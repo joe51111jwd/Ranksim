@@ -2,7 +2,16 @@ from datetime import date
 
 from aeo.ranksim.features import PageDoc
 from aeo.ranksim.groundtruth import SerpLabel
-from aeo.ranksim.whatif import overrides_from_html, render_whatif, score_whatif
+from aeo.ranksim.whatif import (
+    PageMove,
+    QueryWhatIf,
+    WhatIfReport,
+    overrides_from_html,
+    render_three_way,
+    render_whatif,
+    score_whatif,
+    worse_than_live,
+)
 
 
 def _html(title: str, body: str) -> str:
@@ -90,3 +99,61 @@ def test_bundle_replaces_html_keeps_pagerank_and_inserts_new_urls():
     assert "blocked by robots.txt" in text
     assert "\u2014" not in text and "\u2013" not in text
     assert "No page text was invented." in text
+
+
+def _move(url: str, rank: int | None) -> PageMove:
+    return PageMove(
+        url=url,
+        role="labeled",
+        before_rank=rank,
+        after_rank=rank,
+        swap_rank=rank,
+        title_before="",
+        title_after="",
+        h1_after="",
+        words_before=200,
+        words_after=200,
+        tables_before=0,
+        tables_after=0,
+    )
+
+
+def _query(name: str, url: str | None, rank: int | None, total: int) -> QueryWhatIf:
+    pages = [_move(url, rank)] if url and rank else []
+    return QueryWhatIf(
+        query=name,
+        before_n=total,
+        swap_n=total,
+        after_n=total,
+        real_position=None,
+        real_url=None,
+        real_crawled=False,
+        before_rank=rank,
+        before_url=url,
+        swap_rank=rank,
+        after_rank=rank,
+        after_url=url,
+        after_words=200,
+        content_rank=rank,
+        content_url=url,
+        pages=pages,
+        gaps=[],
+        order=[],
+    )
+
+
+def test_v2_worse_than_live_is_a_ship_blocker():
+    assert worse_than_live(None, 3) is False
+    assert worse_than_live(2, 2) is False
+    assert worse_than_live(2, 4) is True
+    assert worse_than_live(2, None) is True
+    home = "https://www.smartcrewhq.com/"
+    query = "all in one dirtwork software"
+    live = WhatIfReport("n", 0.5, 0.7, 0.1, 0.5, 1, 1, 1, 0, [_query(query, home, 2, 8)], [])
+    v1 = WhatIfReport("n", 0.5, 0.7, 0.1, 0.5, 1, 1, 1, 0, [_query(query, home, 1, 12)], [])
+    v2 = WhatIfReport("n", 0.5, 0.7, 0.1, 0.5, 1, 1, 1, 0, [_query(query, home, 5, 12)], [])
+    text = render_three_way(live, v1, v2)
+    assert "BLOCK" in text
+    assert "Ship blockers:" in text
+    assert "Predicted positions." in text
+    assert "\u2014" not in text and "\u2013" not in text

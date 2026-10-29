@@ -208,6 +208,7 @@ python -m aeo.ranksim train smartcrew/serp.csv
 python -m aeo.ranksim test page.html --url https://www.smartcrewhq.com/dirtwork-software/
 python -m aeo.ranksim test https://www.smartcrewhq.com/dirtwork-software/
 python -m aeo.ranksim test --bundle smartcrew/pr8/manifest.csv --serp smartcrew/serp.csv
+python -m aeo.ranksim test --three-way smartcrew/pr8/manifest.csv smartcrew/pr8_v2/manifest.csv --serp smartcrew/serp.csv
 python -m aeo.ranksim report
 ```
 

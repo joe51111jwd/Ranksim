@@ -59,6 +59,13 @@ def main(argv: list[str] | None = None) -> None:
     )
     test.add_argument("--serp", default="smartcrew/serp.csv", help="Labeled Google file used with --bundle")
     test.add_argument("--out", default=None, help="Write the --bundle report to this path")
+    test.add_argument(
+        "--three-way",
+        nargs=2,
+        metavar=("V1", "V2"),
+        default=None,
+        help="Two manifest.csv paths. Scores live, v1, and v2 with one leave-one-query-out fit.",
+    )
 
     track = sub.add_parser("track", help="Record today's real ranks for the keyword set")
     track.add_argument("--provider", default="auto")
@@ -94,14 +101,16 @@ def main(argv: list[str] | None = None) -> None:
         elif args.command == "calibrate":
             _calibrate(database)
         elif args.command == "test":
-            if args.bundle and args.source:
+            if args.three_way:
+                _test_three_way(database, args)
+            elif args.bundle and args.source:
                 parser.error("Pass either a source page or --bundle, not both")
-            if args.bundle:
+            elif args.bundle:
                 _test_bundle(database, args)
             elif args.source:
                 _test(settings, database, args)
             else:
-                parser.error("test needs a source page or --bundle")
+                parser.error("test needs a source page, --bundle, or --three-way")
         elif args.command == "track":
             _track(settings, database, args)
         elif args.command == "report":
@@ -217,6 +226,49 @@ def _test(settings, database: str, args) -> None:
         )
         if row.feature_moves and row.delta not in (None, 0):
             print("  features: " + "; ".join(row.feature_moves))
+
+
+def _test_three_way(database: str, args) -> None:
+    from aeo.ranksim.corpus import load_corpus_docs
+    from aeo.ranksim.groundtruth import load_serp_file
+    from aeo.ranksim.keywords import build_keywords
+    from aeo.ranksim.saved_html import load_saved_html
+    from aeo.ranksim.whatif import overrides_from_html, render_three_way, score_many
+
+    labels = load_serp_file(args.serp)
+    intents = {row.query: row.intent for row in build_keywords()}
+    bundles = {}
+    for name, manifest_path in (("v1", args.three_way[0]), ("v2", args.three_way[1])):
+        manifest = Path(manifest_path)
+        if not manifest.is_file():
+            raise SystemExit(f"Bundle manifest not found: {manifest}")
+        html_by_url, missing = load_saved_html(manifest.parent)
+        if missing:
+            raise SystemExit("Bundle manifest rows with no file were not invented: " + ", ".join(missing))
+        if not html_by_url:
+            raise SystemExit(f"{manifest} has no url,file rows")
+        bundles[name] = html_by_url
+    session = open_session(database)
+    try:
+        pages = load_corpus_docs(session)
+        reports = score_many(
+            labels,
+            pages,
+            {
+                "live": [],
+                "v1": overrides_from_html(bundles["v1"], pages),
+                "v2": overrides_from_html(bundles["v2"], pages),
+            },
+            intents,
+        )
+    finally:
+        session.close()
+    text = render_three_way(reports["live"], reports["v1"], reports["v2"])
+    target = Path(args.out) if args.out else Path("smartcrew") / "pr8-v2-compare.txt"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(text)
+    print(text, end="")
+    print(f"Wrote {target}")
 
 
 def _test_bundle(database: str, args) -> None:

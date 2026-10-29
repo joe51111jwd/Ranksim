@@ -143,6 +143,19 @@ def score_whatif(
 
     Each query is scored by a model trained on the other queries only.
     """
+    reports = score_many(labels, pages, {"bundle": overrides}, intents, today=today)
+    return reports["bundle"]
+
+
+def score_many(
+    labels: list[SerpLabel],
+    pages: dict[str, PageDoc],
+    variants: dict[str, list[Override]],
+    intents: dict[str, str] | None = None,
+    *,
+    today: date | None = None,
+) -> dict[str, WhatIfReport]:
+    """Score several HTML bundles with one leave-one-query-out fit per query."""
     today = today or date.today()
     intents = intents or {}
     examples, uncovered, withheld = build_examples(labels, pages, intents, today=today)
@@ -153,39 +166,43 @@ def score_whatif(
     for label in labels:
         by_query.setdefault(label.query, []).append(label)
     usable = {query: rows for query, rows in _examples_by_query(examples).items() if len(rows) >= 2}
-    override_index = {row.url: row for row in overrides}
-    queries: list[QueryWhatIf] = []
+    models = {}
     for query in by_query:
         train = [row for name, rows in usable.items() if name != query for row in rows]
-        model = fit_lambdamart(train) if train else None
-        queries.append(
+        models[query] = fit_lambdamart(train) if train else None
+    note = accuracy.note
+    if withheld:
+        note += " Navboost prior was withheld because it copied the label position."
+    reports = {}
+    for name, overrides in variants.items():
+        override_index = {row.url: row for row in overrides}
+        queries = [
             _score_query(
                 query,
                 by_query[query],
                 pages,
                 override_index,
                 intents,
-                model,
+                models[query],
                 today,
                 withhold=withheld,
             )
+            for query in by_query
+        ]
+        reports[name] = WhatIfReport(
+            accuracy_note=note,
+            pairwise_accuracy=accuracy.pairwise_accuracy,
+            ndcg_at_10=accuracy.ndcg_at_10,
+            spearman=accuracy.spearman,
+            top3_hit_rate=accuracy.top3_hit_rate,
+            n_queries=accuracy.n_queries,
+            n_pairs=accuracy.n_pairs,
+            n_labeled_urls=len(examples),
+            uncovered_urls=uncovered,
+            queries=queries,
+            bundle_urls=[row.doc.url for row in overrides],
         )
-    note = accuracy.note
-    if withheld:
-        note += " Navboost prior was withheld because it copied the label position."
-    return WhatIfReport(
-        accuracy_note=note,
-        pairwise_accuracy=accuracy.pairwise_accuracy,
-        ndcg_at_10=accuracy.ndcg_at_10,
-        spearman=accuracy.spearman,
-        top3_hit_rate=accuracy.top3_hit_rate,
-        n_queries=accuracy.n_queries,
-        n_pairs=accuracy.n_pairs,
-        n_labeled_urls=len(examples),
-        uncovered_urls=uncovered,
-        queries=queries,
-        bundle_urls=[row.doc.url for row in overrides],
-    )
+    return reports
 
 
 def render_whatif(
@@ -755,3 +772,184 @@ def _rank_cell(rank: int | None, total: int) -> str:
     if rank is None:
         return "n/a"
     return f"{rank} of {total}"
+
+
+# Queries each PR URL is written to rank for, among the labeled 16.
+PAGE_TARGETS: dict[str, tuple[str, ...]] = {
+    "https://www.smartcrewhq.com": (
+        "all in one dirtwork software",
+        "all in one dirt work software",
+        "all in one excavation software",
+        "all in one heavy civil software",
+        "all-in-one heavy civil construction software",
+        "best all in one heavy civil software",
+        "best all-in-one dirtworks software",
+        "best heavy civil construction software",
+        "best heavy construction software",
+        "heavy civil field management software",
+        "excavation contractor software",
+    ),
+    "https://www.smartcrewhq.com/compare/hcss-heavyjob-alternative": (
+        "hcss alternative",
+        "hcss heavyjob alternative",
+        "hcss heavybid alternative",
+        "b2w alternative",
+    ),
+    "https://www.smartcrewhq.com/all-in-one-heavy-civil-software": (
+        "all in one heavy civil software",
+        "all-in-one heavy civil construction software",
+        "best all in one heavy civil software",
+        "best heavy civil construction software",
+        "best heavy construction software",
+        "heavy civil field management software",
+    ),
+    "https://www.smartcrewhq.com/all-in-one-dirt-work-software": (
+        "all in one dirt work software",
+        "all in one dirtwork software",
+        "best all-in-one dirtworks software",
+        "dirt work contractor software",
+        "all in one excavation software",
+    ),
+    "https://www.smartcrewhq.com/blog/best-excavation-software-20-50-employees": (
+        "all in one dirt work software",
+        "all in one dirtwork software",
+        "best all-in-one dirtworks software",
+        "all in one excavation software",
+        "excavation contractor software",
+        "best heavy construction software",
+    ),
+    "https://www.smartcrewhq.com/blog/best-software-small-dirt-work-contractors": (
+        "dirt work contractor software",
+        "best all-in-one dirtworks software",
+        "all in one dirt work software",
+    ),
+}
+
+
+def worse_than_live(live_rank: int | None, new_rank: int | None) -> bool:
+    """A higher rank number is worse. A page that was not on the live set cannot regress."""
+    if live_rank is None:
+        return False
+    if new_rank is None:
+        return True
+    return new_rank > live_rank
+
+
+def render_three_way(live: WhatIfReport, v1: WhatIfReport, v2: WhatIfReport) -> str:
+    """Predicted live vs PR v1 vs PR v2. A v2 rank worse than live is a ship blocker."""
+    lines = [
+        "Predicted positions. Not live Google ranks.",
+        "Model: LambdaMART, leave-one-query-out. The query being scored was not in that model.",
+        "Cross-validated accuracy on the labeled file, using the stored pages:",
+        f"  Pairwise accuracy: {_num(live.pairwise_accuracy)}",
+        f"  NDCG at 10: {_num(live.ndcg_at_10)}",
+        f"  Spearman: {_num(live.spearman)}",
+        f"  Top-3 hit rate: {_num(live.top3_hit_rate)}",
+        (
+            f"  Labeled URLs with HTML: {live.n_labeled_urls}. Uncovered URLs: {live.uncovered_urls}. "
+            f"Queries: {live.n_queries}. Pairs: {live.n_pairs}."
+        ),
+        "Live is the stored crawl. v1 and v2 replace those URLs with the bundle and add URLs the query did not already have.",
+        "A BLOCK line means v2's predicted rank number is worse than live. That blocks shipping.",
+        "",
+        "query\tlive\tv1\tv2\tship",
+    ]
+    live_by = {row.query: row for row in live.queries}
+    v1_by = {row.query: row for row in v1.queries}
+    v2_by = {row.query: row for row in v2.queries}
+    blockers: list[str] = []
+    for query in live_by:
+        left = live_by[query]
+        mid = v1_by[query]
+        right = v2_by[query]
+        blocked = worse_than_live(left.after_rank, right.after_rank)
+        if blocked:
+            blockers.append(
+                f"BLOCK query {query}: live {_rank_cell(left.after_rank, left.after_n)} "
+                f"{_short(left.after_url)}, v2 {_rank_cell(right.after_rank, right.after_n)} {_short(right.after_url)}"
+            )
+        lines.append(
+            "\t".join(
+                [
+                    query,
+                    f"{_rank_cell(left.after_rank, left.after_n)} {_short(left.after_url)}".strip(),
+                    f"{_rank_cell(mid.after_rank, mid.after_n)} {_short(mid.after_url)}".strip(),
+                    f"{_rank_cell(right.after_rank, right.after_n)} {_short(right.after_url)}".strip(),
+                    "BLOCK" if blocked else "",
+                ]
+            )
+        )
+    lines.append("")
+    lines.append("Per SmartCrew URL. A row is included when the query is a target, the URL is on the live set, or the URL is the best predicted SmartCrew page.")
+    lines.append("page\tquery\trole\tlive\tv1\tv2\tship")
+    for url in PAGE_TARGETS:
+        targets = set(PAGE_TARGETS[url])
+        for query in live_by:
+            left = _page_rank(live_by[query], url)
+            mid = _page_rank(v1_by[query], url)
+            right = _page_rank(v2_by[query], url)
+            best = url in {
+                _key(live_by[query].after_url),
+                _key(v1_by[query].after_url),
+                _key(v2_by[query].after_url),
+            }
+            if query not in targets and left[0] is None and not best:
+                continue
+            role = "target" if query in targets else "ranks"
+            blocked = worse_than_live(left[0], right[0])
+            if blocked:
+                blockers.append(
+                    f"BLOCK page {_short(url)} on {query}: live {_rank_cell(*left)}, v2 {_rank_cell(*right)}"
+                )
+            lines.append(
+                "\t".join(
+                    [
+                        _short(url),
+                        query,
+                        role,
+                        _rank_cell(*left),
+                        _rank_cell(*mid),
+                        _rank_cell(*right),
+                        "BLOCK" if blocked else "",
+                    ]
+                )
+            )
+    lines.append("")
+    if blockers:
+        lines.append(f"Ship blockers: {len(blockers)}. v2 predicts worse than live.")
+        lines.extend(blockers)
+    else:
+        lines.append("Ship blockers: 0. No SmartCrew page or query has a v2 predicted rank worse than live.")
+    lines.append("These ranks are predicted slots in the crawled set.")
+    text = "\n".join(lines) + "\n"
+    return text.replace("\u2014", " - ").replace("\u2013", "-")
+
+
+def _page_rank(row: QueryWhatIf, url: str) -> tuple[int | None, int]:
+    key = _key(url)
+    for page in row.pages:
+        if _key(page.url) == key:
+            return page.after_rank, row.after_n
+    return None, row.after_n
+
+
+def _key(url: str | None) -> str:
+    if not url:
+        return ""
+    try:
+        return normalize_url(url)
+    except ValueError:
+        return url
+
+
+def _short(url: str | None) -> str:
+    if not url:
+        return ""
+    try:
+        key = normalize_url(url)
+    except ValueError:
+        return url
+    marker = "://"
+    if marker not in key:
+        return key
+    return "/" + key.split(marker, 1)[1].split("/", 1)[1] if key.count("/") >= 3 else "/"

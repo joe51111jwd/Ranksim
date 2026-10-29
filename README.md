@@ -224,9 +224,9 @@ Daily check, once a SERP key is set:
 
 The tracker appends a row per query. It does not fill days you did not run.
 
-The HTML report is [http://127.0.0.1:8741/ranksim](http://127.0.0.1:8741/ranksim) and `smartcrew/report.html`. With an empty corpus it lists page gaps and says calibration has not been run. It does not print a Spearman number until a SERP has been stored.
+The HTML report is [http://127.0.0.1:8741/ranksim](http://127.0.0.1:8741/ranksim) and `smartcrew/report.html`.
 
-On a 3-page labeled mock in the unit tests, the fitter reaches Spearman 1 and NDCG at 10 of 1. That only shows the math can recover an obvious order. It is not Google accuracy. No Google calibration has been run in this environment because no SerpAPI or DataForSEO key is configured.
+`smartcrew/serp.csv` is a 10-query Google US export from 2026-10-29 (82 rows). `index-serp` crawls those URLs. Cross-validated accuracy on that file is weak and unstable: pairwise accuracy 0.544, NDCG at 10 of 0.737, Spearman -0.226, top-3 hit rate 0.600. Thirty-one labeled rows were not crawled (robots blocks or HTTP 403), so these numbers are not a full top-10 test. Do not treat them as a stable measure of Google accuracy.
 
 ## What's next
 

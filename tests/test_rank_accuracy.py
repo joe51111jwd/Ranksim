@@ -11,6 +11,14 @@ from aeo.ranksim.lambdamart import build_examples, cross_validate
 from aeo.ranksim.groundtruth import SerpLabel
 
 
+def test_fetch_url_can_keep_a_trailing_slash():
+    from aeo.crawl.urls import normalize_url
+
+    assert normalize_url("https://example.com/a/", keep_trailing_slash=True).endswith("/a/")
+    assert normalize_url("https://example.com/a/").endswith("/a")
+    assert not normalize_url("https://example.com/a/").endswith("/a/")
+
+
 def test_bm25f_weights_title_above_a_single_body_mention():
     query = "dirtwork software"
     scores = bm25f_scores(

@@ -6,6 +6,7 @@ import math
 from dataclasses import dataclass, field
 from datetime import date
 
+from aeo.crawl.urls import normalize_url
 from aeo.ranksim.features import FEATURE_NAMES, PageDoc, raw_features
 from aeo.ranksim.groundtruth import SerpLabel, navboost_leaks
 from aeo.ranksim.metrics import mean_metric, ndcg_at_k, spearman
@@ -37,6 +38,16 @@ class AccuracyReport:
     fold_notes: list[str] = field(default_factory=list)
 
 
+def _lookup_page(pages: dict[str, PageDoc], url: str) -> PageDoc | None:
+    if url in pages:
+        return pages[url]
+    try:
+        key = normalize_url(url)
+    except ValueError:
+        return None
+    return pages.get(key)
+
+
 def relevance(position: float) -> float:
     if position <= 0:
         return 0.0
@@ -65,7 +76,7 @@ def build_examples(
     grouped: dict[str, list[tuple[SerpLabel, PageDoc]]] = {}
     uncovered = 0
     for label in labels:
-        page = pages.get(label.url)
+        page = _lookup_page(pages, label.url)
         if page is None:
             uncovered += 1
             continue

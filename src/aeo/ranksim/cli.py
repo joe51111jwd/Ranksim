@@ -25,6 +25,7 @@ from aeo.ranksim.authority import authority_client
 from aeo.ranksim.keywords import build_keywords, gap_summary, page_gaps, refresh_sitemap, write_keywords_csv
 from aeo.ranksim.loop import FetchResult, attach_authority, collect_corpus, calibrate, page_from_html, run_test, track_ranks
 from aeo.ranksim.report import render_report
+from aeo.ranksim.index_serp import index_serp_csv
 from aeo.ranksim.serp import resolve_serp
 from aeo.ranksim.store import open_session
 
@@ -67,6 +68,10 @@ def main(argv: list[str] | None = None) -> None:
     evaluate = sub.add_parser("evaluate", help="Cross-validate LambdaMART on a real Google position file")
     evaluate.add_argument("serp_file", help="CSV with query, url, position")
 
+    index_serp = sub.add_parser("index-serp", help="Crawl URLs from a Google position file plus the SmartCrew sitemap")
+    index_serp.add_argument("serp_file")
+    index_serp.add_argument("--delay", type=float, default=0.4)
+
     args = parser.parse_args(argv)
     settings = get_settings()
     database = args.database or settings.ranksim_database_url
@@ -89,6 +94,8 @@ def main(argv: list[str] | None = None) -> None:
             _train(database, args)
         elif args.command == "evaluate":
             _evaluate(database, args)
+        elif args.command == "index-serp":
+            _index_serp(settings, database, args)
         else:
             parser.error(f"Unknown command {args.command}")
     except ProviderConfigError as exc:
@@ -230,17 +237,13 @@ def _evaluate(database: str, args) -> None:
 def _score_file(database: str, path: str, *, fit: bool, model_out: str | None):
     from aeo.ranksim.groundtruth import load_serp_file
     from aeo.ranksim.lambdamart import build_examples, cross_validate, fit_lambdamart, save_model
-    from aeo.ranksim.loop import page_from_row
-    from aeo.ranksim.store import page_by_url
 
     labels = load_serp_file(path)
     session = open_session(database)
-    pages = {}
     try:
-        for label in labels:
-            row = page_by_url(session, label.url)
-            if row is not None and row.status == "fetched":
-                pages[label.url] = page_from_row(row)
+        from aeo.ranksim.corpus import load_corpus_docs
+
+        pages = load_corpus_docs(session)
     finally:
         session.close()
     intents = {row.query: row.intent for row in build_keywords()}
@@ -255,8 +258,30 @@ def _score_file(database: str, path: str, *, fit: bool, model_out: str | None):
         model = fit_lambdamart(examples)
         Path(model_out).parent.mkdir(parents=True, exist_ok=True)
         save_model(model, model_out)
-        report.note += f" Saved model to {model_out}. The saved fit uses all labeled queries, so quote the cross-validated numbers, not an in-sample score."
+        names = list(model.feature_name())
+        gains = model.feature_importance(importance_type="gain")
+        ranked = sorted(zip(names, gains), key=lambda item: item[1], reverse=True)
+        top = ", ".join(f"{name} ({gain:.1f})" for name, gain in ranked[:8] if gain > 0)
+        report.note += (
+            f" Saved model to {model_out}. The saved fit uses all labeled queries, so quote the cross-validated numbers, not an in-sample score."
+        )
+        if top:
+            report.note += f" In-sample gain, unstable at this sample size: {top}."
     return report
+
+
+def _index_serp(settings, database: str, args) -> None:
+    summary = index_serp_csv(args.serp_file, database, settings, delay_seconds=args.delay)
+    print(
+        f"Labels: {summary['labels']}. Queries: {summary['queries']}. "
+        f"Attempted: {summary['attempted']}. Fetched: {summary['fetched']}. "
+        f"Blocked by robots: {summary['blocked']}. Errors: {summary['error']}."
+    )
+    print("Blocked and failed URLs were not given invented page text.")
+    for url in summary["blocked_urls"]:
+        print(f"blocked {url}")
+    for url, error in summary["error_urls"]:
+        print(f"error {url} {error}")
 
 
 def _print_accuracy(report) -> None:

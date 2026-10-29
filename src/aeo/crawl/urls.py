@@ -16,7 +16,7 @@ def domain_of(url: str) -> str:
     return host
 
 
-def normalize_url(url: str) -> str:
+def normalize_url(url: str, *, keep_trailing_slash: bool = False) -> str:
     raw = url.strip()
     parts = urlsplit(raw)
     if parts.scheme not in {"http", "https"}:
@@ -34,7 +34,7 @@ def normalize_url(url: str) -> str:
     else:
         netloc = host
     path = parts.path or "/"
-    if path != "/" and path.endswith("/"):
+    if path != "/" and path.endswith("/") and not keep_trailing_slash:
         path = path[:-1]
     return urlunsplit((parts.scheme, netloc, path, parts.query, ""))
 
@@ -54,7 +54,13 @@ def _is_public_ip(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
     )
 
 
-def assert_safe_url(url: str, *, allow_private: bool = False, resolve: bool = True) -> str:
+def assert_safe_url(
+    url: str,
+    *,
+    allow_private: bool = False,
+    resolve: bool = True,
+    keep_trailing_slash: bool = False,
+) -> str:
     """Reject non-http URLs and, unless explicitly allowed, private targets.
 
     ``resolve=False`` checks only the URL itself (scheme, credentials, IP
@@ -62,7 +68,7 @@ def assert_safe_url(url: str, *, allow_private: bool = False, resolve: bool = Tr
     points at a link-local address is blocked. ``allow_private`` skips both
     checks for tests and local labs.
     """
-    normalized = normalize_url(url)
+    normalized = normalize_url(url, keep_trailing_slash=keep_trailing_slash)
     if allow_private:
         return normalized
     host = urlsplit(normalized).hostname or ""

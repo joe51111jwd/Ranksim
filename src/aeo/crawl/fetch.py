@@ -232,7 +232,7 @@ class Crawler:
     def _get_following_redirects(self, url: str) -> tuple[httpx.Response, str]:
         current = url
         for _ in range(MAX_REDIRECTS + 1):
-            current = assert_safe_url(current, allow_private=self.allow_private)
+            current = assert_safe_url(current, allow_private=self.allow_private, keep_trailing_slash=True)
             response = self.client.get(
                 current,
                 headers={

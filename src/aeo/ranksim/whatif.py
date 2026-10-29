@@ -154,14 +154,32 @@ def score_many(
     intents: dict[str, str] | None = None,
     *,
     today: date | None = None,
+    compute_accuracy: bool = True,
 ) -> dict[str, WhatIfReport]:
-    """Score several HTML bundles with one leave-one-query-out fit per query."""
+    """Score several HTML bundles with one leave-one-query-out fit per query.
+
+    ``compute_accuracy`` repeats that fit to measure cross-validation. Leave it
+    false to score with the fit only.
+    """
     today = today or date.today()
     intents = intents or {}
     examples, uncovered, withheld = build_examples(labels, pages, intents, today=today)
-    accuracy = cross_validate(examples, real_google=True, folds_mode="loo")
-    accuracy.uncovered_urls = uncovered
-    accuracy.navboost_withheld = withheld
+    if compute_accuracy:
+        accuracy = cross_validate(examples, real_google=True, folds_mode="loo")
+        accuracy.uncovered_urls = uncovered
+        accuracy.navboost_withheld = withheld
+        pairwise = accuracy.pairwise_accuracy
+        ndcg = accuracy.ndcg_at_10
+        rho = accuracy.spearman
+        top3 = accuracy.top3_hit_rate
+        n_queries = accuracy.n_queries
+        n_pairs = accuracy.n_pairs
+        note = accuracy.note
+    else:
+        pairwise = ndcg = rho = top3 = None
+        n_queries = len({row.query for row in examples})
+        n_pairs = 0
+        note = "Scored with the leave-one-query-out fit. Cross-validation was not rerun."
     by_query: dict[str, list[SerpLabel]] = {}
     for label in labels:
         by_query.setdefault(label.query, []).append(label)
@@ -170,7 +188,6 @@ def score_many(
     for query in by_query:
         train = [row for name, rows in usable.items() if name != query for row in rows]
         models[query] = fit_lambdamart(train) if train else None
-    note = accuracy.note
     if withheld:
         note += " Navboost prior was withheld because it copied the label position."
     reports = {}
@@ -191,12 +208,12 @@ def score_many(
         ]
         reports[name] = WhatIfReport(
             accuracy_note=note,
-            pairwise_accuracy=accuracy.pairwise_accuracy,
-            ndcg_at_10=accuracy.ndcg_at_10,
-            spearman=accuracy.spearman,
-            top3_hit_rate=accuracy.top3_hit_rate,
-            n_queries=accuracy.n_queries,
-            n_pairs=accuracy.n_pairs,
+            pairwise_accuracy=pairwise,
+            ndcg_at_10=ndcg,
+            spearman=rho,
+            top3_hit_rate=top3,
+            n_queries=n_queries,
+            n_pairs=n_pairs,
             n_labeled_urls=len(examples),
             uncovered_urls=uncovered,
             queries=queries,
@@ -923,6 +940,67 @@ def render_three_way(live: WhatIfReport, v1: WhatIfReport, v2: WhatIfReport) -> 
     lines.append("These ranks are predicted slots in the crawled set.")
     text = "\n".join(lines) + "\n"
     return text.replace("\u2014", " - ").replace("\u2013", "-")
+
+
+def render_regression(live: WhatIfReport, v2: WhatIfReport, v3: WhatIfReport) -> str:
+    """Short predicted check of live, v2, and v3. Same-set ranks omit new URLs."""
+    lines = [
+        "Predicted positions. Not live Google ranks.",
+        "Same leave-one-query-out fit as the v2 run. Cross-validation was not rerun.",
+        "CV from that fit: pairwise 0.534, NDCG at 10 0.695, Spearman 0.075, top-3 hit rate 0.500.",
+        "Coverage: 122 of 135 labeled rows, 13 uncovered, 414 pairs.",
+        "Full-set ranks can include new SmartCrew URLs. Same-set ranks use only the live competitor set.",
+        "A CLEAR line is a same-set rank number worse than live.",
+        "",
+        "query\tlive\tv2\tv3",
+    ]
+    live_by = {row.query: row for row in live.queries}
+    v2_by = {row.query: row for row in v2.queries}
+    v3_by = {row.query: row for row in v3.queries}
+    clear: list[str] = []
+    for query in live_by:
+        left, mid, right = live_by[query], v2_by[query], v3_by[query]
+        lines.append(
+            "\t".join(
+                [
+                    query,
+                    f"{_rank_cell(left.after_rank, left.after_n)} {_short(left.after_url)}".strip(),
+                    f"{_rank_cell(mid.after_rank, mid.after_n)} {_short(mid.after_url)}".strip(),
+                    f"{_rank_cell(right.after_rank, right.after_n)} {_short(right.after_url)}".strip(),
+                ]
+            )
+        )
+    lines.append("")
+    lines.append("Same-set check. Each live SmartCrew URL, v3 HTML, no new SmartCrew pages.")
+    lines.append("query\tpage\tlive\tv3_same_set")
+    for query in live_by:
+        right = v3_by[query]
+        for page in right.pages:
+            if page.before_rank is None:
+                continue
+            lines.append(
+                "\t".join(
+                    [
+                        query,
+                        _short(page.url),
+                        _rank_cell(page.before_rank, right.before_n),
+                        _rank_cell(page.swap_rank, right.swap_n),
+                    ]
+                )
+            )
+            if worse_than_live(page.before_rank, page.swap_rank):
+                clear.append(
+                    f"CLEAR {query} {_short(page.url)}: live {_rank_cell(page.before_rank, right.before_n)}, "
+                    f"v3 same-set {_rank_cell(page.swap_rank, right.swap_n)}"
+                )
+    lines.append("")
+    if clear:
+        lines.append(f"Clearly worse than live: {len(clear)}.")
+        lines.extend(clear)
+    else:
+        lines.append("Clearly worse than live: none. No live SmartCrew URL lost a same-set rank under v3.")
+    lines.append("These ranks are predicted.")
+    return ("\n".join(lines) + "\n").replace("\u2014", " - ").replace("\u2013", "-")
 
 
 def _page_rank(row: QueryWhatIf, url: str) -> tuple[int | None, int]:

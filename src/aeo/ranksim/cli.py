@@ -66,6 +66,13 @@ def main(argv: list[str] | None = None) -> None:
         default=None,
         help="Two manifest.csv paths. Scores live, v1, and v2 with one leave-one-query-out fit.",
     )
+    test.add_argument(
+        "--regression",
+        nargs=2,
+        metavar=("V2", "V3"),
+        default=None,
+        help="Score live, v2, and v3 with one fit and a same-set check. Does not rerun cross-validation.",
+    )
 
     track = sub.add_parser("track", help="Record today's real ranks for the keyword set")
     track.add_argument("--provider", default="auto")
@@ -101,7 +108,9 @@ def main(argv: list[str] | None = None) -> None:
         elif args.command == "calibrate":
             _calibrate(database)
         elif args.command == "test":
-            if args.three_way:
+            if args.regression:
+                _test_regression(database, args)
+            elif args.three_way:
                 _test_three_way(database, args)
             elif args.bundle and args.source:
                 parser.error("Pass either a source page or --bundle, not both")
@@ -110,7 +119,7 @@ def main(argv: list[str] | None = None) -> None:
             elif args.source:
                 _test(settings, database, args)
             else:
-                parser.error("test needs a source page, --bundle, or --three-way")
+                parser.error("test needs a source page, --bundle, --three-way, or --regression")
         elif args.command == "track":
             _track(settings, database, args)
         elif args.command == "report":
@@ -226,6 +235,53 @@ def _test(settings, database: str, args) -> None:
         )
         if row.feature_moves and row.delta not in (None, 0):
             print("  features: " + "; ".join(row.feature_moves))
+
+
+def _load_bundle(manifest_path: str, pages) -> list:
+    from aeo.ranksim.saved_html import load_saved_html
+    from aeo.ranksim.whatif import overrides_from_html
+
+    manifest = Path(manifest_path)
+    if not manifest.is_file():
+        raise SystemExit(f"Bundle manifest not found: {manifest}")
+    html_by_url, missing = load_saved_html(manifest.parent)
+    if missing:
+        raise SystemExit("Bundle manifest rows with no file were not invented: " + ", ".join(missing))
+    if not html_by_url:
+        raise SystemExit(f"{manifest} has no url,file rows")
+    return overrides_from_html(html_by_url, pages)
+
+
+def _test_regression(database: str, args) -> None:
+    from aeo.ranksim.corpus import load_corpus_docs
+    from aeo.ranksim.groundtruth import load_serp_file
+    from aeo.ranksim.keywords import build_keywords
+    from aeo.ranksim.whatif import render_regression, score_many
+
+    labels = load_serp_file(args.serp)
+    intents = {row.query: row.intent for row in build_keywords()}
+    session = open_session(database)
+    try:
+        pages = load_corpus_docs(session)
+        reports = score_many(
+            labels,
+            pages,
+            {
+                "live": [],
+                "v2": _load_bundle(args.regression[0], pages),
+                "v3": _load_bundle(args.regression[1], pages),
+            },
+            intents,
+            compute_accuracy=False,
+        )
+    finally:
+        session.close()
+    text = render_regression(reports["live"], reports["v2"], reports["v3"])
+    target = Path(args.out) if args.out else Path("smartcrew") / "pr8-v3-compare.txt"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(text)
+    print(text, end="")
+    print(f"Wrote {target}")
 
 
 def _test_three_way(database: str, args) -> None:

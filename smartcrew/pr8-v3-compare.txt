@@ -1,0 +1,39 @@
+Predicted positions. Not live Google ranks.
+Same leave-one-query-out fit as the v2 run. Cross-validation was not rerun.
+CV from that fit: pairwise 0.534, NDCG at 10 0.695, Spearman 0.075, top-3 hit rate 0.500.
+Coverage: 122 of 135 labeled rows, 13 uncovered, 414 pairs.
+Full-set ranks can include new SmartCrew URLs. Same-set ranks use only the live competitor set.
+A CLEAR line is a same-set rank number worse than live.
+
+query	live	v2	v3
+hcss alternative	n/a	7 of 13 /compare/hcss-heavyjob-alternative	7 of 13 /compare/hcss-heavyjob-alternative
+best all-in-one dirtworks software	1 of 8 /blog/best-excavation-software-20-50-employees	1 of 13 /	1 of 13 /blog/best-excavation-software-20-50-employees
+best heavy civil construction software	n/a	2 of 13 /all-in-one-heavy-civil-software	2 of 13 /all-in-one-heavy-civil-software
+hcss heavyjob alternative	1 of 7 /compare/hcss-heavyjob-alternative	1 of 12 /compare/hcss-heavyjob-alternative	1 of 12 /compare/hcss-heavyjob-alternative
+dirt work contractor software	2 of 9 /blog/best-software-small-dirt-work-contractors	3 of 14 /	3 of 14 /blog/best-software-small-dirt-work-contractors
+best heavy construction software	n/a	3 of 13 /blog/best-excavation-software-20-50-employees	3 of 13 /blog/best-excavation-software-20-50-employees
+b2w alternative	n/a	4 of 12 /compare/hcss-heavyjob-alternative	4 of 12 /compare/hcss-heavyjob-alternative
+excavation contractor software	n/a	5 of 13 /blog/best-software-small-dirt-work-contractors	5 of 13 /blog/best-software-small-dirt-work-contractors
+heavy civil field management software	n/a	5 of 15 /	5 of 15 /
+hcss heavybid alternative	n/a	2 of 11 /all-in-one-heavy-civil-software	2 of 11 /all-in-one-heavy-civil-software
+all in one heavy civil software	n/a	4 of 15 /	3 of 15 /
+all in one dirt work software	4 of 8 /blog/best-excavation-software-20-50-employees	3 of 13 /blog/best-excavation-software-20-50-employees	3 of 13 /blog/best-excavation-software-20-50-employees
+all-in-one heavy civil construction software	n/a	3 of 15 /	3 of 15 /blog/best-excavation-software-20-50-employees
+all in one dirtwork software	4 of 8 /blog/best-excavation-software-20-50-employees	4 of 12 /blog/best-excavation-software-20-50-employees	4 of 12 /blog/best-excavation-software-20-50-employees
+all in one excavation software	n/a	1 of 14 /	1 of 14 /
+best all in one heavy civil software	n/a	2 of 14 /	1 of 14 /
+
+Same-set check. Each live SmartCrew URL, v3 HTML, no new SmartCrew pages.
+query	page	live	v3_same_set
+best all-in-one dirtworks software	/blog/best-excavation-software-20-50-employees	1 of 8	2 of 8
+hcss heavyjob alternative	/compare/hcss-heavyjob-alternative	1 of 7	2 of 7
+dirt work contractor software	/blog/best-software-small-dirt-work-contractors	2 of 9	4 of 9
+all in one dirt work software	/blog/best-excavation-software-20-50-employees	4 of 8	4 of 8
+all in one dirtwork software	/	7 of 8	5 of 8
+all in one dirtwork software	/blog/best-excavation-software-20-50-employees	4 of 8	4 of 8
+
+Clearly worse than live: 3.
+CLEAR best all-in-one dirtworks software /blog/best-excavation-software-20-50-employees: live 1 of 8, v3 same-set 2 of 8
+CLEAR hcss heavyjob alternative /compare/hcss-heavyjob-alternative: live 1 of 7, v3 same-set 2 of 7
+CLEAR dirt work contractor software /blog/best-software-small-dirt-work-contractors: live 2 of 9, v3 same-set 4 of 9
+These ranks are predicted.

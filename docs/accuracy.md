@@ -49,7 +49,9 @@ On each held-out query:
 - Spearman correlation of predicted rank and labeled position. Constant scores make Spearman undefined, which is reported as n/a rather than zero.
 - Top-3 hit rate: the labeled position-1 URL appears in the model's top 3.
 
-Cross-validation uses leave-one-query-out when there are 8 or fewer queries, otherwise 5 folds. The saved model is fit on all labeled queries after that, so the saved file is for scoring. Quote the cross-validated numbers, not an in-sample score.
+`evaluate` and `train` default to leave-one-query-out. Pass `--folds kfold` for 5 folds when there are more than 8 queries.
+
+Pages that refuse the crawler can be supplied later as files. Put HTML in `smartcrew/saved_html/` and list `url,file` in `manifest.csv`. A missing file is skipped. The index does not invent a page. The saved model is fit on all labeled queries after that, so the saved file is for scoring. Quote the cross-validated numbers, not an in-sample score.
 
 ## What would raise the numbers
 

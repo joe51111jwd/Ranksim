@@ -210,7 +210,9 @@ python -m aeo.ranksim test https://www.smartcrewhq.com/dirtwork-software/
 python -m aeo.ranksim report
 ```
 
-`evaluate` and `train` read `query,url,position` or a Search Console export with Query, Page, and Position. Optional `prior_position` is an older Google observation used as a Navboost stand-in. If that column copies `position`, it is withheld so the metric cannot cheat. With fewer than two usable queries, the command prints what file is needed and does not emit NDCG, Spearman, top-3 hit rate, or pairwise accuracy.
+`evaluate` and `train` default to leave-one-query-out. They read `query,url,position` or a Search Console export with Query, Page, and Position. Optional `prior_position` is an older Google observation used as a Navboost stand-in. If that column copies `position`, it is withheld so the metric cannot cheat. With fewer than two usable queries, the command prints what file is needed and does not emit NDCG, Spearman, top-3 hit rate, or pairwise accuracy.
+
+Blocked pages can be added later without a refetch. Put the HTML in `smartcrew/saved_html/` and list `url,file` in `manifest.csv`. A missing file is skipped. No page text is invented.
 
 `test` re-fetches only the page you pass (or reads a local file). It prints predicted position before and after, the competitor gaps, and which features moved. A blank before-position means the page was outside the stored set, not a rank of 151.
 

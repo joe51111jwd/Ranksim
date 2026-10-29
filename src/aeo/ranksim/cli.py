@@ -64,9 +64,11 @@ def main(argv: list[str] | None = None) -> None:
     train = sub.add_parser("train", help="Train LambdaMART on a real Google position file")
     train.add_argument("serp_file", help="CSV with query, url, position")
     train.add_argument("--model-out", default="data/ranksim-lambdamart.txt")
+    train.add_argument("--folds", choices=["loo", "kfold"], default="loo")
 
     evaluate = sub.add_parser("evaluate", help="Cross-validate LambdaMART on a real Google position file")
     evaluate.add_argument("serp_file", help="CSV with query, url, position")
+    evaluate.add_argument("--folds", choices=["loo", "kfold"], default="loo")
 
     index_serp = sub.add_parser("index-serp", help="Crawl URLs from a Google position file plus the SmartCrew sitemap")
     index_serp.add_argument("serp_file")
@@ -225,16 +227,16 @@ def _track(settings, database: str, args) -> None:
 
 
 def _train(database: str, args) -> None:
-    report = _score_file(database, args.serp_file, fit=True, model_out=args.model_out)
+    report = _score_file(database, args.serp_file, fit=True, model_out=args.model_out, folds=args.folds)
     _print_accuracy(report)
 
 
 def _evaluate(database: str, args) -> None:
-    report = _score_file(database, args.serp_file, fit=False, model_out=None)
+    report = _score_file(database, args.serp_file, fit=False, model_out=None, folds=args.folds)
     _print_accuracy(report)
 
 
-def _score_file(database: str, path: str, *, fit: bool, model_out: str | None):
+def _score_file(database: str, path: str, *, fit: bool, model_out: str | None, folds: str = "loo"):
     from aeo.ranksim.groundtruth import load_serp_file
     from aeo.ranksim.lambdamart import build_examples, cross_validate, fit_lambdamart, save_model
 
@@ -249,7 +251,7 @@ def _score_file(database: str, path: str, *, fit: bool, model_out: str | None):
     intents = {row.query: row.intent for row in build_keywords()}
     examples, uncovered, withheld = build_examples(labels, pages, intents)
     real = True
-    report = cross_validate(examples, real_google=real)
+    report = cross_validate(examples, real_google=real, folds_mode=folds)
     report.uncovered_urls = uncovered
     report.navboost_withheld = withheld
     if withheld:
@@ -275,8 +277,13 @@ def _index_serp(settings, database: str, args) -> None:
     print(
         f"Labels: {summary['labels']}. Queries: {summary['queries']}. "
         f"Attempted: {summary['attempted']}. Fetched: {summary['fetched']}. "
+        f"Saved HTML: {summary['saved_html']}. Skipped already stored: {summary['skipped']}. "
         f"Blocked by robots: {summary['blocked']}. Errors: {summary['error']}."
     )
+    if summary["saved_missing"]:
+        print("Saved HTML manifest rows with no file were not invented:")
+        for url in summary["saved_missing"]:
+            print(f"missing file {url}")
     print("Blocked and failed URLs were not given invented page text.")
     for url in summary["blocked_urls"]:
         print(f"blocked {url}")
@@ -290,10 +297,19 @@ def _print_accuracy(report) -> None:
     if not report.cross_validated:
         print("No NDCG, Spearman, top-3 hit rate, or pairwise accuracy is reported.")
         return
+    print("Predicted metrics. Not live Google ranks.")
     print(f"Pairwise accuracy: {_num(report.pairwise_accuracy)}")
     print(f"NDCG at 10: {_num(report.ndcg_at_10)}")
     print(f"Spearman: {_num(report.spearman)}")
     print(f"Top-3 hit rate: {_num(report.top3_hit_rate)}")
+    if report.query_scores:
+        print("query\tn\tpairwise\tndcg10\tspearman\ttop3\tsmartcrew_real\tsmartcrew_predicted")
+        for row in report.query_scores:
+            print(
+                f"{row.query}\t{row.n_urls}\t{_num(row.pairwise_accuracy)}\t{_num(row.ndcg_at_10)}\t"
+                f"{_num(row.spearman)}\t{_num(row.top3_hit)}\t{_cell(row.smartcrew_real_position)}\t"
+                f"{_cell(row.smartcrew_predicted_rank)}"
+            )
     print("These figures describe the labeled file under query holdout. They are not a live Google rank.")
 
 

@@ -22,6 +22,19 @@ class RankExample:
 
 
 @dataclass
+class QueryScore:
+    query: str
+    n_urls: int
+    pairwise_accuracy: float | None
+    ndcg_at_10: float | None
+    spearman: float | None
+    top3_hit: float | None
+    smartcrew_real_position: float | None
+    smartcrew_predicted_rank: int | None
+    smartcrew_url: str | None
+
+
+@dataclass
 class AccuracyReport:
     ndcg_at_10: float | None
     spearman: float | None
@@ -36,6 +49,7 @@ class AccuracyReport:
     real_google: bool
     note: str
     fold_notes: list[str] = field(default_factory=list)
+    query_scores: list[QueryScore] = field(default_factory=list)
 
 
 def _lookup_page(pages: dict[str, PageDoc], url: str) -> PageDoc | None:
@@ -123,7 +137,7 @@ def build_examples(
     return examples, uncovered, withhold
 
 
-def cross_validate(examples: list[RankExample], *, real_google: bool) -> AccuracyReport:
+def cross_validate(examples: list[RankExample], *, real_google: bool, folds_mode: str = "auto") -> AccuracyReport:
     by_query: dict[str, list[RankExample]] = {}
     for example in examples:
         by_query.setdefault(example.query, []).append(example)
@@ -146,14 +160,20 @@ def cross_validate(examples: list[RankExample], *, real_google: bool) -> Accurac
         return empty
 
     queries = sorted(usable)
-    fold_count = len(queries) if len(queries) <= 8 else 5
-    folds = _folds(queries, fold_count)
+    if folds_mode == "loo":
+        folds = [{query} for query in queries]
+        protocol = "Leave-one-query-out"
+    else:
+        fold_count = len(queries) if len(queries) <= 8 else 5
+        folds = _folds(queries, fold_count)
+        protocol = "Query holdout"
     ndcgs: list[float | None] = []
     spearmans: list[float | None] = []
     hits: list[float] = []
     pair_correct = 0
     pair_total = 0
     notes: list[str] = []
+    query_scores: list[QueryScore] = []
     for test_queries in folds:
         train_rows = [row for query, rows in usable.items() if query not in test_queries for row in rows]
         test_rows = [row for query in test_queries for row in usable[query]]
@@ -164,12 +184,16 @@ def cross_validate(examples: list[RankExample], *, real_google: bool) -> Accurac
         for query in test_queries:
             group = [row for row in test_rows if row.query == query]
             group_scores = [scores[id(row)] for row in group]
-            ndcgs.append(_ndcg(group, group_scores))
-            spearmans.append(spearman(group_scores, [row.position for row in group]))
-            hits.append(_top3_hit(group, group_scores))
+            ndcg = _ndcg(group, group_scores)
+            rho = spearman(group_scores, [row.position for row in group])
+            hit = _top3_hit(group, group_scores)
             correct, total = _pairs(group, group_scores)
+            ndcgs.append(ndcg)
+            spearmans.append(rho)
+            hits.append(hit)
             pair_correct += correct
             pair_total += total
+            query_scores.append(_query_score(group, group_scores, ndcg, rho, hit, correct, total))
     if pair_total == 0:
         empty.note = "Cross-validation produced no labeled pairs."
         return empty
@@ -186,10 +210,10 @@ def cross_validate(examples: list[RankExample], *, real_google: bool) -> Accurac
         cross_validated=True,
         real_google=real_google,
         note=(
-            "Cross-validated by holding out queries. "
-            "Predicted agreement with the labeled file, not a live Google measurement."
+            f"{protocol} predicted agreement with the labeled file, not a live Google measurement."
         ),
         fold_notes=notes,
+        query_scores=query_scores,
     )
 
 
@@ -278,6 +302,38 @@ def _pairs(group: list[RankExample], scores: list[float]) -> tuple[int, int]:
             if scores[left] > scores[right]:
                 correct += 1
     return correct, total
+
+
+def _query_score(group, scores, ndcg, rho, hit, correct, total) -> QueryScore:
+    from aeo.crawl.urls import domain_of
+
+    order = sorted(range(len(group)), key=lambda index: (-scores[index], index))
+    rank = {index: place for place, index in enumerate(order, start=1)}
+    ours = [index for index, row in enumerate(group) if _is_smartcrew(domain_of(row.url))]
+    if not ours:
+        real = None
+        predicted = None
+        url = None
+    else:
+        best = min(ours, key=lambda index: (group[index].position, index))
+        real = group[best].position
+        predicted = rank[best]
+        url = group[best].url
+    return QueryScore(
+        query=group[0].query,
+        n_urls=len(group),
+        pairwise_accuracy=(correct / total) if total else None,
+        ndcg_at_10=ndcg,
+        spearman=rho,
+        top3_hit=hit,
+        smartcrew_real_position=real,
+        smartcrew_predicted_rank=predicted,
+        smartcrew_url=url,
+    )
+
+
+def _is_smartcrew(host: str) -> bool:
+    return host == "smartcrewhq.com" or host.endswith(".smartcrewhq.com")
 
 
 def _folds(queries: list[str], fold_count: int) -> list[set[str]]:

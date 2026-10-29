@@ -21,6 +21,7 @@ dev = ["pytest>=8.3"]
 
 [project.scripts]
 aeo-worker = "aeo.worker:main"
+ranksim = "aeo.ranksim.cli:main"
 
 [build-system]
 requires = ["hatchling"]

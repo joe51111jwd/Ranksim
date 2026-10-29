@@ -5,7 +5,7 @@ from __future__ import annotations
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, Query, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel, Field, field_validator, model_validator
 from sqlalchemy.orm import Session
 
@@ -25,6 +25,7 @@ from aeo.serialize import (
     page_summary,
     simulation_results,
 )
+from aeo.ranksim.report import render_report
 from aeo.sim.calibrate import calibration_report, normalize_engine
 from aeo.sim.calibrate import Observation as ScoreObservation
 
@@ -272,6 +273,11 @@ def _finish(session: Session, settings: Settings) -> None:
     session.commit()
     if settings.process_jobs_inline:
         drain(session, settings)
+
+
+@router.get("/ranksim", response_class=HTMLResponse, tags=["ranksim"])
+def ranksim_page(settings: Settings = Depends(get_app_settings)) -> HTMLResponse:
+    return HTMLResponse(render_report(settings.ranksim_database_url))
 
 
 @router.get("/health", tags=["meta"])

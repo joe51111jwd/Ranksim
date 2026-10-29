@@ -156,6 +156,7 @@ The stored `predicted_citation_share` is copied from the question at log time. L
 | `POST` | `/v1/calibration` | Log a real engine observation |
 | `GET` | `/v1/calibration/accuracy` | Accuracy, precision, recall, Brier score |
 | `GET` | `/v1/jobs/{id}` | Queue job |
+| `GET` | `/ranksim` | SmartCrew Google rank report (predicted only) |
 
 `search_provider` is `auto`, `brave`, `mock`, or `none`. `llm_provider` and `embedding_provider` are `auto`, `openai`, or `mock`. `auto` uses the live adapter only when the matching API key is set. `brave` or `openai` without a key returns 400 and does not fall back to the mock.
 
@@ -172,6 +173,55 @@ pytest
 ```
 
 They cover Okapi BM25 (including a hand-checked `log(2)` score), reciprocal rank fusion, hybrid ordering, fan-out parsing, citation position and mention rate, the mock run-to-run variation, diagnostic branches, before/after diffs, calibration with an empty log and with known pairs, robots.txt, private-address blocking, the Brave and OpenAI request shapes, and an API run that recomputes citation share from the mock policy. Network is not required. Mock output is flagged `synthetic`.
+
+## Google rank simulator (SmartCrew)
+
+A separate loop for `www.smartcrewhq.com`. It keeps a keyword list, a focused corpus of at most 1000 pages, and a linear ranker. Predicted positions are scores on that index. They are not live Google ranks.
+
+The keyword file is `smartcrew/keywords.csv` (150 queries: intent, suggested target page, and whether that URL is in the sitemap snapshot from 2026-10-29). 113 queries map to a page that exists. 37 are page gaps. Regenerate with:
+
+```bash
+python -m aeo.ranksim keywords
+python -m aeo.ranksim gaps
+```
+
+`keywords --refresh-sitemap` refetches `https://www.smartcrewhq.com/sitemap.xml` and rewrites the snapshot. It does not invent URLs.
+
+### Keys
+
+| Env | Use |
+| --- | --- |
+| `SERPAPI_KEY` | Google organic results via SerpAPI. Preferred. |
+| `DATAFORSEO_LOGIN` and `DATAFORSEO_PASSWORD` | Google organic results via DataForSEO. Used when SerpAPI is unset. |
+| `BRAVE_API_KEY` | Fallback web search. Positions are Brave order, not Google. |
+| `RANKSIM_AUTHORITY=dataforseo` | Optional backlink rank on the same DataForSEO account. Off by default. |
+
+If none of the SERP keys are set, `collect` and `track` exit with an error. They do not invent a Google top 10. `--mock` is explicit and every row is marked synthetic.
+
+### Commands
+
+```bash
+python -m aeo.ranksim collect          # real SERP, then crawl, cap 1000 pages
+python -m aeo.ranksim calibrate        # Spearman and NDCG against the stored order
+python -m aeo.ranksim test page.html --url https://www.smartcrewhq.com/dirtwork-software/
+python -m aeo.ranksim test https://www.smartcrewhq.com/dirtwork-software/
+python -m aeo.ranksim track            # today's positions for the same 150 queries
+python -m aeo.ranksim report
+```
+
+`test` re-fetches only the page you pass (or reads a local file). Competitors stay as stored. It prints predicted position before and after for every query, plus heading terms, tables, or FAQ blocks the stored competitors have that the new page lacks. A blank before-position means SmartCrew was outside the fetched results, not a rank of 151.
+
+Daily check, once a SERP key is set:
+
+```bash
+0 6 * * * cd /path/to/repo && python -m aeo.ranksim track
+```
+
+The tracker appends a row per query. It does not fill days you did not run.
+
+The HTML report is [http://127.0.0.1:8741/ranksim](http://127.0.0.1:8741/ranksim) and `smartcrew/report.html`. With an empty corpus it lists page gaps and says calibration has not been run. It does not print a Spearman number until a SERP has been stored.
+
+On a 3-page labeled mock in the unit tests, the fitter reaches Spearman 1 and NDCG at 10 of 1. That only shows the math can recover an obvious order. It is not Google accuracy. No Google calibration has been run in this environment because no SerpAPI or DataForSEO key is configured.
 
 ## What's next
 

@@ -14,6 +14,9 @@ class Settings(BaseSettings):
     llm_provider: str = "auto"
     embedding_provider: str = "auto"
     brave_api_key: str | None = None
+    serpapi_key: str | None = None
+    dataforseo_login: str | None = None
+    dataforseo_password: str | None = None
     openai_api_key: str | None = None
     openai_base_url: str = "https://api.openai.com/v1"
     openai_model: str = "gpt-4o-mini"
@@ -27,8 +30,19 @@ class Settings(BaseSettings):
     request_timeout_seconds: float = 20.0
     rrf_k: int = 60
     final_passages: int = 8
+    ranksim_database_url: str = "sqlite:///./data/ranksim.db"
+    ranksim_serp_depth: int = 10
+    ranksim_max_pages: int = 1000
+    ranksim_authority: str = "off"
 
-    @field_validator("brave_api_key", "openai_api_key", mode="before")
+    @field_validator(
+        "brave_api_key",
+        "openai_api_key",
+        "serpapi_key",
+        "dataforseo_login",
+        "dataforseo_password",
+        mode="before",
+    )
     @classmethod
     def blank_is_none(cls, value: object) -> object:
         if isinstance(value, str) and not value.strip():

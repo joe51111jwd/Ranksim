@@ -6,6 +6,27 @@
     "version": "0.1.0"
   },
   "paths": {
+    "/ranksim": {
+      "get": {
+        "tags": [
+          "ranksim"
+        ],
+        "summary": "Ranksim Page",
+        "operationId": "ranksim_page_ranksim_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/health": {
       "get": {
         "tags": [

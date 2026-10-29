@@ -47,6 +47,14 @@ def test_extracts_raw_html_fields_and_drops_nav():
     assert extracted.word_count > 5
 
 
+def test_div_text_is_kept_when_paragraphs_are_only_a_stub():
+    words = " ".join(["dirtwork"] * 100)
+    html = f"<html><head><title>HCSS alternatives</title></head><body><p>See more</p><div>{words}</div></body></html>"
+    extracted = extract_html(html, "https://www.facebook.com/fb-answers/hcss-software-alternative/")
+    assert extracted.word_count > 80
+    assert "dirtwork" in extracted.main_text
+
+
 def test_chunker_keeps_heading_and_splits_long_sections():
     text = "word " * 400
     chunks = chunk_sections([("Packing", text)], max_chars=200, overlap=20)

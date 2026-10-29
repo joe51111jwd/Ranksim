@@ -180,6 +180,12 @@ def extract_html(html: str, base_url: str) -> ExtractedPage:
             tag.decompose()
     root = soup.find("main") or soup.find("article") or soup.body or soup
     extracted.sections = _sections_from(root)
-    extracted.main_text = "\n\n".join(text for _, text in extracted.sections).strip()
+    structured = "\n\n".join(text for _, text in extracted.sections).strip()
+    # Some saved pages put the article in divs. A short p/li must not hide that text.
+    plain = " ".join(root.get_text(" ", strip=True).split())
+    if word_count(structured) < 40 and word_count(plain) >= word_count(structured) + 80:
+        extracted.sections = [("", plain)]
+        structured = plain
+    extracted.main_text = structured
     extracted.word_count = word_count(extracted.main_text)
     return extracted

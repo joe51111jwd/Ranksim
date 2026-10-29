@@ -1,32 +1,32 @@
 Predicted positions. Not live Google ranks.
 Model: LambdaMART, leave-one-query-out. The query being scored was not in that model.
 Cross-validated accuracy on the labeled file, using the pages stored before this HTML change:
-  Pairwise accuracy: 0.566
-  NDCG at 10: 0.729
-  Spearman: -0.028
-  Top-3 hit rate: 0.625
-  Labeled URLs with HTML: 94. Uncovered URLs: 41. Queries: 16. Pairs: 258.
-Confidence: pairwise accuracy on this file is only a little above a coin flip, Spearman is about zero, and the top-3 hit rate sits close to chance on these short lists. Read a predicted slot as a model score inside the crawled set, not as a Google rank.
+  Pairwise accuracy: 0.604
+  NDCG at 10: 0.723
+  Spearman: 0.207
+  Top-3 hit rate: 0.562
+  Labeled URLs with HTML: 122. Uncovered URLs: 13. Queries: 16. Pairs: 414.
+Confidence: use the cross-validated numbers above. Pairwise accuracy is the one to trust first. Spearman and the top-3 hit rate move around on a 16-query file. A predicted slot is a score inside the crawled set.
 Before set: crawled URLs from the labeled file. After set: those URLs, with bundle HTML on a matching URL, plus bundle URLs that were not in that query. A new URL gets crawl PageRank 0. Domain PageRank is copied from other pages on the same host. No competitor HTML was invented.
 
 query	real_google	before_predicted	after_predicted	after_url	after_words	content_page_predicted	content_page_url	before_n	after_n
 content_page_predicted is the best SmartCrew URL whose extracted body has at least 150 words. A short crawl shell can outscore that page when the model is unstable.
-hcss alternative		n/a	1 of 9	https://www.smartcrewhq.com/	27	2 of 9	https://www.smartcrewhq.com/blog/best-software-small-dirt-work-contractors/	3	9
-best all-in-one dirtworks software	3	3 of 5	2 of 10	https://www.smartcrewhq.com/	27	3 of 10	https://www.smartcrewhq.com/blog/best-excavation-software-20-50-employees/	5	10
-best heavy civil construction software		n/a	2 of 11	https://www.smartcrewhq.com/	27	4 of 11	https://www.smartcrewhq.com/blog/best-software-small-dirt-work-contractors/	5	11
-hcss heavyjob alternative	7	3 of 6	2 of 11	https://www.smartcrewhq.com/	27	3 of 11	https://www.smartcrewhq.com/blog/best-software-small-dirt-work-contractors/	6	11
-dirt work contractor software	9	2 of 8	2 of 13	https://www.smartcrewhq.com/blog/best-software-small-dirt-work-contractors/	4667	2 of 13	https://www.smartcrewhq.com/blog/best-software-small-dirt-work-contractors/	8	13
-best heavy construction software		n/a	2 of 12	https://www.smartcrewhq.com/blog/best-software-small-dirt-work-contractors/	4667	2 of 12	https://www.smartcrewhq.com/blog/best-software-small-dirt-work-contractors/	6	12
-b2w alternative		n/a	1 of 8	https://www.smartcrewhq.com/	27	2 of 8	https://www.smartcrewhq.com/blog/best-software-small-dirt-work-contractors/	2	8
-excavation contractor software		n/a	2 of 13	https://www.smartcrewhq.com/compare/hcss-heavyjob-alternative/	3588	2 of 13	https://www.smartcrewhq.com/compare/hcss-heavyjob-alternative/	7	13
-heavy civil field management software		n/a	3 of 13	https://www.smartcrewhq.com/compare/hcss-heavyjob-alternative/	3588	3 of 13	https://www.smartcrewhq.com/compare/hcss-heavyjob-alternative/	7	13
-hcss heavybid alternative		n/a	1 of 8	https://www.smartcrewhq.com/	27	2 of 8	https://www.smartcrewhq.com/blog/best-software-small-dirt-work-contractors/	2	8
-all in one heavy civil software		n/a	4 of 13	https://www.smartcrewhq.com/	27	5 of 13	https://www.smartcrewhq.com/blog/best-excavation-software-20-50-employees/	7	13
-all in one dirt work software	3	3 of 7	2 of 12	https://www.smartcrewhq.com/blog/best-software-small-dirt-work-contractors/	4667	2 of 12	https://www.smartcrewhq.com/blog/best-software-small-dirt-work-contractors/	7	12
-all-in-one heavy civil construction software		n/a	3 of 13	https://www.smartcrewhq.com/compare/hcss-heavyjob-alternative/	3588	3 of 13	https://www.smartcrewhq.com/compare/hcss-heavyjob-alternative/	7	13
-all in one dirtwork software	1	3 of 7	4 of 11	https://www.smartcrewhq.com/	27	5 of 11	https://www.smartcrewhq.com/compare/hcss-heavyjob-alternative/	7	11
+hcss alternative		n/a	3 of 13	https://www.smartcrewhq.com/	27	6 of 13	https://www.smartcrewhq.com/blog/best-software-small-dirt-work-contractors/	7	13
+best all-in-one dirtworks software	3	1 of 8	1 of 13	https://www.smartcrewhq.com/	27	4 of 13	https://www.smartcrewhq.com/all-in-one-heavy-civil-software/	8	13
+best heavy civil construction software		n/a	3 of 13	https://www.smartcrewhq.com/	27	4 of 13	https://www.smartcrewhq.com/all-in-one-heavy-civil-software/	7	13
+hcss heavyjob alternative	7	2 of 7	1 of 12	https://www.smartcrewhq.com/compare/hcss-heavyjob-alternative/	3588	1 of 12	https://www.smartcrewhq.com/compare/hcss-heavyjob-alternative/	7	12
+dirt work contractor software	9	3 of 9	3 of 14	https://www.smartcrewhq.com/	27	4 of 14	https://www.smartcrewhq.com/compare/hcss-heavyjob-alternative/	9	14
+best heavy construction software		n/a	3 of 13	https://www.smartcrewhq.com/	27	4 of 13	https://www.smartcrewhq.com/blog/best-excavation-software-20-50-employees/	7	13
+b2w alternative		n/a	3 of 12	https://www.smartcrewhq.com/	27	6 of 12	https://www.smartcrewhq.com/all-in-one-heavy-civil-software/	6	12
+excavation contractor software		n/a	3 of 13	https://www.smartcrewhq.com/	27	8 of 13	https://www.smartcrewhq.com/blog/best-excavation-software-20-50-employees/	7	13
+heavy civil field management software		n/a	4 of 15	https://www.smartcrewhq.com/	27	6 of 15	https://www.smartcrewhq.com/compare/hcss-heavyjob-alternative/	9	15
+hcss heavybid alternative		n/a	4 of 11	https://www.smartcrewhq.com/	27	5 of 11	https://www.smartcrewhq.com/all-in-one-dirt-work-software/	5	11
+all in one heavy civil software		n/a	4 of 15	https://www.smartcrewhq.com/	27	6 of 15	https://www.smartcrewhq.com/all-in-one-heavy-civil-software/	9	15
+all in one dirt work software	3	3 of 8	4 of 13	https://www.smartcrewhq.com/all-in-one-heavy-civil-software/	1276	4 of 13	https://www.smartcrewhq.com/all-in-one-heavy-civil-software/	8	13
+all-in-one heavy civil construction software		n/a	4 of 15	https://www.smartcrewhq.com/	27	6 of 15	https://www.smartcrewhq.com/blog/best-excavation-software-20-50-employees/	9	15
+all in one dirtwork software	1	4 of 8	4 of 12	https://www.smartcrewhq.com/blog/best-excavation-software-20-50-employees/	2885	4 of 12	https://www.smartcrewhq.com/blog/best-excavation-software-20-50-employees/	8	12
 all in one excavation software		n/a	1 of 14	https://www.smartcrewhq.com/	27	2 of 14	https://www.smartcrewhq.com/blog/best-excavation-software-20-50-employees/	8	14
-best all in one heavy civil software		n/a	2 of 13	https://www.smartcrewhq.com/blog/best-excavation-software-20-50-employees/	2885	2 of 13	https://www.smartcrewhq.com/blog/best-excavation-software-20-50-employees/	7	13
+best all in one heavy civil software		n/a	2 of 14	https://www.smartcrewhq.com/	27	7 of 14	https://www.smartcrewhq.com/blog/best-excavation-software-20-50-employees/	8	14
 
 Detail. Focus queries are first. Ranks are predicted.
 
@@ -34,1084 +34,1165 @@ Query: hcss alternative
 Predicted. Not a live Google rank.
 Real Google position: not in the labeled file.
 Best predicted SmartCrew page before: n/a (none in the crawled labeled set).
-Best predicted SmartCrew page after the bundle: 1 of 9 https://www.smartcrewhq.com/.
+Best predicted SmartCrew page after the bundle: 3 of 13 https://www.smartcrewhq.com/.
 That page has 27 extracted words. The built file is a short crawl shell, not a full article. With pairwise accuracy at the cross-validated number above, this slot is not evidence the shell would outrank the crawled pages.
-Best predicted SmartCrew page with at least 150 extracted words: 2 of 9 https://www.smartcrewhq.com/blog/best-software-small-dirt-work-contractors/.
+Best predicted SmartCrew page with at least 150 extracted words: 6 of 13 https://www.smartcrewhq.com/blog/best-software-small-dirt-work-contractors/.
 The after rank inserts SmartCrew into a set where the labeled file has no crawled SmartCrew URL. It is not a move from a Google position.
 SmartCrew pages in this query:
-  https://www.smartcrewhq.com/ | inserted from the crawl, PR HTML | before n/a | after 1 of 9 | 27 words | 0 tables
+  https://www.smartcrewhq.com/ | inserted from the crawl, PR HTML | before n/a | after 3 of 13 | 27 words | 0 tables
     title All-in-One Heavy Civil and Dirt Work Software | SmartCrew
     h1 All-in-one heavy civil and dirt work software for dirtwork companies
-    feature heading match 0.000 (contribution 1.516)
-    feature link count 7.000 (contribution 0.546)
-    feature site radius 0.150 (contribution 0.292)
-    feature domain PageRank 0.046 (contribution -0.291)
-    feature originality 0.522 (contribution -0.134)
-  https://www.smartcrewhq.com/blog/best-software-small-dirt-work-contractors/ | inserted from the crawl, PR HTML | before n/a | after 2 of 9 | 4667 words | 4 tables
+    feature heading match 0.000 (contribution 2.126)
+    feature embedding similarity 0.000 (contribution -0.396)
+    feature title match 0.000 (contribution -0.372)
+    feature link count 7.000 (contribution 0.212)
+    feature domain PageRank 0.046 (contribution -0.187)
+  https://www.smartcrewhq.com/blog/best-software-small-dirt-work-contractors/ | inserted from the crawl, PR HTML | before n/a | after 6 of 13 | 4667 words | 4 tables
     title Dirt Work Contractor Software for Small Crews | SmartCrew
     h1 Dirt work contractor software for small dirtwork crews
-    feature heading match 0.000 (contribution 1.321)
-    feature title match 0.000 (contribution 0.316)
-    feature domain PageRank 0.046 (contribution -0.313)
-    feature entity coverage 0.636 (contribution 0.169)
-    feature site radius 0.303 (contribution 0.161)
-  https://www.smartcrewhq.com/all-in-one-dirt-work-software/ | new URL, not in the crawl | before n/a | after 4 of 9 | 984 words | 2 tables
+    feature heading match 0.000 (contribution 1.746)
+    feature link count 183.000 (contribution -0.413)
+    feature title match 0.000 (contribution -0.400)
+    feature domain PageRank 0.046 (contribution -0.221)
+    feature freshness 1.000 (contribution -0.107)
+  https://www.smartcrewhq.com/all-in-one-dirt-work-software/ | new URL, not in the crawl | before n/a | after 7 of 13 | 984 words | 2 tables
     title All-in-One Dirt Work Software | SmartCrew
     h1 All-in-one dirt work software
     feature Crawl PageRank is 0. This URL has no inlinks in the stored crawl.
-    feature heading match 0.000 (contribution 1.572)
-    feature domain PageRank 0.046 (contribution -0.382)
-    feature fetch speed 0.000 (contribution -0.341)
-    feature originality 0.753 (contribution -0.286)
-    feature title match 0.000 (contribution 0.191)
-  https://www.smartcrewhq.com/compare/hcss-heavyjob-alternative/ | inserted from the crawl, PR HTML | before n/a | after 5 of 9 | 3588 words | 3 tables
-    title HCSS Alternative for Dirtwork Contractors | SmartCrew
-    h1 HCSS alternative for dirtwork contractors
-    feature title match 3.093 (contribution 0.971)
-    feature originality 0.852 (contribution -0.434)
-    feature H1 match 3.171 (contribution -0.234)
-    feature BM25F 2.595 (contribution 0.212)
-    feature crawl PageRank 0.014 (contribution 0.159)
-  https://www.smartcrewhq.com/blog/best-excavation-software-20-50-employees/ | inserted from the crawl, PR HTML | before n/a | after 6 of 9 | 2885 words | 5 tables
+    feature heading match 0.000 (contribution 1.967)
+    feature embedding similarity 0.022 (contribution -0.368)
+    feature title match 0.000 (contribution -0.346)
+    feature domain PageRank 0.046 (contribution -0.233)
+    feature body match 1.972 (contribution -0.152)
+  https://www.smartcrewhq.com/blog/best-excavation-software-20-50-employees/ | inserted from the crawl, PR HTML | before n/a | after 10 of 13 | 2885 words | 5 tables
     title Best All-in-One Dirt Work and Excavation Software, 20 to 50
     h1 Best all-in-one dirt work and excavation software for a team of 20 to 50
-    feature domain PageRank 0.046 (contribution -0.380)
-    feature title match 0.000 (contribution 0.274)
-    feature originality 0.838 (contribution -0.256)
-    feature entity coverage 0.696 (contribution 0.203)
-    feature site radius 0.230 (contribution 0.161)
-  https://www.smartcrewhq.com/all-in-one-heavy-civil-software/ | new URL, not in the crawl | before n/a | after 9 of 9 | 1276 words | 2 tables
+    feature embedding similarity 0.248 (contribution 0.468)
+    feature title match 0.000 (contribution -0.403)
+    feature body match 0.497 (contribution 0.246)
+    feature domain PageRank 0.046 (contribution -0.205)
+    feature link count 125.000 (contribution 0.169)
+  https://www.smartcrewhq.com/compare/hcss-heavyjob-alternative/ | inserted from the crawl, PR HTML | before n/a | after 11 of 13 | 3588 words | 3 tables
+    title HCSS Alternative for Dirtwork Contractors | SmartCrew
+    h1 HCSS alternative for dirtwork contractors
+    feature title match 3.510 (contribution 0.435)
+    feature body match 3.192 (contribution -0.401)
+    feature BM25F 2.683 (contribution -0.279)
+    feature URL term match 1.000 (contribution 0.237)
+    feature originality 0.852 (contribution -0.146)
+  https://www.smartcrewhq.com/all-in-one-heavy-civil-software/ | new URL, not in the crawl | before n/a | after 13 of 13 | 1276 words | 2 tables
     title All-in-One Heavy Civil Construction Software | SmartCrew
     h1 All-in-one heavy civil construction software
     feature Crawl PageRank is 0. This URL has no inlinks in the stored crawl.
-    feature domain PageRank 0.046 (contribution -0.485)
-    feature originality 0.748 (contribution -0.398)
-    feature fetch speed 0.000 (contribution -0.335)
-    feature body match 2.319 (contribution -0.214)
-    feature title match 0.000 (contribution 0.174)
+    feature embedding similarity 0.116 (contribution -0.469)
+    feature domain PageRank 0.046 (contribution -0.268)
+    feature heading match 0.775 (contribution -0.137)
+    feature body match 2.367 (contribution -0.074)
+    feature URL match 0.000 (contribution 0.065)
 Real Google top 3, and the remaining gap versus the best predicted SmartCrew page:
   Google #1 https://www.g2.com/products/hcss/competitors/alternatives | fetch error (HTTP 403). No page text was invented.
-  Google #2 predicted rank 8 of 9 | 25 HCSS Competitors, Alternatives & Lookalikes | https://revenuebase.ai/companies/lookalikes/hcss.com
+  Google #2 predicted rank 9 of 13 | 25 HCSS Competitors, Alternatives & Lookalikes | https://revenuebase.ai/companies/lookalikes/hcss.com
     Model places SmartCrew ahead of this crawled page.
     Features where this page is still higher than the best predicted SmartCrew page:
     link count Google page 4152.000, SmartCrew 7.000
-    title match Google page 0.916, SmartCrew 0.000
-    freshness Google page 0.928, SmartCrew 0.000
-    BM25F Google page 0.703, SmartCrew 0.000
-  Google #3 https://www.reddit.com/r/estimators/comments/11jjop2/estimating_software_options/ | blocked by robots.txt. No page text was invented.
+    title match Google page 1.035, SmartCrew 0.000
+    heading match Google page 1.306, SmartCrew 0.000
+    embedding similarity Google page 0.326, SmartCrew 0.000
+  Google #3 predicted rank 8 of 13 | Estimating software options? : r/estimators | https://www.reddit.com/r/estimators/comments/11jjop2/estimating_software_options/
+    Model places SmartCrew ahead of this crawled page.
+    Features where this page is still higher than the best predicted SmartCrew page:
+    link count Google page 76.000, SmartCrew 7.000
+    body match Google page 2.052, SmartCrew 0.000
+    embedding similarity Google page 0.303, SmartCrew 0.000
+    originality Google page 0.976, SmartCrew 0.522
 Predicted order after the bundle (crawled labeled URLs plus bundle URLs):
-  1. https://www.smartcrewhq.com/ SmartCrew
-  2. https://www.smartcrewhq.com/blog/best-software-small-dirt-work-contractors/ SmartCrew
-  3. https://www.getonecrew.com/post/hcss-heavyjob-alternatives
-  4. https://www.smartcrewhq.com/all-in-one-dirt-work-software/ SmartCrew
-  5. https://www.smartcrewhq.com/compare/hcss-heavyjob-alternative/ SmartCrew
-  6. https://www.smartcrewhq.com/blog/best-excavation-software-20-50-employees/ SmartCrew
-  7. https://www.trimble.com/en/products/b2w-software/b2w-vs-hcss
-  8. https://revenuebase.ai/companies/lookalikes/hcss.com
-  9. https://www.smartcrewhq.com/all-in-one-heavy-civil-software/ SmartCrew
+  1. https://www.reddit.com/r/estimators/comments/19aqnz7/estimating_software_for_sitework/
+  2. https://www.softwareadvice.com/construction/hcss-profile/alternatives/
+  3. https://www.smartcrewhq.com/ SmartCrew
+  4. https://www.getonecrew.com/post/hcss-heavyjob-alternatives
+  5. https://www.trustradius.com/products/hcss/competitors
+  6. https://www.smartcrewhq.com/blog/best-software-small-dirt-work-contractors/ SmartCrew
+  7. https://www.smartcrewhq.com/all-in-one-dirt-work-software/ SmartCrew
+  8. https://www.reddit.com/r/estimators/comments/11jjop2/estimating_software_options/
+  9. https://revenuebase.ai/companies/lookalikes/hcss.com
+  10. https://www.smartcrewhq.com/blog/best-excavation-software-20-50-employees/ SmartCrew
+  11. https://www.smartcrewhq.com/compare/hcss-heavyjob-alternative/ SmartCrew
+  12. https://www.trimble.com/en/products/b2w-software/b2w-vs-hcss
+  13. https://www.smartcrewhq.com/all-in-one-heavy-civil-software/ SmartCrew
 
 Query: all in one heavy civil software
 Predicted. Not a live Google rank.
 Real Google position: not in the labeled file.
 Best predicted SmartCrew page before: n/a (none in the crawled labeled set).
-Best predicted SmartCrew page after the bundle: 4 of 13 https://www.smartcrewhq.com/.
+Best predicted SmartCrew page after the bundle: 4 of 15 https://www.smartcrewhq.com/.
 That page has 27 extracted words. The built file is a short crawl shell, not a full article. With pairwise accuracy at the cross-validated number above, this slot is not evidence the shell would outrank the crawled pages.
-Best predicted SmartCrew page with at least 150 extracted words: 5 of 13 https://www.smartcrewhq.com/blog/best-excavation-software-20-50-employees/.
+Best predicted SmartCrew page with at least 150 extracted words: 6 of 15 https://www.smartcrewhq.com/all-in-one-heavy-civil-software/.
 The after rank inserts SmartCrew into a set where the labeled file has no crawled SmartCrew URL. It is not a move from a Google position.
 SmartCrew pages in this query:
-  https://www.smartcrewhq.com/ | inserted from the crawl, PR HTML | before n/a | after 4 of 13 | 27 words | 0 tables
+  https://www.smartcrewhq.com/ | inserted from the crawl, PR HTML | before n/a | after 4 of 15 | 27 words | 0 tables
     title All-in-One Heavy Civil and Dirt Work Software | SmartCrew
     h1 All-in-one heavy civil and dirt work software for dirtwork companies
-    feature heading match 3.985 (contribution -0.495)
-    feature title match 3.539 (contribution 0.477)
-    feature fetch speed 0.737 (contribution 0.434)
-    feature site radius 0.150 (contribution 0.400)
-    feature H1 match 3.568 (contribution -0.227)
-  https://www.smartcrewhq.com/blog/best-excavation-software-20-50-employees/ | inserted from the crawl, PR HTML | before n/a | after 5 of 13 | 2885 words | 5 tables
-    title Best All-in-One Dirt Work and Excavation Software, 20 to 50
-    h1 Best all-in-one dirt work and excavation software for a team of 20 to 50
-    feature freshness 1.000 (contribution 0.314)
-    feature title match 1.682 (contribution -0.269)
-    feature site radius 0.230 (contribution 0.262)
-    feature heading match 3.377 (contribution -0.173)
-    feature entity coverage 0.778 (contribution -0.136)
-  https://www.smartcrewhq.com/compare/hcss-heavyjob-alternative/ | inserted from the crawl, PR HTML | before n/a | after 6 of 13 | 3588 words | 3 tables
-    title HCSS Alternative for Dirtwork Contractors | SmartCrew
-    h1 HCSS alternative for dirtwork contractors
-    feature embedding similarity 0.189 (contribution -0.332)
-    feature site radius 0.305 (contribution 0.261)
-    feature title match 0.000 (contribution 0.215)
-    feature domain PageRank 0.046 (contribution -0.160)
-    feature anchor text 2.244 (contribution -0.105)
-  https://www.smartcrewhq.com/all-in-one-heavy-civil-software/ | new URL, not in the crawl | before n/a | after 7 of 13 | 1276 words | 2 tables
+    feature fetch speed 0.737 (contribution 0.313)
+    feature embedding similarity 0.705 (contribution -0.280)
+    feature link count 7.000 (contribution 0.224)
+    feature entity coverage 0.303 (contribution -0.204)
+    feature title match 3.584 (contribution 0.193)
+  https://www.smartcrewhq.com/all-in-one-heavy-civil-software/ | new URL, not in the crawl | before n/a | after 6 of 15 | 1276 words | 2 tables
     title All-in-One Heavy Civil Construction Software | SmartCrew
     h1 All-in-one heavy civil construction software
     feature Crawl PageRank is 0. This URL has no inlinks in the stored crawl.
-    feature fetch speed 0.000 (contribution -0.520)
-    feature title match 3.767 (contribution 0.445)
-    feature freshness 1.000 (contribution 0.324)
-    feature heading match 4.772 (contribution -0.270)
-    feature URL term match 1.000 (contribution 0.190)
-  https://www.smartcrewhq.com/blog/best-software-small-dirt-work-contractors/ | inserted from the crawl, PR HTML | before n/a | after 9 of 13 | 4667 words | 4 tables
-    title Dirt Work Contractor Software for Small Crews | SmartCrew
-    h1 Dirt work contractor software for small dirtwork crews
-    feature entity coverage 0.808 (contribution -0.344)
-    feature embedding similarity 0.254 (contribution 0.277)
-    feature originality 0.905 (contribution -0.272)
-    feature site radius 0.303 (contribution 0.265)
-    feature anchor text 10.941 (contribution -0.223)
-  https://www.smartcrewhq.com/all-in-one-dirt-work-software/ | new URL, not in the crawl | before n/a | after 10 of 13 | 984 words | 2 tables
+    feature title match 3.813 (contribution 0.404)
+    feature originality 0.744 (contribution -0.308)
+    feature embedding similarity 0.717 (contribution -0.301)
+    feature H1 match 4.388 (contribution 0.114)
+    feature content effort 0.317 (contribution -0.086)
+  https://www.smartcrewhq.com/all-in-one-dirt-work-software/ | new URL, not in the crawl | before n/a | after 9 of 15 | 984 words | 2 tables
     title All-in-One Dirt Work Software | SmartCrew
     h1 All-in-one dirt work software
     feature Crawl PageRank is 0. This URL has no inlinks in the stored crawl.
-    feature title match 2.029 (contribution -0.406)
-    feature fetch speed 0.000 (contribution -0.343)
-    feature freshness 1.000 (contribution 0.271)
-    feature originality 0.753 (contribution -0.226)
-    feature site radius 0.177 (contribution 0.147)
+    feature originality 0.753 (contribution -0.403)
+    feature title match 2.294 (contribution 0.311)
+    feature H1 match 2.674 (contribution 0.183)
+    feature embedding similarity 0.412 (contribution -0.167)
+    feature heading match 2.848 (contribution -0.140)
+  https://www.smartcrewhq.com/compare/hcss-heavyjob-alternative/ | inserted from the crawl, PR HTML | before n/a | after 11 of 15 | 3588 words | 3 tables
+    title HCSS Alternative for Dirtwork Contractors | SmartCrew
+    h1 HCSS alternative for dirtwork contractors
+    feature URL match 0.000 (contribution 0.367)
+    feature crawl PageRank 0.014 (contribution 0.236)
+    feature originality 0.848 (contribution -0.195)
+    feature title match 0.000 (contribution -0.192)
+    feature heading match 2.029 (contribution -0.186)
+  https://www.smartcrewhq.com/blog/best-excavation-software-20-50-employees/ | inserted from the crawl, PR HTML | before n/a | after 12 of 15 | 2885 words | 5 tables
+    title Best All-in-One Dirt Work and Excavation Software, 20 to 50
+    h1 Best all-in-one dirt work and excavation software for a team of 20 to 50
+    feature originality 0.838 (contribution -0.451)
+    feature embedding similarity 0.458 (contribution -0.233)
+    feature readability 0.896 (contribution -0.211)
+    feature H1 match 1.934 (contribution 0.162)
+    feature freshness 1.000 (contribution 0.154)
+  https://www.smartcrewhq.com/blog/best-software-small-dirt-work-contractors/ | inserted from the crawl, PR HTML | before n/a | after 13 of 15 | 4667 words | 4 tables
+    title Dirt Work Contractor Software for Small Crews | SmartCrew
+    h1 Dirt work contractor software for small dirtwork crews
+    feature entity coverage 0.800 (contribution -0.420)
+    feature originality 0.905 (contribution -0.380)
+    feature embedding similarity 0.254 (contribution 0.297)
+    feature title match 0.171 (contribution -0.234)
+    feature heading match 2.045 (contribution -0.166)
 Real Google top 3, and the remaining gap versus the best predicted SmartCrew page:
-  Google #1 predicted rank 1 of 13 | Construction Software for Contractors of Every Size | HCSS | https://www.hcss.com/
+  Google #1 predicted rank 1 of 15 | Construction Software for Contractors of Every Size | HCSS | https://www.hcss.com/
     Model places this crawled page ahead of SmartCrew.
     Features where this page is still higher than the best predicted SmartCrew page:
     link count Google page 75.000, SmartCrew 7.000
-    anchor text Google page 7.812, SmartCrew 0.000
     freshness Google page 0.677, SmartCrew 0.000
-    originality Google page 0.987, SmartCrew 0.522
-  Google #2 predicted rank 2 of 13 | Trimble Construction One for Heavy Civil Construction | https://www.trimble.com/en/solutions/trimble-construction-one/civil
+    originality Google page 0.978, SmartCrew 0.522
+    content effort Google page 0.443, SmartCrew 0.061
+  Google #2 predicted rank 2 of 15 | Trimble Construction One for Heavy Civil Construction | https://www.trimble.com/en/solutions/trimble-construction-one/civil
     Model places this crawled page ahead of SmartCrew.
     Features where this page is still higher than the best predicted SmartCrew page:
-    URL match Google page 2.259, SmartCrew 0.000
+    URL match Google page 2.167, SmartCrew 0.000
     URL term match Google page 0.400, SmartCrew 0.000
     originality Google page 0.625, SmartCrew 0.522
     site focus Google page 1.000, SmartCrew 0.850
-  Google #3 https://www.sage.com/en-us/sage-construction/heavy-civil/ | fetch error (HTTP 403). No page text was invented.
+  Google #3 predicted rank 5 of 15 | Heavy Civil Construction Software | Sage US | https://www.sage.com/en-us/sage-construction/heavy-civil/
+    Model places SmartCrew ahead of this crawled page.
+    Features where this page is still higher than the best predicted SmartCrew page:
+    link count Google page 166.000, SmartCrew 7.000
+    URL match Google page 2.400, SmartCrew 0.000
+    originality Google page 0.974, SmartCrew 0.522
+    URL term match Google page 0.400, SmartCrew 0.000
 Predicted order after the bundle (crawled labeled URLs plus bundle URLs):
   1. https://www.hcss.com/
   2. https://www.trimble.com/en/solutions/trimble-construction-one/civil
-  3. https://www.ibeam.ai/blog/heavy-civil-estimating-software-infrastructure
+  3. https://www.reddit.com/r/estimators/comments/155p2il/what_take_off_software_do_you_use_for_civil/
   4. https://www.smartcrewhq.com/ SmartCrew
-  5. https://www.smartcrewhq.com/blog/best-excavation-software-20-50-employees/ SmartCrew
-  6. https://www.smartcrewhq.com/compare/hcss-heavyjob-alternative/ SmartCrew
-  7. https://www.smartcrewhq.com/all-in-one-heavy-civil-software/ SmartCrew
-  8. https://www.fieldwire.com/blog/construction-and-project-management-software/
-  9. https://www.smartcrewhq.com/blog/best-software-small-dirt-work-contractors/ SmartCrew
-  10. https://www.smartcrewhq.com/all-in-one-dirt-work-software/ SmartCrew
-  11. https://www.submittallink.com/post/all-in-one-construction-software
-  12. https://www.ivosystems.com/
-  13. https://kahua.com/articles/best-construction-management-software/
+  5. https://www.sage.com/en-us/sage-construction/heavy-civil/
+  6. https://www.smartcrewhq.com/all-in-one-heavy-civil-software/ SmartCrew
+  7. https://www.ivosystems.com/
+  8. https://www.ibeam.ai/blog/heavy-civil-estimating-software-infrastructure
+  9. https://www.smartcrewhq.com/all-in-one-dirt-work-software/ SmartCrew
+  10. https://www.submittallink.com/post/all-in-one-construction-software
+  11. https://www.smartcrewhq.com/compare/hcss-heavyjob-alternative/ SmartCrew
+  12. https://www.smartcrewhq.com/blog/best-excavation-software-20-50-employees/ SmartCrew
+  13. https://www.smartcrewhq.com/blog/best-software-small-dirt-work-contractors/ SmartCrew
+  14. https://www.fieldwire.com/blog/construction-and-project-management-software/
+  15. https://kahua.com/articles/best-construction-management-software/
 
 Query: all in one dirt work software
 Predicted. Not a live Google rank.
 Real Google position: 3 at https://www.smartcrewhq.com/blog/best-excavation-software-20-50-employees/ (that URL was crawled).
-Best predicted SmartCrew page before: 3 of 7 https://www.smartcrewhq.com/blog/best-excavation-software-20-50-employees/.
-Best predicted SmartCrew page after HTML replacement only: 4 of 7.
-Best predicted SmartCrew page after the bundle: 2 of 12 https://www.smartcrewhq.com/blog/best-software-small-dirt-work-contractors/.
+Best predicted SmartCrew page before: 3 of 8 https://www.smartcrewhq.com/blog/best-excavation-software-20-50-employees/.
+Best predicted SmartCrew page after HTML replacement only: 6 of 8.
+Best predicted SmartCrew page after the bundle: 4 of 13 https://www.smartcrewhq.com/all-in-one-heavy-civil-software/.
 SmartCrew pages in this query:
-  https://www.smartcrewhq.com/blog/best-software-small-dirt-work-contractors/ | inserted from the crawl, PR HTML | before n/a | after 2 of 12 | 4667 words | 4 tables
-    title Dirt Work Contractor Software for Small Crews | SmartCrew
-    h1 Dirt work contractor software for small dirtwork crews
-    feature title match 2.284 (contribution 1.542)
-    feature crawl PageRank 0.014 (contribution -0.278)
-    feature H1 match 2.158 (contribution 0.239)
-    feature heading match 2.863 (contribution -0.204)
-    feature domain PageRank 0.046 (contribution -0.180)
-  https://www.smartcrewhq.com/blog/best-excavation-software-20-50-employees/ | labeled, HTML replaced | before 3 of 7 | after 3 of 12 | words 2822 -> 2885 | tables 5 -> 5
-    title Best All-in-One Excavation Software for a Team of 20 to 50 -> Best All-in-One Dirt Work and Excavation Software, 20 to 50
-    h1 Best all-in-one dirt work and excavation software for a team of 20 to 50
-    feature title match 3.239 -> 5.986 (contribution 1.067 -> 1.198)
-    feature H1 match 2.784 -> 5.162 (contribution -0.169 -> -0.286)
-    feature entity coverage 0.737 -> 0.789 (contribution 0.030 -> -0.072)
-    feature BM25F 1.274 -> 2.175 (contribution 0.115 -> 0.026)
-    feature embedding similarity 0.412 -> 0.523 (contribution 0.011 -> 0.091)
-  https://www.smartcrewhq.com/all-in-one-heavy-civil-software/ | new URL, not in the crawl | before n/a | after 4 of 12 | 1276 words | 2 tables
+  https://www.smartcrewhq.com/all-in-one-heavy-civil-software/ | new URL, not in the crawl | before n/a | after 4 of 13 | 1276 words | 2 tables
     title All-in-One Heavy Civil Construction Software | SmartCrew
     h1 All-in-one heavy civil construction software
     feature Crawl PageRank is 0. This URL has no inlinks in the stored crawl.
-    feature title match 2.284 (contribution 0.925)
-    feature BM25F 1.009 (contribution -0.339)
-    feature heading match 2.748 (contribution -0.295)
-    feature H1 match 2.321 (contribution 0.250)
-    feature domain PageRank 0.046 (contribution -0.230)
-  https://www.smartcrewhq.com/ | inserted from the crawl, PR HTML | before n/a | after 5 of 12 | 27 words | 0 tables
+    feature title match 2.492 (contribution 0.376)
+    feature heading match 3.173 (contribution -0.216)
+    feature originality 0.756 (contribution -0.174)
+    feature fetch speed 0.000 (contribution -0.140)
+    feature BM25F 0.934 (contribution 0.121)
+  https://www.smartcrewhq.com/blog/best-software-small-dirt-work-contractors/ | inserted from the crawl, PR HTML | before n/a | after 5 of 13 | 4667 words | 4 tables
+    title Dirt Work Contractor Software for Small Crews | SmartCrew
+    h1 Dirt work contractor software for small dirtwork crews
+    feature title match 2.492 (contribution 0.442)
+    feature originality 0.898 (contribution -0.337)
+    feature heading match 3.205 (contribution -0.187)
+    feature freshness 1.000 (contribution -0.172)
+    feature word count 0.567 (contribution -0.146)
+  https://www.smartcrewhq.com/ | inserted from the crawl, PR HTML | before n/a | after 8 of 13 | 27 words | 0 tables
     title All-in-One Heavy Civil and Dirt Work Software | SmartCrew
     h1 All-in-one heavy civil and dirt work software for dirtwork companies
-    feature title match 4.089 (contribution 1.036)
-    feature heading match 3.561 (contribution -0.340)
-    feature link count 7.000 (contribution 0.332)
-    feature H1 match 3.610 (contribution -0.304)
-    feature crawl PageRank 0.014 (contribution -0.214)
-  https://www.smartcrewhq.com/all-in-one-dirt-work-software/ | new URL, not in the crawl | before n/a | after 7 of 12 | 984 words | 2 tables
+    feature link count 7.000 (contribution 0.430)
+    feature heading match 4.007 (contribution -0.415)
+    feature embedding similarity 0.749 (contribution -0.338)
+    feature title match 4.412 (contribution 0.309)
+    feature fetch speed 0.737 (contribution 0.280)
+  https://www.smartcrewhq.com/blog/best-excavation-software-20-50-employees/ | labeled, HTML replaced | before 3 of 8 | after 10 of 13 | words 2822 -> 2885 | tables 5 -> 5
+    title Best All-in-One Excavation Software for a Team of 20 to 50 -> Best All-in-One Dirt Work and Excavation Software, 20 to 50
+    h1 Best all-in-one dirt work and excavation software for a team of 20 to 50
+    feature word count 0.936 -> 0.923 (contribution 0.042 -> -0.171)
+    feature entity coverage 0.667 -> 0.714 (contribution 0.181 -> 0.066)
+    feature originality 0.993 -> 0.993 (contribution -0.019 -> -0.097)
+    feature domain PageRank 0.046 -> 0.046 (contribution -0.137 -> -0.066)
+    feature readability 0.885 -> 0.896 (contribution -0.057 -> -0.118)
+  https://www.smartcrewhq.com/all-in-one-dirt-work-software/ | new URL, not in the crawl | before n/a | after 11 of 13 | 984 words | 2 tables
     title All-in-One Dirt Work Software | SmartCrew
     h1 All-in-one dirt work software
     feature Crawl PageRank is 0. This URL has no inlinks in the stored crawl.
-    feature title match 4.667 (contribution 0.877)
-    feature heading match 4.197 (contribution -0.380)
-    feature H1 match 4.791 (contribution -0.322)
-    feature domain PageRank 0.046 (contribution -0.254)
-    feature originality 0.749 (contribution -0.197)
-  https://www.smartcrewhq.com/compare/hcss-heavyjob-alternative/ | inserted from the crawl, PR HTML | before n/a | after 11 of 12 | 3588 words | 3 tables
+    feature title match 5.039 (contribution 0.341)
+    feature embedding similarity 0.810 (contribution -0.338)
+    feature originality 0.749 (contribution -0.230)
+    feature heading match 4.711 (contribution -0.199)
+    feature domain PageRank 0.046 (contribution -0.189)
+  https://www.smartcrewhq.com/compare/hcss-heavyjob-alternative/ | inserted from the crawl, PR HTML | before n/a | after 13 of 13 | 3588 words | 3 tables
     title HCSS Alternative for Dirtwork Contractors | SmartCrew
     h1 HCSS alternative for dirtwork contractors
-    feature crawl PageRank 0.014 (contribution -0.539)
-    feature domain PageRank 0.046 (contribution -0.403)
-    feature title match 0.000 (contribution 0.234)
-    feature embedding similarity 0.126 (contribution -0.180)
-    feature freshness 1.000 (contribution 0.123)
+    feature embedding similarity 0.126 (contribution -0.329)
+    feature originality 0.858 (contribution -0.294)
+    feature domain PageRank 0.046 (contribution -0.182)
+    feature URL match 0.000 (contribution 0.145)
+    feature readability 0.898 (contribution -0.138)
 Real Google top 3, and the remaining gap versus the best predicted SmartCrew page:
-  Google #1 predicted rank 12 of 12 | Construction Takeoff Software | Earthworks Takeoff Guide-AGTEK - AGTEK | https://agtek.com/solutions/takeoff/
+  Google #1 predicted rank 9 of 13 | Construction Takeoff Software | Earthworks Takeoff Guide-AGTEK - AGTEK | https://agtek.com/solutions/takeoff/
     Model places SmartCrew ahead of this crawled page.
     Features where this page is still higher than the best predicted SmartCrew page:
-    originality Google page 0.996, SmartCrew 0.898
-    readability Google page 0.824, SmartCrew 0.714
-    content effort Google page 0.481, SmartCrew 0.139
-    word count Google page 0.772, SmartCrew 0.567
-  Google #2 predicted rank 8 of 12 | Earthwork & Sitework Estimating Software | Contractor Software | https://www.stackct.com/sitework-takeoff-estimating-construction-software/
+    link count Google page 72.000, SmartCrew 65.000
+    fetch speed Google page 0.723, SmartCrew 0.000
+    originality Google page 0.996, SmartCrew 0.756
+    content effort Google page 0.481, SmartCrew 0.317
+  Google #2 predicted rank 6 of 13 | Earthwork & Sitework Estimating Software | Contractor Software | https://www.stackct.com/sitework-takeoff-estimating-construction-software/
     Model places SmartCrew ahead of this crawled page.
     Features where this page is still higher than the best predicted SmartCrew page:
-    readability Google page 0.863, SmartCrew 0.714
-    originality Google page 0.993, SmartCrew 0.898
-    word count Google page 0.991, SmartCrew 0.567
-    content effort Google page 0.534, SmartCrew 0.139
-  Google #3 is another SmartCrew URL, predicted 3 of 12. Best All-in-One Dirt Work and Excavation Software, 20 to 50 | https://www.smartcrewhq.com/blog/best-excavation-software-20-50-employees/
+    fetch speed Google page 0.543, SmartCrew 0.000
+    originality Google page 0.993, SmartCrew 0.756
+    content effort Google page 0.534, SmartCrew 0.317
+    BM25F Google page 1.110, SmartCrew 0.934
+  Google #3 is another SmartCrew URL, predicted 10 of 13. Best All-in-One Dirt Work and Excavation Software, 20 to 50 | https://www.smartcrewhq.com/blog/best-excavation-software-20-50-employees/
     Features where this SmartCrew URL is higher than the best predicted SmartCrew page:
-    title match Google page 3.851, SmartCrew 2.284
-    H1 match Google page 3.401, SmartCrew 2.158
-    heading match Google page 3.340, SmartCrew 2.863
-    readability Google page 0.896, SmartCrew 0.714
+    link count Google page 125.000, SmartCrew 65.000
+    title match Google page 4.154, SmartCrew 2.492
+    anchor text Google page 9.634, SmartCrew 0.000
+    heading match Google page 3.766, SmartCrew 3.173
 Predicted order after the bundle (crawled labeled URLs plus bundle URLs):
   1. https://www.hcss.com/who-uses-hcss/earthwork-estimating-software/
-  2. https://www.smartcrewhq.com/blog/best-software-small-dirt-work-contractors/ SmartCrew
-  3. https://www.smartcrewhq.com/blog/best-excavation-software-20-50-employees/ SmartCrew
+  2. https://www.reddit.com/r/estimators/comments/1nyalj7/best_sitework_takeoff_programs_for_an_earthmover/
+  3. https://myquoteiq.com/top-8-softwares-for-excavation-businesses-in-2026/
   4. https://www.smartcrewhq.com/all-in-one-heavy-civil-software/ SmartCrew
-  5. https://www.smartcrewhq.com/ SmartCrew
-  6. https://myquoteiq.com/top-8-softwares-for-excavation-businesses-in-2026/
-  7. https://www.smartcrewhq.com/all-in-one-dirt-work-software/ SmartCrew
-  8. https://www.stackct.com/sitework-takeoff-estimating-construction-software/
-  9. https://synkedup.com/industries/sitework-excavation/
-  10. https://exayard.com/blog/best-earthwork-estimating-software
-  11. https://www.smartcrewhq.com/compare/hcss-heavyjob-alternative/ SmartCrew
-  12. https://agtek.com/solutions/takeoff/
+  5. https://www.smartcrewhq.com/blog/best-software-small-dirt-work-contractors/ SmartCrew
+  6. https://www.stackct.com/sitework-takeoff-estimating-construction-software/
+  7. https://synkedup.com/industries/sitework-excavation/
+  8. https://www.smartcrewhq.com/ SmartCrew
+  9. https://agtek.com/solutions/takeoff/
+  10. https://www.smartcrewhq.com/blog/best-excavation-software-20-50-employees/ SmartCrew
+  11. https://www.smartcrewhq.com/all-in-one-dirt-work-software/ SmartCrew
+  12. https://exayard.com/blog/best-earthwork-estimating-software
+  13. https://www.smartcrewhq.com/compare/hcss-heavyjob-alternative/ SmartCrew
 
 Query: best all-in-one dirtworks software
 Predicted. Not a live Google rank.
 Real Google position: 3 at https://www.smartcrewhq.com/blog/best-excavation-software-20-50-employees/ (that URL was crawled).
-Best predicted SmartCrew page before: 3 of 5 https://www.smartcrewhq.com/blog/best-excavation-software-20-50-employees/.
-Best predicted SmartCrew page after HTML replacement only: 2 of 5.
-Best predicted SmartCrew page after the bundle: 2 of 10 https://www.smartcrewhq.com/.
+Best predicted SmartCrew page before: 1 of 8 https://www.smartcrewhq.com/blog/best-excavation-software-20-50-employees/.
+Best predicted SmartCrew page after HTML replacement only: 1 of 8.
+Best predicted SmartCrew page after the bundle: 1 of 13 https://www.smartcrewhq.com/.
 That page has 27 extracted words. The built file is a short crawl shell, not a full article. With pairwise accuracy at the cross-validated number above, this slot is not evidence the shell would outrank the crawled pages.
-Best predicted SmartCrew page with at least 150 extracted words: 3 of 10 https://www.smartcrewhq.com/blog/best-excavation-software-20-50-employees/.
+Best predicted SmartCrew page with at least 150 extracted words: 4 of 13 https://www.smartcrewhq.com/all-in-one-heavy-civil-software/.
 SmartCrew pages in this query:
-  https://www.smartcrewhq.com/ | inserted from the crawl, PR HTML | before n/a | after 2 of 10 | 27 words | 0 tables
+  https://www.smartcrewhq.com/ | inserted from the crawl, PR HTML | before n/a | after 1 of 13 | 27 words | 0 tables
     title All-in-One Heavy Civil and Dirt Work Software | SmartCrew
     h1 All-in-one heavy civil and dirt work software for dirtwork companies
-    feature link count 7.000 (contribution 0.998)
-    feature domain PageRank 0.046 (contribution -0.393)
-    feature embedding similarity 0.485 (contribution 0.259)
-    feature body match 0.441 (contribution 0.218)
-    feature title match 1.842 (contribution -0.212)
-  https://www.smartcrewhq.com/blog/best-excavation-software-20-50-employees/ | labeled, HTML replaced | before 3 of 5 | after 3 of 10 | words 2822 -> 2885 | tables 5 -> 5
-    title Best All-in-One Excavation Software for a Team of 20 to 50 -> Best All-in-One Dirt Work and Excavation Software, 20 to 50
-    h1 Best all-in-one dirt work and excavation software for a team of 20 to 50
-    feature embedding similarity 0.553 -> 0.563 (contribution -0.038 -> -0.126)
-    feature title match 2.878 -> 2.756 (contribution 0.962 -> 0.943)
-    feature heading match 3.322 -> 3.320 (contribution -0.231 -> -0.212)
-    feature readability 0.885 -> 0.896 (contribution -0.066 -> -0.074)
-    feature homepage authority 0.014 -> 0.014 (contribution -0.011 -> -0.017)
-  https://www.smartcrewhq.com/all-in-one-dirt-work-software/ | new URL, not in the crawl | before n/a | after 4 of 10 | 984 words | 2 tables
-    title All-in-One Dirt Work Software | SmartCrew
-    h1 All-in-one dirt work software
-    feature Crawl PageRank is 0. This URL has no inlinks in the stored crawl.
-    feature originality 0.745 (contribution -0.727)
-    feature title match 2.091 (contribution -0.439)
-    feature body match 1.132 (contribution 0.378)
-    feature embedding similarity 0.469 (contribution 0.201)
-    feature domain PageRank 0.046 (contribution -0.186)
-  https://www.smartcrewhq.com/all-in-one-heavy-civil-software/ | new URL, not in the crawl | before n/a | after 6 of 10 | 1276 words | 2 tables
+    feature link count 7.000 (contribution 0.831)
+    feature domain PageRank 0.046 (contribution -0.285)
+    feature site radius 0.150 (contribution 0.234)
+    feature fetch speed 0.737 (contribution 0.218)
+    feature title match 2.378 (contribution 0.217)
+  https://www.smartcrewhq.com/all-in-one-heavy-civil-software/ | new URL, not in the crawl | before n/a | after 4 of 13 | 1276 words | 2 tables
     title All-in-One Heavy Civil Construction Software | SmartCrew
     h1 All-in-one heavy civil construction software
     feature Crawl PageRank is 0. This URL has no inlinks in the stored crawl.
-    feature originality 0.756 (contribution -0.745)
-    feature title match 1.959 (contribution -0.271)
-    feature domain PageRank 0.046 (contribution -0.206)
-    feature URL match 3.249 (contribution -0.183)
-    feature link count 65.000 (contribution -0.144)
-  https://www.smartcrewhq.com/compare/hcss-heavyjob-alternative/ | inserted from the crawl, PR HTML | before n/a | after 8 of 10 | 3588 words | 3 tables
-    title HCSS Alternative for Dirtwork Contractors | SmartCrew
-    h1 HCSS alternative for dirtwork contractors
-    feature originality 0.861 (contribution -0.507)
-    feature domain PageRank 0.046 (contribution -0.462)
-    feature title match 0.000 (contribution -0.209)
-    feature embedding similarity 0.079 (contribution -0.176)
-    feature anchor text 2.359 (contribution -0.157)
-  https://www.smartcrewhq.com/blog/best-software-small-dirt-work-contractors/ | inserted from the crawl, PR HTML | before n/a | after 9 of 10 | 4667 words | 4 tables
+    feature originality 0.748 (contribution -0.345)
+    feature title match 2.526 (contribution 0.296)
+    feature URL match 3.833 (contribution -0.186)
+    feature word count 1.000 (contribution 0.171)
+    feature domain PageRank 0.046 (contribution -0.151)
+  https://www.smartcrewhq.com/all-in-one-dirt-work-software/ | new URL, not in the crawl | before n/a | after 5 of 13 | 984 words | 2 tables
+    title All-in-One Dirt Work Software | SmartCrew
+    h1 All-in-one dirt work software
+    feature Crawl PageRank is 0. This URL has no inlinks in the stored crawl.
+    feature originality 0.745 (contribution -0.381)
+    feature title match 2.694 (contribution 0.292)
+    feature URL match 3.833 (contribution -0.186)
+    feature word count 1.000 (contribution 0.167)
+    feature domain PageRank 0.046 (contribution -0.152)
+  https://www.smartcrewhq.com/blog/best-excavation-software-20-50-employees/ | labeled, HTML replaced | before 1 of 8 | after 6 of 13 | words 2822 -> 2885 | tables 5 -> 5
+    title Best All-in-One Excavation Software for a Team of 20 to 50 -> Best All-in-One Dirt Work and Excavation Software, 20 to 50
+    h1 Best all-in-one dirt work and excavation software for a team of 20 to 50
+    feature word count 0.936 -> 0.923 (contribution 0.154 -> -0.212)
+    feature title match 3.892 -> 3.710 (contribution 0.571 -> 0.447)
+    feature readability 0.885 -> 0.896 (contribution -0.115 -> -0.220)
+    feature originality 0.990 -> 0.990 (contribution -0.156 -> -0.223)
+    feature embedding similarity 0.553 -> 0.563 (contribution 0.007 -> -0.043)
+  https://www.smartcrewhq.com/blog/best-software-small-dirt-work-contractors/ | inserted from the crawl, PR HTML | before n/a | after 12 of 13 | 4667 words | 4 tables
     title Dirt Work Contractor Software for Small Crews | SmartCrew
     h1 Dirt work contractor software for small dirtwork crews
-    feature originality 0.898 (contribution -0.624)
-    feature URL match 0.936 (contribution -0.230)
-    feature domain PageRank 0.046 (contribution -0.230)
-    feature anchor text 12.498 (contribution -0.227)
-    feature title match 0.148 (contribution -0.187)
+    feature originality 0.898 (contribution -0.404)
+    feature title match 0.201 (contribution -0.286)
+    feature URL match 1.038 (contribution -0.248)
+    feature domain PageRank 0.046 (contribution -0.174)
+    feature word count 0.567 (contribution -0.148)
+  https://www.smartcrewhq.com/compare/hcss-heavyjob-alternative/ | inserted from the crawl, PR HTML | before n/a | after 13 of 13 | 3588 words | 3 tables
+    title HCSS Alternative for Dirtwork Contractors | SmartCrew
+    h1 HCSS alternative for dirtwork contractors
+    feature title match 0.000 (contribution -0.340)
+    feature domain PageRank 0.046 (contribution -0.305)
+    feature originality 0.858 (contribution -0.267)
+    feature embedding similarity 0.079 (contribution -0.235)
+    feature URL match 0.000 (contribution 0.191)
 Real Google top 3, and the remaining gap versus the best predicted SmartCrew page:
-  Google #1 predicted rank 7 of 10 | Top 10 Best Work Order Software For Excavation Contractors 2026 | https://myquoteiq.com/top-10-best-work-order-software-for-excavation-contractors-in-2026/
+  Google #1 predicted rank 2 of 13 | Top 10 Best Work Order Software For Excavation Contractors 2026 | https://myquoteiq.com/top-10-best-work-order-software-for-excavation-contractors-in-2026/
     Model places SmartCrew ahead of this crawled page.
     Features where this page is still higher than the best predicted SmartCrew page:
     link count Google page 126.000, SmartCrew 7.000
-    body match Google page 1.569, SmartCrew 0.441
+    URL match Google page 0.988, SmartCrew 0.000
     originality Google page 0.990, SmartCrew 0.522
-    URL match Google page 0.889, SmartCrew 0.000
-  Google #2 https://www.reddit.com/r/estimators/comments/1twtuwz/what_is_some_good_earthwork_estimating_software/ | blocked by robots.txt. No page text was invented.
-  Google #3 is another SmartCrew URL, predicted 3 of 10. Best All-in-One Dirt Work and Excavation Software, 20 to 50 | https://www.smartcrewhq.com/blog/best-excavation-software-20-50-employees/
+    BM25F Google page 0.780, SmartCrew 0.431
+  Google #2 predicted rank 8 of 13 | What is some good earthwork estimating software (takeoff + price benchmarking) to evaluate for my team? : r... | https://www.reddit.com/r/estimators/comments/1twtuwz/what_is_some_good_earthwork_estimating_software/
+    Model places SmartCrew ahead of this crawled page.
+    Features where this page is still higher than the best predicted SmartCrew page:
+    link count Google page 71.000, SmartCrew 7.000
+    originality Google page 0.974, SmartCrew 0.522
+    URL match Google page 0.332, SmartCrew 0.000
+    BM25F Google page 0.687, SmartCrew 0.431
+  Google #3 is another SmartCrew URL, predicted 6 of 13. Best All-in-One Dirt Work and Excavation Software, 20 to 50 | https://www.smartcrewhq.com/blog/best-excavation-software-20-50-employees/
     Features where this SmartCrew URL is higher than the best predicted SmartCrew page:
     link count Google page 125.000, SmartCrew 7.000
-    anchor text Google page 11.752, SmartCrew 0.000
-    body match Google page 1.745, SmartCrew 0.441
-    freshness Google page 1.000, SmartCrew 0.000
+    URL match Google page 1.038, SmartCrew 0.000
+    heading match Google page 3.579, SmartCrew 2.498
+    BM25F Google page 0.934, SmartCrew 0.431
 
 Query: best heavy civil construction software
 Predicted. Not a live Google rank.
 Real Google position: not in the labeled file.
 Best predicted SmartCrew page before: n/a (none in the crawled labeled set).
-Best predicted SmartCrew page after the bundle: 2 of 11 https://www.smartcrewhq.com/.
+Best predicted SmartCrew page after the bundle: 3 of 13 https://www.smartcrewhq.com/.
 That page has 27 extracted words. The built file is a short crawl shell, not a full article. With pairwise accuracy at the cross-validated number above, this slot is not evidence the shell would outrank the crawled pages.
-Best predicted SmartCrew page with at least 150 extracted words: 4 of 11 https://www.smartcrewhq.com/blog/best-software-small-dirt-work-contractors/.
+Best predicted SmartCrew page with at least 150 extracted words: 4 of 13 https://www.smartcrewhq.com/all-in-one-heavy-civil-software/.
 The after rank inserts SmartCrew into a set where the labeled file has no crawled SmartCrew URL. It is not a move from a Google position.
 SmartCrew pages in this query:
-  https://www.smartcrewhq.com/ | inserted from the crawl, PR HTML | before n/a | after 2 of 11 | 27 words | 0 tables
+  https://www.smartcrewhq.com/ | inserted from the crawl, PR HTML | before n/a | after 3 of 13 | 27 words | 0 tables
     title All-in-One Heavy Civil and Dirt Work Software | SmartCrew
     h1 All-in-one heavy civil and dirt work software for dirtwork companies
-    feature site radius 0.150 (contribution 0.534)
-    feature fetch speed 0.737 (contribution 0.529)
-    feature body match 0.909 (contribution 0.352)
-    feature link count 7.000 (contribution 0.316)
-    feature H1 match 2.221 (contribution -0.259)
-  https://www.smartcrewhq.com/blog/best-software-small-dirt-work-contractors/ | inserted from the crawl, PR HTML | before n/a | after 4 of 11 | 4667 words | 4 tables
-    title Dirt Work Contractor Software for Small Crews | SmartCrew
-    h1 Dirt work contractor software for small dirtwork crews
-    feature title match 0.136 (contribution 0.501)
-    feature H1 match 0.219 (contribution 0.444)
-    feature site radius 0.303 (contribution 0.413)
-    feature domain PageRank 0.046 (contribution -0.313)
-    feature embedding similarity 0.118 (contribution -0.313)
-  https://www.smartcrewhq.com/blog/best-excavation-software-20-50-employees/ | inserted from the crawl, PR HTML | before n/a | after 5 of 11 | 2885 words | 5 tables
-    title Best All-in-One Dirt Work and Excavation Software, 20 to 50
-    h1 Best all-in-one dirt work and excavation software for a team of 20 to 50
-    feature site radius 0.230 (contribution 0.437)
-    feature originality 0.838 (contribution -0.319)
-    feature BM25F 2.158 (contribution 0.262)
-    feature fetch speed 0.685 (contribution 0.215)
-    feature entity coverage 0.667 (contribution 0.213)
-  https://www.smartcrewhq.com/compare/hcss-heavyjob-alternative/ | inserted from the crawl, PR HTML | before n/a | after 8 of 11 | 3588 words | 3 tables
-    title HCSS Alternative for Dirtwork Contractors | SmartCrew
-    h1 HCSS alternative for dirtwork contractors
-    feature site radius 0.305 (contribution 0.440)
-    feature domain PageRank 0.046 (contribution -0.420)
-    feature BM25F 2.250 (contribution 0.310)
-    feature crawl PageRank 0.014 (contribution -0.269)
-    feature originality 0.852 (contribution -0.208)
-  https://www.smartcrewhq.com/all-in-one-heavy-civil-software/ | new URL, not in the crawl | before n/a | after 9 of 11 | 1276 words | 2 tables
+    feature fetch speed 0.737 (contribution 0.787)
+    feature body match 0.766 (contribution 0.400)
+    feature originality 0.522 (contribution -0.252)
+    feature link count 7.000 (contribution 0.202)
+    feature embedding similarity 0.397 (contribution 0.173)
+  https://www.smartcrewhq.com/all-in-one-heavy-civil-software/ | new URL, not in the crawl | before n/a | after 4 of 13 | 1276 words | 2 tables
     title All-in-One Heavy Civil Construction Software | SmartCrew
     h1 All-in-one heavy civil construction software
     feature Crawl PageRank is 0. This URL has no inlinks in the stored crawl.
-    feature fetch speed 0.000 (contribution -1.073)
-    feature site radius 0.232 (contribution 0.383)
-    feature domain PageRank 0.046 (contribution -0.144)
-    feature title match 3.266 (contribution 0.131)
-    feature H1 match 3.502 (contribution -0.118)
-  https://www.smartcrewhq.com/all-in-one-dirt-work-software/ | new URL, not in the crawl | before n/a | after 10 of 11 | 984 words | 2 tables
+    feature title match 2.733 (contribution 0.684)
+    feature fetch speed 0.000 (contribution 0.251)
+    feature URL match 2.922 (contribution -0.158)
+    feature originality 0.748 (contribution -0.150)
+    feature BM25F 1.319 (contribution 0.147)
+  https://www.smartcrewhq.com/all-in-one-dirt-work-software/ | new URL, not in the crawl | before n/a | after 9 of 13 | 984 words | 2 tables
     title All-in-One Dirt Work Software | SmartCrew
     h1 All-in-one dirt work software
     feature Crawl PageRank is 0. This URL has no inlinks in the stored crawl.
-    feature fetch speed 0.000 (contribution -1.015)
-    feature domain PageRank 0.046 (contribution -0.438)
-    feature site radius 0.177 (contribution 0.378)
-    feature title match 0.145 (contribution 0.322)
-    feature originality 0.753 (contribution -0.206)
+    feature embedding similarity 0.099 (contribution -0.423)
+    feature title match 0.123 (contribution -0.285)
+    feature domain PageRank 0.046 (contribution -0.269)
+    feature originality 0.753 (contribution -0.218)
+    feature fetch speed 0.000 (contribution 0.154)
+  https://www.smartcrewhq.com/blog/best-excavation-software-20-50-employees/ | inserted from the crawl, PR HTML | before n/a | after 10 of 13 | 2885 words | 5 tables
+    title Best All-in-One Dirt Work and Excavation Software, 20 to 50
+    h1 Best all-in-one dirt work and excavation software for a team of 20 to 50
+    feature readability 0.896 (contribution -0.363)
+    feature originality 0.838 (contribution -0.336)
+    feature entity coverage 0.679 (contribution 0.179)
+    feature body match 2.160 (contribution -0.163)
+    feature content effort 0.218 (contribution -0.146)
+  https://www.smartcrewhq.com/compare/hcss-heavyjob-alternative/ | inserted from the crawl, PR HTML | before n/a | after 11 of 13 | 3588 words | 3 tables
+    title HCSS Alternative for Dirtwork Contractors | SmartCrew
+    h1 HCSS alternative for dirtwork contractors
+    feature embedding similarity 0.205 (contribution -0.498)
+    feature originality 0.852 (contribution -0.270)
+    feature domain PageRank 0.046 (contribution -0.233)
+    feature body match 1.161 (contribution 0.228)
+    feature anchor text 4.944 (contribution -0.199)
+  https://www.smartcrewhq.com/blog/best-software-small-dirt-work-contractors/ | inserted from the crawl, PR HTML | before n/a | after 13 of 13 | 4667 words | 4 tables
+    title Dirt Work Contractor Software for Small Crews | SmartCrew
+    h1 Dirt work contractor software for small dirtwork crews
+    feature body match 1.547 (contribution -0.358)
+    feature embedding similarity 0.118 (contribution -0.336)
+    feature originality 0.905 (contribution -0.273)
+    feature domain PageRank 0.046 (contribution -0.225)
+    feature title match 0.116 (contribution -0.205)
 Real Google top 3, and the remaining gap versus the best predicted SmartCrew page:
-  Google #1 https://www.reddit.com/r/estimators/comments/155p2il/what_take_off_software_do_you_use_for_civil/ | blocked by robots.txt. No page text was invented.
-  Google #2 predicted rank 7 of 11 | Top 25 Heavy civil construction software based in the United States | https://revenuebase.ai/companies/heavy-civil-construction-software/united-states
+  Google #1 predicted rank 8 of 13 | What take off software do you use for Civil Construction : r/estimators | https://www.reddit.com/r/estimators/comments/155p2il/what_take_off_software_do_you_use_for_civil/
+    Model places SmartCrew ahead of this crawled page.
+    Features where this page is still higher than the best predicted SmartCrew page:
+    link count Google page 95.000, SmartCrew 7.000
+    body match Google page 1.784, SmartCrew 0.766
+    URL match Google page 1.195, SmartCrew 0.000
+    word count Google page 1.000, SmartCrew 0.072
+  Google #2 predicted rank 7 of 13 | Top 25 Heavy civil construction software based in the United States | https://revenuebase.ai/companies/heavy-civil-construction-software/united-states
     Model places SmartCrew ahead of this crawled page.
     Features where this page is still higher than the best predicted SmartCrew page:
     link count Google page 123.000, SmartCrew 7.000
-    URL match Google page 4.107, SmartCrew 0.000
-    word count Google page 1.000, SmartCrew 0.072
-    heading match Google page 2.969, SmartCrew 1.840
-  Google #3 predicted rank 1 of 11 | Construction Software for Contractors of Every Size | HCSS | https://www.hcss.com/
+    URL match Google page 3.655, SmartCrew 0.000
+    heading match Google page 2.688, SmartCrew 1.712
+    freshness Google page 0.763, SmartCrew 0.000
+  Google #3 predicted rank 1 of 13 | Construction Software for Contractors of Every Size | HCSS | https://www.hcss.com/
     Model places this crawled page ahead of SmartCrew.
     Features where this page is still higher than the best predicted SmartCrew page:
     link count Google page 75.000, SmartCrew 7.000
-    anchor text Google page 7.162, SmartCrew 0.000
-    BM25F Google page 2.023, SmartCrew 1.176
+    body match Google page 1.600, SmartCrew 0.766
+    freshness Google page 0.677, SmartCrew 0.000
     word count Google page 1.000, SmartCrew 0.072
 
 Query: hcss heavyjob alternative
 Predicted. Not a live Google rank.
 Real Google position: 7 at https://www.smartcrewhq.com/compare/hcss-heavyjob-alternative/ (that URL was crawled).
-Best predicted SmartCrew page before: 3 of 6 https://www.smartcrewhq.com/compare/hcss-heavyjob-alternative/.
-Best predicted SmartCrew page after HTML replacement only: 4 of 6.
-Best predicted SmartCrew page after the bundle: 2 of 11 https://www.smartcrewhq.com/.
-That page has 27 extracted words. The built file is a short crawl shell, not a full article. With pairwise accuracy at the cross-validated number above, this slot is not evidence the shell would outrank the crawled pages.
-Best predicted SmartCrew page with at least 150 extracted words: 3 of 11 https://www.smartcrewhq.com/blog/best-software-small-dirt-work-contractors/.
+Best predicted SmartCrew page before: 2 of 7 https://www.smartcrewhq.com/compare/hcss-heavyjob-alternative/.
+Best predicted SmartCrew page after HTML replacement only: 3 of 7.
+Best predicted SmartCrew page after the bundle: 1 of 12 https://www.smartcrewhq.com/compare/hcss-heavyjob-alternative/.
 SmartCrew pages in this query:
-  https://www.smartcrewhq.com/ | inserted from the crawl, PR HTML | before n/a | after 2 of 11 | 27 words | 0 tables
-    title All-in-One Heavy Civil and Dirt Work Software | SmartCrew
-    h1 All-in-one heavy civil and dirt work software for dirtwork companies
-    feature heading match 0.000 (contribution 1.284)
-    feature link count 7.000 (contribution 0.792)
-    feature fetch speed 0.737 (contribution 0.314)
-    feature domain PageRank 0.046 (contribution -0.296)
-    feature crawl PageRank 0.014 (contribution 0.153)
-  https://www.smartcrewhq.com/blog/best-software-small-dirt-work-contractors/ | inserted from the crawl, PR HTML | before n/a | after 3 of 11 | 4667 words | 4 tables
-    title Dirt Work Contractor Software for Small Crews | SmartCrew
-    h1 Dirt work contractor software for small dirtwork crews
-    feature heading match 0.000 (contribution 1.178)
-    feature domain PageRank 0.046 (contribution -0.320)
-    feature fetch speed 0.731 (contribution 0.270)
-    feature body match 0.000 (contribution -0.222)
-    feature freshness 1.000 (contribution 0.220)
-  https://www.smartcrewhq.com/compare/hcss-heavyjob-alternative/ | labeled, HTML replaced | before 3 of 6 | after 4 of 11 | words 10743 -> 3588 | tables 7 -> 3
+  https://www.smartcrewhq.com/compare/hcss-heavyjob-alternative/ | labeled, HTML replaced | before 2 of 7 | after 1 of 12 | words 10743 -> 3588 | tables 7 -> 3
     title HCSS HeavyJob vs SmartCrew (2026): Pricing, Features & Best Alternatives -> HCSS Alternative for Dirtwork Contractors | SmartCrew
     h1 HCSS alternative for dirtwork contractors
-    feature readability 0.637 -> 0.898 (contribution -0.025 -> -0.248)
-    feature fetch speed 0.724 -> 0.724 (contribution 0.232 -> 0.084)
-    feature anchor text 7.547 -> 7.547 (contribution -0.167 -> -0.049)
-    feature freshness 0.994 -> 1.000 (contribution 0.264 -> 0.161)
-    feature heading match 1.167 -> 1.128 (contribution -0.016 -> 0.081)
-  https://www.smartcrewhq.com/all-in-one-dirt-work-software/ | new URL, not in the crawl | before n/a | after 5 of 11 | 984 words | 2 tables
+    feature readability 0.637 -> 0.898 (contribution 0.540 -> -0.188)
+    feature entity coverage 0.810 -> 0.810 (contribution -0.503 -> -0.199)
+    feature link count 612.000 -> 94.000 (contribution 0.286 -> -0.014)
+    feature crawl PageRank 0.014 -> 0.014 (contribution 0.366 -> 0.200)
+    feature originality 0.974 -> 0.987 (contribution -0.006 -> -0.143)
+  https://www.smartcrewhq.com/ | inserted from the crawl, PR HTML | before n/a | after 2 of 12 | 27 words | 0 tables
+    title All-in-One Heavy Civil and Dirt Work Software | SmartCrew
+    h1 All-in-one heavy civil and dirt work software for dirtwork companies
+    feature link count 7.000 (contribution 0.667)
+    feature crawl PageRank 0.014 (contribution 0.425)
+    feature heading match 0.000 (contribution 0.336)
+    feature embedding similarity 0.000 (contribution -0.318)
+    feature fetch speed 0.737 (contribution 0.280)
+  https://www.smartcrewhq.com/blog/best-excavation-software-20-50-employees/ | inserted from the crawl, PR HTML | before n/a | after 5 of 12 | 2885 words | 5 tables
+    title Best All-in-One Dirt Work and Excavation Software, 20 to 50
+    h1 Best all-in-one dirt work and excavation software for a team of 20 to 50
+    feature freshness 1.000 (contribution 0.384)
+    feature readability 0.896 (contribution -0.339)
+    feature title match 0.000 (contribution -0.299)
+    feature H1 match 0.000 (contribution -0.161)
+    feature link count 125.000 (contribution 0.143)
+  https://www.smartcrewhq.com/blog/best-software-small-dirt-work-contractors/ | inserted from the crawl, PR HTML | before n/a | after 6 of 12 | 4667 words | 4 tables
+    title Dirt Work Contractor Software for Small Crews | SmartCrew
+    h1 Dirt work contractor software for small dirtwork crews
+    feature crawl PageRank 0.014 (contribution 0.438)
+    feature title match 0.000 (contribution -0.290)
+    feature domain PageRank 0.046 (contribution -0.209)
+    feature originality 0.905 (contribution -0.164)
+    feature freshness 1.000 (contribution 0.163)
+  https://www.smartcrewhq.com/all-in-one-dirt-work-software/ | new URL, not in the crawl | before n/a | after 10 of 12 | 984 words | 2 tables
     title All-in-One Dirt Work Software | SmartCrew
     h1 All-in-one dirt work software
     feature Crawl PageRank is 0. This URL has no inlinks in the stored crawl.
-    feature heading match 0.000 (contribution 1.013)
-    feature fetch speed 0.000 (contribution -0.630)
-    feature domain PageRank 0.046 (contribution -0.397)
-    feature freshness 1.000 (contribution 0.305)
-    feature embedding similarity -0.037 (contribution -0.198)
-  https://www.smartcrewhq.com/blog/best-excavation-software-20-50-employees/ | inserted from the crawl, PR HTML | before n/a | after 8 of 11 | 2885 words | 5 tables
-    title Best All-in-One Dirt Work and Excavation Software, 20 to 50
-    h1 Best all-in-one dirt work and excavation software for a team of 20 to 50
-    feature freshness 1.000 (contribution 0.301)
-    feature body match 0.426 (contribution -0.281)
-    feature readability 0.896 (contribution -0.241)
-    feature domain PageRank 0.046 (contribution -0.161)
-    feature H1 match 0.000 (contribution -0.126)
-  https://www.smartcrewhq.com/all-in-one-heavy-civil-software/ | new URL, not in the crawl | before n/a | after 10 of 11 | 1276 words | 2 tables
+    feature embedding similarity -0.037 (contribution -0.495)
+    feature originality 0.753 (contribution -0.391)
+    feature heading match 0.000 (contribution 0.331)
+    feature domain PageRank 0.046 (contribution -0.248)
+    feature title match 0.000 (contribution -0.240)
+  https://www.smartcrewhq.com/all-in-one-heavy-civil-software/ | new URL, not in the crawl | before n/a | after 12 of 12 | 1276 words | 2 tables
     title All-in-One Heavy Civil Construction Software | SmartCrew
     h1 All-in-one heavy civil construction software
     feature Crawl PageRank is 0. This URL has no inlinks in the stored crawl.
-    feature domain PageRank 0.046 (contribution -0.464)
-    feature fetch speed 0.000 (contribution -0.406)
-    feature originality 0.752 (contribution -0.344)
-    feature freshness 1.000 (contribution 0.315)
-    feature embedding similarity 0.057 (contribution -0.247)
+    feature embedding similarity 0.057 (contribution -0.472)
+    feature originality 0.752 (contribution -0.446)
+    feature entity coverage 0.742 (contribution -0.395)
+    feature domain PageRank 0.046 (contribution -0.264)
+    feature link count 65.000 (contribution -0.252)
 Real Google top 3, and the remaining gap versus the best predicted SmartCrew page:
-  Google #1 predicted rank 9 of 11 | 10 HCSS HeavyJob Alternatives: Top Picks for 2026 - OneCrew | https://www.getonecrew.com/post/hcss-heavyjob-alternatives
+  Google #1 predicted rank 9 of 12 | 10 HCSS HeavyJob Alternatives: Top Picks for 2026 - OneCrew | https://www.getonecrew.com/post/hcss-heavyjob-alternatives
     Model places SmartCrew ahead of this crawled page.
     Features where this page is still higher than the best predicted SmartCrew page:
-    link count Google page 35.000, SmartCrew 7.000
-    heading match Google page 3.609, SmartCrew 0.000
-    title match Google page 2.248, SmartCrew 0.000
-    BM25F Google page 2.293, SmartCrew 0.000
-  Google #2 https://www.reddit.com/r/estimators/comments/11jjop2/estimating_software_options/ | blocked by robots.txt. No page text was invented.
-  Google #3 predicted rank 11 of 11 | 7 Best Heavy Civil Construction Time Tracking Software (2026) | https://truein.com/blogs/heavy-civil-construction-time-tracking-software
+    originality Google page 0.988, SmartCrew 0.848
+    readability Google page 0.985, SmartCrew 0.898
+    heading match Google page 4.019, SmartCrew 3.862
+    fetch speed Google page 0.781, SmartCrew 0.724
+  Google #2 predicted rank 4 of 12 | Estimating software options? : r/estimators | https://www.reddit.com/r/estimators/comments/11jjop2/estimating_software_options/
     Model places SmartCrew ahead of this crawled page.
     Features where this page is still higher than the best predicted SmartCrew page:
-    link count Google page 58.000, SmartCrew 7.000
-    heading match Google page 2.245, SmartCrew 0.000
-    BM25F Google page 1.799, SmartCrew 0.000
-    body match Google page 1.309, SmartCrew 0.000
+    content effort Google page 0.613, SmartCrew 0.194
+    originality Google page 1.000, SmartCrew 0.848
+    word count Google page 1.000, SmartCrew 0.782
+    site focus Google page 1.000, SmartCrew 0.695
+  Google #3 predicted rank 11 of 12 | 7 Best Heavy Civil Construction Time Tracking Software (2026) | https://truein.com/blogs/heavy-civil-construction-time-tracking-software
+    Model places SmartCrew ahead of this crawled page.
+    Features where this page is still higher than the best predicted SmartCrew page:
+    originality Google page 0.992, SmartCrew 0.848
+    content effort Google page 0.354, SmartCrew 0.194
+    word count Google page 1.000, SmartCrew 0.782
+    site focus Google page 1.000, SmartCrew 0.695
 
 Query: dirt work contractor software
 Predicted. Not a live Google rank.
 Real Google position: 9 at https://www.smartcrewhq.com/blog/best-software-small-dirt-work-contractors/ (that URL was crawled).
-Best predicted SmartCrew page before: 2 of 8 https://www.smartcrewhq.com/blog/best-software-small-dirt-work-contractors/.
-Best predicted SmartCrew page after HTML replacement only: 3 of 8.
-Best predicted SmartCrew page after the bundle: 2 of 13 https://www.smartcrewhq.com/blog/best-software-small-dirt-work-contractors/.
+Best predicted SmartCrew page before: 3 of 9 https://www.smartcrewhq.com/blog/best-software-small-dirt-work-contractors/.
+Best predicted SmartCrew page after HTML replacement only: 6 of 9.
+Best predicted SmartCrew page after the bundle: 3 of 14 https://www.smartcrewhq.com/.
+That page has 27 extracted words. The built file is a short crawl shell, not a full article. With pairwise accuracy at the cross-validated number above, this slot is not evidence the shell would outrank the crawled pages.
+Best predicted SmartCrew page with at least 150 extracted words: 4 of 14 https://www.smartcrewhq.com/compare/hcss-heavyjob-alternative/.
 SmartCrew pages in this query:
-  https://www.smartcrewhq.com/blog/best-software-small-dirt-work-contractors/ | labeled, HTML replaced | before 2 of 8 | after 2 of 13 | words 10083 -> 4667 | tables 8 -> 4
-    title Best All-in-One Software for Small Dirtwork Contractors (2026) -> Dirt Work Contractor Software for Small Crews | SmartCrew
-    h1 Dirt work contractor software for small dirtwork crews
-    feature embedding similarity 0.222 -> 0.397 (contribution 0.364 -> 0.041)
-    feature originality 0.997 -> 0.993 (contribution 0.523 -> 0.281)
-    feature entity coverage 0.842 -> 0.842 (contribution -0.344 -> -0.113)
-    feature freshness 0.994 -> 1.000 (contribution 0.374 -> 0.196)
-    feature BM25F 1.901 -> 2.192 (contribution -0.025 -> 0.149)
-  https://www.smartcrewhq.com/ | inserted from the crawl, PR HTML | before n/a | after 3 of 13 | 27 words | 0 tables
+  https://www.smartcrewhq.com/ | inserted from the crawl, PR HTML | before n/a | after 3 of 14 | 27 words | 0 tables
     title All-in-One Heavy Civil and Dirt Work Software | SmartCrew
     h1 All-in-one heavy civil and dirt work software for dirtwork companies
-    feature crawl PageRank 0.014 (contribution 0.783)
-    feature title match 2.059 (contribution -0.529)
-    feature link count 7.000 (contribution 0.496)
-    feature fetch speed 0.737 (contribution 0.306)
-    feature domain PageRank 0.046 (contribution -0.274)
-  https://www.smartcrewhq.com/compare/hcss-heavyjob-alternative/ | inserted from the crawl, PR HTML | before n/a | after 5 of 13 | 3588 words | 3 tables
+    feature fetch speed 0.737 (contribution 0.784)
+    feature crawl PageRank 0.014 (contribution 0.729)
+    feature body match 0.934 (contribution 0.348)
+    feature title match 2.234 (contribution 0.228)
+    feature originality 0.522 (contribution -0.175)
+  https://www.smartcrewhq.com/compare/hcss-heavyjob-alternative/ | inserted from the crawl, PR HTML | before n/a | after 4 of 14 | 3588 words | 3 tables
     title HCSS Alternative for Dirtwork Contractors | SmartCrew
     h1 HCSS alternative for dirtwork contractors
-    feature embedding similarity 0.159 (contribution -0.528)
-    feature title match 0.000 (contribution 0.448)
-    feature link count 94.000 (contribution -0.355)
-    feature originality 0.861 (contribution -0.264)
-    feature fetch speed 0.724 (contribution 0.243)
-  https://www.smartcrewhq.com/blog/best-excavation-software-20-50-employees/ | inserted from the crawl, PR HTML | before n/a | after 7 of 13 | 2885 words | 5 tables
+    feature crawl PageRank 0.014 (contribution 0.653)
+    feature fetch speed 0.724 (contribution 0.465)
+    feature readability 0.898 (contribution -0.268)
+    feature originality 0.861 (contribution -0.213)
+    feature freshness 1.000 (contribution 0.211)
+  https://www.smartcrewhq.com/blog/best-software-small-dirt-work-contractors/ | labeled, HTML replaced | before 3 of 9 | after 7 of 14 | words 10083 -> 4667 | tables 8 -> 4
+    title Best All-in-One Software for Small Dirtwork Contractors (2026) -> Dirt Work Contractor Software for Small Crews | SmartCrew
+    h1 Dirt work contractor software for small dirtwork crews
+    feature body match 1.468 -> 2.400 (contribution 0.273 -> -0.308)
+    feature originality 0.997 -> 0.993 (contribution 0.506 -> -0.016)
+    feature readability 0.620 -> 0.714 (contribution 0.463 -> -0.003)
+    feature title match 0.153 -> 4.463 (contribution -0.159 -> 0.259)
+    feature content effort 0.044 -> 0.139 (contribution -0.203 -> 0.050)
+  https://www.smartcrewhq.com/blog/best-excavation-software-20-50-employees/ | inserted from the crawl, PR HTML | before n/a | after 8 of 14 | 2885 words | 5 tables
     title Best All-in-One Dirt Work and Excavation Software, 20 to 50
     h1 Best all-in-one dirt work and excavation software for a team of 20 to 50
-    feature title match 1.938 (contribution -0.474)
-    feature freshness 1.000 (contribution 0.388)
-    feature originality 0.835 (contribution -0.383)
-    feature domain PageRank 0.046 (contribution -0.297)
-    feature embedding similarity 0.307 (contribution 0.136)
-  https://www.smartcrewhq.com/all-in-one-dirt-work-software/ | new URL, not in the crawl | before n/a | after 10 of 13 | 984 words | 2 tables
+    feature originality 0.835 (contribution -0.392)
+    feature title match 2.106 (contribution 0.236)
+    feature readability 0.896 (contribution -0.206)
+    feature freshness 1.000 (contribution 0.186)
+    feature word count 0.923 (contribution -0.184)
+  https://www.smartcrewhq.com/all-in-one-dirt-work-software/ | new URL, not in the crawl | before n/a | after 10 of 14 | 984 words | 2 tables
     title All-in-One Dirt Work Software | SmartCrew
     h1 All-in-one dirt work software
     feature Crawl PageRank is 0. This URL has no inlinks in the stored crawl.
-    feature fetch speed 0.000 (contribution -0.953)
-    feature domain PageRank 0.046 (contribution -0.270)
-    feature originality 0.753 (contribution -0.263)
-    feature title match 2.353 (contribution 0.192)
-    feature URL term match 0.750 (contribution 0.105)
-  https://www.smartcrewhq.com/all-in-one-heavy-civil-software/ | new URL, not in the crawl | before n/a | after 13 of 13 | 1276 words | 2 tables
+    feature originality 0.753 (contribution -0.455)
+    feature title match 2.543 (contribution 0.294)
+    feature fetch speed 0.000 (contribution -0.210)
+    feature domain PageRank 0.046 (contribution -0.188)
+    feature URL match 3.499 (contribution 0.180)
+  https://www.smartcrewhq.com/all-in-one-heavy-civil-software/ | new URL, not in the crawl | before n/a | after 13 of 14 | 1276 words | 2 tables
     title All-in-One Heavy Civil Construction Software | SmartCrew
     h1 All-in-one heavy civil construction software
     feature Crawl PageRank is 0. This URL has no inlinks in the stored crawl.
-    feature fetch speed 0.000 (contribution -0.527)
-    feature embedding similarity 0.131 (contribution -0.418)
-    feature originality 0.756 (contribution -0.359)
-    feature domain PageRank 0.046 (contribution -0.347)
-    feature heading match 0.218 (contribution -0.321)
+    feature originality 0.756 (contribution -0.423)
+    feature embedding similarity 0.131 (contribution -0.311)
+    feature content effort 0.317 (contribution -0.238)
+    feature domain PageRank 0.046 (contribution -0.190)
+    feature readability 0.855 (contribution -0.165)
 Real Google top 3, and the remaining gap versus the best predicted SmartCrew page:
-  Google #1 predicted rank 4 of 13 | Earthwork & Excavation Bidding & Estimating Software | HCSS | https://www.hcss.com/who-uses-hcss/earthwork-estimating-software/
+  Google #1 predicted rank 9 of 14 | Earthwork & Excavation Bidding & Estimating Software | HCSS | https://www.hcss.com/who-uses-hcss/earthwork-estimating-software/
     Model places SmartCrew ahead of this crawled page.
     Features where this page is still higher than the best predicted SmartCrew page:
-    domain PageRank Google page 0.187, SmartCrew 0.046
-    word count Google page 1.000, SmartCrew 0.567
-    content effort Google page 0.638, SmartCrew 0.139
-    readability Google page 0.946, SmartCrew 0.714
-  Google #2 predicted rank 8 of 13 | Earthwork & Sitework Estimating Software | Contractor Software | https://www.stackct.com/sitework-takeoff-estimating-construction-software/
+    link count Google page 74.000, SmartCrew 7.000
+    originality Google page 0.997, SmartCrew 0.522
+    content effort Google page 0.638, SmartCrew 0.061
+    anchor text Google page 2.135, SmartCrew 0.000
+  Google #2 predicted rank 5 of 14 | Earthwork & Sitework Estimating Software | Contractor Software | https://www.stackct.com/sitework-takeoff-estimating-construction-software/
     Model places SmartCrew ahead of this crawled page.
     Features where this page is still higher than the best predicted SmartCrew page:
-    word count Google page 0.991, SmartCrew 0.567
-    content effort Google page 0.534, SmartCrew 0.139
-    readability Google page 0.863, SmartCrew 0.714
-    originality Google page 0.996, SmartCrew 0.898
-  Google #3 predicted rank 6 of 13 | Top 10 Best Work Order Software For Excavation Contractors 2026 | https://myquoteiq.com/top-10-best-work-order-software-for-excavation-contractors-in-2026/
-    Model places SmartCrew ahead of this crawled page.
+    originality Google page 0.996, SmartCrew 0.522
+    body match Google page 1.444, SmartCrew 0.934
+    content effort Google page 0.534, SmartCrew 0.061
+    BM25F Google page 1.998, SmartCrew 1.208
+  Google #3 predicted rank 1 of 14 | Top 10 Best Work Order Software For Excavation Contractors 2026 | https://myquoteiq.com/top-10-best-work-order-software-for-excavation-contractors-in-2026/
+    Model places this crawled page ahead of SmartCrew.
     Features where this page is still higher than the best predicted SmartCrew page:
-    originality Google page 0.990, SmartCrew 0.898
-    embedding similarity Google page 0.556, SmartCrew 0.397
-    site focus Google page 1.000, SmartCrew 0.697
+    link count Google page 126.000, SmartCrew 7.000
+    URL match Google page 1.497, SmartCrew 0.000
+    body match Google page 1.664, SmartCrew 0.934
+    originality Google page 0.990, SmartCrew 0.522
 
 Query: best heavy construction software
 Predicted. Not a live Google rank.
 Real Google position: not in the labeled file.
 Best predicted SmartCrew page before: n/a (none in the crawled labeled set).
-Best predicted SmartCrew page after the bundle: 2 of 12 https://www.smartcrewhq.com/blog/best-software-small-dirt-work-contractors/.
+Best predicted SmartCrew page after the bundle: 3 of 13 https://www.smartcrewhq.com/.
+That page has 27 extracted words. The built file is a short crawl shell, not a full article. With pairwise accuracy at the cross-validated number above, this slot is not evidence the shell would outrank the crawled pages.
+Best predicted SmartCrew page with at least 150 extracted words: 4 of 13 https://www.smartcrewhq.com/blog/best-excavation-software-20-50-employees/.
 The after rank inserts SmartCrew into a set where the labeled file has no crawled SmartCrew URL. It is not a move from a Google position.
 SmartCrew pages in this query:
-  https://www.smartcrewhq.com/blog/best-software-small-dirt-work-contractors/ | inserted from the crawl, PR HTML | before n/a | after 2 of 12 | 4667 words | 4 tables
-    title Dirt Work Contractor Software for Small Crews | SmartCrew
-    h1 Dirt work contractor software for small dirtwork crews
-    feature site radius 0.303 (contribution 0.564)
-    feature title match 0.126 (contribution 0.457)
-    feature embedding similarity 0.113 (contribution -0.341)
-    feature freshness 1.000 (contribution 0.243)
-    feature H1 match 0.197 (contribution 0.222)
-  https://www.smartcrewhq.com/ | inserted from the crawl, PR HTML | before n/a | after 3 of 12 | 27 words | 0 tables
+  https://www.smartcrewhq.com/ | inserted from the crawl, PR HTML | before n/a | after 3 of 13 | 27 words | 0 tables
     title All-in-One Heavy Civil and Dirt Work Software | SmartCrew
     h1 All-in-one heavy civil and dirt work software for dirtwork companies
-    feature site radius 0.150 (contribution 0.504)
-    feature link count 7.000 (contribution 0.380)
-    feature domain PageRank 0.046 (contribution -0.297)
-    feature fetch speed 0.737 (contribution 0.278)
-    feature body match 0.936 (contribution 0.183)
-  https://www.smartcrewhq.com/blog/best-excavation-software-20-50-employees/ | inserted from the crawl, PR HTML | before n/a | after 6 of 12 | 2885 words | 5 tables
+    feature fetch speed 0.737 (contribution 0.703)
+    feature originality 0.522 (contribution -0.245)
+    feature readability 0.766 (contribution -0.180)
+    feature domain PageRank 0.046 (contribution -0.179)
+    feature link count 7.000 (contribution 0.167)
+  https://www.smartcrewhq.com/blog/best-excavation-software-20-50-employees/ | inserted from the crawl, PR HTML | before n/a | after 4 of 13 | 2885 words | 5 tables
     title Best All-in-One Dirt Work and Excavation Software, 20 to 50
     h1 Best all-in-one dirt work and excavation software for a team of 20 to 50
-    feature site radius 0.230 (contribution 0.535)
-    feature freshness 1.000 (contribution 0.252)
-    feature originality 0.838 (contribution -0.237)
-    feature URL match 1.209 (contribution -0.177)
-    feature anchor text 6.076 (contribution -0.176)
-  https://www.smartcrewhq.com/all-in-one-dirt-work-software/ | new URL, not in the crawl | before n/a | after 7 of 12 | 984 words | 2 tables
-    title All-in-One Dirt Work Software | SmartCrew
-    h1 All-in-one dirt work software
-    feature Crawl PageRank is 0. This URL has no inlinks in the stored crawl.
-    feature fetch speed 0.000 (contribution -0.675)
-    feature site radius 0.177 (contribution 0.567)
-    feature title match 0.134 (contribution 0.365)
-    feature domain PageRank 0.046 (contribution -0.339)
-    feature embedding similarity 0.127 (contribution -0.255)
-  https://www.smartcrewhq.com/compare/hcss-heavyjob-alternative/ | inserted from the crawl, PR HTML | before n/a | after 8 of 12 | 3588 words | 3 tables
-    title HCSS Alternative for Dirtwork Contractors | SmartCrew
-    h1 HCSS alternative for dirtwork contractors
-    feature site radius 0.305 (contribution 0.623)
-    feature domain PageRank 0.046 (contribution -0.320)
-    feature entity coverage 0.783 (contribution -0.275)
-    feature title match 0.000 (contribution 0.238)
-    feature embedding similarity 0.141 (contribution -0.220)
-  https://www.smartcrewhq.com/all-in-one-heavy-civil-software/ | new URL, not in the crawl | before n/a | after 10 of 12 | 1276 words | 2 tables
+    feature freshness 1.000 (contribution 0.307)
+    feature embedding similarity 0.293 (contribution 0.265)
+    feature title match 1.154 (contribution 0.220)
+    feature URL match 1.093 (contribution -0.214)
+    feature readability 0.896 (contribution -0.134)
+  https://www.smartcrewhq.com/all-in-one-heavy-civil-software/ | new URL, not in the crawl | before n/a | after 7 of 13 | 1276 words | 2 tables
     title All-in-One Heavy Civil Construction Software | SmartCrew
     h1 All-in-one heavy civil construction software
     feature Crawl PageRank is 0. This URL has no inlinks in the stored crawl.
-    feature site radius 0.232 (contribution 0.535)
-    feature fetch speed 0.000 (contribution -0.526)
-    feature originality 0.748 (contribution -0.250)
-    feature URL match 1.348 (contribution -0.180)
-    feature title match 1.719 (contribution -0.169)
+    feature title match 1.735 (contribution 0.233)
+    feature URL match 1.416 (contribution -0.189)
+    feature originality 0.748 (contribution -0.178)
+    feature link count 65.000 (contribution -0.122)
+    feature domain PageRank 0.046 (contribution -0.111)
+  https://www.smartcrewhq.com/all-in-one-dirt-work-software/ | new URL, not in the crawl | before n/a | after 11 of 13 | 984 words | 2 tables
+    title All-in-One Dirt Work Software | SmartCrew
+    h1 All-in-one dirt work software
+    feature Crawl PageRank is 0. This URL has no inlinks in the stored crawl.
+    feature embedding similarity 0.127 (contribution -0.494)
+    feature title match 0.125 (contribution -0.368)
+    feature domain PageRank 0.046 (contribution -0.253)
+    feature readability 0.789 (contribution -0.134)
+    feature body match 2.053 (contribution -0.124)
+  https://www.smartcrewhq.com/compare/hcss-heavyjob-alternative/ | inserted from the crawl, PR HTML | before n/a | after 12 of 13 | 3588 words | 3 tables
+    title HCSS Alternative for Dirtwork Contractors | SmartCrew
+    h1 HCSS alternative for dirtwork contractors
+    feature title match 0.000 (contribution -0.414)
+    feature anchor text 3.823 (contribution -0.356)
+    feature entity coverage 0.741 (contribution -0.230)
+    feature domain PageRank 0.046 (contribution -0.228)
+    feature embedding similarity 0.141 (contribution -0.158)
+  https://www.smartcrewhq.com/blog/best-software-small-dirt-work-contractors/ | inserted from the crawl, PR HTML | before n/a | after 13 of 13 | 4667 words | 4 tables
+    title Dirt Work Contractor Software for Small Crews | SmartCrew
+    h1 Dirt work contractor software for small dirtwork crews
+    feature title match 0.118 (contribution -0.455)
+    feature embedding similarity 0.113 (contribution -0.304)
+    feature anchor text 7.333 (contribution -0.304)
+    feature domain PageRank 0.046 (contribution -0.190)
+    feature URL match 1.093 (contribution -0.189)
 Real Google top 3, and the remaining gap versus the best predicted SmartCrew page:
-  Google #1 predicted rank 1 of 12 | Construction Software for Contractors of Every Size | HCSS | https://www.hcss.com/
+  Google #1 predicted rank 1 of 13 | Construction Software for Contractors of Every Size | HCSS | https://www.hcss.com/
     Model places this crawled page ahead of SmartCrew.
     Features where this page is still higher than the best predicted SmartCrew page:
-    H1 match Google page 1.529, SmartCrew 0.197
-    title match Google page 0.892, SmartCrew 0.126
-    domain PageRank Google page 0.187, SmartCrew 0.046
-    readability Google page 0.972, SmartCrew 0.714
-  Google #2 https://www.reddit.com/r/Construction/comments/1idtgzi/best_software_for_managing_a_large_construction/ | blocked by robots.txt. No page text was invented.
-  Google #3 predicted rank 5 of 12 | Top 25 Heavy civil construction software based in the United States | https://revenuebase.ai/companies/heavy-civil-construction-software/united-states
+    link count Google page 75.000, SmartCrew 7.000
+    body match Google page 2.066, SmartCrew 0.860
+    BM25F Google page 1.178, SmartCrew 0.345
+    originality Google page 0.987, SmartCrew 0.522
+  Google #2 predicted rank 6 of 13 | Best Software for Managing a Large Construction Project? (58 km Highway) : r/Construction | https://www.reddit.com/r/Construction/comments/1idtgzi/best_software_for_managing_a_large_construction/
     Model places SmartCrew ahead of this crawled page.
     Features where this page is still higher than the best predicted SmartCrew page:
-    H1 match Google page 1.567, SmartCrew 0.197
-    title match Google page 1.529, SmartCrew 0.126
-    URL match Google page 2.259, SmartCrew 1.209
-    heading match Google page 1.751, SmartCrew 1.424
+    link count Google page 61.000, SmartCrew 7.000
+    URL match Google page 2.227, SmartCrew 0.000
+    title match Google page 1.904, SmartCrew 1.024
+    body match Google page 2.447, SmartCrew 0.860
+  Google #3 predicted rank 5 of 13 | Top 25 Heavy civil construction software based in the United States | https://revenuebase.ai/companies/heavy-civil-construction-software/united-states
+    Model places SmartCrew ahead of this crawled page.
+    Features where this page is still higher than the best predicted SmartCrew page:
+    link count Google page 123.000, SmartCrew 7.000
+    URL match Google page 2.221, SmartCrew 0.000
+    heading match Google page 1.796, SmartCrew 0.844
+    title match Google page 1.545, SmartCrew 1.024
 
 Query: b2w alternative
 Predicted. Not a live Google rank.
 Real Google position: not in the labeled file.
 Best predicted SmartCrew page before: n/a (none in the crawled labeled set).
-Best predicted SmartCrew page after the bundle: 1 of 8 https://www.smartcrewhq.com/.
+Best predicted SmartCrew page after the bundle: 3 of 12 https://www.smartcrewhq.com/.
 That page has 27 extracted words. The built file is a short crawl shell, not a full article. With pairwise accuracy at the cross-validated number above, this slot is not evidence the shell would outrank the crawled pages.
-Best predicted SmartCrew page with at least 150 extracted words: 2 of 8 https://www.smartcrewhq.com/blog/best-software-small-dirt-work-contractors/.
+Best predicted SmartCrew page with at least 150 extracted words: 6 of 12 https://www.smartcrewhq.com/all-in-one-heavy-civil-software/.
 The after rank inserts SmartCrew into a set where the labeled file has no crawled SmartCrew URL. It is not a move from a Google position.
 SmartCrew pages in this query:
-  https://www.smartcrewhq.com/ | inserted from the crawl, PR HTML | before n/a | after 1 of 8 | 27 words | 0 tables
+  https://www.smartcrewhq.com/ | inserted from the crawl, PR HTML | before n/a | after 3 of 12 | 27 words | 0 tables
     title All-in-One Heavy Civil and Dirt Work Software | SmartCrew
     h1 All-in-one heavy civil and dirt work software for dirtwork companies
-    feature heading match 0.000 (contribution 1.176)
-    feature originality 0.522 (contribution -0.377)
-    feature link count 7.000 (contribution 0.362)
-    feature fetch speed 0.737 (contribution 0.293)
-    feature domain PageRank 0.046 (contribution -0.272)
-  https://www.smartcrewhq.com/blog/best-software-small-dirt-work-contractors/ | inserted from the crawl, PR HTML | before n/a | after 2 of 8 | 4667 words | 4 tables
-    title Dirt Work Contractor Software for Small Crews | SmartCrew
-    h1 Dirt work contractor software for small dirtwork crews
-    feature heading match 0.000 (contribution 1.039)
-    feature originality 0.905 (contribution -0.369)
-    feature domain PageRank 0.046 (contribution -0.289)
-    feature title match 0.000 (contribution 0.247)
-    feature embedding similarity -0.107 (contribution -0.140)
-  https://www.smartcrewhq.com/blog/best-excavation-software-20-50-employees/ | inserted from the crawl, PR HTML | before n/a | after 3 of 8 | 2885 words | 5 tables
-    title Best All-in-One Dirt Work and Excavation Software, 20 to 50
-    h1 Best all-in-one dirt work and excavation software for a team of 20 to 50
-    feature heading match 0.000 (contribution 0.997)
-    feature originality 0.835 (contribution -0.379)
-    feature domain PageRank 0.046 (contribution -0.228)
-    feature title match 0.000 (contribution 0.203)
-    feature embedding similarity -0.103 (contribution -0.125)
-  https://www.smartcrewhq.com/all-in-one-dirt-work-software/ | new URL, not in the crawl | before n/a | after 6 of 8 | 984 words | 2 tables
-    title All-in-One Dirt Work Software | SmartCrew
-    h1 All-in-one dirt work software
-    feature Crawl PageRank is 0. This URL has no inlinks in the stored crawl.
-    feature heading match 0.000 (contribution 0.876)
-    feature fetch speed 0.000 (contribution -0.651)
-    feature domain PageRank 0.046 (contribution -0.352)
-    feature originality 0.753 (contribution -0.326)
-    feature title match 0.000 (contribution 0.111)
-  https://www.smartcrewhq.com/compare/hcss-heavyjob-alternative/ | inserted from the crawl, PR HTML | before n/a | after 7 of 8 | 3588 words | 3 tables
-    title HCSS Alternative for Dirtwork Contractors | SmartCrew
-    h1 HCSS alternative for dirtwork contractors
-    feature domain PageRank 0.046 (contribution -0.348)
-    feature originality 0.861 (contribution -0.331)
-    feature embedding similarity -0.025 (contribution -0.249)
-    feature title match 1.470 (contribution -0.126)
-    feature link count 94.000 (contribution -0.104)
-  https://www.smartcrewhq.com/all-in-one-heavy-civil-software/ | new URL, not in the crawl | before n/a | after 8 of 8 | 1276 words | 2 tables
+    feature fetch speed 0.737 (contribution 0.615)
+    feature entity coverage 0.290 (contribution 0.350)
+    feature embedding similarity -0.070 (contribution -0.204)
+    feature domain PageRank 0.046 (contribution -0.190)
+    feature readability 0.766 (contribution -0.164)
+  https://www.smartcrewhq.com/all-in-one-heavy-civil-software/ | new URL, not in the crawl | before n/a | after 6 of 12 | 1276 words | 2 tables
     title All-in-One Heavy Civil Construction Software | SmartCrew
     h1 All-in-one heavy civil construction software
     feature Crawl PageRank is 0. This URL has no inlinks in the stored crawl.
-    feature fetch speed 0.000 (contribution -0.681)
-    feature domain PageRank 0.046 (contribution -0.423)
-    feature originality 0.756 (contribution -0.312)
-    feature freshness 1.000 (contribution 0.150)
-    feature title match 0.000 (contribution 0.141)
+    feature title match 0.000 (contribution -0.233)
+    feature domain PageRank 0.046 (contribution -0.221)
+    feature originality 0.756 (contribution -0.194)
+    feature content effort 0.317 (contribution -0.168)
+    feature word count 1.000 (contribution 0.124)
+  https://www.smartcrewhq.com/all-in-one-dirt-work-software/ | new URL, not in the crawl | before n/a | after 7 of 12 | 984 words | 2 tables
+    title All-in-One Dirt Work Software | SmartCrew
+    h1 All-in-one dirt work software
+    feature Crawl PageRank is 0. This URL has no inlinks in the stored crawl.
+    feature readability 0.789 (contribution -0.275)
+    feature title match 0.000 (contribution -0.247)
+    feature originality 0.753 (contribution -0.245)
+    feature domain PageRank 0.046 (contribution -0.219)
+    feature content effort 0.335 (contribution -0.155)
+  https://www.smartcrewhq.com/compare/hcss-heavyjob-alternative/ | inserted from the crawl, PR HTML | before n/a | after 8 of 12 | 3588 words | 3 tables
+    title HCSS Alternative for Dirtwork Contractors | SmartCrew
+    h1 HCSS alternative for dirtwork contractors
+    feature originality 0.861 (contribution -0.431)
+    feature domain PageRank 0.046 (contribution -0.293)
+    feature readability 0.898 (contribution -0.285)
+    feature fetch speed 0.724 (contribution 0.219)
+    feature embedding similarity -0.025 (contribution -0.156)
+  https://www.smartcrewhq.com/blog/best-excavation-software-20-50-employees/ | inserted from the crawl, PR HTML | before n/a | after 10 of 12 | 2885 words | 5 tables
+    title Best All-in-One Dirt Work and Excavation Software, 20 to 50
+    h1 Best all-in-one dirt work and excavation software for a team of 20 to 50
+    feature readability 0.896 (contribution -0.273)
+    feature originality 0.835 (contribution -0.220)
+    feature domain PageRank 0.046 (contribution -0.192)
+    feature embedding similarity -0.103 (contribution -0.171)
+    feature title match 0.000 (contribution -0.155)
+  https://www.smartcrewhq.com/blog/best-software-small-dirt-work-contractors/ | inserted from the crawl, PR HTML | before n/a | after 11 of 12 | 4667 words | 4 tables
+    title Dirt Work Contractor Software for Small Crews | SmartCrew
+    h1 Dirt work contractor software for small dirtwork crews
+    feature originality 0.905 (contribution -0.353)
+    feature domain PageRank 0.046 (contribution -0.253)
+    feature fetch speed 0.731 (contribution 0.230)
+    feature embedding similarity -0.107 (contribution -0.228)
+    feature readability 0.714 (contribution -0.215)
 Real Google top 3, and the remaining gap versus the best predicted SmartCrew page:
-  Google #1 https://www.reddit.com/r/estimators/comments/1ldsr0l/estimating_software_options_not_b2w/ | blocked by robots.txt. No page text was invented.
-  Google #2 https://www.softwareadvice.com/construction/b2w-estimating-and-bidding-profile/alternatives/ | fetch error (HTTP 403). No page text was invented.
+  Google #1 predicted rank 1 of 12 | Estimating Software Options, not B2W : r/estimators | https://www.reddit.com/r/estimators/comments/1ldsr0l/estimating_software_options_not_b2w/
+    Model places this crawled page ahead of SmartCrew.
+    Features where this page is still higher than the best predicted SmartCrew page:
+    link count Google page 83.000, SmartCrew 7.000
+    title match Google page 0.733, SmartCrew 0.000
+    BM25F Google page 1.292, SmartCrew 0.000
+    body match Google page 1.165, SmartCrew 0.000
+  Google #2 predicted rank 4 of 12 | Best 15 B2W Estimate Alternatives in 2026 - Software Advice | https://www.softwareadvice.com/construction/b2w-estimating-and-bidding-profile/alternatives/
+    Model places SmartCrew ahead of this crawled page.
+    Features where this page is still higher than the best predicted SmartCrew page:
+    link count Google page 109.000, SmartCrew 7.000
+    title match Google page 0.644, SmartCrew 0.000
+    body match Google page 1.349, SmartCrew 0.000
+    BM25F Google page 1.354, SmartCrew 0.000
   Google #3 https://startupstash.com/b2w-track-alternatives/ | fetch error (HTTP 403). No page text was invented.
 
 Query: excavation contractor software
 Predicted. Not a live Google rank.
 Real Google position: not in the labeled file.
 Best predicted SmartCrew page before: n/a (none in the crawled labeled set).
-Best predicted SmartCrew page after the bundle: 2 of 13 https://www.smartcrewhq.com/compare/hcss-heavyjob-alternative/.
+Best predicted SmartCrew page after the bundle: 3 of 13 https://www.smartcrewhq.com/.
+That page has 27 extracted words. The built file is a short crawl shell, not a full article. With pairwise accuracy at the cross-validated number above, this slot is not evidence the shell would outrank the crawled pages.
+Best predicted SmartCrew page with at least 150 extracted words: 8 of 13 https://www.smartcrewhq.com/blog/best-excavation-software-20-50-employees/.
 The after rank inserts SmartCrew into a set where the labeled file has no crawled SmartCrew URL. It is not a move from a Google position.
 SmartCrew pages in this query:
-  https://www.smartcrewhq.com/compare/hcss-heavyjob-alternative/ | inserted from the crawl, PR HTML | before n/a | after 2 of 13 | 3588 words | 3 tables
-    title HCSS Alternative for Dirtwork Contractors | SmartCrew
-    h1 HCSS alternative for dirtwork contractors
-    feature heading match 0.000 (contribution 1.577)
-    feature domain PageRank 0.046 (contribution -0.274)
-    feature title match 0.000 (contribution 0.251)
-    feature embedding similarity 0.020 (contribution -0.240)
-    feature entity coverage 0.643 (contribution 0.168)
   https://www.smartcrewhq.com/ | inserted from the crawl, PR HTML | before n/a | after 3 of 13 | 27 words | 0 tables
     title All-in-One Heavy Civil and Dirt Work Software | SmartCrew
     h1 All-in-one heavy civil and dirt work software for dirtwork companies
-    feature link count 7.000 (contribution 0.410)
-    feature domain PageRank 0.046 (contribution -0.328)
-    feature entity coverage 0.290 (contribution 0.151)
-    feature embedding similarity 0.171 (contribution -0.144)
-    feature fetch speed 0.737 (contribution 0.127)
-  https://www.smartcrewhq.com/blog/best-excavation-software-20-50-employees/ | inserted from the crawl, PR HTML | before n/a | after 5 of 13 | 2885 words | 5 tables
+    feature fetch speed 0.737 (contribution 0.589)
+    feature entity coverage 0.290 (contribution 0.524)
+    feature heading match 0.192 (contribution 0.491)
+    feature URL match 0.000 (contribution 0.217)
+    feature originality 0.522 (contribution -0.213)
+  https://www.smartcrewhq.com/blog/best-excavation-software-20-50-employees/ | inserted from the crawl, PR HTML | before n/a | after 8 of 13 | 2885 words | 5 tables
     title Best All-in-One Dirt Work and Excavation Software, 20 to 50
     h1 Best all-in-one dirt work and excavation software for a team of 20 to 50
-    feature URL term match 0.667 (contribution 0.275)
-    feature originality 0.835 (contribution -0.228)
-    feature entity coverage 0.767 (contribution -0.204)
-    feature domain PageRank 0.046 (contribution -0.153)
-    feature title match 0.819 (contribution -0.150)
-  https://www.smartcrewhq.com/all-in-one-heavy-civil-software/ | new URL, not in the crawl | before n/a | after 9 of 13 | 1276 words | 2 tables
-    title All-in-One Heavy Civil Construction Software | SmartCrew
-    h1 All-in-one heavy civil construction software
-    feature Crawl PageRank is 0. This URL has no inlinks in the stored crawl.
-    feature fetch speed 0.000 (contribution -0.781)
-    feature domain PageRank 0.046 (contribution -0.381)
-    feature embedding similarity 0.038 (contribution -0.343)
-    feature heading match 0.217 (contribution 0.211)
-    feature word count 1.000 (contribution 0.200)
-  https://www.smartcrewhq.com/blog/best-software-small-dirt-work-contractors/ | inserted from the crawl, PR HTML | before n/a | after 10 of 13 | 4667 words | 4 tables
+    feature originality 0.835 (contribution -0.619)
+    feature readability 0.896 (contribution -0.131)
+    feature embedding similarity 0.321 (contribution 0.124)
+    feature URL match 1.147 (contribution -0.122)
+    feature title match 0.819 (contribution 0.115)
+  https://www.smartcrewhq.com/compare/hcss-heavyjob-alternative/ | inserted from the crawl, PR HTML | before n/a | after 9 of 13 | 3588 words | 3 tables
+    title HCSS Alternative for Dirtwork Contractors | SmartCrew
+    h1 HCSS alternative for dirtwork contractors
+    feature embedding similarity 0.020 (contribution -0.727)
+    feature heading match 0.000 (contribution 0.279)
+    feature originality 0.848 (contribution -0.257)
+    feature domain PageRank 0.046 (contribution -0.218)
+    feature fetch speed 0.724 (contribution 0.206)
+  https://www.smartcrewhq.com/blog/best-software-small-dirt-work-contractors/ | inserted from the crawl, PR HTML | before n/a | after 11 of 13 | 4667 words | 4 tables
     title Dirt Work Contractor Software for Small Crews | SmartCrew
     h1 Dirt work contractor software for small dirtwork crews
-    feature domain PageRank 0.046 (contribution -0.359)
-    feature entity coverage 0.793 (contribution -0.324)
-    feature H1 match 2.217 (contribution 0.219)
-    feature title match 1.526 (contribution -0.203)
-    feature originality 0.905 (contribution -0.187)
-  https://www.smartcrewhq.com/all-in-one-dirt-work-software/ | new URL, not in the crawl | before n/a | after 13 of 13 | 984 words | 2 tables
+    feature originality 0.905 (contribution -0.643)
+    feature entity coverage 0.793 (contribution -0.346)
+    feature domain PageRank 0.046 (contribution -0.240)
+    feature embedding similarity 0.262 (contribution 0.195)
+    feature readability 0.714 (contribution -0.191)
+  https://www.smartcrewhq.com/all-in-one-dirt-work-software/ | new URL, not in the crawl | before n/a | after 12 of 13 | 984 words | 2 tables
     title All-in-One Dirt Work Software | SmartCrew
     h1 All-in-one dirt work software
     feature Crawl PageRank is 0. This URL has no inlinks in the stored crawl.
-    feature fetch speed 0.000 (contribution -0.614)
-    feature domain PageRank 0.046 (contribution -0.381)
-    feature embedding similarity 0.147 (contribution -0.223)
-    feature word count 1.000 (contribution 0.200)
-    feature originality 0.753 (contribution -0.177)
+    feature originality 0.753 (contribution -0.300)
+    feature domain PageRank 0.046 (contribution -0.249)
+    feature title match 0.203 (contribution -0.207)
+    feature entity coverage 0.774 (contribution -0.160)
+    feature readability 0.789 (contribution -0.133)
+  https://www.smartcrewhq.com/all-in-one-heavy-civil-software/ | new URL, not in the crawl | before n/a | after 13 of 13 | 1276 words | 2 tables
+    title All-in-One Heavy Civil Construction Software | SmartCrew
+    h1 All-in-one heavy civil construction software
+    feature Crawl PageRank is 0. This URL has no inlinks in the stored crawl.
+    feature embedding similarity 0.038 (contribution -0.731)
+    feature heading match 0.217 (contribution 0.367)
+    feature originality 0.752 (contribution -0.293)
+    feature domain PageRank 0.046 (contribution -0.255)
+    feature entity coverage 0.767 (contribution -0.133)
 Real Google top 3, and the remaining gap versus the best predicted SmartCrew page:
   Google #1 predicted rank 1 of 13 | Earthwork & Excavation Bidding & Estimating Software | HCSS | https://www.hcss.com/who-uses-hcss/earthwork-estimating-software/
     Model places this crawled page ahead of SmartCrew.
     Features where this page is still higher than the best predicted SmartCrew page:
-    title match Google page 0.996, SmartCrew 0.000
-    domain PageRank Google page 0.187, SmartCrew 0.046
-    URL match Google page 0.376, SmartCrew 0.000
-    BM25F Google page 0.979, SmartCrew 0.771
-  Google #2 predicted rank 6 of 13 | Earthwork & Sitework Estimating Software | Contractor Software | https://www.stackct.com/sitework-takeoff-estimating-construction-software/
+    link count Google page 74.000, SmartCrew 7.000
+    anchor text Google page 4.479, SmartCrew 0.000
+    title match Google page 0.996, SmartCrew 0.178
+    originality Google page 0.997, SmartCrew 0.522
+  Google #2 predicted rank 2 of 13 | Earthwork & Sitework Estimating Software | Contractor Software | https://www.stackct.com/sitework-takeoff-estimating-construction-software/
+    Model places this crawled page ahead of SmartCrew.
+    Features where this page is still higher than the best predicted SmartCrew page:
+    title match Google page 1.720, SmartCrew 0.178
+    originality Google page 0.996, SmartCrew 0.522
+    BM25F Google page 1.095, SmartCrew 0.084
+    body match Google page 0.738, SmartCrew 0.065
+  Google #3 predicted rank 10 of 13 | Top 10 Excavation Field Service Software In 2026 | QuoteIQ | https://myquoteiq.com/top-10-excavation-field-service-software-in-2026/
     Model places SmartCrew ahead of this crawled page.
     Features where this page is still higher than the best predicted SmartCrew page:
-    title match Google page 1.720, SmartCrew 0.000
-    BM25F Google page 1.095, SmartCrew 0.771
-    URL match Google page 0.376, SmartCrew 0.000
-    heading match Google page 0.207, SmartCrew 0.000
-  Google #3 predicted rank 8 of 13 | Top 10 Excavation Field Service Software In 2026 | QuoteIQ | https://myquoteiq.com/top-10-excavation-field-service-software-in-2026/
-    Model places SmartCrew ahead of this crawled page.
-    Features where this page is still higher than the best predicted SmartCrew page:
-    link count Google page 128.000, SmartCrew 94.000
-    heading match Google page 2.776, SmartCrew 0.000
-    title match Google page 0.871, SmartCrew 0.000
-    H1 match Google page 1.032, SmartCrew 0.000
+    link count Google page 128.000, SmartCrew 7.000
+    heading match Google page 2.776, SmartCrew 0.192
+    URL match Google page 1.210, SmartCrew 0.000
+    body match Google page 1.302, SmartCrew 0.065
 
 Query: heavy civil field management software
 Predicted. Not a live Google rank.
 Real Google position: not in the labeled file.
 Best predicted SmartCrew page before: n/a (none in the crawled labeled set).
-Best predicted SmartCrew page after the bundle: 3 of 13 https://www.smartcrewhq.com/compare/hcss-heavyjob-alternative/.
+Best predicted SmartCrew page after the bundle: 4 of 15 https://www.smartcrewhq.com/.
+That page has 27 extracted words. The built file is a short crawl shell, not a full article. With pairwise accuracy at the cross-validated number above, this slot is not evidence the shell would outrank the crawled pages.
+Best predicted SmartCrew page with at least 150 extracted words: 6 of 15 https://www.smartcrewhq.com/compare/hcss-heavyjob-alternative/.
 The after rank inserts SmartCrew into a set where the labeled file has no crawled SmartCrew URL. It is not a move from a Google position.
 SmartCrew pages in this query:
-  https://www.smartcrewhq.com/compare/hcss-heavyjob-alternative/ | inserted from the crawl, PR HTML | before n/a | after 3 of 13 | 3588 words | 3 tables
-    title HCSS Alternative for Dirtwork Contractors | SmartCrew
-    h1 HCSS alternative for dirtwork contractors
-    feature site radius 0.305 (contribution 0.641)
-    feature originality 0.852 (contribution -0.478)
-    feature domain PageRank 0.046 (contribution -0.271)
-    feature title match 0.000 (contribution 0.269)
-    feature readability 0.898 (contribution -0.147)
-  https://www.smartcrewhq.com/ | inserted from the crawl, PR HTML | before n/a | after 6 of 13 | 27 words | 0 tables
+  https://www.smartcrewhq.com/ | inserted from the crawl, PR HTML | before n/a | after 4 of 15 | 27 words | 0 tables
     title All-in-One Heavy Civil and Dirt Work Software | SmartCrew
     h1 All-in-one heavy civil and dirt work software for dirtwork companies
-    feature site radius 0.150 (contribution 0.617)
-    feature domain PageRank 0.046 (contribution -0.228)
-    feature originality 0.478 (contribution -0.223)
-    feature title match 1.953 (contribution 0.207)
-    feature readability 0.766 (contribution -0.197)
-  https://www.smartcrewhq.com/blog/best-excavation-software-20-50-employees/ | inserted from the crawl, PR HTML | before n/a | after 8 of 13 | 2885 words | 5 tables
-    title Best All-in-One Dirt Work and Excavation Software, 20 to 50
-    h1 Best all-in-one dirt work and excavation software for a team of 20 to 50
-    feature site radius 0.230 (contribution 0.562)
-    feature originality 0.838 (contribution -0.489)
-    feature URL match 0.632 (contribution -0.308)
-    feature embedding similarity 0.249 (contribution 0.198)
-    feature entity coverage 0.680 (contribution 0.140)
-  https://www.smartcrewhq.com/all-in-one-heavy-civil-software/ | new URL, not in the crawl | before n/a | after 10 of 13 | 1276 words | 2 tables
+    feature fetch speed 0.737 (contribution 0.663)
+    feature link count 7.000 (contribution 0.437)
+    feature crawl PageRank 0.014 (contribution 0.261)
+    feature URL match 0.000 (contribution 0.240)
+    feature heading match 2.325 (contribution -0.239)
+  https://www.smartcrewhq.com/compare/hcss-heavyjob-alternative/ | inserted from the crawl, PR HTML | before n/a | after 6 of 15 | 3588 words | 3 tables
+    title HCSS Alternative for Dirtwork Contractors | SmartCrew
+    h1 HCSS alternative for dirtwork contractors
+    feature URL match 0.000 (contribution 0.511)
+    feature crawl PageRank 0.014 (contribution 0.294)
+    feature originality 0.852 (contribution -0.245)
+    feature title match 0.000 (contribution -0.156)
+    feature heading match 2.061 (contribution -0.147)
+  https://www.smartcrewhq.com/all-in-one-heavy-civil-software/ | new URL, not in the crawl | before n/a | after 7 of 15 | 1276 words | 2 tables
     title All-in-One Heavy Civil Construction Software | SmartCrew
     h1 All-in-one heavy civil construction software
     feature Crawl PageRank is 0. This URL has no inlinks in the stored crawl.
-    feature site radius 0.232 (contribution 0.560)
-    feature fetch speed 0.000 (contribution -0.376)
-    feature title match 2.079 (contribution 0.307)
-    feature URL match 4.055 (contribution -0.238)
-    feature readability 0.855 (contribution -0.143)
-  https://www.smartcrewhq.com/blog/best-software-small-dirt-work-contractors/ | inserted from the crawl, PR HTML | before n/a | after 12 of 13 | 4667 words | 4 tables
+    feature originality 0.744 (contribution -0.343)
+    feature H1 match 2.510 (contribution 0.155)
+    feature title match 1.980 (contribution 0.146)
+    feature word count 1.000 (contribution 0.125)
+    feature content effort 0.317 (contribution -0.123)
+  https://www.smartcrewhq.com/blog/best-excavation-software-20-50-employees/ | inserted from the crawl, PR HTML | before n/a | after 12 of 15 | 2885 words | 5 tables
+    title Best All-in-One Dirt Work and Excavation Software, 20 to 50
+    h1 Best all-in-one dirt work and excavation software for a team of 20 to 50
+    feature originality 0.838 (contribution -0.264)
+    feature embedding similarity 0.249 (contribution 0.249)
+    feature URL match 0.638 (contribution -0.223)
+    feature title match 0.291 (contribution -0.157)
+    feature entity coverage 0.633 (contribution 0.144)
+  https://www.smartcrewhq.com/blog/best-software-small-dirt-work-contractors/ | inserted from the crawl, PR HTML | before n/a | after 13 of 15 | 4667 words | 4 tables
     title Dirt Work Contractor Software for Small Crews | SmartCrew
     h1 Dirt work contractor software for small dirtwork crews
-    feature site radius 0.303 (contribution 0.642)
-    feature embedding similarity 0.152 (contribution -0.490)
-    feature URL match 0.632 (contribution -0.312)
-    feature originality 0.905 (contribution -0.268)
-    feature readability 0.714 (contribution -0.229)
-  https://www.smartcrewhq.com/all-in-one-dirt-work-software/ | new URL, not in the crawl | before n/a | after 13 of 13 | 984 words | 2 tables
+    feature originality 0.905 (contribution -0.602)
+    feature readability 0.714 (contribution -0.143)
+    feature crawl PageRank 0.014 (contribution 0.142)
+    feature domain PageRank 0.046 (contribution -0.120)
+    feature URL match 0.638 (contribution -0.111)
+  https://www.smartcrewhq.com/all-in-one-dirt-work-software/ | new URL, not in the crawl | before n/a | after 15 of 15 | 984 words | 2 tables
     title All-in-One Dirt Work Software | SmartCrew
     h1 All-in-one dirt work software
     feature Crawl PageRank is 0. This URL has no inlinks in the stored crawl.
-    feature site radius 0.177 (contribution 0.569)
-    feature embedding similarity 0.142 (contribution -0.426)
-    feature fetch speed 0.000 (contribution -0.400)
-    feature URL match 0.709 (contribution -0.305)
-    feature originality 0.753 (contribution -0.294)
+    feature originality 0.753 (contribution -0.607)
+    feature URL match 0.715 (contribution -0.227)
+    feature embedding similarity 0.142 (contribution 0.187)
+    feature content effort 0.335 (contribution -0.168)
+    feature readability 0.789 (contribution -0.166)
 Real Google top 3, and the remaining gap versus the best predicted SmartCrew page:
-  Google #1 predicted rank 2 of 13 | Construction Software for Contractors of Every Size | HCSS | https://www.hcss.com/
+  Google #1 predicted rank 1 of 15 | Construction Software for Contractors of Every Size | HCSS | https://www.hcss.com/
     Model places this crawled page ahead of SmartCrew.
     Features where this page is still higher than the best predicted SmartCrew page:
-    anchor text Google page 7.821, SmartCrew 2.286
-    domain PageRank Google page 0.187, SmartCrew 0.046
-    title match Google page 0.413, SmartCrew 0.000
-    H1 match Google page 0.693, SmartCrew 0.000
-  Google #2 predicted rank 5 of 13 | 6 best construction management software for field teams | Fieldwire by Hilti | https://www.fieldwire.com/blog/construction-and-project-management-software/
+    link count Google page 75.000, SmartCrew 7.000
+    originality Google page 0.973, SmartCrew 0.478
+    word count Google page 1.000, SmartCrew 0.072
+    content effort Google page 0.443, SmartCrew 0.061
+  Google #2 predicted rank 8 of 15 | 6 best construction management software for field teams | Fieldwire by Hilti | https://www.fieldwire.com/blog/construction-and-project-management-software/
     Model places SmartCrew ahead of this crawled page.
     Features where this page is still higher than the best predicted SmartCrew page:
-    title match Google page 3.033, SmartCrew 0.000
-    URL match Google page 2.302, SmartCrew 0.000
-    heading match Google page 4.165, SmartCrew 1.994
-    H1 match Google page 2.937, SmartCrew 0.000
-  Google #3 predicted rank 9 of 13 | Trimble Construction One for Heavy Civil Construction | https://www.trimble.com/en/solutions/trimble-construction-one/civil
-    Model places SmartCrew ahead of this crawled page.
+    link count Google page 94.000, SmartCrew 7.000
+    heading match Google page 4.384, SmartCrew 2.325
+    URL match Google page 2.467, SmartCrew 0.000
+    title match Google page 3.231, SmartCrew 1.860
+  Google #3 predicted rank 3 of 15 | Trimble Construction One for Heavy Civil Construction | https://www.trimble.com/en/solutions/trimble-construction-one/civil
+    Model places this crawled page ahead of SmartCrew.
     Features where this page is still higher than the best predicted SmartCrew page:
-    title match Google page 1.810, SmartCrew 0.000
-    URL match Google page 1.207, SmartCrew 0.000
-    H1 match Google page 1.051, SmartCrew 0.000
+    URL match Google page 1.129, SmartCrew 0.000
+    originality Google page 0.625, SmartCrew 0.478
     URL term match Google page 0.200, SmartCrew 0.000
+    site focus Google page 1.000, SmartCrew 0.850
 
 Query: hcss heavybid alternative
 Predicted. Not a live Google rank.
 Real Google position: not in the labeled file.
 Best predicted SmartCrew page before: n/a (none in the crawled labeled set).
-Best predicted SmartCrew page after the bundle: 1 of 8 https://www.smartcrewhq.com/.
+Best predicted SmartCrew page after the bundle: 4 of 11 https://www.smartcrewhq.com/.
 That page has 27 extracted words. The built file is a short crawl shell, not a full article. With pairwise accuracy at the cross-validated number above, this slot is not evidence the shell would outrank the crawled pages.
-Best predicted SmartCrew page with at least 150 extracted words: 2 of 8 https://www.smartcrewhq.com/blog/best-software-small-dirt-work-contractors/.
+Best predicted SmartCrew page with at least 150 extracted words: 5 of 11 https://www.smartcrewhq.com/all-in-one-dirt-work-software/.
 The after rank inserts SmartCrew into a set where the labeled file has no crawled SmartCrew URL. It is not a move from a Google position.
 SmartCrew pages in this query:
-  https://www.smartcrewhq.com/ | inserted from the crawl, PR HTML | before n/a | after 1 of 8 | 27 words | 0 tables
+  https://www.smartcrewhq.com/ | inserted from the crawl, PR HTML | before n/a | after 4 of 11 | 27 words | 0 tables
     title All-in-One Heavy Civil and Dirt Work Software | SmartCrew
     h1 All-in-one heavy civil and dirt work software for dirtwork companies
-    feature heading match 0.000 (contribution 1.222)
-    feature link count 7.000 (contribution 0.328)
-    feature fetch speed 0.737 (contribution 0.297)
-    feature domain PageRank 0.046 (contribution -0.272)
-    feature H1 match 0.000 (contribution 0.194)
-  https://www.smartcrewhq.com/blog/best-software-small-dirt-work-contractors/ | inserted from the crawl, PR HTML | before n/a | after 2 of 8 | 4667 words | 4 tables
-    title Dirt Work Contractor Software for Small Crews | SmartCrew
-    h1 Dirt work contractor software for small dirtwork crews
-    feature heading match 0.000 (contribution 0.874)
-    feature embedding similarity 0.218 (contribution 0.278)
-    feature domain PageRank 0.046 (contribution -0.263)
-    feature originality 0.905 (contribution -0.242)
-    feature title match 0.000 (contribution 0.157)
-  https://www.smartcrewhq.com/blog/best-excavation-software-20-50-employees/ | inserted from the crawl, PR HTML | before n/a | after 4 of 8 | 2885 words | 5 tables
-    title Best All-in-One Dirt Work and Excavation Software, 20 to 50
-    h1 Best all-in-one dirt work and excavation software for a team of 20 to 50
-    feature originality 0.838 (contribution -0.211)
-    feature heading match 0.396 (contribution 0.187)
-    feature homepage authority 0.014 (contribution 0.133)
-    feature body match 0.861 (contribution 0.132)
-    feature freshness 1.000 (contribution 0.122)
-  https://www.smartcrewhq.com/compare/hcss-heavyjob-alternative/ | inserted from the crawl, PR HTML | before n/a | after 5 of 8 | 3588 words | 3 tables
-    title HCSS Alternative for Dirtwork Contractors | SmartCrew
-    h1 HCSS alternative for dirtwork contractors
-    feature title match 3.140 (contribution 1.013)
-    feature entity coverage 0.833 (contribution -0.244)
-    feature originality 0.848 (contribution -0.230)
-    feature H1 match 3.330 (contribution -0.192)
-    feature anchor text 4.435 (contribution -0.185)
-  https://www.smartcrewhq.com/all-in-one-dirt-work-software/ | new URL, not in the crawl | before n/a | after 6 of 8 | 984 words | 2 tables
+    feature heading match 0.000 (contribution 0.570)
+    feature fetch speed 0.737 (contribution 0.557)
+    feature title match 0.000 (contribution -0.279)
+    feature embedding similarity 0.057 (contribution -0.244)
+    feature URL match 0.000 (contribution 0.171)
+  https://www.smartcrewhq.com/all-in-one-dirt-work-software/ | new URL, not in the crawl | before n/a | after 5 of 11 | 984 words | 2 tables
     title All-in-One Dirt Work Software | SmartCrew
     h1 All-in-one dirt work software
     feature Crawl PageRank is 0. This URL has no inlinks in the stored crawl.
-    feature heading match 0.000 (contribution 0.917)
-    feature fetch speed 0.000 (contribution -0.647)
-    feature domain PageRank 0.046 (contribution -0.398)
-    feature originality 0.753 (contribution -0.283)
-    feature body match 2.251 (contribution -0.217)
-  https://www.smartcrewhq.com/all-in-one-heavy-civil-software/ | new URL, not in the crawl | before n/a | after 7 of 8 | 1276 words | 2 tables
+    feature heading match 0.000 (contribution 0.698)
+    feature embedding similarity 0.110 (contribution -0.331)
+    feature fetch speed 0.000 (contribution 0.201)
+    feature domain PageRank 0.046 (contribution -0.199)
+    feature title match 0.000 (contribution -0.194)
+  https://www.smartcrewhq.com/blog/best-software-small-dirt-work-contractors/ | inserted from the crawl, PR HTML | before n/a | after 6 of 11 | 4667 words | 4 tables
+    title Dirt Work Contractor Software for Small Crews | SmartCrew
+    h1 Dirt work contractor software for small dirtwork crews
+    feature heading match 0.000 (contribution 0.518)
+    feature fetch speed 0.731 (contribution 0.459)
+    feature title match 0.000 (contribution -0.353)
+    feature embedding similarity 0.218 (contribution -0.227)
+    feature BM25F 0.000 (contribution -0.174)
+  https://www.smartcrewhq.com/all-in-one-heavy-civil-software/ | new URL, not in the crawl | before n/a | after 7 of 11 | 1276 words | 2 tables
     title All-in-One Heavy Civil Construction Software | SmartCrew
     h1 All-in-one heavy civil construction software
     feature Crawl PageRank is 0. This URL has no inlinks in the stored crawl.
-    feature fetch speed 0.000 (contribution -0.653)
-    feature domain PageRank 0.046 (contribution -0.438)
-    feature originality 0.756 (contribution -0.253)
-    feature entity coverage 0.826 (contribution -0.251)
-    feature embedding similarity 0.246 (contribution 0.245)
+    feature embedding similarity 0.246 (contribution 0.257)
+    feature domain PageRank 0.046 (contribution -0.194)
+    feature title match 0.000 (contribution -0.186)
+    feature fetch speed 0.000 (contribution 0.185)
+    feature freshness 1.000 (contribution 0.152)
+  https://www.smartcrewhq.com/compare/hcss-heavyjob-alternative/ | inserted from the crawl, PR HTML | before n/a | after 9 of 11 | 3588 words | 3 tables
+    title HCSS Alternative for Dirtwork Contractors | SmartCrew
+    h1 HCSS alternative for dirtwork contractors
+    feature body match 2.597 (contribution -0.356)
+    feature title match 3.623 (contribution 0.354)
+    feature originality 0.848 (contribution -0.197)
+    feature heading match 2.948 (contribution -0.156)
+    feature fetch speed 0.724 (contribution 0.154)
+  https://www.smartcrewhq.com/blog/best-excavation-software-20-50-employees/ | inserted from the crawl, PR HTML | before n/a | after 10 of 11 | 2885 words | 5 tables
+    title Best All-in-One Dirt Work and Excavation Software, 20 to 50
+    h1 Best all-in-one dirt work and excavation software for a team of 20 to 50
+    feature title match 0.000 (contribution -0.210)
+    feature readability 0.896 (contribution -0.190)
+    feature content effort 0.218 (contribution -0.185)
+    feature originality 0.838 (contribution -0.145)
+    feature BM25F 0.685 (contribution 0.134)
 Real Google top 3, and the remaining gap versus the best predicted SmartCrew page:
-  Google #1 https://www.softwareadvice.com/construction/hcss-profile/alternatives/ | fetch error (HTTP 403). No page text was invented.
-  Google #2 predicted rank 8 of 8 | HCSS Alternatives for Heavy Civil Contractors (2026) | https://constructionbids.ai/blog/hcss-alternative-heavy-construction-software
+  Google #1 predicted rank 8 of 11 | Best 15 HeavyBid Alternatives in 2026 - Software Advice | https://www.softwareadvice.com/construction/hcss-profile/alternatives/
     Model places SmartCrew ahead of this crawled page.
     Features where this page is still higher than the best predicted SmartCrew page:
+    link count Google page 109.000, SmartCrew 7.000
+    heading match Google page 2.741, SmartCrew 0.000
+    title match Google page 1.963, SmartCrew 0.000
+    body match Google page 0.847, SmartCrew 0.000
+  Google #2 predicted rank 11 of 11 | HCSS Alternatives for Heavy Civil Contractors (2026) | https://constructionbids.ai/blog/hcss-alternative-heavy-construction-software
+    Model places SmartCrew ahead of this crawled page.
+    Features where this page is still higher than the best predicted SmartCrew page:
+    heading match Google page 5.410, SmartCrew 0.000
     link count Google page 30.000, SmartCrew 7.000
-    heading match Google page 5.044, SmartCrew 0.000
-    BM25F Google page 3.012, SmartCrew 0.000
-    URL match Google page 2.177, SmartCrew 0.000
-  Google #3 https://www.reddit.com/r/estimators/comments/11jjop2/estimating_software_options/ | blocked by robots.txt. No page text was invented.
+    body match Google page 2.766, SmartCrew 0.000
+    URL match Google page 1.981, SmartCrew 0.000
+  Google #3 predicted rank 2 of 11 | Estimating software options? : r/estimators | https://www.reddit.com/r/estimators/comments/11jjop2/estimating_software_options/
+    Model places this crawled page ahead of SmartCrew.
+    Features where this page is still higher than the best predicted SmartCrew page:
+    link count Google page 76.000, SmartCrew 7.000
+    body match Google page 1.779, SmartCrew 0.000
+    content effort Google page 0.613, SmartCrew 0.061
+    BM25F Google page 1.390, SmartCrew 0.000
 
 Query: all-in-one heavy civil construction software
 Predicted. Not a live Google rank.
 Real Google position: not in the labeled file.
 Best predicted SmartCrew page before: n/a (none in the crawled labeled set).
-Best predicted SmartCrew page after the bundle: 3 of 13 https://www.smartcrewhq.com/compare/hcss-heavyjob-alternative/.
+Best predicted SmartCrew page after the bundle: 4 of 15 https://www.smartcrewhq.com/.
+That page has 27 extracted words. The built file is a short crawl shell, not a full article. With pairwise accuracy at the cross-validated number above, this slot is not evidence the shell would outrank the crawled pages.
+Best predicted SmartCrew page with at least 150 extracted words: 6 of 15 https://www.smartcrewhq.com/blog/best-excavation-software-20-50-employees/.
 The after rank inserts SmartCrew into a set where the labeled file has no crawled SmartCrew URL. It is not a move from a Google position.
 SmartCrew pages in this query:
-  https://www.smartcrewhq.com/compare/hcss-heavyjob-alternative/ | inserted from the crawl, PR HTML | before n/a | after 3 of 13 | 3588 words | 3 tables
-    title HCSS Alternative for Dirtwork Contractors | SmartCrew
-    h1 HCSS alternative for dirtwork contractors
-    feature site radius 0.305 (contribution 0.472)
-    feature domain PageRank 0.046 (contribution -0.369)
-    feature originality 0.848 (contribution -0.278)
-    feature embedding similarity 0.173 (contribution -0.214)
-    feature freshness 1.000 (contribution 0.202)
-  https://www.smartcrewhq.com/blog/best-software-small-dirt-work-contractors/ | inserted from the crawl, PR HTML | before n/a | after 4 of 13 | 4667 words | 4 tables
-    title Dirt Work Contractor Software for Small Crews | SmartCrew
-    h1 Dirt work contractor software for small dirtwork crews
-    feature site radius 0.303 (contribution 0.434)
-    feature originality 0.905 (contribution -0.400)
-    feature domain PageRank 0.046 (contribution -0.323)
-    feature freshness 1.000 (contribution 0.231)
-    feature title match 0.192 (contribution -0.156)
-  https://www.smartcrewhq.com/ | inserted from the crawl, PR HTML | before n/a | after 5 of 13 | 27 words | 0 tables
+  https://www.smartcrewhq.com/ | inserted from the crawl, PR HTML | before n/a | after 4 of 15 | 27 words | 0 tables
     title All-in-One Heavy Civil and Dirt Work Software | SmartCrew
     h1 All-in-one heavy civil and dirt work software for dirtwork companies
-    feature title match 3.809 (contribution 0.529)
-    feature embedding similarity 0.644 (contribution -0.419)
-    feature link count 7.000 (contribution 0.415)
-    feature site radius 0.150 (contribution 0.348)
-    feature domain PageRank 0.046 (contribution -0.335)
-  https://www.smartcrewhq.com/all-in-one-dirt-work-software/ | new URL, not in the crawl | before n/a | after 6 of 13 | 984 words | 2 tables
+    feature embedding similarity 0.644 (contribution -0.467)
+    feature link count 7.000 (contribution 0.356)
+    feature fetch speed 0.737 (contribution 0.355)
+    feature domain PageRank 0.046 (contribution -0.202)
+    feature H1 match 3.693 (contribution -0.149)
+  https://www.smartcrewhq.com/blog/best-excavation-software-20-50-employees/ | inserted from the crawl, PR HTML | before n/a | after 6 of 15 | 2885 words | 5 tables
+    title Best All-in-One Dirt Work and Excavation Software, 20 to 50
+    h1 Best all-in-one dirt work and excavation software for a team of 20 to 50
+    feature originality 0.838 (contribution -0.534)
+    feature heading match 3.531 (contribution -0.158)
+    feature title match 1.857 (contribution 0.157)
+    feature content effort 0.218 (contribution -0.134)
+    feature H1 match 1.821 (contribution 0.132)
+  https://www.smartcrewhq.com/all-in-one-dirt-work-software/ | new URL, not in the crawl | before n/a | after 9 of 15 | 984 words | 2 tables
     title All-in-One Dirt Work Software | SmartCrew
     h1 All-in-one dirt work software
     feature Crawl PageRank is 0. This URL has no inlinks in the stored crawl.
-    feature fetch speed 0.000 (contribution -1.342)
-    feature entity coverage 0.864 (contribution 1.298)
-    feature originality 0.753 (contribution -0.564)
-    feature freshness 1.000 (contribution 0.278)
-    feature site radius 0.177 (contribution 0.249)
-  https://www.smartcrewhq.com/blog/best-excavation-software-20-50-employees/ | inserted from the crawl, PR HTML | before n/a | after 7 of 13 | 2885 words | 5 tables
-    title Best All-in-One Dirt Work and Excavation Software, 20 to 50
-    h1 Best all-in-one dirt work and excavation software for a team of 20 to 50
-    feature entity coverage 0.762 (contribution -0.532)
-    feature domain PageRank 0.046 (contribution -0.336)
-    feature freshness 1.000 (contribution 0.314)
-    feature site radius 0.230 (contribution 0.283)
-    feature originality 0.838 (contribution -0.283)
-  https://www.smartcrewhq.com/all-in-one-heavy-civil-software/ | new URL, not in the crawl | before n/a | after 13 of 13 | 1276 words | 2 tables
+    feature originality 0.753 (contribution -0.692)
+    feature entity coverage 0.808 (contribution -0.248)
+    feature URL match 3.314 (contribution -0.213)
+    feature embedding similarity 0.337 (contribution 0.191)
+    feature title match 2.249 (contribution 0.185)
+  https://www.smartcrewhq.com/compare/hcss-heavyjob-alternative/ | inserted from the crawl, PR HTML | before n/a | after 11 of 15 | 3588 words | 3 tables
+    title HCSS Alternative for Dirtwork Contractors | SmartCrew
+    h1 HCSS alternative for dirtwork contractors
+    feature entity coverage 0.750 (contribution -0.345)
+    feature title match 0.000 (contribution -0.344)
+    feature originality 0.848 (contribution -0.302)
+    feature domain PageRank 0.046 (contribution -0.141)
+    feature heading match 1.925 (contribution -0.134)
+  https://www.smartcrewhq.com/all-in-one-heavy-civil-software/ | new URL, not in the crawl | before n/a | after 14 of 15 | 1276 words | 2 tables
     title All-in-One Heavy Civil Construction Software | SmartCrew
     h1 All-in-one heavy civil construction software
     feature Crawl PageRank is 0. This URL has no inlinks in the stored crawl.
-    feature originality 0.744 (contribution -0.471)
-    feature fetch speed 0.000 (contribution -0.409)
-    feature entity coverage 0.818 (contribution -0.351)
-    feature title match 4.548 (contribution 0.333)
-    feature site radius 0.232 (contribution 0.226)
+    feature embedding similarity 0.682 (contribution -0.493)
+    feature originality 0.744 (contribution -0.408)
+    feature entity coverage 0.769 (contribution -0.248)
+    feature URL match 6.147 (contribution -0.204)
+    feature title match 4.449 (contribution 0.146)
+  https://www.smartcrewhq.com/blog/best-software-small-dirt-work-contractors/ | inserted from the crawl, PR HTML | before n/a | after 15 of 15 | 4667 words | 4 tables
+    title Dirt Work Contractor Software for Small Crews | SmartCrew
+    h1 Dirt work contractor software for small dirtwork crews
+    feature entity coverage 0.750 (contribution -0.582)
+    feature originality 0.905 (contribution -0.422)
+    feature title match 0.167 (contribution -0.382)
+    feature fetch speed 0.731 (contribution 0.187)
+    feature readability 0.714 (contribution -0.139)
 Real Google top 3, and the remaining gap versus the best predicted SmartCrew page:
-  Google #1 predicted rank 1 of 13 | Construction Software for Contractors of Every Size | HCSS | https://www.hcss.com/
+  Google #1 predicted rank 1 of 15 | Construction Software for Contractors of Every Size | HCSS | https://www.hcss.com/
     Model places this crawled page ahead of SmartCrew.
     Features where this page is still higher than the best predicted SmartCrew page:
-    heading match Google page 2.624, SmartCrew 1.930
-    title match Google page 0.726, SmartCrew 0.000
-    H1 match Google page 1.720, SmartCrew 0.000
-    domain PageRank Google page 0.187, SmartCrew 0.046
-  Google #2 predicted rank 2 of 13 | Trimble Construction One for Heavy Civil Construction | https://www.trimble.com/en/solutions/trimble-construction-one/civil
+    link count Google page 75.000, SmartCrew 7.000
+    anchor text Google page 6.847, SmartCrew 0.000
+    freshness Google page 0.677, SmartCrew 0.000
+    originality Google page 0.978, SmartCrew 0.522
+  Google #2 predicted rank 3 of 15 | Trimble Construction One for Heavy Civil Construction | https://www.trimble.com/en/solutions/trimble-construction-one/civil
     Model places this crawled page ahead of SmartCrew.
     Features where this page is still higher than the best predicted SmartCrew page:
-    title match Google page 3.905, SmartCrew 0.000
-    URL match Google page 3.221, SmartCrew 0.000
-    H1 match Google page 1.304, SmartCrew 0.000
-    embedding similarity Google page 0.655, SmartCrew 0.173
-  Google #3 https://www.sage.com/en-us/sage-construction/heavy-civil/ | fetch error (HTTP 403). No page text was invented.
+    URL match Google page 3.116, SmartCrew 0.000
+    URL term match Google page 0.500, SmartCrew 0.000
+    originality Google page 0.625, SmartCrew 0.522
+    site focus Google page 1.000, SmartCrew 0.850
+  Google #3 predicted rank 13 of 15 | Heavy Civil Construction Software | Sage US | https://www.sage.com/en-us/sage-construction/heavy-civil/
+    Model places SmartCrew ahead of this crawled page.
+    Features where this page is still higher than the best predicted SmartCrew page:
+    link count Google page 166.000, SmartCrew 7.000
+    URL match Google page 3.654, SmartCrew 0.000
+    originality Google page 0.974, SmartCrew 0.522
+    word count Google page 1.000, SmartCrew 0.072
 
 Query: all in one dirtwork software
 Predicted. Not a live Google rank.
 Real Google position: 1 at https://www.smartcrewhq.com/ (that URL was crawled).
-Best predicted SmartCrew page before: 3 of 7 https://www.smartcrewhq.com/.
-Best predicted SmartCrew page after HTML replacement only: 3 of 7.
-Best predicted SmartCrew page after the bundle: 4 of 11 https://www.smartcrewhq.com/.
-That page has 27 extracted words. The built file is a short crawl shell, not a full article. With pairwise accuracy at the cross-validated number above, this slot is not evidence the shell would outrank the crawled pages.
-Best predicted SmartCrew page with at least 150 extracted words: 5 of 11 https://www.smartcrewhq.com/compare/hcss-heavyjob-alternative/.
+Best predicted SmartCrew page before: 4 of 8 https://www.smartcrewhq.com/blog/best-excavation-software-20-50-employees/.
+Best predicted SmartCrew page after HTML replacement only: 4 of 8.
+Best predicted SmartCrew page after the bundle: 4 of 12 https://www.smartcrewhq.com/blog/best-excavation-software-20-50-employees/.
 SmartCrew pages in this query:
-  https://www.smartcrewhq.com/ | labeled, HTML replaced | before 3 of 7 | after 4 of 11 | words 0 -> 27 | tables 0 -> 0
-    title SmartCrew | All-in-One Software for Heavy Civil & Dirt Work -> All-in-One Heavy Civil and Dirt Work Software | SmartCrew
-    h1 All-in-one heavy civil and dirt work software for dirtwork companies
-    feature originality 0.667 -> 0.913 (contribution -0.246 -> -0.429)
-    feature H1 match 0.000 -> 3.523 (contribution -0.125 -> 0.012)
-    feature readability 0.000 -> 0.766 (contribution 0.123 -> 0.007)
-    feature link count 0.000 -> 7.000 (contribution 0.760 -> 0.871)
-    feature body match 0.000 -> 4.221 (contribution 0.046 -> -0.061)
-  https://www.smartcrewhq.com/compare/hcss-heavyjob-alternative/ | inserted from the crawl, PR HTML | before n/a | after 5 of 11 | 3588 words | 3 tables
-    title HCSS Alternative for Dirtwork Contractors | SmartCrew
-    h1 HCSS alternative for dirtwork contractors
-    feature originality 0.855 (contribution -0.549)
-    feature domain PageRank 0.046 (contribution -0.460)
-    feature BM25F 2.174 (contribution 0.314)
-    feature crawl PageRank 0.014 (contribution -0.250)
-    feature embedding similarity 0.035 (contribution -0.167)
-  https://www.smartcrewhq.com/all-in-one-dirt-work-software/ | new URL, not in the crawl | before n/a | after 6 of 11 | 984 words | 2 tables
-    title All-in-One Dirt Work Software | SmartCrew
-    h1 All-in-one dirt work software
-    feature Crawl PageRank is 0. This URL has no inlinks in the stored crawl.
-    feature originality 0.753 (contribution -0.839)
-    feature domain PageRank 0.046 (contribution -0.203)
-    feature BM25F 2.619 (contribution -0.191)
-    feature freshness 1.000 (contribution 0.171)
-    feature embedding similarity 0.508 (contribution -0.164)
-  https://www.smartcrewhq.com/all-in-one-heavy-civil-software/ | new URL, not in the crawl | before n/a | after 7 of 11 | 1276 words | 2 tables
+  https://www.smartcrewhq.com/blog/best-excavation-software-20-50-employees/ | labeled, HTML replaced | before 4 of 8 | after 4 of 12 | words 2822 -> 2885 | tables 5 -> 5
+    title Best All-in-One Excavation Software for a Team of 20 to 50 -> Best All-in-One Dirt Work and Excavation Software, 20 to 50
+    h1 Best all-in-one dirt work and excavation software for a team of 20 to 50
+    feature word count 0.936 -> 0.923 (contribution 0.086 -> -0.079)
+    feature entity coverage 0.778 -> 0.857 (contribution -0.016 -> 0.049)
+    feature title match 2.533 -> 2.409 (contribution 0.253 -> 0.201)
+    feature content effort 0.223 -> 0.218 (contribution -0.250 -> -0.208)
+    feature originality 0.986 -> 0.987 (contribution -0.101 -> -0.134)
+  https://www.smartcrewhq.com/all-in-one-heavy-civil-software/ | new URL, not in the crawl | before n/a | after 5 of 12 | 1276 words | 2 tables
     title All-in-One Heavy Civil Construction Software | SmartCrew
     h1 All-in-one heavy civil construction software
     feature Crawl PageRank is 0. This URL has no inlinks in the stored crawl.
-    feature originality 0.752 (contribution -0.896)
-    feature fetch speed 0.000 (contribution -0.235)
-    feature domain PageRank 0.046 (contribution -0.190)
-    feature embedding similarity 0.491 (contribution -0.186)
-    feature BM25F 2.143 (contribution 0.132)
-  https://www.smartcrewhq.com/blog/best-excavation-software-20-50-employees/ | labeled, HTML replaced | before 4 of 7 | after 9 of 11 | words 2822 -> 2885 | tables 5 -> 5
-    title Best All-in-One Excavation Software for a Team of 20 to 50 -> Best All-in-One Dirt Work and Excavation Software, 20 to 50
-    h1 Best all-in-one dirt work and excavation software for a team of 20 to 50
-    feature title match 2.404 -> 2.291 (contribution 0.190 -> -0.041)
-    feature URL term match 0.250 -> 0.250 (contribution -0.062 -> -0.184)
-    feature readability 0.885 -> 0.896 (contribution -0.087 -> -0.191)
-    feature freshness 0.994 -> 1.000 (contribution 0.239 -> 0.165)
-    feature originality 0.986 -> 0.987 (contribution -0.464 -> -0.533)
-  https://www.smartcrewhq.com/blog/best-software-small-dirt-work-contractors/ | inserted from the crawl, PR HTML | before n/a | after 11 of 11 | 4667 words | 4 tables
+    feature originality 0.752 (contribution -0.451)
+    feature title match 2.284 (contribution 0.284)
+    feature URL match 3.477 (contribution -0.209)
+    feature content effort 0.317 (contribution -0.195)
+    feature fetch speed 0.000 (contribution -0.158)
+  https://www.smartcrewhq.com/all-in-one-dirt-work-software/ | new URL, not in the crawl | before n/a | after 7 of 12 | 984 words | 2 tables
+    title All-in-One Dirt Work Software | SmartCrew
+    h1 All-in-one dirt work software
+    feature Crawl PageRank is 0. This URL has no inlinks in the stored crawl.
+    feature BM25F 2.699 (contribution -0.583)
+    feature originality 0.753 (contribution -0.340)
+    feature title match 2.445 (contribution 0.297)
+    feature content effort 0.335 (contribution -0.240)
+    feature URL match 3.477 (contribution -0.190)
+  https://www.smartcrewhq.com/blog/best-software-small-dirt-work-contractors/ | inserted from the crawl, PR HTML | before n/a | after 8 of 12 | 4667 words | 4 tables
     title Dirt Work Contractor Software for Small Crews | SmartCrew
     h1 Dirt work contractor software for small dirtwork crews
-    feature originality 0.905 (contribution -0.669)
-    feature domain PageRank 0.046 (contribution -0.238)
-    feature crawl PageRank 0.014 (contribution -0.175)
-    feature BM25F 2.739 (contribution -0.174)
-    feature embedding similarity 0.397 (contribution -0.163)
+    feature BM25F 2.834 (contribution -0.381)
+    feature originality 0.905 (contribution -0.365)
+    feature freshness 1.000 (contribution 0.209)
+    feature H1 match 1.390 (contribution 0.206)
+    feature content effort 0.139 (contribution -0.159)
+  https://www.smartcrewhq.com/ | labeled, HTML replaced | before 5 of 8 | after 9 of 12 | words 0 -> 27 | tables 0 -> 0
+    title SmartCrew | All-in-One Software for Heavy Civil & Dirt Work -> All-in-One Heavy Civil and Dirt Work Software | SmartCrew
+    h1 All-in-one heavy civil and dirt work software for dirtwork companies
+    feature BM25F 1.286 -> 4.521 (contribution 0.052 -> -0.376)
+    feature body match 0.000 -> 4.221 (contribution 0.081 -> -0.135)
+    feature fetch speed 0.737 -> 0.737 (contribution 0.111 -> -0.023)
+    feature H1 match 0.000 -> 3.660 (contribution -0.103 -> 0.026)
+    feature readability 0.000 -> 0.766 (contribution 0.131 -> 0.022)
+  https://www.smartcrewhq.com/compare/hcss-heavyjob-alternative/ | inserted from the crawl, PR HTML | before n/a | after 10 of 12 | 3588 words | 3 tables
+    title HCSS Alternative for Dirtwork Contractors | SmartCrew
+    h1 HCSS alternative for dirtwork contractors
+    feature embedding similarity 0.035 (contribution -0.414)
+    feature content effort 0.194 (contribution -0.394)
+    feature originality 0.855 (contribution -0.304)
+    feature domain PageRank 0.046 (contribution -0.258)
+    feature title match 2.433 (contribution 0.222)
 Real Google top 3, and the remaining gap versus the best predicted SmartCrew page:
-  Google #1 is the best predicted SmartCrew page, at 4 of 11. All-in-One Heavy Civil and Dirt Work Software | SmartCrew | https://www.smartcrewhq.com/
-  Google #2 predicted rank 3 of 11 | Dirt Work - Field Service Management for Excavation Companies | https://www.dirtworksoftware.com/
-    Model places this crawled page ahead of SmartCrew.
-    Features where this page is still higher than the best predicted SmartCrew page:
-    originality Google page 0.800, SmartCrew 0.522
-    site focus Google page 1.000, SmartCrew 0.850
-  Google #3 is another SmartCrew URL, predicted 9 of 11. Best All-in-One Dirt Work and Excavation Software, 20 to 50 | https://www.smartcrewhq.com/blog/best-excavation-software-20-50-employees/
+  Google #1 is another SmartCrew URL, predicted 9 of 12. All-in-One Heavy Civil and Dirt Work Software | SmartCrew | https://www.smartcrewhq.com/
     Features where this SmartCrew URL is higher than the best predicted SmartCrew page:
-    link count Google page 125.000, SmartCrew 7.000
-    anchor text Google page 11.020, SmartCrew 0.000
-    freshness Google page 1.000, SmartCrew 0.000
-    originality Google page 0.832, SmartCrew 0.522
+    H1 match Google page 2.908, SmartCrew 1.752
+    embedding similarity Google page 0.640, SmartCrew 0.468
+    heading match Google page 3.639, SmartCrew 3.104
+    title match Google page 2.142, SmartCrew 2.018
+  Google #2 predicted rank 6 of 12 | Dirt Work - Field Service Management for Excavation Companies | https://www.dirtworksoftware.com/
+    Model places SmartCrew ahead of this crawled page.
+    Features where this page is still higher than the best predicted SmartCrew page:
+    fetch speed Google page 0.721, SmartCrew 0.685
+    thin content Google page 1.000, SmartCrew 0.000
+    site focus Google page 1.000, SmartCrew 0.770
+  Google #3 is the best predicted SmartCrew page, at 4 of 12. Best All-in-One Dirt Work and Excavation Software, 20 to 50 | https://www.smartcrewhq.com/blog/best-excavation-software-20-50-employees/
 
 Query: all in one excavation software
 Predicted. Not a live Google rank.
@@ -1125,146 +1206,154 @@ SmartCrew pages in this query:
   https://www.smartcrewhq.com/ | inserted from the crawl, PR HTML | before n/a | after 1 of 14 | 27 words | 0 tables
     title All-in-One Heavy Civil and Dirt Work Software | SmartCrew
     h1 All-in-one heavy civil and dirt work software for dirtwork companies
-    feature title match 2.410 (contribution 0.815)
-    feature fetch speed 0.737 (contribution 0.616)
-    feature link count 7.000 (contribution 0.373)
-    feature domain PageRank 0.046 (contribution -0.358)
-    feature originality 0.522 (contribution 0.249)
+    feature link count 7.000 (contribution 0.653)
+    feature fetch speed 0.737 (contribution 0.568)
+    feature content effort 0.061 (contribution -0.268)
+    feature domain PageRank 0.046 (contribution -0.262)
+    feature title match 2.410 (contribution 0.122)
   https://www.smartcrewhq.com/blog/best-excavation-software-20-50-employees/ | inserted from the crawl, PR HTML | before n/a | after 2 of 14 | 2885 words | 5 tables
     title Best All-in-One Dirt Work and Excavation Software, 20 to 50
     h1 Best all-in-one dirt work and excavation software for a team of 20 to 50
-    feature title match 3.004 (contribution 0.514)
-    feature fetch speed 0.685 (contribution 0.469)
-    feature URL match 1.224 (contribution -0.260)
-    feature originality 0.835 (contribution 0.221)
-    feature heading match 3.796 (contribution -0.208)
-  https://www.smartcrewhq.com/all-in-one-heavy-civil-software/ | new URL, not in the crawl | before n/a | after 4 of 14 | 1276 words | 2 tables
+    feature title match 3.004 (contribution 0.282)
+    feature URL match 1.224 (contribution -0.279)
+    feature fetch speed 0.685 (contribution 0.128)
+    feature BM25F 0.855 (contribution 0.120)
+    feature originality 0.835 (contribution -0.117)
+  https://www.smartcrewhq.com/all-in-one-heavy-civil-software/ | new URL, not in the crawl | before n/a | after 3 of 14 | 1276 words | 2 tables
     title All-in-One Heavy Civil Construction Software | SmartCrew
     h1 All-in-one heavy civil construction software
     feature Crawl PageRank is 0. This URL has no inlinks in the stored crawl.
-    feature fetch speed 0.000 (contribution -1.052)
-    feature title match 2.566 (contribution 0.701)
-    feature URL match 3.796 (contribution -0.272)
-    feature heading match 2.707 (contribution 0.193)
-    feature domain PageRank 0.046 (contribution -0.189)
-  https://www.smartcrewhq.com/blog/best-software-small-dirt-work-contractors/ | inserted from the crawl, PR HTML | before n/a | after 8 of 14 | 4667 words | 4 tables
-    title Dirt Work Contractor Software for Small Crews | SmartCrew
-    h1 Dirt work contractor software for small dirtwork crews
-    feature domain PageRank 0.046 (contribution -0.477)
-    feature crawl PageRank 0.014 (contribution -0.295)
-    feature BM25F 0.823 (contribution -0.206)
-    feature heading match 2.928 (contribution -0.195)
-    feature entity coverage 0.636 (contribution 0.184)
-  https://www.smartcrewhq.com/compare/hcss-heavyjob-alternative/ | inserted from the crawl, PR HTML | before n/a | after 10 of 14 | 3588 words | 3 tables
-    title HCSS Alternative for Dirtwork Contractors | SmartCrew
-    h1 HCSS alternative for dirtwork contractors
-    feature domain PageRank 0.046 (contribution -0.503)
-    feature embedding similarity 0.000 (contribution -0.292)
-    feature originality 0.861 (contribution -0.202)
-    feature site radius 0.305 (contribution 0.187)
-    feature fetch speed 0.724 (contribution 0.152)
-  https://www.smartcrewhq.com/all-in-one-dirt-work-software/ | new URL, not in the crawl | before n/a | after 11 of 14 | 984 words | 2 tables
+    feature title match 2.566 (contribution 0.239)
+    feature entity coverage 0.676 (contribution 0.190)
+    feature originality 0.756 (contribution -0.178)
+    feature URL match 3.796 (contribution -0.156)
+    feature BM25F 0.736 (contribution 0.128)
+  https://www.smartcrewhq.com/all-in-one-dirt-work-software/ | new URL, not in the crawl | before n/a | after 4 of 14 | 984 words | 2 tables
     title All-in-One Dirt Work Software | SmartCrew
     h1 All-in-one dirt work software
     feature Crawl PageRank is 0. This URL has no inlinks in the stored crawl.
-    feature fetch speed 0.000 (contribution -1.113)
-    feature title match 2.745 (contribution 0.306)
-    feature URL match 3.796 (contribution -0.272)
-    feature domain PageRank 0.046 (contribution -0.227)
-    feature heading match 3.403 (contribution -0.224)
+    feature title match 2.745 (contribution 0.235)
+    feature entity coverage 0.686 (contribution 0.179)
+    feature BM25F 0.832 (contribution 0.155)
+    feature originality 0.745 (contribution -0.153)
+    feature URL match 3.796 (contribution -0.152)
+  https://www.smartcrewhq.com/compare/hcss-heavyjob-alternative/ | inserted from the crawl, PR HTML | before n/a | after 10 of 14 | 3588 words | 3 tables
+    title HCSS Alternative for Dirtwork Contractors | SmartCrew
+    h1 HCSS alternative for dirtwork contractors
+    feature embedding similarity 0.000 (contribution -0.404)
+    feature fetch speed 0.724 (contribution 0.343)
+    feature domain PageRank 0.046 (contribution -0.256)
+    feature title match 0.000 (contribution -0.249)
+    feature readability 0.898 (contribution -0.149)
+  https://www.smartcrewhq.com/blog/best-software-small-dirt-work-contractors/ | inserted from the crawl, PR HTML | before n/a | after 13 of 14 | 4667 words | 4 tables
+    title Dirt Work Contractor Software for Small Crews | SmartCrew
+    h1 Dirt work contractor software for small dirtwork crews
+    feature title match 0.181 (contribution -0.352)
+    feature domain PageRank 0.046 (contribution -0.308)
+    feature anchor text 10.440 (contribution -0.146)
+    feature originality 0.902 (contribution -0.145)
+    feature readability 0.714 (contribution -0.118)
 Real Google top 3, and the remaining gap versus the best predicted SmartCrew page:
   Google #1 predicted rank 12 of 14 | Top 10 Job Management Software For Excavation Contractors 2026 | https://myquoteiq.com/top-10-best-job-management-software-for-excavation-contractors-in-2026/
     Model places SmartCrew ahead of this crawled page.
     Features where this page is still higher than the best predicted SmartCrew page:
     link count Google page 127.000, SmartCrew 7.000
     URL match Google page 1.161, SmartCrew 0.000
-    URL term match Google page 0.500, SmartCrew 0.000
-    FAQ Google page 1.000, SmartCrew 0.000
+    originality Google page 0.989, SmartCrew 0.522
+    entity coverage Google page 0.719, SmartCrew 0.286
   Google #2 predicted rank 9 of 14 | Earthwork Takeoff Software: Accurate Estimates Fast - AGTEK | https://agtek.com/construction-takeoffs/
     Model places SmartCrew ahead of this crawled page.
     Features where this page is still higher than the best predicted SmartCrew page:
     link count Google page 29.000, SmartCrew 7.000
-    FAQ Google page 1.000, SmartCrew 0.000
-    freshness Google page 0.891, SmartCrew 0.000
+    content effort Google page 0.467, SmartCrew 0.061
     originality Google page 0.984, SmartCrew 0.522
-  Google #3 predicted rank 3 of 14 | Earthwork & Sitework Estimating Software | Contractor Software | https://www.stackct.com/sitework-takeoff-estimating-construction-software/
+    word count Google page 1.000, SmartCrew 0.072
+  Google #3 predicted rank 5 of 14 | Earthwork & Sitework Estimating Software | Contractor Software | https://www.stackct.com/sitework-takeoff-estimating-construction-software/
     Model places SmartCrew ahead of this crawled page.
     Features where this page is still higher than the best predicted SmartCrew page:
     URL match Google page 0.429, SmartCrew 0.000
-    FAQ Google page 1.000, SmartCrew 0.000
-    URL term match Google page 0.250, SmartCrew 0.000
+    content effort Google page 0.534, SmartCrew 0.061
     originality Google page 0.993, SmartCrew 0.522
+    word count Google page 0.991, SmartCrew 0.072
 
 Query: best all in one heavy civil software
 Predicted. Not a live Google rank.
 Real Google position: not in the labeled file.
 Best predicted SmartCrew page before: n/a (none in the crawled labeled set).
-Best predicted SmartCrew page after the bundle: 2 of 13 https://www.smartcrewhq.com/blog/best-excavation-software-20-50-employees/.
+Best predicted SmartCrew page after the bundle: 2 of 14 https://www.smartcrewhq.com/.
+That page has 27 extracted words. The built file is a short crawl shell, not a full article. With pairwise accuracy at the cross-validated number above, this slot is not evidence the shell would outrank the crawled pages.
+Best predicted SmartCrew page with at least 150 extracted words: 7 of 14 https://www.smartcrewhq.com/blog/best-excavation-software-20-50-employees/.
 The after rank inserts SmartCrew into a set where the labeled file has no crawled SmartCrew URL. It is not a move from a Google position.
 SmartCrew pages in this query:
-  https://www.smartcrewhq.com/blog/best-excavation-software-20-50-employees/ | inserted from the crawl, PR HTML | before n/a | after 2 of 13 | 2885 words | 5 tables
-    title Best All-in-One Dirt Work and Excavation Software, 20 to 50
-    h1 Best all-in-one dirt work and excavation software for a team of 20 to 50
-    feature title match 2.940 (contribution 0.557)
-    feature fetch speed 0.685 (contribution 0.278)
-    feature heading match 4.007 (contribution -0.227)
-    feature site radius 0.230 (contribution 0.101)
-    feature freshness 1.000 (contribution 0.094)
-  https://www.smartcrewhq.com/ | inserted from the crawl, PR HTML | before n/a | after 4 of 13 | 27 words | 0 tables
+  https://www.smartcrewhq.com/ | inserted from the crawl, PR HTML | before n/a | after 2 of 14 | 27 words | 0 tables
     title All-in-One Heavy Civil and Dirt Work Software | SmartCrew
     h1 All-in-one heavy civil and dirt work software for dirtwork companies
-    feature title match 4.924 (contribution 0.472)
-    feature fetch speed 0.737 (contribution 0.423)
-    feature heading match 3.864 (contribution -0.380)
-    feature link count 7.000 (contribution 0.317)
-    feature H1 match 4.407 (contribution -0.203)
-  https://www.smartcrewhq.com/all-in-one-dirt-work-software/ | new URL, not in the crawl | before n/a | after 6 of 13 | 984 words | 2 tables
-    title All-in-One Dirt Work Software | SmartCrew
-    h1 All-in-one dirt work software
-    feature Crawl PageRank is 0. This URL has no inlinks in the stored crawl.
-    feature fetch speed 0.000 (contribution -0.659)
-    feature title match 2.547 (contribution 0.612)
-    feature originality 0.753 (contribution -0.238)
-    feature link count 65.000 (contribution -0.122)
-    feature entity coverage 0.786 (contribution -0.112)
-  https://www.smartcrewhq.com/blog/best-software-small-dirt-work-contractors/ | inserted from the crawl, PR HTML | before n/a | after 7 of 13 | 4667 words | 4 tables
-    title Dirt Work Contractor Software for Small Crews | SmartCrew
-    h1 Dirt work contractor software for small dirtwork crews
-    feature originality 0.905 (contribution -0.447)
-    feature embedding similarity 0.263 (contribution -0.223)
-    feature crawl PageRank 0.014 (contribution -0.205)
-    feature title match 0.113 (contribution 0.199)
-    feature body match 1.303 (contribution 0.159)
-  https://www.smartcrewhq.com/all-in-one-heavy-civil-software/ | new URL, not in the crawl | before n/a | after 10 of 13 | 1276 words | 2 tables
+    feature fetch speed 0.737 (contribution 0.707)
+    feature heading match 4.122 (contribution -0.233)
+    feature embedding similarity 0.644 (contribution -0.202)
+    feature link count 7.000 (contribution 0.180)
+    feature title match 5.012 (contribution 0.159)
+  https://www.smartcrewhq.com/blog/best-excavation-software-20-50-employees/ | inserted from the crawl, PR HTML | before n/a | after 7 of 14 | 2885 words | 5 tables
+    title Best All-in-One Dirt Work and Excavation Software, 20 to 50
+    h1 Best all-in-one dirt work and excavation software for a team of 20 to 50
+    feature originality 0.835 (contribution -0.377)
+    feature title match 3.132 (contribution 0.227)
+    feature readability 0.896 (contribution -0.205)
+    feature fetch speed 0.685 (contribution 0.165)
+    feature embedding similarity 0.526 (contribution -0.135)
+  https://www.smartcrewhq.com/compare/hcss-heavyjob-alternative/ | inserted from the crawl, PR HTML | before n/a | after 8 of 14 | 3588 words | 3 tables
+    title HCSS Alternative for Dirtwork Contractors | SmartCrew
+    h1 HCSS alternative for dirtwork contractors
+    feature title match 0.000 (contribution -0.380)
+    feature fetch speed 0.724 (contribution 0.274)
+    feature readability 0.898 (contribution -0.257)
+    feature URL match 0.000 (contribution 0.193)
+    feature originality 0.852 (contribution -0.177)
+  https://www.smartcrewhq.com/all-in-one-heavy-civil-software/ | new URL, not in the crawl | before n/a | after 9 of 14 | 1276 words | 2 tables
     title All-in-One Heavy Civil Construction Software | SmartCrew
     h1 All-in-one heavy civil construction software
     feature Crawl PageRank is 0. This URL has no inlinks in the stored crawl.
-    feature fetch speed 0.000 (contribution -0.623)
-    feature title match 5.241 (contribution 0.307)
-    feature heading match 4.653 (contribution -0.261)
-    feature originality 0.756 (contribution -0.202)
-    feature URL term match 0.833 (contribution 0.198)
-  https://www.smartcrewhq.com/compare/hcss-heavyjob-alternative/ | inserted from the crawl, PR HTML | before n/a | after 11 of 13 | 3588 words | 3 tables
-    title HCSS Alternative for Dirtwork Contractors | SmartCrew
-    h1 HCSS alternative for dirtwork contractors
-    feature originality 0.852 (contribution -0.323)
-    feature domain PageRank 0.046 (contribution -0.291)
-    feature crawl PageRank 0.014 (contribution -0.206)
-    feature embedding similarity 0.173 (contribution -0.199)
-    feature H1 match 0.000 (contribution -0.157)
+    feature originality 0.756 (contribution -0.538)
+    feature title match 5.333 (contribution 0.268)
+    feature embedding similarity 0.655 (contribution -0.237)
+    feature fetch speed 0.000 (contribution -0.170)
+    feature heading match 4.958 (contribution -0.146)
+  https://www.smartcrewhq.com/all-in-one-dirt-work-software/ | new URL, not in the crawl | before n/a | after 10 of 14 | 984 words | 2 tables
+    title All-in-One Dirt Work Software | SmartCrew
+    h1 All-in-one dirt work software
+    feature Crawl PageRank is 0. This URL has no inlinks in the stored crawl.
+    feature originality 0.753 (contribution -0.564)
+    feature title match 2.697 (contribution 0.222)
+    feature embedding similarity 0.389 (contribution -0.166)
+    feature fetch speed 0.000 (contribution -0.149)
+    feature freshness 1.000 (contribution -0.149)
+  https://www.smartcrewhq.com/blog/best-software-small-dirt-work-contractors/ | inserted from the crawl, PR HTML | before n/a | after 12 of 14 | 4667 words | 4 tables
+    title Dirt Work Contractor Software for Small Crews | SmartCrew
+    h1 Dirt work contractor software for small dirtwork crews
+    feature title match 0.106 (contribution -0.564)
+    feature originality 0.905 (contribution -0.361)
+    feature freshness 1.000 (contribution -0.204)
+    feature fetch speed 0.731 (contribution 0.201)
+    feature link count 183.000 (contribution -0.161)
 Real Google top 3, and the remaining gap versus the best predicted SmartCrew page:
-  Google #1 predicted rank 1 of 13 | Construction Software for Contractors of Every Size | HCSS | https://www.hcss.com/
-    Model places this crawled page ahead of SmartCrew.
-    Features where this page is still higher than the best predicted SmartCrew page:
-    domain PageRank Google page 0.187, SmartCrew 0.046
-    originality Google page 0.969, SmartCrew 0.835
-    content effort Google page 0.443, SmartCrew 0.218
-    readability Google page 0.972, SmartCrew 0.896
-  Google #2 predicted rank 5 of 13 | 10 Best Construction Estimating Software in 2026 - TechnBrains | https://www.technbrains.com/construction-software-development/estimating-software/
+  Google #1 predicted rank 3 of 14 | Construction Software for Contractors of Every Size | HCSS | https://www.hcss.com/
     Model places SmartCrew ahead of this crawled page.
     Features where this page is still higher than the best predicted SmartCrew page:
-    link count Google page 134.000, SmartCrew 125.000
-    originality Google page 0.970, SmartCrew 0.835
-    readability Google page 1.000, SmartCrew 0.896
-    site focus Google page 1.000, SmartCrew 0.770
-  Google #3 https://www.reddit.com/r/civilengineering/comments/1w1ca4u/civil_engineering_design_software_recommendations/ | blocked by robots.txt. No page text was invented.
+    link count Google page 75.000, SmartCrew 7.000
+    freshness Google page 0.677, SmartCrew 0.000
+    originality Google page 0.969, SmartCrew 0.522
+    content effort Google page 0.443, SmartCrew 0.061
+  Google #2 predicted rank 13 of 14 | 10 Best Construction Estimating Software in 2026 - TechnBrains | https://www.technbrains.com/construction-software-development/estimating-software/
+    Model places SmartCrew ahead of this crawled page.
+    Features where this page is still higher than the best predicted SmartCrew page:
+    link count Google page 134.000, SmartCrew 7.000
+    freshness Google page 0.989, SmartCrew 0.000
+    originality Google page 0.970, SmartCrew 0.522
+    URL match Google page 0.375, SmartCrew 0.000
+  Google #3 predicted rank 6 of 14 | Civil Engineering Design Software Recommendations For New Firm : r/civilengineering | https://www.reddit.com/r/civilengineering/comments/1w1ca4u/civil_engineering_design_software_recommendations/
+    Model places SmartCrew ahead of this crawled page.
+    Features where this page is still higher than the best predicted SmartCrew page:
+    link count Google page 72.000, SmartCrew 7.000
+    URL match Google page 1.233, SmartCrew 0.000
+    freshness Google page 0.747, SmartCrew 0.000
+    originality Google page 0.994, SmartCrew 0.522

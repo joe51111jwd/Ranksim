@@ -206,9 +206,9 @@ def render_whatif(
         f"Queries: {report.n_queries}. Pairs: {report.n_pairs}."
     )
     lines.append(
-        "Confidence: pairwise accuracy on this file is only a little above a coin flip, Spearman is about zero, "
-        "and the top-3 hit rate sits close to chance on these short lists. Read a predicted slot as a model score "
-        "inside the crawled set, not as a Google rank."
+        "Confidence: use the cross-validated numbers above. Pairwise accuracy is the one to trust first. "
+        "Spearman and the top-3 hit rate move around on a 16-query file. A predicted slot is a score inside "
+        "the crawled set."
     )
     lines.append(
         "Before set: crawled URLs from the labeled file. After set: those URLs, with bundle HTML on a matching URL, "

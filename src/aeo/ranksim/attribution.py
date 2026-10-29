@@ -16,6 +16,8 @@ LABELS = {
     "bm25_h1": "H1 match",
     "bm25_headings": "heading match",
     "bm25_body": "body match",
+    "has_headings": "has headings",
+    "has_body": "has body",
     "bm25_url": "URL match",
     "bm25_anchor": "anchor text",
     "embedding": "embedding similarity",
@@ -63,11 +65,18 @@ def feature_moves(
         return []
     moves: list[tuple[float, str]] = []
     for name in FEATURE_NAMES:
-        delta = raw[1][name] - raw[0][name]
+        before = raw[0][name]
+        after = raw[1][name]
+        if before != before and after != after:
+            continue
+        weight = abs(chosen.get(name, 0.0))
+        if before != before or after != after:
+            moves.append((weight or 1.0, _line(name, before, after)))
+            continue
+        delta = after - before
         if abs(delta) < 1e-9:
             continue
-        weight = chosen.get(name, 0.0)
-        moves.append((abs(weight * delta), _line(name, raw[0][name], raw[1][name])))
+        moves.append((abs(weight * delta) if weight else abs(delta), _line(name, before, after)))
     moves.sort(key=lambda item: item[0], reverse=True)
     lines = [line for _score, line in moves[:limit]]
     if not lines:
@@ -77,4 +86,10 @@ def feature_moves(
 
 def _line(name: str, before: float, after: float) -> str:
     label = LABELS.get(name, name)
-    return f"{label} {before:.3f} -> {after:.3f}"
+    return f"{label} {_fmt(before)} -> {_fmt(after)}"
+
+
+def _fmt(value: float) -> str:
+    if value != value:
+        return "missing"
+    return f"{value:.3f}"

@@ -19,6 +19,8 @@ HAND_WEIGHTS: dict[str, float] = {
     "bm25_h1": 0.08,
     "bm25_headings": 0.05,
     "bm25_body": 0.08,
+    "has_headings": 0.00,
+    "has_body": 0.00,
     "bm25_url": 0.05,
     "bm25_anchor": 0.07,
     "embedding": 0.06,
@@ -66,7 +68,13 @@ class CalibrationReport:
 
 
 def dot(weights: dict[str, float], features: dict[str, float]) -> float:
-    return sum(weights.get(name, 0.0) * features.get(name, 0.0) for name in FEATURE_NAMES)
+    total = 0.0
+    for name in FEATURE_NAMES:
+        value = features.get(name, 0.0)
+        if value != value:
+            continue
+        total += weights.get(name, 0.0) * value
+    return total
 
 
 def score_pages(

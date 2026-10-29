@@ -16,6 +16,8 @@ FEATURE_NAMES = (
     "bm25_h1",
     "bm25_headings",
     "bm25_body",
+    "has_headings",
+    "has_body",
     "bm25_url",
     "bm25_anchor",
     "embedding",
@@ -41,6 +43,19 @@ FEATURE_NAMES = (
     "url_exact",
     "navboost_prior",
 )
+
+# Higher values should raise the predicted score. Other features stay unconstrained.
+MONOTONE_UP = frozenset(
+    {
+        "bm25f",
+        "bm25_title",
+        "bm25_h1",
+        "bm25_headings",
+        "bm25_body",
+        "topic_coverage",
+    }
+)
+THIN_WORD_GATE = 150
 
 
 @dataclass
@@ -194,6 +209,19 @@ def _content_effort(page: PageDoc) -> float:
     return unique_ratio * word_count_score(page.word_count)
 
 
+def _match_or_missing(score: float, text: str) -> float:
+    """A zero or blank heading/body match is missing, not a real zero.
+
+    LightGBM then keeps that split out of the numeric threshold that was
+    treating 'no heading text' as a good score.
+    """
+    if not text or not str(text).strip():
+        return float("nan")
+    if score <= 0.0:
+        return float("nan")
+    return float(score)
+
+
 def raw_features(query: str, intent: str, pages: list[PageDoc], today: date) -> list[dict[str, float]]:
     titles = [page.title for page in pages]
     h1s = [page.h1 for page in pages]
@@ -239,9 +267,11 @@ def raw_features(query: str, intent: str, pages: list[PageDoc], today: date) -> 
             {
                 "bm25f": fielded[index],
                 "bm25_title": title_scores[index],
-                "bm25_h1": h1_scores[index],
-                "bm25_headings": heading_scores[index],
-                "bm25_body": body_scores[index],
+                "bm25_h1": _match_or_missing(h1_scores[index], page.h1),
+                "bm25_headings": _match_or_missing(heading_scores[index], page.headings or page.h1),
+                "bm25_body": _match_or_missing(body_scores[index], page.body),
+                "has_headings": 1.0 if (page.headings or page.h1 or "").strip() else 0.0,
+                "has_body": 1.0 if (page.body or "").strip() else 0.0,
                 "bm25_url": url_scores[index],
                 "bm25_anchor": anchor_scores[index],
                 "embedding": similarity,
@@ -258,7 +288,7 @@ def raw_features(query: str, intent: str, pages: list[PageDoc], today: date) -> 
                 "word_count": word_count_score(page.word_count),
                 "content_effort": _content_effort(page),
                 "originality": originality[index],
-                "thin_content": 1.0 if page.word_count < 150 else 0.0,
+                "thin_content": 1.0 if page.word_count < THIN_WORD_GATE else 0.0,
                 "readability": _readability(page.body),
                 "ad_density": float(page.ad_hits),
                 "links": float(page.link_count),
@@ -276,16 +306,23 @@ def normalize_rows(rows: list[dict[str, float]]) -> list[dict[str, float]]:
         return []
     spans = {}
     for name in FEATURE_NAMES:
-        values = [row[name] for row in rows]
-        spans[name] = (min(values), max(values))
+        values = [row[name] for row in rows if row[name] == row[name]]
+        if not values:
+            spans[name] = (0.0, 0.0)
+        else:
+            spans[name] = (min(values), max(values))
     normalized: list[dict[str, float]] = []
     for row in rows:
         scaled = {}
         for name in FEATURE_NAMES:
+            value = row[name]
+            if value != value:
+                scaled[name] = 0.0
+                continue
             low, high = spans[name]
             if high == low:
                 scaled[name] = 0.0
             else:
-                scaled[name] = (row[name] - low) / (high - low)
+                scaled[name] = (value - low) / (high - low)
         normalized.append(scaled)
     return normalized

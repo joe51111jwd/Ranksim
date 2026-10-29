@@ -222,7 +222,7 @@ def render_whatif(
     )
     lines.append(
         "content_page_predicted is the best SmartCrew URL whose extracted body has at least 150 words. "
-        "A short crawl shell can outscore that page when the model is unstable."
+        "A page under 150 words is gated behind those."
     )
     for row in report.queries:
         lines.append(
@@ -469,6 +469,8 @@ def _render_query(row: QueryWhatIf, statuses: dict[str, tuple[str, str | None]])
             lines.append(f"    title {_plain(page.title_after)}")
         if page.h1_after and page.h1_after != page.title_after:
             lines.append(f"    h1 {_plain(page.h1_after)}")
+        if page.words_after < 150:
+            lines.append("    thin-content gate: ranked behind every page with at least 150 words")
         for feature in page.feature_lines:
             lines.append(f"    feature {feature}")
     lines.append("Real Google top 3, and the remaining gap versus the best predicted SmartCrew page:")
@@ -528,17 +530,34 @@ def _content_deltas(model, before: dict[str, float], after: dict[str, float], li
     after_c = _contrib(model, after)
     rows = []
     for name in FEATURE_NAMES:
-        raw_delta = after[name] - before[name]
+        raw_before = before[name]
+        raw_after = after[name]
+        raw_delta = raw_after - raw_before
         contrib_delta = after_c[name] - before_c[name]
-        if abs(raw_delta) < 1e-6 and abs(contrib_delta) < 1e-4:
+        raw_missing = raw_delta != raw_delta
+        contrib_missing = contrib_delta != contrib_delta
+        if raw_missing and contrib_missing:
             continue
-        rows.append((abs(contrib_delta), abs(raw_delta), name, before[name], after[name], before_c[name], after_c[name]))
+        if not raw_missing and abs(raw_delta) < 1e-6 and not contrib_missing and abs(contrib_delta) < 1e-4:
+            continue
+        rows.append(
+            (
+                0.0 if contrib_missing else abs(contrib_delta),
+                0.0 if raw_missing else abs(raw_delta),
+                name,
+                raw_before,
+                raw_after,
+                before_c[name],
+                after_c[name],
+            )
+        )
     rows.sort(key=lambda item: (item[0], item[1]), reverse=True)
     lines = []
     for _contrib_abs, _raw_abs, name, raw_before, raw_after, contrib_before, contrib_after in rows[:limit]:
         label = LABELS.get(name, name)
         lines.append(
-            f"{label} {raw_before:.3f} -> {raw_after:.3f} (contribution {contrib_before:.3f} -> {contrib_after:.3f})"
+            f"{label} {_fmt_feature(raw_before)} -> {_fmt_feature(raw_after)} "
+            f"(contribution {_fmt_feature(contrib_before)} -> {_fmt_feature(contrib_after)})"
         )
     return lines or ["No scored feature changed on the same candidate set."]
 
@@ -551,13 +570,15 @@ def _new_page_lines(model, features: dict[str, float], limit: int = 5) -> list[s
         if abs(contrib[name]) < 1e-4:
             continue
         label = LABELS.get(name, name)
-        lines.append(f"{label} {features[name]:.3f} (contribution {contrib[name]:.3f})")
+        lines.append(f"{label} {_fmt_feature(features[name])} (contribution {_fmt_feature(contrib[name])})")
     return lines or ["No feature contribution stood out."]
 
 
 def _gap_lines(ours: dict[str, float], rival: dict[str, float], gain: dict[str, float], limit: int = 4) -> list[str]:
     rows = []
     for name in FEATURE_NAMES:
+        if rival[name] != rival[name] or ours[name] != ours[name]:
+            continue
         delta = rival[name] - ours[name]
         if delta <= 0.02:
             continue
@@ -566,7 +587,9 @@ def _gap_lines(ours: dict[str, float], rival: dict[str, float], gain: dict[str, 
     lines = []
     for _weighted, _delta, name, rival_value, our_value in rows[:limit]:
         label = LABELS.get(name, name)
-        lines.append(f"{label} Google page {rival_value:.3f}, SmartCrew {our_value:.3f}")
+        lines.append(
+            f"{label} Google page {_fmt_feature(rival_value)}, SmartCrew {_fmt_feature(our_value)}"
+        )
     return lines
 
 
@@ -706,6 +729,12 @@ def _plain(text: str, limit: int = 110) -> str:
     if len(cleaned) <= limit:
         return cleaned
     return cleaned[: limit - 3] + "..."
+
+
+def _fmt_feature(value: float) -> str:
+    if value != value:
+        return "missing"
+    return f"{value:.3f}"
 
 
 def _num(value: float | None) -> str:

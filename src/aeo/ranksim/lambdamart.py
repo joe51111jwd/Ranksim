@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from datetime import date
 
 from aeo.crawl.urls import normalize_url
-from aeo.ranksim.features import FEATURE_NAMES, PageDoc, raw_features
+from aeo.ranksim.features import FEATURE_NAMES, MONOTONE_UP, PageDoc, raw_features
 from aeo.ranksim.groundtruth import SerpLabel, navboost_leaks
 from aeo.ranksim.metrics import mean_metric, ndcg_at_k, spearman
 
@@ -252,6 +252,8 @@ def fit_lambdamart(examples: list[RankExample]):
         "min_data_in_leaf": 1,
         "verbose": -1,
         "num_threads": 1,
+        "monotone_constraints": [1 if name in MONOTONE_UP else 0 for name in FEATURE_NAMES],
+        "monotone_constraints_method": "advanced",
     }
     return lgb.train(params, dataset, num_boost_round=40)
 
@@ -262,11 +264,41 @@ def predict_scores(model, examples: list[RankExample]) -> dict[int, float]:
     import numpy as np
 
     matrix = np.asarray(
-        [[row.features.get(name, 0.0) for name in FEATURE_NAMES] for row in examples],
+        [[_feature_value(row.features, name) for name in FEATURE_NAMES] for row in examples],
         dtype=float,
     )
     values = model.predict(matrix)
-    return {id(row): float(score) for row, score in zip(examples, values)}
+    scores = {id(row): float(score) for row, score in zip(examples, values)}
+    return gate_thin_pages(examples, scores)
+
+
+def gate_thin_pages(examples: list[RankExample], scores: dict[int, float]) -> dict[int, float]:
+    """Pages under 150 words rank behind every page that has a real body."""
+    grouped: dict[str, list[RankExample]] = {}
+    for example in examples:
+        grouped.setdefault(example.query, []).append(example)
+    adjusted = dict(scores)
+    for group in grouped.values():
+        thin = [row for row in group if _is_thin(row)]
+        solid = [row for row in group if not _is_thin(row)]
+        if not thin or not solid:
+            continue
+        floor = min(adjusted[id(row)] for row in solid)
+        ordered = sorted(thin, key=lambda row: (-adjusted[id(row)], row.url))
+        for offset, row in enumerate(ordered, start=1):
+            adjusted[id(row)] = floor - offset
+    return adjusted
+
+
+def _is_thin(example: RankExample) -> bool:
+    return float(example.features.get("thin_content", 0.0) or 0.0) >= 1.0
+
+
+def _feature_value(features: dict[str, float], name: str) -> float:
+    value = features.get(name, 0.0)
+    if value is None:
+        return float("nan")
+    return float(value)
 
 
 def save_model(model, path: str) -> None:

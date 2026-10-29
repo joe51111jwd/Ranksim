@@ -229,7 +229,7 @@ The tracker appends a row per query. It does not fill days you did not run.
 
 The HTML report is [http://127.0.0.1:8741/ranksim](http://127.0.0.1:8741/ranksim) and `smartcrew/report.html`.
 
-`smartcrew/serp.csv` is a 16-query Google US export from 2026-10-29 (135 rows). `index-serp` crawls those URLs and, when `smartcrew/saved_html/manifest.csv` has a file, stores that HTML instead. Leave-one-query-out accuracy on the stored pages: pairwise accuracy 0.604, NDCG at 10 of 0.723, Spearman 0.207, top-3 hit rate 0.562, on 122 labeled rows and 414 pairs. Thirteen labeled rows are still uncovered. Do not treat these figures as a stable measure of Google accuracy.
+`smartcrew/serp.csv` is a 16-query Google US export from 2026-10-29 (135 rows). `index-serp` crawls those URLs and, when `smartcrew/saved_html/manifest.csv` has a file, stores that HTML instead. Leave-one-query-out accuracy on the stored pages, after missing heading and body matches, monotone match features, and the 150-word gate: pairwise accuracy 0.534, NDCG at 10 of 0.695, Spearman 0.075, top-3 hit rate 0.500, on 122 labeled rows and 414 pairs. Thirteen labeled rows are still uncovered. The previous fit, before those constraints, had pairwise accuracy 0.604. Do not treat either figure as a stable measure of Google accuracy.
 
 ## What's next
 

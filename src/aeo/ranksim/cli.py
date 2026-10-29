@@ -48,10 +48,17 @@ def main(argv: list[str] | None = None) -> None:
 
     sub.add_parser("calibrate", help="Fit weights to the stored SERP order")
 
-    test = sub.add_parser("test", help="Re-score every query after one page change")
-    test.add_argument("source", help="A page URL, a staging URL, or a local HTML file")
+    test = sub.add_parser("test", help="Re-score queries after a page change")
+    test.add_argument("source", nargs="?", default=None, help="A page URL, a staging URL, or a local HTML file")
     test.add_argument("--url", default=None, help="Canonical URL when source is a file or staging host")
     test.add_argument("--replaces", default=None, help="Stored URL whose HTML should be replaced")
+    test.add_argument(
+        "--bundle",
+        default=None,
+        help="Path to a manifest.csv (url,file) of built HTML. Scores with leave-one-query-out LambdaMART.",
+    )
+    test.add_argument("--serp", default="smartcrew/serp.csv", help="Labeled Google file used with --bundle")
+    test.add_argument("--out", default=None, help="Write the --bundle report to this path")
 
     track = sub.add_parser("track", help="Record today's real ranks for the keyword set")
     track.add_argument("--provider", default="auto")
@@ -87,7 +94,14 @@ def main(argv: list[str] | None = None) -> None:
         elif args.command == "calibrate":
             _calibrate(database)
         elif args.command == "test":
-            _test(settings, database, args)
+            if args.bundle and args.source:
+                parser.error("Pass either a source page or --bundle, not both")
+            if args.bundle:
+                _test_bundle(database, args)
+            elif args.source:
+                _test(settings, database, args)
+            else:
+                parser.error("test needs a source page or --bundle")
         elif args.command == "track":
             _track(settings, database, args)
         elif args.command == "report":
@@ -203,6 +217,81 @@ def _test(settings, database: str, args) -> None:
         )
         if row.feature_moves and row.delta not in (None, 0):
             print("  features: " + "; ".join(row.feature_moves))
+
+
+def _test_bundle(database: str, args) -> None:
+    from aeo.ranksim.corpus import load_corpus_docs
+    from aeo.ranksim.groundtruth import load_serp_file
+    from aeo.ranksim.keywords import build_keywords
+    from aeo.ranksim.saved_html import load_saved_html
+    from aeo.ranksim.store import save_test_run
+    from aeo.ranksim.whatif import overrides_from_html, render_whatif, score_whatif
+
+    manifest = Path(args.bundle)
+    if not manifest.is_file():
+        raise SystemExit(f"Bundle manifest not found: {manifest}")
+    html_by_url, missing = load_saved_html(manifest.parent)
+    if missing:
+        joined = ", ".join(missing)
+        raise SystemExit(f"Bundle manifest rows with no file were not invented: {joined}")
+    if not html_by_url:
+        raise SystemExit(f"{manifest} has no url,file rows")
+    labels = load_serp_file(args.serp)
+    intents = {row.query: row.intent for row in build_keywords()}
+    session = open_session(database)
+    try:
+        pages = load_corpus_docs(session)
+        statuses = _page_statuses(session)
+        report = score_whatif(labels, pages, overrides_from_html(html_by_url, pages), intents)
+        text = render_whatif(report, statuses)
+        save_test_run(
+            session,
+            source_label=f"bundle:{manifest}",
+            weight_label="lambdamart_loo",
+            synthetic_corpus=False,
+            is_google=True,
+            summary_json={
+                "predicted": True,
+                "pairwise_accuracy": report.pairwise_accuracy,
+                "ndcg_at_10": report.ndcg_at_10,
+                "spearman": report.spearman,
+                "top3_hit_rate": report.top3_hit_rate,
+                "queries": [
+                    {
+                        "query": row.query,
+                        "real_position": row.real_position,
+                        "before_predicted": row.before_rank,
+                        "after_predicted": row.after_rank,
+                        "before_url": row.before_url,
+                        "after_url": row.after_url,
+                        "before_n": row.before_n,
+                        "after_n": row.after_n,
+                    }
+                    for row in report.queries
+                ],
+            },
+        )
+    finally:
+        session.close()
+    target = Path(args.out) if args.out else Path("smartcrew") / "pr8-predicted.txt"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(text)
+    print(text, end="")
+    print(f"Wrote {target}")
+
+
+def _page_statuses(session) -> dict[str, tuple[str, str | None]]:
+    from aeo.crawl.urls import normalize_url
+    from aeo.ranksim.store import RsPage
+
+    statuses: dict[str, tuple[str, str | None]] = {}
+    for row in session.query(RsPage).all():
+        statuses[row.url] = (row.status, row.error)
+        try:
+            statuses[normalize_url(row.url)] = (row.status, row.error)
+        except ValueError:
+            continue
+    return statuses
 
 
 def _track(settings, database: str, args) -> None:

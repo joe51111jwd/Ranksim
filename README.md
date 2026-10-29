@@ -207,6 +207,7 @@ python -m aeo.ranksim evaluate smartcrew/serp.csv
 python -m aeo.ranksim train smartcrew/serp.csv
 python -m aeo.ranksim test page.html --url https://www.smartcrewhq.com/dirtwork-software/
 python -m aeo.ranksim test https://www.smartcrewhq.com/dirtwork-software/
+python -m aeo.ranksim test --bundle smartcrew/pr8/manifest.csv --serp smartcrew/serp.csv
 python -m aeo.ranksim report
 ```
 
@@ -214,9 +215,9 @@ python -m aeo.ranksim report
 
 Blocked pages can be added later without a refetch. Put the HTML in `smartcrew/saved_html/` and list `url,file` in `manifest.csv`. A missing file is skipped. No page text is invented.
 
-`test` re-fetches only the page you pass (or reads a local file). It prints predicted position before and after, the competitor gaps, and which features moved. A blank before-position means the page was outside the stored set, not a rank of 151.
+`test` with one source re-fetches that page, or reads a local file, and rescores with the linear weights. Competitors stay as stored. A blank before-position means SmartCrew was outside the stored results, not a rank of 151.
 
-`test` re-fetches only the page you pass (or reads a local file). Competitors stay as stored. It prints predicted position before and after for every query, plus heading terms, tables, or FAQ blocks the stored competitors have that the new page lacks. A blank before-position means SmartCrew was outside the fetched results, not a rank of 151.
+`test --bundle` reads a `manifest.csv` of built HTML (`url,file`, files next to the manifest) and rescores every query in the labeled file with leave-one-query-out LambdaMART. Matching URLs replace stored HTML. URLs that were not in that query are added only on the after side. The report says predicted, names feature contribution changes, and lists Google top-3 URLs that were never crawled instead of inventing their text.
 
 Daily check, once a SERP key is set:
 
@@ -228,7 +229,7 @@ The tracker appends a row per query. It does not fill days you did not run.
 
 The HTML report is [http://127.0.0.1:8741/ranksim](http://127.0.0.1:8741/ranksim) and `smartcrew/report.html`.
 
-`smartcrew/serp.csv` is a 10-query Google US export from 2026-10-29 (82 rows). `index-serp` crawls those URLs. Cross-validated accuracy on that file is weak and unstable: pairwise accuracy 0.544, NDCG at 10 of 0.737, Spearman -0.226, top-3 hit rate 0.600. Thirty-one labeled rows were not crawled (robots blocks or HTTP 403), so these numbers are not a full top-10 test. Do not treat them as a stable measure of Google accuracy.
+`smartcrew/serp.csv` is a 16-query Google US export from 2026-10-29 (135 rows). `index-serp` crawls those URLs. Leave-one-query-out accuracy on the pages that were actually stored is weak: pairwise accuracy 0.566, NDCG at 10 of 0.729, Spearman -0.028, top-3 hit rate 0.625, on 94 labeled URLs and 258 pairs. Forty-one labeled rows were not crawled (robots blocks or HTTP 403), so these numbers are not a full top-10 test. Do not treat them as a stable measure of Google accuracy.
 
 ## What's next
 

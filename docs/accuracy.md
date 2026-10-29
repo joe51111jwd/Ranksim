@@ -51,6 +51,8 @@ On each held-out query:
 
 `evaluate` and `train` default to leave-one-query-out. Pass `--folds kfold` for 5 folds when there are more than 8 queries.
 
+`test --bundle` scores a manifest of saved HTML the same way: each query uses the model trained on the other queries. Bundle URLs that are already in that query replace the stored HTML and keep the crawled link features. Bundle URLs that are not in that query are added only in the after set. A URL the crawl never saw gets crawl PageRank 0, and domain PageRank is copied from other pages on the same host. The printed rank is a predicted slot in that candidate set, not a Google position. Competitor pages that were not crawled are named and left blank.
+
 Pages that refuse the crawler can be supplied later as files. Put HTML in `smartcrew/saved_html/` and list `url,file` in `manifest.csv`. A missing file is skipped. The index does not invent a page. The saved model is fit on all labeled queries after that, so the saved file is for scoring. Quote the cross-validated numbers, not an in-sample score.
 
 ## What would raise the numbers

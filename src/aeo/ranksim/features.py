@@ -6,25 +6,40 @@ from dataclasses import dataclass
 from datetime import date, datetime
 
 from aeo.rank.bm25 import bm25_scores
-from aeo.rank.vectors import cosine, hash_embed
-from aeo.textutil import salient_terms
+from aeo.rank.vectors import cosine, hash_embed, l2_normalize
+from aeo.ranksim.bm25f import bm25f_scores
+from aeo.textutil import salient_terms, tokenize_for_search
 
 FEATURE_NAMES = (
+    "bm25f",
     "bm25_title",
     "bm25_h1",
     "bm25_headings",
     "bm25_body",
     "bm25_url",
+    "bm25_anchor",
     "embedding",
+    "site_focus",
+    "site_radius",
+    "pagerank",
+    "domain_rank",
+    "homepage_authority",
     "intent_match",
     "freshness",
     "topic_coverage",
     "has_table",
     "has_faq",
     "word_count",
+    "content_effort",
+    "originality",
+    "thin_content",
+    "readability",
+    "ad_density",
     "links",
     "speed",
     "authority",
+    "url_exact",
+    "navboost_prior",
 )
 
 
@@ -42,6 +57,12 @@ class PageDoc:
     fetch_ms: float | None = None
     updated: str | None = None
     authority: float | None = None
+    anchors: str = ""
+    pagerank: float = 0.0
+    domain_rank: float = 0.0
+    homepage_authority: float = 0.0
+    ad_hits: int = 0
+    navboost_prior: float = 0.0
     is_ours: bool = False
 
 
@@ -107,6 +128,72 @@ def topic_coverage(query: str, page: PageDoc, peers: list[PageDoc]) -> float:
     return sum(1 for term in terms if term in page_terms) / len(terms)
 
 
+def _trigrams(text: str) -> set[tuple[str, str, str]]:
+    tokens = tokenize_for_search(text)[:400]
+    return {tuple(tokens[index : index + 3]) for index in range(len(tokens) - 2)}  # type: ignore[misc]
+
+
+def _originality(pages: list[PageDoc]) -> list[float]:
+    grams = [_trigrams(f"{page.title} {page.h1} {page.body[:2500]}") for page in pages]
+    scores: list[float] = []
+    for index, own in enumerate(grams):
+        if not own:
+            scores.append(0.0)
+            continue
+        others: set[tuple[str, str, str]] = set()
+        for other_index, other in enumerate(grams):
+            if other_index != index:
+                others.update(other)
+        scores.append(sum(1 for gram in own if gram not in others) / len(own))
+    return scores
+
+
+def _site_focus(pages: list[PageDoc]) -> tuple[list[float], list[float]]:
+    from aeo.crawl.urls import domain_of
+
+    vectors = [hash_embed(f"{page.title} {page.h1} {page.body[:800]}") for page in pages]
+    domains = [domain_of(page.url) for page in pages]
+    focus = [0.0] * len(pages)
+    radius = [0.0] * len(pages)
+    grouped: dict[str, list[int]] = {}
+    for index, domain in enumerate(domains):
+        grouped.setdefault(domain or "", []).append(index)
+    for indexes in grouped.values():
+        if len(indexes) < 2:
+            for index in indexes:
+                focus[index] = 1.0
+                radius[index] = 0.0
+            continue
+        width = len(vectors[indexes[0]])
+        centroid = [0.0] * width
+        for index in indexes:
+            for dim, value in enumerate(vectors[index]):
+                centroid[dim] += value
+        centroid = l2_normalize([value / len(indexes) for value in centroid])
+        for index in indexes:
+            similarity = cosine(vectors[index], centroid)
+            focus[index] = similarity
+            radius[index] = 1.0 - similarity
+    return focus, radius
+
+
+def _readability(text: str) -> float:
+    chunks = [part.strip() for part in text.replace("!", ".").replace("?", ".").split(".") if part.strip()]
+    if not chunks:
+        return 0.0
+    lengths = [len(part.split()) for part in chunks]
+    average = sum(lengths) / len(lengths)
+    return 1.0 / (1.0 + abs(average - 18.0) / 18.0)
+
+
+def _content_effort(page: PageDoc) -> float:
+    tokens = tokenize_for_search(page.body)
+    if not tokens:
+        return 0.0
+    unique_ratio = len(set(tokens)) / len(tokens)
+    return unique_ratio * word_count_score(page.word_count)
+
+
 def raw_features(query: str, intent: str, pages: list[PageDoc], today: date) -> list[dict[str, float]]:
     titles = [page.title for page in pages]
     h1s = [page.h1 for page in pages]
@@ -118,7 +205,26 @@ def raw_features(query: str, intent: str, pages: list[PageDoc], today: date) -> 
     heading_scores = bm25_scores(query, headings)
     body_scores = bm25_scores(query, bodies)
     url_scores = bm25_scores(query, urls)
+    anchors = [page.anchors for page in pages]
+    anchor_scores = bm25_scores(query, anchors)
+    fielded = bm25f_scores(
+        query,
+        [
+            {
+                "title": page.title,
+                "h1": page.h1,
+                "headings": page.headings,
+                "url": url_text(page.url),
+                "anchor": page.anchors,
+                "body": page.body[:8000],
+            }
+            for page in pages
+        ],
+    )
     query_vector = hash_embed(query)
+    query_terms = salient_terms(query)
+    originality = _originality(pages)
+    focus, radius = _site_focus(pages)
     rows: list[dict[str, float]] = []
     for index, page in enumerate(pages):
         page_vector = hash_embed(f"{page.title} {page.h1} {page.body[:2000]}")
@@ -127,23 +233,39 @@ def raw_features(query: str, intent: str, pages: list[PageDoc], today: date) -> 
         except ValueError:
             similarity = 0.0
         authority = 0.0 if page.authority is None else float(page.authority)
+        url_terms = set(tokenize_for_search(url_text(page.url)))
+        exact = 0.0 if not query_terms else sum(1 for term in query_terms if term in url_terms) / len(query_terms)
         rows.append(
             {
+                "bm25f": fielded[index],
                 "bm25_title": title_scores[index],
                 "bm25_h1": h1_scores[index],
                 "bm25_headings": heading_scores[index],
                 "bm25_body": body_scores[index],
                 "bm25_url": url_scores[index],
+                "bm25_anchor": anchor_scores[index],
                 "embedding": similarity,
+                "site_focus": focus[index],
+                "site_radius": radius[index],
+                "pagerank": page.pagerank,
+                "domain_rank": page.domain_rank,
+                "homepage_authority": page.homepage_authority,
                 "intent_match": intent_match(intent, page.url, page.title),
                 "freshness": freshness_score(page.updated, today),
                 "topic_coverage": topic_coverage(query, page, pages),
                 "has_table": 1.0 if page.table_count else 0.0,
                 "has_faq": 1.0 if page.has_faq else 0.0,
                 "word_count": word_count_score(page.word_count),
+                "content_effort": _content_effort(page),
+                "originality": originality[index],
+                "thin_content": 1.0 if page.word_count < 150 else 0.0,
+                "readability": _readability(page.body),
+                "ad_density": float(page.ad_hits),
                 "links": float(page.link_count),
                 "speed": speed_score(page.fetch_ms),
                 "authority": authority,
+                "url_exact": exact,
+                "navboost_prior": page.navboost_prior,
             }
         )
     return rows

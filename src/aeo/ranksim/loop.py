@@ -59,6 +59,7 @@ class QueryDelta:
     delta: int | None
     competitor_gaps: list[str]
     note: str
+    feature_moves: list[str] = field(default_factory=list)
 
 
 def is_our_url(url: str) -> bool:
@@ -333,7 +334,14 @@ def run_test(
         if before_pos is not None and after_pos is not None:
             delta = before_pos - after_pos
         gaps = competitor_gaps(keyword.query, ours, before_pages)
-        note = "Predicted position among stored results for this query. Not a live Google rank."
+        before_ours = next((page for page in before_pages if page.url == ours.url), None)
+        moves: list[str] = []
+        if before_ours is not None:
+            from aeo.ranksim.attribution import feature_moves
+
+            peers = [page for page in before_pages if page.url != ours.url][:8]
+            moves = feature_moves(keyword.query, intent, before_ours, ours, peers, today=today, weights=weights)
+        note = "Predicted position on our index. Not a live Google rank."
         if before_pos is None:
             note = "SmartCrew was not in the stored results. Before position is blank. " + note
         deltas.append(
@@ -345,6 +353,7 @@ def run_test(
                 delta=delta,
                 competitor_gaps=gaps,
                 note=note,
+                feature_moves=moves,
             )
         )
     save_test_run(
@@ -364,6 +373,7 @@ def run_test(
                     "after_predicted_position": row.after_predicted_position,
                     "delta": row.delta,
                     "competitor_gaps": row.competitor_gaps,
+                    "feature_moves": row.feature_moves,
                     "note": row.note,
                 }
                 for row in deltas

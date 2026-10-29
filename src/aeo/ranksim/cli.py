@@ -60,6 +60,13 @@ def main(argv: list[str] | None = None) -> None:
     report = sub.add_parser("report", help="Write the HTML report")
     report.add_argument("--out", default=None)
 
+    train = sub.add_parser("train", help="Train LambdaMART on a real Google position file")
+    train.add_argument("serp_file", help="CSV with query, url, position")
+    train.add_argument("--model-out", default="data/ranksim-lambdamart.txt")
+
+    evaluate = sub.add_parser("evaluate", help="Cross-validate LambdaMART on a real Google position file")
+    evaluate.add_argument("serp_file", help="CSV with query, url, position")
+
     args = parser.parse_args(argv)
     settings = get_settings()
     database = args.database or settings.ranksim_database_url
@@ -78,9 +85,16 @@ def main(argv: list[str] | None = None) -> None:
             _track(settings, database, args)
         elif args.command == "report":
             _report(database, args.out)
+        elif args.command == "train":
+            _train(database, args)
+        elif args.command == "evaluate":
+            _evaluate(database, args)
         else:
             parser.error(f"Unknown command {args.command}")
     except ProviderConfigError as exc:
+        print(str(exc), file=sys.stderr)
+        raise SystemExit(2) from exc
+    except ValueError as exc:
         print(str(exc), file=sys.stderr)
         raise SystemExit(2) from exc
 
@@ -170,7 +184,7 @@ def _test(settings, database: str, args) -> None:
     improved = sum(1 for row in deltas if row.delta is not None and row.delta > 0)
     regressed = sum(1 for row in deltas if row.delta is not None and row.delta < 0)
     print(f"Tested {label}")
-    print("Positions are predicted. They are not live Google ranks.")
+    print("Positions are predicted on our index. They are not live Google ranks.")
     print(f"Improved: {improved}. Regressed: {regressed}. Queries: {len(deltas)}.")
     print("query\tbefore\tafter\tchange\tcompetitor_gap")
     for row in deltas:
@@ -178,6 +192,8 @@ def _test(settings, database: str, args) -> None:
         print(
             f"{row.query}\t{_cell(row.before_predicted_position)}\t{_cell(row.after_predicted_position)}\t{_cell(row.delta)}\t{gap}"
         )
+        if row.feature_moves and row.delta not in (None, 0):
+            print("  features: " + "; ".join(row.feature_moves))
 
 
 def _track(settings, database: str, args) -> None:
@@ -199,6 +215,61 @@ def _track(settings, database: str, args) -> None:
         print("Synthetic mock tracker. Not a Google rank check.")
     print(f"SmartCrew was inside the fetched results for {found} queries.")
     print("A blank position means the domain was outside this fetch, not a made-up rank.")
+
+
+def _train(database: str, args) -> None:
+    report = _score_file(database, args.serp_file, fit=True, model_out=args.model_out)
+    _print_accuracy(report)
+
+
+def _evaluate(database: str, args) -> None:
+    report = _score_file(database, args.serp_file, fit=False, model_out=None)
+    _print_accuracy(report)
+
+
+def _score_file(database: str, path: str, *, fit: bool, model_out: str | None):
+    from aeo.ranksim.groundtruth import load_serp_file
+    from aeo.ranksim.lambdamart import build_examples, cross_validate, fit_lambdamart, save_model
+    from aeo.ranksim.loop import page_from_row
+    from aeo.ranksim.store import page_by_url
+
+    labels = load_serp_file(path)
+    session = open_session(database)
+    pages = {}
+    try:
+        for label in labels:
+            row = page_by_url(session, label.url)
+            if row is not None and row.status == "fetched":
+                pages[label.url] = page_from_row(row)
+    finally:
+        session.close()
+    intents = {row.query: row.intent for row in build_keywords()}
+    examples, uncovered, withheld = build_examples(labels, pages, intents)
+    real = True
+    report = cross_validate(examples, real_google=real)
+    report.uncovered_urls = uncovered
+    report.navboost_withheld = withheld
+    if withheld:
+        report.note += " Navboost prior was withheld because it copied the label position."
+    if fit and examples and report.cross_validated and model_out:
+        model = fit_lambdamart(examples)
+        Path(model_out).parent.mkdir(parents=True, exist_ok=True)
+        save_model(model, model_out)
+        report.note += f" Saved model to {model_out}. The saved fit uses all labeled queries, so quote the cross-validated numbers, not an in-sample score."
+    return report
+
+
+def _print_accuracy(report) -> None:
+    print(report.note)
+    print(f"Labeled URLs: {report.n_labeled_urls}. Uncovered URLs: {report.uncovered_urls}. Queries: {report.n_queries}. Pairs: {report.n_pairs}.")
+    if not report.cross_validated:
+        print("No NDCG, Spearman, top-3 hit rate, or pairwise accuracy is reported.")
+        return
+    print(f"Pairwise accuracy: {_num(report.pairwise_accuracy)}")
+    print(f"NDCG at 10: {_num(report.ndcg_at_10)}")
+    print(f"Spearman: {_num(report.spearman)}")
+    print(f"Top-3 hit rate: {_num(report.top3_hit_rate)}")
+    print("These figures describe the labeled file under query holdout. They are not a live Google rank.")
 
 
 def _report(database: str, out: str | None) -> None:

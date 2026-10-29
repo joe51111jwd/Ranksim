@@ -49,7 +49,7 @@ def render_report(database_url: str | None = None, keywords: list[Keyword] | Non
 <body>
 <main>
   <h1>SmartCrew rank simulator</h1>
-  <p class="banner">Predicted positions are model scores on a focused index. They are not live Google ranks. Mock rows are labeled synthetic.</p>
+  <p class="banner">Predicted positions are model scores on our index. They are not live Google ranks. LambdaMART accuracy is omitted until a file of real Google positions is provided. See docs/accuracy.md.</p>
   <div class="stats">
     <div class="stat"><b>{summary["queries"]}</b>target queries</div>
     <div class="stat"><b>{summary["with_page"]}</b>queries with a sitemap page</div>

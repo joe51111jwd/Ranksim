@@ -11,22 +11,38 @@ from aeo.ranksim.metrics import mean_metric, ndcg_at_k, spearman
 
 # Weights apply to features scaled inside each query. Authority stays at 0
 # until a backlink key fills that feature. These are not learned from Google.
+# Defaults from published ranking practice (field BM25, PageRank, on-page quality).
+# They are not Google's weights and are replaced when LambdaMART is trained.
 HAND_WEIGHTS: dict[str, float] = {
-    "bm25_title": 0.22,
-    "bm25_h1": 0.16,
-    "bm25_headings": 0.08,
-    "bm25_body": 0.12,
-    "bm25_url": 0.08,
-    "embedding": 0.12,
-    "intent_match": 0.06,
-    "freshness": 0.04,
-    "topic_coverage": 0.05,
-    "has_table": 0.02,
-    "has_faq": 0.02,
-    "word_count": 0.02,
+    "bm25f": 0.16,
+    "bm25_title": 0.12,
+    "bm25_h1": 0.08,
+    "bm25_headings": 0.05,
+    "bm25_body": 0.08,
+    "bm25_url": 0.05,
+    "bm25_anchor": 0.07,
+    "embedding": 0.06,
+    "site_focus": 0.04,
+    "site_radius": 0.00,
+    "pagerank": 0.07,
+    "domain_rank": 0.03,
+    "homepage_authority": 0.03,
+    "intent_match": 0.03,
+    "freshness": 0.03,
+    "topic_coverage": 0.04,
+    "has_table": 0.01,
+    "has_faq": 0.01,
+    "word_count": 0.01,
+    "content_effort": 0.02,
+    "originality": 0.02,
+    "thin_content": -0.03,
+    "readability": 0.01,
+    "ad_density": -0.02,
     "links": 0.01,
     "speed": 0.00,
     "authority": 0.00,
+    "url_exact": 0.04,
+    "navboost_prior": 0.00,
 }
 
 

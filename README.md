@@ -1,5 +1,7 @@
 # AEO Simulator
 
+Google SEO ranking for SmartCrew is the active track. The answer-engine simulation is parked. See `docs/accuracy.md`.
+
 A sandbox search and answer engine for answer-engine optimization. You submit a site and the questions you want to win. The service indexes those pages, pulls a competitor set, expands each question into sub-queries, and writes several grounded answers. It then reports how often the submitted domain was cited or mentioned, why a page is losing, and how a draft or re-crawl changes that.
 
 These are sandbox results. `answers_are_official_engine_results` is always `false`. The simulator does not pretend to be ChatGPT, Perplexity, or Google AI Overviews. Log what those products actually did on `POST /v1/calibration` if you want to measure whether the sandbox tracks them.
@@ -176,7 +178,7 @@ They cover Okapi BM25 (including a hand-checked `log(2)` score), reciprocal rank
 
 ## Google rank simulator (SmartCrew)
 
-A separate loop for `www.smartcrewhq.com`. It keeps a keyword list, a focused corpus of at most 1000 pages, and a linear ranker. Predicted positions are scores on that index. They are not live Google ranks.
+A separate loop for `www.smartcrewhq.com`. Stage 1 retrieves with BM25F over title, URL, H1, headings, body, and anchor text. Stage 2 is LambdaMART (LightGBM) using the features in `docs/accuracy.md`. Predicted positions are scores on our index. They are not live Google ranks. Default weights are a published-practice prior. They are replaced only when you train on a real position file.
 
 The keyword file is `smartcrew/keywords.csv` (150 queries: intent, suggested target page, and whether that URL is in the sitemap snapshot from 2026-10-29). 113 queries map to a page that exists. 37 are page gaps. Regenerate with:
 
@@ -201,13 +203,16 @@ If none of the SERP keys are set, `collect` and `track` exit with an error. They
 ### Commands
 
 ```bash
-python -m aeo.ranksim collect          # real SERP, then crawl, cap 1000 pages
-python -m aeo.ranksim calibrate        # Spearman and NDCG against the stored order
+python -m aeo.ranksim evaluate smartcrew/serp.csv
+python -m aeo.ranksim train smartcrew/serp.csv
 python -m aeo.ranksim test page.html --url https://www.smartcrewhq.com/dirtwork-software/
 python -m aeo.ranksim test https://www.smartcrewhq.com/dirtwork-software/
-python -m aeo.ranksim track            # today's positions for the same 150 queries
 python -m aeo.ranksim report
 ```
+
+`evaluate` and `train` read `query,url,position` or a Search Console export with Query, Page, and Position. Optional `prior_position` is an older Google observation used as a Navboost stand-in. If that column copies `position`, it is withheld so the metric cannot cheat. With fewer than two usable queries, the command prints what file is needed and does not emit NDCG, Spearman, top-3 hit rate, or pairwise accuracy.
+
+`test` re-fetches only the page you pass (or reads a local file). It prints predicted position before and after, the competitor gaps, and which features moved. A blank before-position means the page was outside the stored set, not a rank of 151.
 
 `test` re-fetches only the page you pass (or reads a local file). Competitors stay as stored. It prints predicted position before and after for every query, plus heading terms, tables, or FAQ blocks the stored competitors have that the new page lacks. A blank before-position means SmartCrew was outside the fetched results, not a rank of 151.
 

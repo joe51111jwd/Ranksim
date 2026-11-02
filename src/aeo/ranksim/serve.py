@@ -13,7 +13,8 @@ from aeo.crawl.fetch import Crawler
 from aeo.ranksim.check import check_draft, score_site, suggest_links
 from aeo.ranksim.confidence import LooFit, loo_fit
 from aeo.ranksim.corpus import load_corpus_docs
-from aeo.ranksim.demo import render_page
+from aeo.ranksim.demo import render_page, render_space_page
+from aeo.ranksim.space import build_space, domains_from_labels, read_competitors
 from aeo.ranksim.groundtruth import load_serp_file
 from aeo.ranksim.judge import relevance_experiment
 from aeo.ranksim.keywords import build_keywords
@@ -52,6 +53,17 @@ class DemoState:
         self.relevance_note = relevance_experiment(examples, None).note
         self.site_rows = score_site(self.pages, self.labels, self.fit.models, self.queries, self.today)
         self.fixes = suggest_links(self.graph, self.pages, self.labels, self.fit.models, today=self.today)
+        competitors = read_competitors(Path("smartcrew/competitors.csv"))
+        if not competitors:
+            competitors = domains_from_labels(self.labels, "smartcrewhq.com")
+        self.space = build_space(
+            self.labels,
+            self.pages,
+            self.fit.models,
+            competitors,
+            our_domain="smartcrewhq.com",
+            today=self.today,
+        )
 
     def accuracy_line(self) -> str:
         pairwise = "n/a" if self.fit.pairwise is None else f"{self.fit.pairwise:.3f}"
@@ -116,6 +128,10 @@ def create_app(state: DemoState) -> FastAPI:
             run_ai=True,
         )
         return state.page(selected=SAMPLE_QUERY, url_value=SAMPLE_URL, html_value="", result=result, error=result.error)
+
+    @app.get("/space", response_class=HTMLResponse)
+    def space() -> HTMLResponse:
+        return HTMLResponse(render_space_page(state.space, state.llm_note()))
 
     @app.post("/check", response_class=HTMLResponse)
     def check(query: str = Form(""), url: str = Form(""), html: str = Form(""), ai: str = Form("")) -> HTMLResponse:

@@ -87,6 +87,77 @@ def test_link_graph_respects_depth_and_records_orphans():
     assert "hcss alternative" in graph.nodes["https://www.smartcrewhq.com/a"].anchors
 
 
+def test_cheap_model_defaults_and_disk_cache(tmp_path):
+    from aeo.ranksim.llm import CachingLlm, LlmClient, LlmReply, estimate_cost, resolve_llm
+
+    openai = resolve_llm(Settings(openai_api_key="sk-test", anthropic_api_key=None, ranksim_llm_model=None))
+    assert openai.model == "gpt-4o-mini"
+    anthropic = resolve_llm(Settings(openai_api_key=None, anthropic_api_key="sk-ant", ranksim_llm_model=None))
+    assert anthropic.model == "claude-3-5-haiku-20241022"
+    override = resolve_llm(Settings(openai_api_key="sk-test", ranksim_llm_model="gpt-4o-mini"))
+    assert override.model == "gpt-4o-mini"
+    assert estimate_cost("not-a-priced-model", 10, 10) is None
+
+    class Fake(LlmClient):
+        name = "openai"
+        available = True
+        model = "gpt-4o-mini"
+        calls = 0
+
+        def complete(self, system: str, user: str) -> LlmReply:
+            self.calls += 1
+            return LlmReply(text="ok", provider="openai", stub=False, model=self.model, input_tokens=1000, output_tokens=100)
+
+    fake = Fake()
+    cached = CachingLlm(fake, tmp_path / "cache", tmp_path / "cost.jsonl", "test-run")
+    first = cached.complete("sys", "user")
+    second = cached.complete("sys", "user")
+    assert fake.calls == 1
+    assert first.cache_hit is False and second.cache_hit is True
+    assert second.estimated_usd == 0.0
+    assert first.estimated_usd == pytest.approx((1000 * 0.15 + 100 * 0.60) / 1_000_000)
+    log = (tmp_path / "cost.jsonl").read_text()
+    assert "test-run" in log and "cache_hit" in log
+
+
+def test_space_does_not_invent_a_rank_for_missing_html():
+    from aeo.ranksim.confidence import loo_fit
+    from aeo.ranksim.lambdamart import RankExample
+    from aeo.ranksim.space import build_space
+
+    examples = []
+    for index in range(2):
+        query = f"dirtwork software {index}"
+        for position, url, title in (
+            (1, f"https://rival.example/{index}", query),
+            (2, f"https://www.smartcrewhq.com/{index}", "notes"),
+        ):
+            page = PageDoc(url=url, title=title, h1=title, body=(title + " ") * 40, word_count=80, is_ours="smartcrewhq" in url)
+            examples.append(RankExample(query, url, position, {"bm25_title": 1.0 if position == 1 else 0.0}))
+    fit = loo_fit(examples, feature_names=["bm25_title"], keep_models=True)
+    labels = [
+        SerpLabel("dirtwork software 0", "https://rival.example/0", 1, None, "manual_csv"),
+        SerpLabel("dirtwork software 0", "https://www.smartcrewhq.com/0", 2, None, "manual_csv"),
+        SerpLabel("dirtwork software 0", "https://missing.example/hidden", 3, None, "manual_csv"),
+        SerpLabel("dirtwork software 1", "https://rival.example/1", 1, None, "manual_csv"),
+        SerpLabel("dirtwork software 1", "https://www.smartcrewhq.com/1", 2, None, "manual_csv"),
+    ]
+    pages = {}
+    for row in examples:
+        pages[row.url] = PageDoc(url=row.url, title=row.url, body="x " * 40, word_count=40, is_ours="smartcrewhq" in row.url)
+    report = build_space(labels, pages, fit.models, ["rival.example", "missing.example"])
+    board = next(item for item in report.boards if item.query == "dirtwork software 0")
+    missing = next(player for player in board.players if player.domain == "missing.example")
+    assert missing.real_position == 3
+    assert missing.predicted_rank is None
+    share = next(row for row in report.shares if row.domain == "missing.example")
+    assert share.real_top10 == 1
+    assert share.predicted_queries == 0
+    text = __import__("aeo.ranksim.space", fromlist=["render_space_text"]).render_space_text(report)
+    assert "PREDICTED n/a" in text
+    assert "REAL 3" in text
+
+
 def test_stub_llm_and_unmeasured_relevance():
     client = resolve_llm(Settings(openai_api_key=None, anthropic_api_key=None))
     assert client.available is False

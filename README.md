@@ -214,6 +214,8 @@ python -m aeo.ranksim graph --serp smartcrew/serp.csv
 python -m aeo.ranksim graph-eval
 python -m aeo.ranksim noise day-one.csv day-two.csv
 python -m aeo.ranksim serve --port 8765
+python -m aeo.ranksim competitors import --from-serps --crawl
+python -m aeo.ranksim space
 python -m aeo.ranksim report
 ```
 

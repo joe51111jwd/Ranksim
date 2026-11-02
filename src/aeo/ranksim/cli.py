@@ -109,6 +109,21 @@ def main(argv: list[str] | None = None) -> None:
     noise = sub.add_parser("noise", help="Compare two Google snapshots. One file is not enough.")
     noise.add_argument("snapshots", nargs="+")
 
+    competitors = sub.add_parser("competitors", help="Import competitor domains")
+    comp_sub = competitors.add_subparsers(dest="competitors_command", required=True)
+    comp_import = comp_sub.add_parser("import", help="Save a competitor list, optionally from the labeled top 10")
+    comp_import.add_argument("domains", nargs="*", help="Domains or URLs")
+    comp_import.add_argument("--file", default=None, help="Text or CSV file of domains")
+    comp_import.add_argument("--from-serps", action="store_true", help="Take domains that appear in the labeled top 10")
+    comp_import.add_argument("--serp", default="smartcrew/serp.csv")
+    comp_import.add_argument("--crawl", action="store_true", help="Fetch a homepage when that host is not stored yet")
+    comp_import.add_argument("--max-fetches", type=int, default=20)
+    comp_import.add_argument("--out", default="smartcrew/competitors.csv")
+
+    space = sub.add_parser("space", help="Print how the client stacks up against imported competitors")
+    space.add_argument("--serp", default="smartcrew/serp.csv")
+    space.add_argument("--competitors", default="smartcrew/competitors.csv")
+
     serve = sub.add_parser("serve", help="Serve the pre-publish rank check demo")
     serve.add_argument("--host", default="0.0.0.0")
     serve.add_argument("--port", type=int, default=8765)
@@ -157,6 +172,10 @@ def main(argv: list[str] | None = None) -> None:
             _noise(args)
         elif args.command == "serve":
             _serve(settings, database, args)
+        elif args.command == "competitors":
+            _competitors(settings, database, args)
+        elif args.command == "space":
+            _space(database, args)
         else:
             parser.error(f"Unknown command {args.command}")
     except ProviderConfigError as exc:
@@ -279,6 +298,71 @@ def _noise(args) -> None:
     print(f"Pairwise agreement: {report.pairwise_agreement:.3f}.")
     print(f"Top-1 same rate: {report.top1_same_rate:.3f}.")
     print(f"Mean absolute position change: {report.mean_abs_position_change:.3f}.")
+
+
+def _competitors(settings, database: str, args) -> None:
+    from aeo.ranksim.groundtruth import load_serp_file
+    from aeo.ranksim.space import crawl_competitor_homepages, domains_from_labels, parse_competitor_text, write_competitors
+
+    domains: list[str] = []
+    source_bits = []
+    if args.from_serps:
+        domains.extend(domains_from_labels(load_serp_file(args.serp), "smartcrewhq.com"))
+        source_bits.append("labeled_top10")
+    if args.file:
+        domains.extend(parse_competitor_text(Path(args.file).read_text(encoding="utf-8")))
+        source_bits.append("file")
+    if args.domains:
+        domains.extend(parse_competitor_text("\n".join(args.domains)))
+        source_bits.append("argv")
+    ordered = list(dict.fromkeys(domains))
+    if not ordered:
+        raise SystemExit("No competitors. Pass domains, --file, or --from-serps. Nothing was invented.")
+    write_competitors(args.out, ordered, "+".join(source_bits) or "import")
+    print(f"Wrote {len(ordered)} competitors to {args.out}")
+    for domain in ordered:
+        print(domain)
+    if not args.crawl:
+        print("No crawl. Pass --crawl to fetch homepages that are not stored yet.")
+        return
+    fetched, skipped, errors = crawl_competitor_homepages(settings, ordered, database, max_fetches=args.max_fetches)
+    print(f"Homepage fetches: {fetched}. Already stored: {skipped}.")
+    for error in errors:
+        print(f"not stored {error}")
+
+
+def _space(database: str, args) -> None:
+    from aeo.ranksim.confidence import loo_fit
+    from aeo.ranksim.corpus import load_corpus_docs
+    from aeo.ranksim.groundtruth import load_serp_file
+    from aeo.ranksim.keywords import build_keywords
+    from aeo.ranksim.lambdamart import build_examples
+    from aeo.ranksim.linkgraph import attach_graph, load_graph
+    from aeo.ranksim.space import build_space, domains_from_labels, read_competitors, render_space_text
+    from pathlib import Path
+
+    labels = load_serp_file(args.serp)
+    competitors = read_competitors(args.competitors)
+    source = args.competitors
+    if not competitors:
+        competitors = domains_from_labels(labels, "smartcrewhq.com")
+        source = "labeled top 10 (no competitors file)"
+    intents = {row.query: row.intent for row in build_keywords()}
+    session = open_session(database)
+    try:
+        pages = load_corpus_docs(session)
+    finally:
+        session.close()
+    graph_path = Path("smartcrew/linkgraph.json")
+    if graph_path.is_file():
+        attach_graph(pages, load_graph(str(graph_path)))
+    examples, uncovered, _withheld = build_examples(labels, pages, intents)
+    fit = loo_fit(examples, keep_models=True)
+    report = build_space(labels, pages, fit.models, competitors)
+    print(f"Competitors from {source}. Uncovered labeled rows: {uncovered}.")
+    if fit.pairwise is not None:
+        print(f"PREDICTED backtest pairwise {fit.pairwise:.3f} on {fit.n_pairs} pairs.")
+    print(render_space_text(report), end="")
 
 
 def _serve(settings, database: str, args) -> None:

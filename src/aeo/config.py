@@ -36,6 +36,7 @@ class Settings(BaseSettings):
     ranksim_serp_depth: int = 10
     ranksim_max_pages: int = 1000
     ranksim_authority: str = "off"
+    ranksim_llm_model: str | None = None
 
     @field_validator(
         "brave_api_key",
@@ -45,6 +46,7 @@ class Settings(BaseSettings):
         "dataforseo_login",
         "dataforseo_password",
         "anthropic_api_key",
+        "ranksim_llm_model",
         mode="before",
     )
     @classmethod

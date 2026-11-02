@@ -1,12 +1,32 @@
-"""Pluggable chat completion. No key means a stub that does not invent text."""
+"""Pluggable chat completion. No key means a stub that does not invent text.
+
+Calls are cached on disk. Cost is an estimate from published list rates and the
+token counts the API returns. A cache hit costs nothing. Unknown models are
+logged with tokens only, not a made-up dollar amount.
+"""
 
 from __future__ import annotations
 
+import hashlib
+import json
 from dataclasses import dataclass
+from datetime import datetime, timezone
+from pathlib import Path
 
 import httpx
 
 from aeo.config import Settings
+
+# USD per 1,000,000 tokens: (input, output). Published list rates, not an invoice.
+LIST_RATES = {
+    "gpt-4o-mini": (0.15, 0.60),
+    "claude-3-5-haiku": (0.80, 4.00),
+    "claude-3-5-haiku-20241022": (0.80, 4.00),
+    "claude-3-5-haiku-latest": (0.80, 4.00),
+}
+
+OPENAI_DEFAULT = "gpt-4o-mini"
+ANTHROPIC_DEFAULT = "claude-3-5-haiku-20241022"
 
 
 @dataclass
@@ -14,26 +34,35 @@ class LlmReply:
     text: str
     provider: str
     stub: bool
+    model: str = ""
+    input_tokens: int | None = None
+    output_tokens: int | None = None
+    estimated_usd: float | None = None
+    cache_hit: bool = False
 
 
 class LlmClient:
     name = "base"
     available = False
+    model = ""
 
     def complete(self, system: str, user: str) -> LlmReply:
         raise RuntimeError("No LLM is configured.")
+
+    def cost_summary(self) -> str:
+        return "No LLM client."
 
 
 class StubLlm(LlmClient):
     name = "stub"
     available = False
+    model = ""
 
     def complete(self, system: str, user: str) -> LlmReply:
-        return LlmReply(
-            text="",
-            provider="stub",
-            stub=True,
-        )
+        return LlmReply(text="", provider="stub", stub=True, model="", estimated_usd=0.0)
+
+    def cost_summary(self) -> str:
+        return "LLM stub. Estimated cost $0. No API calls."
 
 
 class OpenAiLlm(LlmClient):
@@ -60,15 +89,24 @@ class OpenAiLlm(LlmClient):
             timeout=60.0,
         )
         response.raise_for_status()
-        text = response.json()["choices"][0]["message"]["content"]
-        return LlmReply(text=str(text or ""), provider="openai", stub=False)
+        payload = response.json()
+        text = payload["choices"][0]["message"]["content"]
+        usage = payload.get("usage") or {}
+        return LlmReply(
+            text=str(text or ""),
+            provider="openai",
+            stub=False,
+            model=self.model,
+            input_tokens=_int(usage.get("prompt_tokens")),
+            output_tokens=_int(usage.get("completion_tokens")),
+        )
 
 
 class AnthropicLlm(LlmClient):
     name = "anthropic"
     available = True
 
-    def __init__(self, api_key: str, model: str = "claude-3-5-haiku-latest") -> None:
+    def __init__(self, api_key: str, model: str) -> None:
         self.api_key = api_key
         self.model = model
 
@@ -90,14 +128,137 @@ class AnthropicLlm(LlmClient):
             timeout=60.0,
         )
         response.raise_for_status()
-        parts = response.json().get("content") or []
+        payload = response.json()
+        parts = payload.get("content") or []
         text = "".join(str(part.get("text") or "") for part in parts if isinstance(part, dict))
-        return LlmReply(text=text, provider="anthropic", stub=False)
+        usage = payload.get("usage") or {}
+        return LlmReply(
+            text=text,
+            provider="anthropic",
+            stub=False,
+            model=self.model,
+            input_tokens=_int(usage.get("input_tokens")),
+            output_tokens=_int(usage.get("output_tokens")),
+        )
 
 
-def resolve_llm(settings: Settings) -> LlmClient:
+class CachingLlm(LlmClient):
+    """Disk cache and a JSONL cost log around a real client."""
+
+    def __init__(self, inner: LlmClient, cache_dir: Path, cost_log: Path, run_id: str) -> None:
+        self.inner = inner
+        self.name = inner.name
+        self.available = inner.available
+        self.model = inner.model
+        self.cache_dir = cache_dir
+        self.cost_log = cost_log
+        self.run_id = run_id
+        self.calls = 0
+        self.cache_hits = 0
+        self.estimated_usd = 0.0
+        self.unpriced_calls = 0
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        cost_log.parent.mkdir(parents=True, exist_ok=True)
+
+    def complete(self, system: str, user: str) -> LlmReply:
+        key = hashlib.sha256(
+            json.dumps(
+                {"provider": self.inner.name, "model": self.model, "system": system, "user": user},
+                sort_keys=True,
+            ).encode()
+        ).hexdigest()
+        path = self.cache_dir / f"{key}.json"
+        if path.is_file():
+            saved = json.loads(path.read_text(encoding="utf-8"))
+            reply = LlmReply(
+                text=str(saved.get("text") or ""),
+                provider=self.inner.name,
+                stub=False,
+                model=self.model,
+                input_tokens=saved.get("input_tokens"),
+                output_tokens=saved.get("output_tokens"),
+                estimated_usd=0.0,
+                cache_hit=True,
+            )
+            self.cache_hits += 1
+            self._log(reply)
+            return reply
+        reply = self.inner.complete(system, user)
+        reply.model = reply.model or self.model
+        reply.estimated_usd = estimate_cost(reply.model, reply.input_tokens, reply.output_tokens)
+        reply.cache_hit = False
+        path.write_text(
+            json.dumps(
+                {
+                    "text": reply.text,
+                    "model": reply.model,
+                    "input_tokens": reply.input_tokens,
+                    "output_tokens": reply.output_tokens,
+                }
+            ),
+            encoding="utf-8",
+        )
+        self.calls += 1
+        if reply.estimated_usd is None:
+            self.unpriced_calls += 1
+        else:
+            self.estimated_usd += reply.estimated_usd
+        self._log(reply)
+        return reply
+
+    def cost_summary(self) -> str:
+        priced = f"${self.estimated_usd:.6f}"
+        extra = ""
+        if self.unpriced_calls:
+            extra = f" {self.unpriced_calls} calls had no published rate, so their dollars were not estimated."
+        return (
+            f"LLM {self.name} {self.model}. Fresh calls {self.calls}, cache hits {self.cache_hits}. "
+            f"Estimated cost this run {priced}.{extra} Log: {self.cost_log}."
+        )
+
+    def _log(self, reply: LlmReply) -> None:
+        row = {
+            "at": datetime.now(timezone.utc).isoformat(),
+            "run_id": self.run_id,
+            "provider": reply.provider,
+            "model": reply.model,
+            "cache_hit": reply.cache_hit,
+            "input_tokens": reply.input_tokens,
+            "output_tokens": reply.output_tokens,
+            "estimated_usd": reply.estimated_usd,
+        }
+        with self.cost_log.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(row) + "\n")
+
+
+def estimate_cost(model: str, input_tokens: int | None, output_tokens: int | None) -> float | None:
+    rates = LIST_RATES.get(model)
+    if rates is None or input_tokens is None or output_tokens is None:
+        return None
+    in_rate, out_rate = rates
+    return (input_tokens * in_rate + output_tokens * out_rate) / 1_000_000
+
+
+def resolve_llm(settings: Settings, *, cache_dir: Path | None = None, cost_log: Path | None = None, run_id: str = "run") -> LlmClient:
+    chosen = (settings.ranksim_llm_model or "").strip()
     if settings.openai_api_key:
-        return OpenAiLlm(settings.openai_api_key, settings.openai_model, settings.openai_base_url)
-    if settings.anthropic_api_key:
-        return AnthropicLlm(settings.anthropic_api_key)
-    return StubLlm()
+        inner: LlmClient = OpenAiLlm(settings.openai_api_key, chosen or OPENAI_DEFAULT, settings.openai_base_url)
+    elif settings.anthropic_api_key:
+        inner = AnthropicLlm(settings.anthropic_api_key, chosen or ANTHROPIC_DEFAULT)
+    else:
+        return StubLlm()
+    return CachingLlm(
+        inner,
+        cache_dir or Path("data/llm-cache"),
+        cost_log or Path("data/llm-cost.jsonl"),
+        run_id,
+    )
+
+
+def _int(value) -> int | None:
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None

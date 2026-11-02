@@ -6,6 +6,7 @@ from html import escape
 
 from aeo.ranksim.check import CheckResult, LinkFix, SiteRow
 from aeo.ranksim.linkgraph import LinkGraph
+from aeo.ranksim.space import SpaceReport
 
 
 def render_page(
@@ -35,7 +36,7 @@ def render_page(
         "<title>Pre-publish rank check</title>",
         f"<style>{CSS}</style></head><body>",
         "<main>",
-        "<p class=\"eyebrow\">SmartCrew demo <span class=\"pill\">PREDICTED</span></p>",
+        "<p class=\"eyebrow\">SmartCrew demo <span class=\"pill\">PREDICTED</span> <a href=\"/space\">Space view</a></p>",
         "<h1>Pre-publish rank check</h1>",
         "<p class=\"lead\">Score a draft against the stored Google results for one query. Same-set: the crawled competitors, plus this draft only.</p>",
         f"<section class=\"banner\"><p>{escape(accuracy_line)}</p><p>{escape(calibration_note)}</p><p>{escape(llm_note)}</p><p>{escape(relevance_note)}</p></section>",
@@ -61,6 +62,74 @@ def render_page(
     body.append(_fixes(fixes))
     body.append("</main></body></html>")
     return "\n".join(body)
+
+
+def render_space_page(report: SpaceReport, llm_note: str) -> str:
+    share_rows = []
+    for row in report.shares:
+        pred3 = "PREDICTED n/a" if row.predicted_queries == 0 else f"PREDICTED {row.predicted_top3} of {row.predicted_queries}"
+        pred10 = "PREDICTED n/a" if row.predicted_queries == 0 else f"PREDICTED {row.predicted_top10} of {row.predicted_queries}"
+        share_rows.append(
+            "<tr>"
+            f"<td>{escape(row.domain)}</td>"
+            f"<td>REAL {row.real_top3} of {row.tracked_queries}</td>"
+            f"<td>REAL {row.real_top10} of {row.tracked_queries}</td>"
+            f"<td>{escape(pred3)}</td>"
+            f"<td>{escape(pred10)}</td>"
+            "</tr>"
+        )
+    h2h_rows = []
+    for row in report.headtohead:
+        if row.real_queries == 0 and row.predicted_queries == 0:
+            continue
+        real = "REAL n/a" if row.real_queries == 0 else f"REAL {row.real_wins}-{row.real_losses}-{row.real_ties} over {row.real_queries}"
+        pred = "PREDICTED n/a" if row.predicted_queries == 0 else f"PREDICTED {row.predicted_wins}-{row.predicted_losses}-{row.predicted_ties} over {row.predicted_queries}"
+        h2h_rows.append(f"<tr><td>{escape(row.domain)}</td><td>{escape(real)}</td><td>{escape(pred)}</td></tr>")
+    boards = []
+    for board in report.boards:
+        lines = [f"<h3>{escape(board.query)}</h3><p class=\"muted\">{board.scored_pages} scored pages</p><ul>"]
+        for player in board.players:
+            real = "REAL n/a" if player.real_position is None else f"REAL #{player.real_position:g}"
+            if player.predicted_rank is None:
+                pred = "PREDICTED n/a"
+            else:
+                pred = f"PREDICTED {player.predicted_rank} of {player.predicted_of}"
+            lines.append(f"<li><strong>{escape(player.domain)}</strong> {escape(real)} / {escape(pred)}</li>")
+        lines.append("</ul>")
+        boards.append("".join(lines))
+    fixes = "".join(
+        f"<li>PREDICTED {fix.predicted_rank} of {fix.predicted_of} on {escape(fix.query)} {escape(fix.url)}</li>"
+        for fix in report.fixes
+    ) or "<li>No client page had a predicted rank.</li>"
+    notes = "".join(f"<p class=\"muted\">{escape(note)}</p>" for note in report.notes)
+    return f"""<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>How you stack up</title>
+<style>{CSS}</style></head><body><main>
+<p class="eyebrow">SmartCrew demo <span class="pill">PREDICTED</span> <a href="/">Rank check</a></p>
+<h1>How you stack up</h1>
+<p class="lead">Stored Google results are REAL. Model ranks are PREDICTED, and only for pages we stored.</p>
+<section class="banner"><p>{escape(llm_note)}</p></section>
+<h2>Share of tracked queries</h2>
+<table><thead><tr><th>Domain</th><th>REAL top 3</th><th>REAL top 10</th><th>PREDICTED top 3</th><th>PREDICTED top 10</th></tr></thead>
+<tbody>{''.join(share_rows)}</tbody></table>
+<h2>Head to head</h2>
+<p class="muted">Record is wins-losses-ties. REAL only when both domains are in the stored file. PREDICTED only when both have stored HTML.</p>
+<table><thead><tr><th>Competitor</th><th>REAL</th><th>PREDICTED</th></tr></thead><tbody>{''.join(h2h_rows)}</tbody></table>
+<h2>Gaps</h2>
+<ul>
+<li>{escape(report.content_gap)}</li>
+<li>{escape(report.link_gap)}</li>
+<li>{escape(report.authority_gap)}</li>
+</ul>
+<h2>Pages to fix first</h2>
+<ul>{fixes}</ul>
+<h2>Every player, every query</h2>
+{''.join(boards)}
+{notes}
+</main></body></html>
+"""
 
 
 def _result_html(result: CheckResult) -> str:

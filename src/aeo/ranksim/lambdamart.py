@@ -217,11 +217,12 @@ def cross_validate(examples: list[RankExample], *, real_google: bool, folds_mode
     )
 
 
-def fit_lambdamart(examples: list[RankExample]):
+def fit_lambdamart(examples: list[RankExample], feature_names: tuple[str, ...] | list[str] | None = None):
     import lightgbm as lgb
 
+    names = list(feature_names or FEATURE_NAMES)
     ordered = sorted(examples, key=lambda row: row.query)
-    features = [[row.features.get(name, 0.0) for name in FEATURE_NAMES] for row in ordered]
+    features = [[_feature_value(row.features, name) for name in names] for row in ordered]
     labels = [int(max(0, min(10, round(relevance(row.position))))) for row in ordered]
     group: list[int] = []
     current = None
@@ -242,7 +243,7 @@ def fit_lambdamart(examples: list[RankExample]):
         np.asarray(features, dtype=float),
         label=np.asarray(labels, dtype=float),
         group=group,
-        feature_name=list(FEATURE_NAMES),
+        feature_name=names,
     )
     params = {
         "objective": "lambdarank",
@@ -252,19 +253,20 @@ def fit_lambdamart(examples: list[RankExample]):
         "min_data_in_leaf": 1,
         "verbose": -1,
         "num_threads": 1,
-        "monotone_constraints": [1 if name in MONOTONE_UP else 0 for name in FEATURE_NAMES],
+        "monotone_constraints": [1 if name in MONOTONE_UP else 0 for name in names],
         "monotone_constraints_method": "advanced",
     }
     return lgb.train(params, dataset, num_boost_round=40)
 
 
-def predict_scores(model, examples: list[RankExample]) -> dict[int, float]:
+def predict_scores(model, examples: list[RankExample], feature_names: list[str] | None = None) -> dict[int, float]:
     if not examples:
         return {}
     import numpy as np
 
+    names = feature_names or list(model.feature_name())
     matrix = np.asarray(
-        [[_feature_value(row.features, name) for name in FEATURE_NAMES] for row in examples],
+        [[_feature_value(row.features, name) for name in names] for row in examples],
         dtype=float,
     )
     values = model.predict(matrix)

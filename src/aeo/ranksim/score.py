@@ -45,6 +45,9 @@ HAND_WEIGHTS: dict[str, float] = {
     "authority": 0.00,
     "url_exact": 0.04,
     "navboost_prior": 0.00,
+    "orphan": 0.00,
+    "link_depth": 0.00,
+    "crawl_inlinks": 0.00,
 }
 
 

@@ -95,6 +95,25 @@ def main(argv: list[str] | None = None) -> None:
     index_serp.add_argument("serp_file")
     index_serp.add_argument("--delay", type=float, default=0.4)
 
+    graph = sub.add_parser("graph", help="Crawl a polite link graph from the client site and labeled competitors")
+    graph.add_argument("--serp", default="smartcrew/serp.csv")
+    graph.add_argument("--out", default="smartcrew/linkgraph.json")
+    graph.add_argument("--max-fetches", type=int, default=50)
+    graph.add_argument("--internal-depth", type=int, default=2)
+    graph.add_argument("--outbound-depth", type=int, default=1)
+
+    graph_eval = sub.add_parser("graph-eval", help="Compare held-out pairwise accuracy with and without link-graph features")
+    graph_eval.add_argument("--serp", default="smartcrew/serp.csv")
+    graph_eval.add_argument("--graph", default="smartcrew/linkgraph.json")
+
+    noise = sub.add_parser("noise", help="Compare two Google snapshots. One file is not enough.")
+    noise.add_argument("snapshots", nargs="+")
+
+    serve = sub.add_parser("serve", help="Serve the pre-publish rank check demo")
+    serve.add_argument("--host", default="0.0.0.0")
+    serve.add_argument("--port", type=int, default=8765)
+    serve.add_argument("--serp", default="smartcrew/serp.csv")
+
     args = parser.parse_args(argv)
     settings = get_settings()
     database = args.database or settings.ranksim_database_url
@@ -130,6 +149,14 @@ def main(argv: list[str] | None = None) -> None:
             _evaluate(database, args)
         elif args.command == "index-serp":
             _index_serp(settings, database, args)
+        elif args.command == "graph":
+            _graph(settings, database, args)
+        elif args.command == "graph-eval":
+            _graph_eval(database, args)
+        elif args.command == "noise":
+            _noise(args)
+        elif args.command == "serve":
+            _serve(settings, database, args)
         else:
             parser.error(f"Unknown command {args.command}")
     except ProviderConfigError as exc:
@@ -138,6 +165,135 @@ def main(argv: list[str] | None = None) -> None:
     except ValueError as exc:
         print(str(exc), file=sys.stderr)
         raise SystemExit(2) from exc
+
+
+def _graph(settings, database: str, args) -> None:
+    from aeo.ranksim.groundtruth import load_serp_file
+    from aeo.ranksim.linkgraph import collect_graph, save_graph
+    from aeo.ranksim.loop import store_fetched_page, FetchResult
+    from aeo.ranksim.saved_html import load_saved_html
+    from aeo.ranksim.store import open_session
+
+    labels = load_serp_file(args.serp)
+    saved, missing = load_saved_html()
+    if missing:
+        print("Saved HTML rows with no file were skipped:")
+        for url in missing:
+            print(f"missing file {url}")
+    graph = collect_graph(
+        settings,
+        labels,
+        saved_html=saved,
+        our_internal_depth=args.internal_depth,
+        outbound_depth=args.outbound_depth,
+        max_fetches=args.max_fetches,
+    )
+    save_graph(graph, args.out)
+    session = open_session(database)
+    try:
+        stored = 0
+        for url, node in graph.nodes.items():
+            if node.status != "fetched" or not node.html:
+                continue
+            store_fetched_page(session, FetchResult(url=url, html=node.html, status="fetched"))
+            stored += 1
+    finally:
+        session.close()
+    print(f"Link graph: {len(graph.nodes)} pages, {len(graph.edges)} edges, {graph.fetches} fetches, {graph.blocked} robots blocks.")
+    print(f"Stored {stored} fetched pages into the rank database.")
+    print(f"Wrote {args.out}")
+    for note in graph.notes:
+        print(note)
+    print("In-crawl inlinks are not web-wide backlinks. No backlink API was called.")
+
+
+def _graph_eval(database: str, args) -> None:
+    from aeo.ranksim.confidence import loo_fit
+    from aeo.ranksim.corpus import load_corpus_docs
+    from aeo.ranksim.features import FEATURE_NAMES
+    from aeo.ranksim.groundtruth import load_serp_file
+    from aeo.ranksim.keywords import build_keywords
+    from aeo.ranksim.lambdamart import build_examples
+    from aeo.ranksim.linkgraph import attach_graph, load_graph
+    from pathlib import Path
+
+    labels = load_serp_file(args.serp)
+    intents = {row.query: row.intent for row in build_keywords()}
+    session = open_session(database)
+    try:
+        pages = load_corpus_docs(session)
+    finally:
+        session.close()
+    base_names = [name for name in FEATURE_NAMES if name not in {"orphan", "link_depth", "crawl_inlinks"}]
+    before_examples, uncovered, _withheld = build_examples(labels, pages, intents)
+    before = loo_fit(before_examples, base_names)
+    print("Predicted metrics. Not live Google ranks.")
+    print(f"Without link-graph features: pairwise {_fmt(before.pairwise)} on {before.n_pairs} pairs, {before.n_queries} queries. Uncovered rows: {uncovered}.")
+    path = Path(args.graph)
+    if not path.is_file():
+        print(f"No graph file at {path}. Link-feature impact was not measured.")
+        return
+    graph = load_graph(str(path))
+    attached = attach_graph(pages, graph)
+    varied = _graph_feature_varies(pages)
+    after_examples, _uncovered, _withheld = build_examples(labels, pages, intents)
+    after = loo_fit(after_examples, FEATURE_NAMES)
+    print(f"With link-graph features: pairwise {_fmt(after.pairwise)} on {after.n_pairs} pairs. Pages updated from the graph: {attached}.")
+    if not varied:
+        print("Link features did not vary on the stored pages, so a change in pairwise accuracy is not evidence they helped.")
+    elif before.pairwise is not None and after.pairwise is not None:
+        print(f"Pairwise delta: {after.pairwise - before.pairwise:+.3f}.")
+    print("Web-wide backlinks were not included. No DataForSEO key was used.")
+
+
+def _graph_feature_varies(pages: dict) -> bool:
+    seen = set()
+    depths = set()
+    for url, doc in pages.items():
+        if url != getattr(doc, "url", url):
+            continue
+        if doc.orphan is not None:
+            seen.add(doc.orphan)
+        if doc.link_depth is not None:
+            depths.add(doc.link_depth)
+    return len(seen) > 1 or len(depths) > 1
+
+
+def _fmt(value) -> str:
+    return "n/a" if value is None else f"{value:.3f}"
+
+
+def _noise(args) -> None:
+    from aeo.ranksim.groundtruth import load_serp_file
+    from aeo.ranksim.noise import noise_ceiling
+
+    if len(args.snapshots) < 2:
+        print("Noise ceiling was not computed. Pass two snapshot CSVs of the same queries from different days.")
+        return
+    report = noise_ceiling(load_serp_file(args.snapshots[0]), load_serp_file(args.snapshots[1]))
+    print(report.note)
+    if not report.computed:
+        print("No pairwise agreement, top-1 rate, or position change is reported.")
+        return
+    print(f"Queries compared: {report.n_queries}.")
+    print(f"Pairwise agreement: {report.pairwise_agreement:.3f}.")
+    print(f"Top-1 same rate: {report.top1_same_rate:.3f}.")
+    print(f"Mean absolute position change: {report.mean_abs_position_change:.3f}.")
+
+
+def _serve(settings, database: str, args) -> None:
+    import uvicorn
+
+    from aeo.ranksim.serve import DemoState, create_app
+
+    print("Fitting the leave-one-query-out model. This does not call an LLM or a SERP API.")
+    state = DemoState(settings, args.serp, database)
+    print(state.accuracy_line())
+    print(state.llm_note())
+    print(state.relevance_note)
+    app = create_app(state)
+    print(f"Demo: http://127.0.0.1:{args.port}/")
+    uvicorn.run(app, host=args.host, port=args.port, log_level="warning")
 
 
 def _keywords(refresh: bool) -> None:

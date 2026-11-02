@@ -42,6 +42,9 @@ FEATURE_NAMES = (
     "authority",
     "url_exact",
     "navboost_prior",
+    "orphan",
+    "link_depth",
+    "crawl_inlinks",
 )
 
 # Higher values should raise the predicted score. Other features stay unconstrained.
@@ -79,6 +82,10 @@ class PageDoc:
     ad_hits: int = 0
     navboost_prior: float = 0.0
     is_ours: bool = False
+    # None means the link crawl did not observe this page. That is missing, not zero.
+    orphan: bool | None = None
+    link_depth: int | None = None
+    crawl_inlinks: int | None = None
 
 
 def url_text(url: str) -> str:
@@ -209,6 +216,12 @@ def _content_effort(page: PageDoc) -> float:
     return unique_ratio * word_count_score(page.word_count)
 
 
+def _observed_flag(value: bool | None) -> float:
+    if value is None:
+        return float("nan")
+    return 1.0 if value else 0.0
+
+
 def _match_or_missing(score: float, text: str) -> float:
     """A zero or blank heading/body match is missing, not a real zero.
 
@@ -296,6 +309,9 @@ def raw_features(query: str, intent: str, pages: list[PageDoc], today: date) -> 
                 "authority": authority,
                 "url_exact": exact,
                 "navboost_prior": page.navboost_prior,
+                "orphan": _observed_flag(page.orphan),
+                "link_depth": float("nan") if page.link_depth is None else float(page.link_depth),
+                "crawl_inlinks": float("nan") if page.crawl_inlinks is None else float(page.crawl_inlinks),
             }
         )
     return rows

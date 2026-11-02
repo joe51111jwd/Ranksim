@@ -43,6 +43,9 @@ LABELS = {
     "authority": "authority",
     "url_exact": "URL term match",
     "navboost_prior": "Navboost prior",
+    "orphan": "orphan page",
+    "link_depth": "link depth",
+    "crawl_inlinks": "in-crawl inlinks",
 }
 
 

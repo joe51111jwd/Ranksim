@@ -15,6 +15,7 @@ from aeo.errors import ProviderConfigError
 
 SERPAPI_ENDPOINT = "https://serpapi.com/search.json"
 DATAFORSEO_ENDPOINT = "https://api.dataforseo.com/v3/serp/google/organic/live/advanced"
+SERPER_ENDPOINT = "https://google.serper.dev/search"
 
 
 @dataclass(frozen=True)
@@ -150,6 +151,56 @@ class DataForSeoProvider(SerpProvider):
         return parse_dataforseo(response.json(), count)
 
 
+def parse_serper(payload: dict, count: int) -> list[SerpHit]:
+    hits: list[SerpHit] = []
+    for item in payload.get("organic") or []:
+        url = item.get("link") or item.get("url")
+        if not isinstance(url, str) or not url.startswith("http"):
+            continue
+        position = int(item.get("position") or len(hits) + 1)
+        hits.append(
+            SerpHit(
+                position=position,
+                url=url,
+                title=str(item.get("title") or ""),
+                snippet=str(item.get("snippet") or ""),
+                provider="serper",
+                synthetic=False,
+                is_google=True,
+            )
+        )
+        if len(hits) >= count:
+            break
+    hits.sort(key=lambda hit: hit.position)
+    return [_reposition(hit, index) for index, hit in enumerate(hits, start=1)]
+
+
+class SerperProvider(SerpProvider):
+    """Google organic results via Serper. Requires SERPER_API_KEY."""
+
+    name = "serper"
+    synthetic = False
+    is_google = True
+
+    def __init__(self, api_key: str, client: httpx.Client | None = None) -> None:
+        self.api_key = api_key
+        self._owns = client is None
+        self.client = client or httpx.Client(timeout=30.0)
+
+    def close(self) -> None:
+        if self._owns:
+            self.client.close()
+
+    def search(self, query: str, count: int = 10) -> list[SerpHit]:
+        response = self.client.post(
+            SERPER_ENDPOINT,
+            headers={"X-API-KEY": self.api_key, "Content-Type": "application/json"},
+            json={"q": query, "num": min(max(count, 1), 20), "gl": "us", "hl": "en"},
+        )
+        response.raise_for_status()
+        return parse_serper(response.json(), count)
+
+
 class BraveFallbackProvider(SerpProvider):
     """Brave web search. Positions are Brave's order, not Google's."""
 
@@ -230,12 +281,14 @@ def resolve_serp(settings: Settings, choice: str | None) -> SerpProvider:
             selected = "serpapi"
         elif settings.dataforseo_login and settings.dataforseo_password:
             selected = "dataforseo"
+        elif settings.serper_api_key:
+            selected = "serper"
         elif settings.brave_api_key:
             selected = "brave"
         else:
             raise ProviderConfigError(
                 "No SERP key is set. Refusing to invent Google results. "
-                "Set SERPAPI_KEY or DATAFORSEO_LOGIN and DATAFORSEO_PASSWORD. "
+                "Set SERPAPI_KEY, SERPER_API_KEY, or DATAFORSEO_LOGIN and DATAFORSEO_PASSWORD. "
                 "BRAVE_API_KEY is a non-Google fallback. Use --mock only for tests."
             )
     if selected == "serpapi":
@@ -246,10 +299,14 @@ def resolve_serp(settings: Settings, choice: str | None) -> SerpProvider:
         if not settings.dataforseo_login or not settings.dataforseo_password:
             raise ProviderConfigError("DATAFORSEO_LOGIN and DATAFORSEO_PASSWORD are required.")
         return DataForSeoProvider(settings.dataforseo_login, settings.dataforseo_password)
+    if selected == "serper":
+        if not settings.serper_api_key:
+            raise ProviderConfigError("SERPER_API_KEY is not set. Refusing to invent Google results.")
+        return SerperProvider(settings.serper_api_key)
     if selected == "brave":
         if not settings.brave_api_key:
             raise ProviderConfigError("BRAVE_API_KEY is not set.")
         return BraveFallbackProvider(settings.brave_api_key)
     if selected == "mock":
         return MockSerpProvider()
-    raise ProviderConfigError("SERP provider must be auto, serpapi, dataforseo, brave, or mock.")
+    raise ProviderConfigError("SERP provider must be auto, serpapi, dataforseo, serper, brave, or mock.")

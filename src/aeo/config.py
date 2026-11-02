@@ -20,6 +20,7 @@ class Settings(BaseSettings):
     dataforseo_password: str | None = None
     anthropic_api_key: str | None = None
     openai_api_key: str | None = None
+    openrouter_api_key: str | None = None
     openai_base_url: str = "https://api.openai.com/v1"
     openai_model: str = "gpt-4o-mini"
     openai_embedding_model: str = "text-embedding-3-small"
@@ -41,6 +42,7 @@ class Settings(BaseSettings):
     @field_validator(
         "brave_api_key",
         "openai_api_key",
+        "openrouter_api_key",
         "serpapi_key",
         "serper_api_key",
         "dataforseo_login",

@@ -124,6 +124,18 @@ def main(argv: list[str] | None = None) -> None:
     space.add_argument("--serp", default="smartcrew/serp.csv")
     space.add_argument("--competitors", default="smartcrew/competitors.csv")
 
+    ai_eval = sub.add_parser("ai-eval", help="LLM relevance CV delta and one AI fix loop. Needs an LLM key.")
+    ai_eval.add_argument("--serp", default="smartcrew/serp.csv")
+    ai_eval.add_argument("--query", default="dirt work contractor software")
+    ai_eval.add_argument(
+        "--html",
+        default="smartcrew/pr8_v3/blog-best-software-small-dirt-work-contractors.html",
+    )
+    ai_eval.add_argument(
+        "--url",
+        default="https://www.smartcrewhq.com/blog/best-software-small-dirt-work-contractors/",
+    )
+
     serve = sub.add_parser("serve", help="Serve the pre-publish rank check demo")
     serve.add_argument("--host", default="0.0.0.0")
     serve.add_argument("--port", type=int, default=8765)
@@ -172,6 +184,8 @@ def main(argv: list[str] | None = None) -> None:
             _noise(args)
         elif args.command == "serve":
             _serve(settings, database, args)
+        elif args.command == "ai-eval":
+            _ai_eval(settings, database, args)
         elif args.command == "competitors":
             _competitors(settings, database, args)
         elif args.command == "space":
@@ -363,6 +377,71 @@ def _space(database: str, args) -> None:
     if fit.pairwise is not None:
         print(f"PREDICTED backtest pairwise {fit.pairwise:.3f} on {fit.n_pairs} pairs.")
     print(render_space_text(report), end="")
+
+
+def _ai_eval(settings, database: str, args) -> None:
+    from aeo.ranksim.bootstrap import seed_corpus_if_empty
+    from aeo.ranksim.check import check_draft
+    from aeo.ranksim.confidence import loo_fit
+    from aeo.ranksim.corpus import load_corpus_docs
+    from aeo.ranksim.groundtruth import load_serp_file
+    from aeo.ranksim.judge import collect_judge_scores, relevance_experiment
+    from aeo.ranksim.keywords import build_keywords
+    from aeo.ranksim.lambdamart import build_examples
+    from aeo.ranksim.llm import resolve_llm
+
+    print(seed_corpus_if_empty(database))
+    labels = load_serp_file(args.serp)
+    intents = {row.query: row.intent for row in build_keywords()}
+    session = open_session(database)
+    try:
+        pages = load_corpus_docs(session)
+    finally:
+        session.close()
+    examples, uncovered, _withheld = build_examples(labels, pages, intents)
+    llm = resolve_llm(settings, run_id="ai-eval")
+    print(llm.cost_summary() if not llm.available else f"LLM {llm.name} model {llm.model}.")
+    scores = collect_judge_scores(llm, examples, pages)
+    experiment = relevance_experiment(examples, scores)
+    print("LLM relevance, leave-one-query-out. PREDICTED, not a live rank.")
+    print(experiment.note)
+    if experiment.measured:
+        print(f"Baseline pairwise: {experiment.baseline_pairwise:.3f}")
+        print(f"With llm_relevance: {experiment.with_judge_pairwise:.3f}")
+        if experiment.baseline_pairwise is not None and experiment.with_judge_pairwise is not None:
+            print(f"Delta: {experiment.with_judge_pairwise - experiment.baseline_pairwise:+.3f}")
+    else:
+        print("No pairwise delta. The judge did not score every labeled page.")
+    html_path = Path(args.html)
+    if not html_path.is_file():
+        print(f"Fix loop skipped. HTML file not found: {html_path}")
+    else:
+        fit = loo_fit(examples, keep_models=True)
+        model = fit.models.get(args.query)
+        result = check_draft(
+            query=args.query,
+            html=html_path.read_text(encoding="utf-8", errors="replace"),
+            url=args.url,
+            labels=labels,
+            pages=pages,
+            model=model,
+            calibration=fit.calibration,
+            intent=intents.get(args.query, "commercial"),
+            llm=llm,
+            run_ai=True,
+        )
+        print(f"Fix loop. Query: {args.query}")
+        print(f"URL: {args.url}")
+        print(f"HTML: {html_path}")
+        if result.error:
+            print(result.error)
+        else:
+            print(f"PREDICTED rank {result.predicted_rank} of {result.predicted_of}. Confidence: {result.confidence}.")
+            print(result.fix_note)
+            for round_ in result.fix_rounds:
+                print(f"Round {round_.round_index}: PREDICTED {round_.predicted_rank} of {round_.predicted_of}. {round_.note}")
+        print(f"Uncovered labeled rows: {uncovered}.")
+    print(llm.cost_summary())
 
 
 def _serve(settings, database: str, args) -> None:

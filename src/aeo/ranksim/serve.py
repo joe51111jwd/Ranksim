@@ -37,6 +37,9 @@ class DemoState:
         self.queries = list(dict.fromkeys(row.query for row in self.labels))
         intents = {row.query: row.intent for row in build_keywords()}
         self.intent_for = intents
+        from aeo.ranksim.bootstrap import seed_corpus_if_empty
+
+        print(seed_corpus_if_empty(database))
         session = open_session(database)
         try:
             self.pages = load_corpus_docs(session)
@@ -81,7 +84,7 @@ class DemoState:
     def llm_note(self) -> str:
         if self.llm.available:
             return f"AI layer: {self.llm.name}. Explanations and rewrites are model text about PREDICTED ranks."
-        return "AI layer: stub. No OPENAI_API_KEY or ANTHROPIC_API_KEY is set. Explanations are templates. Rewrites do not run."
+        return "AI layer: stub. No OPENROUTER_API_KEY, OPENAI_API_KEY, or ANTHROPIC_API_KEY is set. Explanations are templates. Rewrites do not run."
 
     def page(self, *, selected: str, url_value: str, html_value: str, result=None, error: str = "") -> HTMLResponse:
         html = render_page(

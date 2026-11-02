@@ -178,6 +178,24 @@ They cover Okapi BM25 (including a hand-checked `log(2)` score), reciprocal rank
 
 ## Google rank simulator (SmartCrew)
 
+Run it locally:
+
+```bash
+pip install -e ".[dev]"
+python -m aeo.ranksim serve
+```
+
+Then open http://127.0.0.1:8765/ . The first start, on an empty database, loads the committed HTML in `smartcrew/saved_html` and `smartcrew/pr8_v3`. It does not crawl and it does not invent the pages that are not in those files.
+
+The AI eval, after you export a key:
+
+```bash
+export OPENROUTER_API_KEY="your-key"
+bash scripts/ai_eval.sh
+```
+
+`OPENAI_API_KEY` is used for OpenRouter when the key starts with `sk-or-`. Otherwise a normal OpenAI key uses `gpt-4o-mini`, and `ANTHROPIC_API_KEY` uses `claude-3-5-haiku-20241022`. Set `RANKSIM_LLM_MODEL` to override. OpenRouter's default model is `openai/gpt-4o-mini`. Calls are cached in `data/llm-cache/` and the estimated cost is appended to `data/llm-cost.jsonl`.
+
 A separate loop for `www.smartcrewhq.com`. Stage 1 retrieves with BM25F over title, URL, H1, headings, body, and anchor text. Stage 2 is LambdaMART (LightGBM) using the features in `docs/accuracy.md`. Predicted positions are scores on our index. They are not live Google ranks. Default weights are a published-practice prior. They are replaced only when you train on a real position file.
 
 The keyword file is `smartcrew/keywords.csv` (150 queries: intent, suggested target page, and whether that URL is in the sitemap snapshot from 2026-10-29). 113 queries map to a page that exists. 37 are page gaps. Regenerate with:
@@ -196,6 +214,10 @@ python -m aeo.ranksim gaps
 | `SERPAPI_KEY` | Google organic results via SerpAPI. Preferred. |
 | `DATAFORSEO_LOGIN` and `DATAFORSEO_PASSWORD` | Google organic results via DataForSEO. Used when SerpAPI is unset. |
 | `BRAVE_API_KEY` | Fallback web search. Positions are Brave order, not Google. |
+| `OPENROUTER_API_KEY` | Cheap AI layer via OpenRouter (`openai/gpt-4o-mini` by default). |
+| `OPENAI_API_KEY` | OpenAI, or OpenRouter when the key starts with `sk-or-`. |
+| `ANTHROPIC_API_KEY` | Anthropic Haiku when no OpenRouter or OpenAI key is set. |
+| `RANKSIM_LLM_MODEL` | Optional model override. |
 | `RANKSIM_AUTHORITY=dataforseo` | Optional backlink rank on the same DataForSEO account. Off by default. |
 
 If none of the SERP keys are set, `collect` and `track` exit with an error. They do not invent a Google top 10. `--mock` is explicit and every row is marked synthetic.

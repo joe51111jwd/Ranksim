@@ -90,9 +90,16 @@ def test_link_graph_respects_depth_and_records_orphans():
 def test_cheap_model_defaults_and_disk_cache(tmp_path):
     from aeo.ranksim.llm import CachingLlm, LlmClient, LlmReply, estimate_cost, resolve_llm
 
-    openai = resolve_llm(Settings(openai_api_key="sk-test", anthropic_api_key=None, ranksim_llm_model=None))
+    openai = resolve_llm(Settings(openai_api_key="sk-test", anthropic_api_key=None, openrouter_api_key=None, ranksim_llm_model=None))
     assert openai.model == "gpt-4o-mini"
-    anthropic = resolve_llm(Settings(openai_api_key=None, anthropic_api_key="sk-ant", ranksim_llm_model=None))
+    assert openai.name == "openai"
+    router = resolve_llm(Settings(openrouter_api_key="sk-or-router", openai_api_key=None, anthropic_api_key=None, ranksim_llm_model=None))
+    assert router.name == "openrouter"
+    assert router.model == "openai/gpt-4o-mini"
+    assert router.inner.base_url == "https://openrouter.ai/api/v1"
+    routed = resolve_llm(Settings(openai_api_key="sk-or-from-openai", openrouter_api_key=None, anthropic_api_key=None, ranksim_llm_model=None))
+    assert routed.name == "openrouter"
+    anthropic = resolve_llm(Settings(openai_api_key=None, anthropic_api_key="sk-ant", openrouter_api_key=None, ranksim_llm_model=None))
     assert anthropic.model == "claude-3-5-haiku-20241022"
     override = resolve_llm(Settings(openai_api_key="sk-test", ranksim_llm_model="gpt-4o-mini"))
     assert override.model == "gpt-4o-mini"

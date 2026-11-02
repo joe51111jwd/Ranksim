@@ -51,6 +51,28 @@ def judge_page(llm: LlmClient, query: str, title: str, excerpt: str) -> float | 
     return parse_judge_score(reply.text)
 
 
+def collect_judge_scores(llm: LlmClient, examples: list[RankExample], pages: dict) -> dict[tuple[str, str], float] | None:
+    """Score every labeled page. Returns None if any score is missing. Does not fill gaps."""
+    from aeo.ranksim.whatif import _lookup_page
+
+    if not llm.available:
+        return None
+    scores: dict[tuple[str, str], float] = {}
+    for index, example in enumerate(examples, start=1):
+        page = _lookup_page(pages, example.url)
+        if page is None:
+            print(f"Judge skipped {example.url}. The page is not stored.")
+            return None
+        score = judge_page(llm, example.query, page.title or "", f"{page.h1}\n{page.body[:1800]}")
+        if score is None:
+            print(f"Judge returned no score for {example.query} {example.url}. Stopping. No scores were invented.")
+            return None
+        scores[(example.query, example.url)] = score
+        if index % 10 == 0 or index == len(examples):
+            print(f"Judged {index} of {len(examples)}.")
+    return scores
+
+
 def relevance_experiment(examples: list[RankExample], scores: dict[tuple[str, str], float] | None) -> RelevanceExperiment:
     """Compare held-out pairwise accuracy with and without an llm_relevance column."""
     if not scores:
@@ -58,7 +80,7 @@ def relevance_experiment(examples: list[RankExample], scores: dict[tuple[str, st
             False,
             None,
             None,
-            "LLM relevance was not measured. No OPENAI_API_KEY or ANTHROPIC_API_KEY is set, so no judge scores were created.",
+            "LLM relevance was not measured. No OpenRouter, OpenAI, or Anthropic key is set, so no judge scores were created.",
         )
     missing = [row for row in examples if (row.query, row.url) not in scores]
     if missing:

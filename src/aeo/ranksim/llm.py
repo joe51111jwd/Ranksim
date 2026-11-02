@@ -20,6 +20,7 @@ from aeo.config import Settings
 # USD per 1,000,000 tokens: (input, output). Published list rates, not an invoice.
 LIST_RATES = {
     "gpt-4o-mini": (0.15, 0.60),
+    "openai/gpt-4o-mini": (0.15, 0.60),
     "claude-3-5-haiku": (0.80, 4.00),
     "claude-3-5-haiku-20241022": (0.80, 4.00),
     "claude-3-5-haiku-latest": (0.80, 4.00),
@@ -27,6 +28,8 @@ LIST_RATES = {
 
 OPENAI_DEFAULT = "gpt-4o-mini"
 ANTHROPIC_DEFAULT = "claude-3-5-haiku-20241022"
+OPENROUTER_BASE = "https://openrouter.ai/api/v1"
+OPENROUTER_DEFAULT = "openai/gpt-4o-mini"
 
 
 @dataclass
@@ -69,15 +72,17 @@ class OpenAiLlm(LlmClient):
     name = "openai"
     available = True
 
-    def __init__(self, api_key: str, model: str, base_url: str) -> None:
+    def __init__(self, api_key: str, model: str, base_url: str, extra_headers: dict[str, str] | None = None) -> None:
         self.api_key = api_key
         self.model = model
         self.base_url = base_url.rstrip("/")
+        self.extra_headers = extra_headers or {}
 
     def complete(self, system: str, user: str) -> LlmReply:
+        headers = {"Authorization": f"Bearer {self.api_key}", **self.extra_headers}
         response = httpx.post(
             f"{self.base_url}/chat/completions",
-            headers={"Authorization": f"Bearer {self.api_key}"},
+            headers=headers,
             json={
                 "model": self.model,
                 "temperature": 0,
@@ -94,11 +99,28 @@ class OpenAiLlm(LlmClient):
         usage = payload.get("usage") or {}
         return LlmReply(
             text=str(text or ""),
-            provider="openai",
+            provider=self.name,
             stub=False,
             model=self.model,
             input_tokens=_int(usage.get("prompt_tokens")),
             output_tokens=_int(usage.get("completion_tokens")),
+        )
+
+
+class OpenRouterLlm(OpenAiLlm):
+    """OpenRouter's OpenAI-compatible chat API."""
+
+    name = "openrouter"
+
+    def __init__(self, api_key: str, model: str) -> None:
+        super().__init__(
+            api_key,
+            model,
+            OPENROUTER_BASE,
+            {
+                "HTTP-Referer": "https://www.smartcrewhq.com",
+                "X-Title": "SmartCrew rank check",
+            },
         )
 
 
@@ -239,10 +261,22 @@ def estimate_cost(model: str, input_tokens: int | None, output_tokens: int | Non
     return (input_tokens * in_rate + output_tokens * out_rate) / 1_000_000
 
 
+def openrouter_key(settings: Settings) -> str | None:
+    if settings.openrouter_api_key:
+        return settings.openrouter_api_key
+    key = settings.openai_api_key or ""
+    if key.startswith("sk-or-"):
+        return key
+    return None
+
+
 def resolve_llm(settings: Settings, *, cache_dir: Path | None = None, cost_log: Path | None = None, run_id: str = "run") -> LlmClient:
     chosen = (settings.ranksim_llm_model or "").strip()
-    if settings.openai_api_key:
-        inner: LlmClient = OpenAiLlm(settings.openai_api_key, chosen or OPENAI_DEFAULT, settings.openai_base_url)
+    router = openrouter_key(settings)
+    if router:
+        inner: LlmClient = OpenRouterLlm(router, chosen or OPENROUTER_DEFAULT)
+    elif settings.openai_api_key:
+        inner = OpenAiLlm(settings.openai_api_key, chosen or OPENAI_DEFAULT, settings.openai_base_url)
     elif settings.anthropic_api_key:
         inner = AnthropicLlm(settings.anthropic_api_key, chosen or ANTHROPIC_DEFAULT)
     else:

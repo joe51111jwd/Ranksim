@@ -434,7 +434,7 @@ def _explain(llm: LlmClient | None, result: CheckResult) -> tuple[str, bool]:
             lines.append(f"PREDICTED loss versus {name}. {gap}")
     template = " ".join(lines) or "No stored competitor could be scored."
     if llm is None or not llm.available:
-        return "Template, not an LLM. No OPENAI_API_KEY or ANTHROPIC_API_KEY is set. " + template, True
+        return "Template, not an LLM. No OPENROUTER_API_KEY, OPENAI_API_KEY, or ANTHROPIC_API_KEY is set. " + template, True
     brief = "\n".join(
         f"{row.outcome} {row.title} stored_google={row.stored_position} predicted_rank={row.predicted_rank}"
         for row in result.competitors
@@ -454,7 +454,7 @@ def _fix_loop(llm, query, html, url, labels, pages, model, calibration, today, i
         return [], True, "No starting rank, so the rewrite loop did not run."
     start = FixRound(0, before_rank, before_of, "Draft as submitted.")
     if llm is None or not llm.available:
-        return [start], True, "AI rewrite did not run. Set OPENAI_API_KEY or ANTHROPIC_API_KEY."
+        return [start], True, "AI rewrite did not run. Set OPENROUTER_API_KEY, an OPENAI_API_KEY that starts with sk-or-, a normal OPENAI_API_KEY, or ANTHROPIC_API_KEY."
     rounds = [start]
     current_html = html
     current_rank = before_rank

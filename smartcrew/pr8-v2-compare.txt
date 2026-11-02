@@ -1,0 +1,75 @@
+Predicted positions. Not live Google ranks.
+Model: LambdaMART, leave-one-query-out. The query being scored was not in that model.
+Cross-validated accuracy on the labeled file, using the stored pages:
+  Pairwise accuracy: 0.534
+  NDCG at 10: 0.695
+  Spearman: 0.075
+  Top-3 hit rate: 0.500
+  Labeled URLs with HTML: 122. Uncovered URLs: 13. Queries: 16. Pairs: 414.
+Live is the stored crawl. v1 and v2 replace those URLs with the bundle and add URLs the query did not already have.
+A BLOCK line means v2's predicted rank number is worse than live. That blocks shipping.
+
+query	live	v1	v2	ship
+hcss alternative	n/a	1 of 13 /compare/hcss-heavyjob-alternative	7 of 13 /compare/hcss-heavyjob-alternative	
+best all-in-one dirtworks software	1 of 8 /blog/best-excavation-software-20-50-employees	2 of 13 /blog/best-excavation-software-20-50-employees	1 of 13 /	
+best heavy civil construction software	n/a	2 of 13 /all-in-one-heavy-civil-software	2 of 13 /all-in-one-heavy-civil-software	
+hcss heavyjob alternative	1 of 7 /compare/hcss-heavyjob-alternative	1 of 12 /compare/hcss-heavyjob-alternative	1 of 12 /compare/hcss-heavyjob-alternative	
+dirt work contractor software	2 of 9 /blog/best-software-small-dirt-work-contractors	3 of 14 /blog/best-software-small-dirt-work-contractors	3 of 14 /	BLOCK
+best heavy construction software	n/a	3 of 13 /blog/best-excavation-software-20-50-employees	3 of 13 /blog/best-excavation-software-20-50-employees	
+b2w alternative	n/a	4 of 12 /compare/hcss-heavyjob-alternative	4 of 12 /compare/hcss-heavyjob-alternative	
+excavation contractor software	n/a	4 of 13 /blog/best-software-small-dirt-work-contractors	5 of 13 /blog/best-software-small-dirt-work-contractors	
+heavy civil field management software	n/a	5 of 15 /	5 of 15 /	
+hcss heavybid alternative	n/a	2 of 11 /all-in-one-heavy-civil-software	2 of 11 /all-in-one-heavy-civil-software	
+all in one heavy civil software	n/a	4 of 15 /	4 of 15 /	
+all in one dirt work software	4 of 8 /blog/best-excavation-software-20-50-employees	3 of 13 /blog/best-excavation-software-20-50-employees	3 of 13 /blog/best-excavation-software-20-50-employees	
+all-in-one heavy civil construction software	n/a	3 of 15 /all-in-one-dirt-work-software	3 of 15 /	
+all in one dirtwork software	4 of 8 /blog/best-excavation-software-20-50-employees	4 of 12 /blog/best-excavation-software-20-50-employees	4 of 12 /blog/best-excavation-software-20-50-employees	
+all in one excavation software	n/a	1 of 14 /	1 of 14 /	
+best all in one heavy civil software	n/a	1 of 14 /	2 of 14 /	
+
+Per SmartCrew URL. A row is included when the query is a target, the URL is on the live set, or the URL is the best predicted SmartCrew page.
+page	query	role	live	v1	v2	ship
+/	best all-in-one dirtworks software	target	n/a	4 of 13	1 of 13	
+/	best heavy civil construction software	target	n/a	4 of 13	3 of 13	
+/	best heavy construction software	target	n/a	8 of 13	6 of 13	
+/	excavation contractor software	target	n/a	13 of 13	9 of 13	
+/	heavy civil field management software	target	n/a	5 of 15	5 of 15	
+/	all in one heavy civil software	target	n/a	4 of 15	4 of 15	
+/	all in one dirt work software	target	n/a	9 of 13	5 of 13	
+/	all-in-one heavy civil construction software	target	n/a	9 of 15	3 of 15	
+/	all in one dirtwork software	target	7 of 8	7 of 12	7 of 12	
+/	all in one excavation software	target	n/a	1 of 14	1 of 14	
+/	best all in one heavy civil software	target	n/a	1 of 14	2 of 14	
+/compare/hcss-heavyjob-alternative	hcss alternative	target	n/a	1 of 13	7 of 13	
+/compare/hcss-heavyjob-alternative	hcss heavyjob alternative	target	1 of 7	1 of 12	1 of 12	
+/compare/hcss-heavyjob-alternative	b2w alternative	target	n/a	4 of 12	4 of 12	
+/compare/hcss-heavyjob-alternative	hcss heavybid alternative	target	n/a	4 of 11	5 of 11	
+/all-in-one-heavy-civil-software	best heavy civil construction software	target	n/a	2 of 13	2 of 13	
+/all-in-one-heavy-civil-software	best heavy construction software	target	n/a	5 of 13	5 of 13	
+/all-in-one-heavy-civil-software	heavy civil field management software	target	n/a	8 of 15	7 of 15	
+/all-in-one-heavy-civil-software	hcss heavybid alternative	ranks	n/a	2 of 11	2 of 11	
+/all-in-one-heavy-civil-software	all in one heavy civil software	target	n/a	9 of 15	9 of 15	
+/all-in-one-heavy-civil-software	all-in-one heavy civil construction software	target	n/a	10 of 15	9 of 15	
+/all-in-one-heavy-civil-software	best all in one heavy civil software	target	n/a	10 of 14	9 of 14	
+/all-in-one-dirt-work-software	best all-in-one dirtworks software	target	n/a	6 of 13	6 of 13	
+/all-in-one-dirt-work-software	dirt work contractor software	target	n/a	6 of 14	7 of 14	
+/all-in-one-dirt-work-software	all in one dirt work software	target	n/a	7 of 13	9 of 13	
+/all-in-one-dirt-work-software	all-in-one heavy civil construction software	ranks	n/a	3 of 15	5 of 15	
+/all-in-one-dirt-work-software	all in one dirtwork software	target	n/a	5 of 12	5 of 12	
+/all-in-one-dirt-work-software	all in one excavation software	target	n/a	3 of 14	3 of 14	
+/blog/best-excavation-software-20-50-employees	best all-in-one dirtworks software	target	1 of 8	2 of 13	3 of 13	BLOCK
+/blog/best-excavation-software-20-50-employees	best heavy construction software	target	n/a	3 of 13	3 of 13	
+/blog/best-excavation-software-20-50-employees	excavation contractor software	target	n/a	7 of 13	6 of 13	
+/blog/best-excavation-software-20-50-employees	all in one dirt work software	target	4 of 8	3 of 13	3 of 13	
+/blog/best-excavation-software-20-50-employees	all in one dirtwork software	target	4 of 8	4 of 12	4 of 12	
+/blog/best-excavation-software-20-50-employees	all in one excavation software	target	n/a	4 of 14	4 of 14	
+/blog/best-software-small-dirt-work-contractors	best all-in-one dirtworks software	target	n/a	9 of 13	9 of 13	
+/blog/best-software-small-dirt-work-contractors	dirt work contractor software	target	2 of 9	3 of 14	4 of 14	BLOCK
+/blog/best-software-small-dirt-work-contractors	excavation contractor software	ranks	n/a	4 of 13	5 of 13	
+/blog/best-software-small-dirt-work-contractors	all in one dirt work software	target	n/a	8 of 13	8 of 13	
+
+Ship blockers: 3. v2 predicts worse than live.
+BLOCK query dirt work contractor software: live 2 of 9 /blog/best-software-small-dirt-work-contractors, v2 3 of 14 /
+BLOCK page /blog/best-excavation-software-20-50-employees on best all-in-one dirtworks software: live 1 of 8, v2 3 of 13
+BLOCK page /blog/best-software-small-dirt-work-contractors on dirt work contractor software: live 2 of 9, v2 4 of 14
+These ranks are predicted slots in the crawled set.

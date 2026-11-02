@@ -1,0 +1,5 @@
+Sitemap snapshot fetched from https://www.smartcrewhq.com/sitemap.xml on 2026-10-29.
+55 URLs. keywords.csv is generated from src/aeo/ranksim/keywords.py against this list.
+A query is a page gap when its suggested target is not in the snapshot.
+Refresh the snapshot with: python -m aeo.ranksim keywords --refresh-sitemap
+That command refetches the live sitemap. It does not invent pages.

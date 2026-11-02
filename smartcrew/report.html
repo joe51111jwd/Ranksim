@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SmartCrew rank simulator</title>
+<style>
+  body { font-family: Georgia, serif; margin: 0; background: #f4f1ea; color: #1c1915; }
+  main { max-width: 980px; margin: 0 auto; padding: 32px 20px 64px; }
+  h1 { font-size: 2rem; line-height: 1.2; margin-bottom: 0.25rem; }
+  h2 { font-size: 1.25rem; margin-top: 2rem; }
+  p, li { line-height: 1.45; }
+  .banner { background: #fff; border: 1px solid #d9d2c5; padding: 12px 14px; }
+  .stats { display: flex; gap: 12px; flex-wrap: wrap; }
+  .stat { background: #fff; border: 1px solid #d9d2c5; padding: 12px 14px; min-width: 140px; }
+  .stat b { display: block; font-size: 1.4rem; }
+  table { width: 100%; border-collapse: collapse; background: #fff; font-size: 0.92rem; }
+  th, td { border-bottom: 1px solid #e4ddd0; text-align: left; padding: 8px; vertical-align: top; }
+  th { background: #efeae0; }
+  code { font-family: ui-monospace, monospace; font-size: 0.85em; }
+</style>
+</head>
+<body>
+<main>
+  <h1>SmartCrew rank simulator</h1>
+  <p class="banner">Predicted positions are model scores on our index. They are not live Google ranks. LambdaMART accuracy is omitted until a file of real Google positions is provided. See docs/accuracy.md.</p>
+  <div class="stats">
+    <div class="stat"><b>150</b>target queries</div>
+    <div class="stat"><b>113</b>queries with a sitemap page</div>
+    <div class="stat"><b>37</b>page gaps</div>
+  </div>
+  <h2>Calibration</h2>
+  <p>Google calibration has not been run. No stored SERP is loaded, so there is no Spearman or NDCG number on this page.</p>
+  <h2>Latest page test</h2>
+  <p>No page test has been saved. Run <code>python -m aeo.ranksim test</code> after a corpus exists.</p>
+  <h2>Real rank tracker</h2>
+  <p>No daily rank check is stored. <code>python -m aeo.ranksim track</code> records positions only from a SERP provider. It does not backfill missing days.</p>
+  <h2>Page gap list</h2>
+  <p>A gap means the suggested URL is not in the sitemap snapshot from 2026-10-29. The list is the keyword map, not a rank.</p>
+  <table>
+    <thead><tr><th>Query</th><th>Intent</th><th>Suggested page</th><th>Note</th></tr></thead>
+    <tbody>
+    <tr><td>hcss heavybid alternative</td><td>comparison</td><td>https://www.smartcrewhq.com/compare/hcss-heavybid-alternative</td><td>No matching URL in the 2026-10-29 sitemap.</td></tr>
+<tr><td>heavybid alternative for contractors</td><td>comparison</td><td>https://www.smartcrewhq.com/compare/hcss-heavybid-alternative</td><td>No matching URL in the 2026-10-29 sitemap.</td></tr>
+<tr><td>smartcrew vs hcss heavybid</td><td>comparison</td><td>https://www.smartcrewhq.com/compare/hcss-heavybid-alternative</td><td>No matching URL in the 2026-10-29 sitemap.</td></tr>
+<tr><td>b2w alternative</td><td>comparison</td><td>https://www.smartcrewhq.com/compare/b2w-alternative</td><td>No matching URL in the 2026-10-29 sitemap.</td></tr>
+<tr><td>b2w track alternative for heavy civil</td><td>comparison</td><td>https://www.smartcrewhq.com/compare/b2w-alternative</td><td>No matching URL in the 2026-10-29 sitemap.</td></tr>
+<tr><td>foundation software alternative</td><td>comparison</td><td>https://www.smartcrewhq.com/compare/foundation-software-alternative</td><td>No matching URL in the 2026-10-29 sitemap.</td></tr>
+<tr><td>viewpoint vista alternative for contractors</td><td>comparison</td><td>https://www.smartcrewhq.com/compare/viewpoint-alternative</td><td>No matching URL in the 2026-10-29 sitemap.</td></tr>
+<tr><td>assignar alternative</td><td>comparison</td><td>https://www.smartcrewhq.com/compare/assignar-alternative</td><td>No matching URL in the 2026-10-29 sitemap.</td></tr>
+<tr><td>rhumbix alternative</td><td>comparison</td><td>https://www.smartcrewhq.com/compare/rhumbix-alternative</td><td>No matching URL in the 2026-10-29 sitemap.</td></tr>
+<tr><td>fieldwire alternative for civil contractors</td><td>comparison</td><td>https://www.smartcrewhq.com/compare/fieldwire-alternative</td><td>No matching URL in the 2026-10-29 sitemap.</td></tr>
+<tr><td>trimble construction one alternative</td><td>comparison</td><td>https://www.smartcrewhq.com/compare/trimble-alternative</td><td>No sitemap page on 2026-10-29. SmartCrew&#x27;s current pages say they do not replace takeoff, estimating, machine control, telematics, or ELD.</td></tr>
+<tr><td>agtek alternative for excavation</td><td>comparison</td><td>https://www.smartcrewhq.com/compare/agtek-alternative</td><td>No sitemap page on 2026-10-29. SmartCrew&#x27;s current pages say they do not replace takeoff, estimating, machine control, telematics, or ELD.</td></tr>
+<tr><td>tenna alternative</td><td>comparison</td><td>https://www.smartcrewhq.com/compare/tenna-alternative</td><td>No matching URL in the 2026-10-29 sitemap.</td></tr>
+<tr><td>certified payroll software for heavy civil</td><td>commercial</td><td>https://www.smartcrewhq.com/features/certified-payroll</td><td>No matching URL in the 2026-10-29 sitemap.</td></tr>
+<tr><td>prevailing wage software for contractors</td><td>commercial</td><td>https://www.smartcrewhq.com/features/certified-payroll</td><td>No matching URL in the 2026-10-29 sitemap.</td></tr>
+<tr><td>excavation estimating software</td><td>commercial</td><td>https://www.smartcrewhq.com/features/excavation-estimating</td><td>No sitemap page on 2026-10-29. SmartCrew&#x27;s current pages say they do not replace takeoff, estimating, machine control, telematics, or ELD.</td></tr>
+<tr><td>dirtwork takeoff software</td><td>commercial</td><td>https://www.smartcrewhq.com/features/dirtwork-takeoff</td><td>No sitemap page on 2026-10-29. SmartCrew&#x27;s current pages say they do not replace takeoff, estimating, machine control, telematics, or ELD.</td></tr>
+<tr><td>construction safety software for excavation crews</td><td>commercial</td><td>https://www.smartcrewhq.com/features/safety</td><td>No matching URL in the 2026-10-29 sitemap.</td></tr>
+<tr><td>toolbox talk app for contractors</td><td>commercial</td><td>https://www.smartcrewhq.com/features/toolbox-talks</td><td>No matching URL in the 2026-10-29 sitemap.</td></tr>
+<tr><td>equipment dispatch software for heavy civil</td><td>commercial</td><td>https://www.smartcrewhq.com/features/equipment-dispatch</td><td>No matching URL in the 2026-10-29 sitemap.</td></tr>
+<tr><td>fleet telematics software for dump trucks</td><td>commercial</td><td>https://www.smartcrewhq.com/features/fleet-telematics</td><td>No sitemap page on 2026-10-29. SmartCrew&#x27;s current pages say they do not replace takeoff, estimating, machine control, telematics, or ELD.</td></tr>
+<tr><td>eld for dump truck contractors</td><td>commercial</td><td>https://www.smartcrewhq.com/features/eld</td><td>No sitemap page on 2026-10-29. SmartCrew&#x27;s current pages say they do not replace takeoff, estimating, machine control, telematics, or ELD.</td></tr>
+<tr><td>bid management software for sitework</td><td>commercial</td><td>https://www.smartcrewhq.com/features/bid-management</td><td>No sitemap page on 2026-10-29. SmartCrew&#x27;s current pages say they do not replace takeoff, estimating, machine control, telematics, or ELD.</td></tr>
+<tr><td>change order software for excavation</td><td>commercial</td><td>https://www.smartcrewhq.com/features/change-orders</td><td>No matching URL in the 2026-10-29 sitemap.</td></tr>
+<tr><td>smartcrew integrations</td><td>commercial</td><td>https://www.smartcrewhq.com/integrations</td><td>No matching URL in the 2026-10-29 sitemap.</td></tr>
+<tr><td>smartcrew reviews</td><td>commercial</td><td>https://www.smartcrewhq.com/reviews</td><td>No matching URL in the 2026-10-29 sitemap.</td></tr>
+<tr><td>smartcrew demo</td><td>transactional</td><td>https://www.smartcrewhq.com/demo</td><td>No matching URL in the 2026-10-29 sitemap.</td></tr>
+<tr><td>hcss heavybid pricing</td><td>transactional</td><td>https://www.smartcrewhq.com/compare/hcss-heavybid-alternative</td><td>No matching URL in the 2026-10-29 sitemap.</td></tr>
+<tr><td>best certified payroll software for civil contractors</td><td>commercial</td><td>https://www.smartcrewhq.com/features/certified-payroll</td><td>No matching URL in the 2026-10-29 sitemap.</td></tr>
+<tr><td>best estimating software for excavation contractors</td><td>commercial</td><td>https://www.smartcrewhq.com/features/excavation-estimating</td><td>No sitemap page on 2026-10-29. SmartCrew&#x27;s current pages say they do not replace takeoff, estimating, machine control, telematics, or ELD.</td></tr>
+<tr><td>smartcrew vs b2w</td><td>comparison</td><td>https://www.smartcrewhq.com/compare/b2w-alternative</td><td>No matching URL in the 2026-10-29 sitemap.</td></tr>
+<tr><td>smartcrew vs foundation software</td><td>comparison</td><td>https://www.smartcrewhq.com/compare/foundation-software-alternative</td><td>No matching URL in the 2026-10-29 sitemap.</td></tr>
+<tr><td>smartcrew vs viewpoint</td><td>comparison</td><td>https://www.smartcrewhq.com/compare/viewpoint-alternative</td><td>No matching URL in the 2026-10-29 sitemap.</td></tr>
+<tr><td>excavation software with certified payroll</td><td>commercial</td><td>https://www.smartcrewhq.com/features/certified-payroll</td><td>No matching URL in the 2026-10-29 sitemap.</td></tr>
+<tr><td>heavy civil estimating and job cost in one system</td><td>commercial</td><td>https://www.smartcrewhq.com/features/excavation-estimating</td><td>No sitemap page on 2026-10-29. SmartCrew&#x27;s current pages say they do not replace takeoff, estimating, machine control, telematics, or ELD.</td></tr>
+<tr><td>machine control software for grading contractors</td><td>commercial</td><td>https://www.smartcrewhq.com/features/machine-control</td><td>No sitemap page on 2026-10-29. SmartCrew&#x27;s current pages say they do not replace takeoff, estimating, machine control, telematics, or ELD.</td></tr>
+<tr><td>smartcrew api</td><td>informational</td><td>https://www.smartcrewhq.com/integrations</td><td>No matching URL in the 2026-10-29 sitemap.</td></tr>
+    </tbody>
+  </table>
+</main>
+</body>
+</html>

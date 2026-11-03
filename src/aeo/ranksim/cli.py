@@ -8,6 +8,8 @@ Examples:
   python -m aeo.ranksim test page.html --url https://www.smartcrewhq.com/dirtwork-software/
   python -m aeo.ranksim track
   python -m aeo.ranksim report
+  python -m aeo.ranksim tester page.html --url https://www.smartcrewhq.com/compare/hcss-heavyjob-alternative/ --watch
+  python -m aeo.ranksim optimize page.html --url https://www.smartcrewhq.com/all-in-one-heavy-civil-software/ --rewriter rules --goal 1
 """
 
 from __future__ import annotations
@@ -136,6 +138,51 @@ def main(argv: list[str] | None = None) -> None:
         default="https://www.smartcrewhq.com/blog/best-software-small-dirt-work-contractors/",
     )
 
+    tester_cmd = sub.add_parser(
+        "tester",
+        help="Sandbox tester. Score a page version in seconds on the stored competitor set. PREDICTED, not live Google.",
+    )
+    tester_cmd.add_argument("source", help="A local HTML file (needs --url) or an http(s) URL: preview, staging, or live")
+    tester_cmd.add_argument("--url", default=None, help="Canonical URL of the page. Required for a local file.")
+    tester_cmd.add_argument(
+        "--queries",
+        default=None,
+        help='Comma-separated target queries, e.g. "q1,q2". Default picks up to --top labeled queries for this page.',
+    )
+    tester_cmd.add_argument("--top", type=int, default=5, help="How many target queries to pick when --queries is not given")
+    tester_cmd.add_argument("--serp", default="smartcrew/serp.csv", help="Labeled Google file")
+    tester_cmd.add_argument("--watch", action="store_true", help="Poll the source and print a new board when the HTML changes")
+    tester_cmd.add_argument("--interval", type=float, default=15.0, help="Seconds between polls with --watch")
+    tester_cmd.add_argument("--max-checks", type=int, default=0, help="Stop --watch after this many polls. 0 polls until Ctrl+C.")
+    tester_cmd.add_argument("--history", default=None, help="Version history JSONL. Default data/tester/<url hash>.jsonl")
+    tester_cmd.add_argument("--json", action="store_true", help="Print the board as JSON")
+    tester_cmd.add_argument(
+        "--fail-on-regression",
+        action="store_true",
+        help="Exit 1 when a target query is PREDICTED worse than live, or than v1 when no live copy is stored",
+    )
+
+    optimize_cmd = sub.add_parser(
+        "optimize",
+        help="Rapid iteration. Rewrite and rescore until PREDICTED top N on every target query. Sandbox only.",
+    )
+    optimize_cmd.add_argument("source", help="A local HTML file (needs --url) or an http(s) URL")
+    optimize_cmd.add_argument("--url", default=None, help="Canonical URL of the page. Required for a local file.")
+    optimize_cmd.add_argument("--queries", default=None, help='Comma-separated target queries, e.g. "q1,q2"')
+    optimize_cmd.add_argument("--top", type=int, default=5, help="How many target queries to pick when --queries is not given")
+    optimize_cmd.add_argument("--goal", type=int, default=3, help="Stop when every target query is PREDICTED at this rank or better")
+    optimize_cmd.add_argument("--max-rounds", type=int, default=8)
+    optimize_cmd.add_argument("--patience", type=int, default=3, help="Stop after this many rejected rounds in a row")
+    optimize_cmd.add_argument("--budget-usd", type=float, default=None, help="Stop the LLM rewriter once its estimated cost reaches this")
+    optimize_cmd.add_argument(
+        "--rewriter",
+        choices=["auto", "llm", "rules"],
+        default="auto",
+        help="auto and llm need an LLM key. rules runs offline and is not an LLM.",
+    )
+    optimize_cmd.add_argument("--out-dir", default=None, help="Default data/optimize/<url slug>")
+    optimize_cmd.add_argument("--serp", default="smartcrew/serp.csv", help="Labeled Google file")
+
     serve = sub.add_parser("serve", help="Serve the pre-publish rank check demo")
     serve.add_argument("--host", default="0.0.0.0")
     serve.add_argument("--port", type=int, default=8765)
@@ -190,6 +237,14 @@ def main(argv: list[str] | None = None) -> None:
             _competitors(settings, database, args)
         elif args.command == "space":
             _space(database, args)
+        elif args.command == "tester":
+            code = _tester(settings, database, args)
+            if code:
+                raise SystemExit(code)
+        elif args.command == "optimize":
+            code = _optimize(settings, database, args)
+            if code:
+                raise SystemExit(code)
         else:
             parser.error(f"Unknown command {args.command}")
     except ProviderConfigError as exc:
@@ -442,6 +497,205 @@ def _ai_eval(settings, database: str, args) -> None:
                 print(f"Round {round_.round_index}: PREDICTED {round_.predicted_rank} of {round_.predicted_of}. {round_.note}")
         print(f"Uncovered labeled rows: {uncovered}.")
     print(llm.cost_summary())
+
+
+def _tester(settings, database: str, args) -> int:
+    """Score a page version in the sandbox, record it, and print the board."""
+    import json
+    import time
+
+    from aeo.ranksim import tester as sandbox
+
+    html, url, label = _load_source(settings, args.source, args.url)
+    kind = "live fetch" if _same_page(args.source, url) else "draft"
+    started = time.perf_counter()
+    ctx = sandbox.load_sim_context(database, args.serp)
+    load_s = time.perf_counter() - started
+    for note in ctx.notes:
+        print(note, file=sys.stderr if args.json else sys.stdout)
+    history = sandbox.TesterHistory(args.history or sandbox.TesterHistory.default_path(url))
+    queries = _split_queries(args.queries)
+    pinned: list[str] = []
+    if not queries:
+        # Keep the queries v1 and the stored copy were scored on, so an edit
+        # that drops query words from the title cannot drop them from the check.
+        first_saved = history.first()
+        if first_saved is not None:
+            pinned.extend(row.query for row in first_saved.scores)
+        stored = sandbox.stored_html(ctx.database, url)
+        if stored is not None:
+            pinned.extend(sandbox.pick_targets(ctx, url, stored[0], top=args.top)[0])
+    targets, skipped, kept = sandbox.stable_targets(ctx, url, html, queries=queries, top=args.top, pinned=pinned)
+    targets_note = _targets_note(sandbox, ctx, url, html, args.top, kept)
+    skipped = sandbox.skip_notes(ctx, skipped)
+    live = sandbox.live_score(ctx, url, targets, created=_now())
+    state: dict = {"regressions": [], "baseline": ""}
+
+    def run(page_html: str) -> str:
+        began = time.perf_counter()
+        current = sandbox.score_page(ctx, url, page_html, targets, label=kind, source=label, created=_now())
+        score_ms = (time.perf_counter() - began) * 1000
+        saved = history.append(current)
+        previous = history.previous()
+        first = history.first()
+        baseline, name = sandbox.baseline_for(current, live, first)
+        state["regressions"] = sandbox.regressions(current, baseline, name)
+        state["baseline"] = name
+        extra = {"skipped": skipped, "first": first, "serp_file": ctx.serp_file, "targets_note": targets_note}
+        if args.json:
+            data = sandbox.board_dict(current, previous, live, ctx.accuracy_line(), **extra)
+            data["history"] = str(history.path)
+            data["new_version_saved"] = saved
+            data["timing"] = {"model_load_seconds": round(load_s, 2), "scoring_ms": round(score_ms, 1)}
+            if args.watch:
+                return json.dumps(data) + "\n"  # one JSON document per line, so the stream is JSONL
+            return json.dumps(data, indent=2) + "\n"
+        text = sandbox.render_board(current, previous, live, ctx.accuracy_line(), **extra)
+        if saved:
+            text += f"Saved as {current.version} in {history.path}."
+        else:
+            text += f"Same HTML as {current.version}, so no new version was saved in {history.path}."
+        return text + f" Model load {load_s:.1f} s. Scoring {score_ms:.0f} ms.\n"
+
+    if not args.watch:
+        print(run(html), end="")
+    else:
+        pending = [html]
+
+        def load() -> str:
+            if pending:
+                return pending.pop()
+            try:
+                fresh, _url, _label = _load_source(settings, args.source, args.url)
+            except SystemExit as exc:
+                raise RuntimeError(str(exc)) from None
+            return fresh
+
+        print(
+            f"Watching {args.source} every {args.interval:g} s. A new board prints only when the HTML changes. Ctrl+C stops.",
+            file=sys.stderr if args.json else sys.stdout,
+        )
+        try:
+            sandbox.watch(load, run, args.interval, args.max_checks, on_change=lambda text: print(str(text).rstrip("\n"), flush=True))
+        except KeyboardInterrupt:
+            print("Stopped.", file=sys.stderr if args.json else sys.stdout)
+    if args.fail_on_regression and state["regressions"]:
+        count = sandbox.count_of(len(state["regressions"]), "target query is", "target queries are")
+        print(f"Failing: {count} PREDICTED worse than {state['baseline']}.", file=sys.stderr)
+        return 1
+    return 0
+
+
+def _same_page(source: str, url: str) -> bool:
+    """True when the source is the page's own URL, so the HTML is a live fetch, not a draft."""
+    from aeo.crawl.urls import normalize_url
+
+    if not source.startswith(("http://", "https://")):
+        return False
+    try:
+        return normalize_url(source) == normalize_url(url)
+    except ValueError:
+        return source == url
+
+
+def _targets_note(sandbox, ctx, url: str, html: str, top: int, kept: list[str]) -> str:
+    if not kept:
+        return ""
+    picked, _skipped = sandbox.pick_targets(ctx, url, html, top=top)
+    held = [query for query in kept if query not in picked]
+    if not held:
+        return ""
+    return (
+        f"Kept as targets from v1 or the stored copy, though this HTML alone would not pick them: {', '.join(held)}. "
+        "An edit cannot drop a query from the check."
+    )
+
+
+def _optimize(settings, database: str, args) -> int:
+    """Rewrite and rescore in the sandbox until PREDICTED top N on every target query."""
+    import time
+
+    from aeo.ranksim import tester as sandbox
+    from aeo.ranksim.llm import resolve_llm
+    from aeo.ranksim.optimize import Guards, LlmRewriter, RulesRewriter, optimize, render_optimize, slug_for
+
+    llm = None
+    if args.rewriter in ("auto", "llm"):
+        llm = resolve_llm(settings, run_id="optimize")
+        if not llm.available:
+            print(
+                "No LLM key is set, so the LLM rewriter cannot run. Set OPENROUTER_API_KEY, OPENAI_API_KEY, "
+                "or ANTHROPIC_API_KEY. Or pass --rewriter rules to run offline with the rules rewriter, which is not an LLM.",
+                file=sys.stderr,
+            )
+            return 2
+    html, url, label = _load_source(settings, args.source, args.url)
+    started = time.perf_counter()
+    ctx = sandbox.load_sim_context(database, args.serp)
+    load_s = time.perf_counter() - started
+    for note in ctx.notes:
+        print(note)
+    targets, skipped = sandbox.pick_targets(ctx, url, html, _split_queries(args.queries), top=args.top)
+    notes = sandbox.skip_notes(ctx, skipped)
+    for query, note in notes.items():
+        print(f"Skipped {query}: {note}.")
+    if not targets:
+        if notes and all(note == sandbox.SKIP_NOTE_UNSTORED for note in notes.values()):
+            print(
+                f"Every query asked for is labeled but has too few stored pages, so nothing was optimized. {sandbox.UNSTORED_HINT}",
+                file=sys.stderr,
+            )
+        else:
+            print(
+                "No query from the labeled Google file matches this page, so nothing was optimized. "
+                "Pass --queries with queries from that file.",
+                file=sys.stderr,
+            )
+        return 2
+    guards = Guards()
+    rewriter = (
+        LlmRewriter(llm)
+        if llm is not None
+        else RulesRewriter(ctx.today, max_title_chars=guards.max_title_chars, max_h1_chars=guards.max_h1_chars)
+    )
+    out_dir = Path(args.out_dir) if args.out_dir else Path("data/optimize") / slug_for(url)
+    print(f"Source: {label}.")
+    began = time.perf_counter()
+    result = optimize(
+        ctx,
+        url,
+        html,
+        targets,
+        goal_rank=args.goal,
+        rewriter=rewriter,
+        max_rounds=args.max_rounds,
+        patience=args.patience,
+        budget_usd=args.budget_usd,
+        out_dir=out_dir,
+        now_label=_now(),
+        guards=guards,
+    )
+    run_s = time.perf_counter() - began
+    print(render_optimize(result, ctx.accuracy_line()), end="")
+    rounds = sandbox.count_of(len(result.rounds), "round file", "round files")
+    print(f"Wrote best.html, {rounds}, log.json, and report.txt to {out_dir}.")
+    if llm is not None:
+        print(llm.cost_summary())
+    print(f"Model load {load_s:.1f} s. Optimize {run_s:.1f} s for {len(result.rounds)} rounds.")
+    return 0
+
+
+def _split_queries(text: str | None) -> list[str] | None:
+    if not text:
+        return None
+    found = [" ".join(part.split()) for part in text.split(",") if part.strip()]
+    return found or None
+
+
+def _now() -> str:
+    from datetime import datetime
+
+    return datetime.now().isoformat(timespec="seconds")
 
 
 def _serve(settings, database: str, args) -> None:

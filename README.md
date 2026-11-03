@@ -209,6 +209,39 @@ python -m aeo.ranksim gaps
 
 `keywords --refresh-sitemap` refetches `https://www.smartcrewhq.com/sitemap.xml` and rewrites the snapshot. It does not invent URLs.
 
+### Sandbox tester and optimize loop
+
+`tester` puts one version of a page into the stored competitor set and scores it on its target queries in under a second, after a few seconds of model loading. You edit the page, the tester re-indexes and re-scores it, and you see which version does better before anything is published. `optimize` is the rapid iteration version: it rewrites the page, scores each version, and keeps the best one until every target query is PREDICTED at `--goal` or better, or a stop rule ends the run.
+
+```bash
+# A local draft. --url is the page the draft will replace.
+python -m aeo.ranksim tester draft.html --url https://www.smartcrewhq.com/compare/hcss-heavyjob-alternative/
+
+# A preview or staging deploy, scored as the canonical page.
+python -m aeo.ranksim tester https://preview.example.com/compare/hcss-heavyjob-alternative/ --url https://www.smartcrewhq.com/compare/hcss-heavyjob-alternative/
+
+# Watch a file or a preview URL. A new board prints only when the HTML changes.
+python -m aeo.ranksim tester draft.html --url https://www.smartcrewhq.com/compare/hcss-heavyjob-alternative/ --watch --interval 15
+
+# CI. JSON on stdout. Exit 1 when a target query is PREDICTED worse.
+python -m aeo.ranksim tester draft.html --url https://www.smartcrewhq.com/compare/hcss-heavyjob-alternative/ --queries "hcss alternative,hcss heavyjob alternative" --json --fail-on-regression
+
+# Optimize offline. The rules rewriter is not an LLM.
+python -m aeo.ranksim optimize draft.html --url https://www.smartcrewhq.com/all-in-one-heavy-civil-software/ --rewriter rules --goal 1
+
+# Optimize with the LLM rewriter. It needs an LLM key.
+export OPENROUTER_API_KEY="your-key"
+python -m aeo.ranksim optimize draft.html --url https://www.smartcrewhq.com/all-in-one-heavy-civil-software/ --rewriter llm --goal 3 --budget-usd 0.50
+```
+
+A URL source is fetched by the crawler, so `robots.txt` is respected and private addresses are blocked. Set `CRAWL_ALLOW_PRIVATE=true` for a preview on localhost. `--watch` polls every `--interval` seconds (15 by default) until Ctrl+C, or for `--max-checks` polls. With `--json` and `--watch` it prints one JSON document per line. `--fail-on-regression` exits 1 when a target query is PREDICTED worse than the stored copy of the URL, or than v1 when none is stored. In this checkout, model load took 2.4 s and scoring took 42 to 196 ms for two queries.
+
+**Reading the tester board.** Each row is one target query. `3/9` means PREDICTED 3 of the 9 pages scored. The `live` column scores the HTML the rank database holds for this URL. It is headed `stored` when that HTML was seeded from a committed file such as `smartcrew/pr8_v3`, because it is not the live site. `prev` is the version before this one and `now` is this version. `change` and `flag` compare `now` with the `live` or `stored` column, or with v1 when the database holds no copy of the URL: `better`, `same`, or `WORSE`, and `n/a` before there is anything to compare. `confidence` is UNSURE or CLEARER. `linear` is an independent hand-weighted scorer on the same pages. When it disagrees with the model, treat the move as unproven. `stored set` counts the labeled Google results for the query that have stored HTML. THIN means fewer than half, and a rank on that set says little. `biggest gap` is the largest gap to the pages PREDICTED ahead, written as a fix. Below the table the board lists the pages PREDICTED ahead, this URL's position in the labeled Google file (a past snapshot, not a live rank), and the skipped queries, which get no rank. Target queries come from the labeled Google file: rows for this URL first, then `keywords.csv` targets, then title, H1, and URL overlap. Once v1 or a stored copy exists, its queries stay pinned, so an edit cannot drop a query from the check. Each changed version is saved as v1, v2, and so on in `data/tester/<url hash>.jsonl`.
+
+**Reading an optimize run.** Each round prints accepted or rejected with the reason. Then come a start vs best table, the stop reason, and what changed. A version is kept only when it passes the guards, improves the PREDICTED objective, makes no target query worse, and the linear check does not get worse. The guards reject keyword stuffing (term share and exact-phrase rate over the whole body, over the first 8000 characters the model reads, and over every run of 200 words), repeated blocks and headings, headings inside nav, footer, or form, new hidden text with a query term (off-screen, tiny, transparent, or CSS-hidden), link farms and empty anchors, a body that shrinks, a page without exactly one title and one H1, and new numbers, prices, ratings, review markup, or model instructions that the starting page does not have. Last place in a stored set never counts as reaching the goal. The best version is kept, not the last. `--rewriter rules` edits the title and the H1 once each, adds one H2 and a visible updated date, never adds body copy, and never writes best or top into a title or H1. The LLM rewriter sees the title and the opening of the page around the H1, at most 12000 characters, and its reply replaces only that opening. `auto` and `llm` exit 2 without an LLM key. `--budget-usd` stops before a call that would likely pass the budget, and stops when the model has no published rate. Output goes to `data/optimize/<slug>/`: `best.html`, `round-NN.html`, `log.json`, and `report.txt`. When no round was accepted, the report says there is nothing new to publish.
+
+**What it does not tell you.** Every rank in both commands is PREDICTED by the leave-one-query-out models on the stored pages. None of it is a live Google rank, and reaching the goal is a sandbox result, not a Google result. Both commands print the backtest for the pages stored now. In this checkout it was pairwise 0.485 on 12 queries, no better than a coin flip, so a PREDICTED move is a smoke test. Review `best.html` for accuracy, publish it, then run `track` to record the real rank. Only the tracked rank says what Google did.
+
 ### Keys
 
 | Env | Use |
@@ -241,6 +274,8 @@ python -m aeo.ranksim serve --port 8765
 python -m aeo.ranksim competitors import --from-serps --crawl
 python -m aeo.ranksim space
 python -m aeo.ranksim report
+python -m aeo.ranksim tester page.html --url https://www.smartcrewhq.com/compare/hcss-heavyjob-alternative/
+python -m aeo.ranksim optimize page.html --url https://www.smartcrewhq.com/all-in-one-heavy-civil-software/ --rewriter rules
 ```
 
 `evaluate` and `train` default to leave-one-query-out. They read `query,url,position` or a Search Console export with Query, Page, and Position. Optional `prior_position` is an older Google observation used as a Navboost stand-in. If that column copies `position`, it is withheld so the metric cannot cheat. With fewer than two usable queries, the command prints what file is needed and does not emit NDCG, Spearman, top-3 hit rate, or pairwise accuracy.

@@ -373,16 +373,39 @@ def clean_url(url: str) -> str:
 
 
 _DOMAINISH = re.compile(r"^(?:www\.)?([a-z0-9-]+(?:\.[a-z0-9-]+)+)$")
+_DOMAIN_IN_TEXT = re.compile(r"(?<![a-z0-9@.-])(?:www\.)?((?:[a-z0-9-]+\.)+[a-z]{2,24})(?![a-z0-9-])")
 _REDIRECT_HOSTS = ("vertexaisearch.cloud.google.com",)
+UNRESOLVED_DOMAIN = ""
+
+
+def is_redirect(url: str) -> bool:
+    host = domain_of(url) if url else ""
+    return bool(host) and any(host == item or host.endswith("." + item) for item in _REDIRECT_HOSTS)
 
 
 def cited_domain(url: str, title: str = "") -> str:
-    """Domain of a cited URL. Grounding redirect URLs carry the real domain in the title."""
+    """Domain of a cited URL. Grounding redirect URLs carry the real domain in the title.
+
+    A redirect whose title names no domain stays unresolved (empty): it is never credited to
+    vertexaisearch.cloud.google.com, which is only Google's redirect host.
+    """
     host = domain_of(url) if url else ""
-    if host and not any(host == item or host.endswith("." + item) for item in _REDIRECT_HOSTS):
+    if host and not is_redirect(url):
         return host
-    match = _DOMAINISH.match((title or "").strip().lower())
-    return match.group(1) if match else host
+    text = (title or "").strip().lower()
+    match = _DOMAINISH.match(text)
+    if match:
+        return match.group(1)
+    found = _DOMAIN_IN_TEXT.search(text)
+    return found.group(1).removeprefix("www.") if found else UNRESOLVED_DOMAIN
+
+
+def _web_url(url: str) -> bool:
+    try:
+        parts = urlsplit(url)
+    except ValueError:
+        return False
+    return parts.scheme in {"http", "https"} and bool(parts.netloc)
 
 
 def domain_is(domain: str, ours: str) -> bool:
@@ -1001,13 +1024,26 @@ def _build_result(
         result.status = f"error: {parsed.failed}"[:240]
         return result
     seen: set[str] = set()
+    skipped = unresolved = 0
     for raw_url, title in parsed.citations:
         url = clean_url(raw_url)
         if not url or url in seen:
             continue
+        if not _web_url(url):
+            skipped += 1  # javascript:, relative paths and the like are not web citations
+            continue
         seen.add(url)
         domain = cited_domain(url, title)
+        if not domain:
+            unresolved += 1
         result.citations.append(EngineCitation(position=len(result.citations) + 1, url=url, domain=domain, title=title))
+    if not parsed.answer.strip() and not result.citations:
+        # An empty, refused, unfinished or partial response is not an answer. It is recorded as an error, never
+        # as 'the engine does not cite you', and it is not cached.
+        why = parsed.note or "the response held no answer text and no citations"
+        result.status = f"error: no answer ({why})"[:240]
+        result.note = REAL_NOTE
+        return result
     result.cited_urls = [item.url for item in result.citations]
     result.cited_domains = []
     for item in result.citations:
@@ -1032,6 +1068,13 @@ def _build_result(
         result.note = f"{REAL_NOTE} {parsed.note}"
     if result.searched is False:
         result.note = f"{result.note} The engine answered without searching the web this time."
+    if skipped:
+        result.note = f"{result.note} {skipped} cited links were not web addresses and were left out."
+    if unresolved:
+        result.note = (
+            f"{result.note} {unresolved} citations were Google redirect links whose site could not be read, "
+            "so whether they point at your site is unknown."
+        )
     return result
 
 
@@ -1435,7 +1478,18 @@ _INJECTION = re.compile(
     r"ignore (?:all |any |the )?(?:previous|prior|above|earlier|other) (?:instructions|prompts|rules)"
     r"|disregard (?:all |any |the )?(?:previous|prior|above|earlier) "
     r"|system prompt|you are now |new instructions|always cite|you must cite|cite (?:only )?this (?:page|source)"
-    r"|developer message|act as (?:an? )?(?:ai|assistant|answer engine)",
+    r"|developer message|act as (?:an? )?(?:ai|assistant|answer engine)"
+    # Text addressed to AI readers: "note to language models", "IMPORTANT NOTE FOR AI SYSTEMS",
+    # "AI assistants reading this should ...", "LLMs must ...".
+    r"|(?:note|message|instructions?|attention|important)\W{0,3}(?:\w+\W+){0,3}?(?:to|for)\s+(?:all\s+|any\s+)?"
+    r"(?:ai|a\.i\.|llms?|language models?|chatbots?|assistants?|answer engines?|crawlers?|bots?)\b"
+    r"|\b(?:ai|llms?|language models?|chatbots?|assistants?|answer engines?)(?:\s+\w+){0,3}\s+"
+    r"(?:reading|summari[sz]ing|processing|parsing|seeing|crawling)\s+(?:this|these)"
+    r"|\b(?:ai|llms?|language models?|chatbots?|assistants?|answer engines?)\s+(?:should|must|shall|need to|are required to)\s+"
+    r"(?:\w+\s+){0,3}?(?:cite|recommend|rank|mention|treat|prefer|say|list|answer|use)\b"
+    r"|treat this (?:page|site|source|article) as (?:the )?(?:primary|main|only|best|authoritative)"
+    r"|cite (?:\(?\[?s?\d+\]?\)?|us|our (?:page|site)) (?:for|in) (?:every|all|each)"
+    r"|recommend us first",
     re.I,
 )
 
@@ -1496,10 +1550,15 @@ class _Src:
 
 
 def _url_key(url: str) -> str:
+    """The same page whatever the spelling: scheme, www, trailing slash and utm_* tags ignored."""
     try:
-        return normalize_url(url).lower()
+        parts = urlsplit(clean_url(normalize_url(url)))
     except ValueError:
         return (url or "").strip().lower()
+    host = (parts.hostname or "").lower().removeprefix("www.")
+    port = f":{parts.port}" if parts.port and parts.port not in (80, 443) else ""
+    path = (parts.path or "/").rstrip("/") or "/"
+    return f"{host}{port}{path}" + (f"?{parts.query}" if parts.query else "")
 
 
 def build_answer_prompt(search: str, ordered: list[_Src], run_index: int) -> tuple[str, str, str]:

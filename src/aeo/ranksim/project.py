@@ -54,6 +54,21 @@ from aeo.ranksim.groundtruth import SerpLabel, load_serp_file
 from aeo.ranksim.lambdamart import RankExample, _ndcg, _pairs, _top3_hit, build_examples, fit_lambdamart, predict_scores
 from aeo.ranksim.loop import FetchResult, page_from_html, store_fetched_page
 from aeo.ranksim.score import HAND_WEIGHTS, dot
+from aeo.ranksim.site_history import (
+    CONTENT_BLIND_NOTE,
+    METHOD_LABEL as SITE_METHOD,
+    SiteHistoryModel,
+    SiteIndex,
+    SlotBacktest,
+    SlotErrors,
+    fit_site_history,
+    lists_from_pairs,
+    site_history_backtest,
+    site_history_position,
+    site_key,
+)
+from aeo.ranksim.relevance import UNTESTED_NOTE as TOPIC_UNTESTED_NOTE
+from aeo.ranksim.relevance import TodoItem, TopicBacktest, TopicCheck, TopicModel, todo_list
 from aeo.ranksim.tester import CONCRETE_FIXES, PageScore, QueryScore, TesterHistory, content_hash, count_of, plain_dashes
 
 DEFAULT_ROOT = Path("data/projects")
@@ -66,6 +81,11 @@ FRESH_DAYS = 7
 THIN_SHARE = 0.5
 DEFAULT_MAX_SITE_PAGES = 60
 PREDICTED_NOTE = "PREDICTED means the mini search engine's guess. It is not a Google rank."
+CONTENT_METHOD = "content model"
+CONTENT_MODEL_NOTE = (
+    "The content model reads the page text. In backtests it did no better than always guessing the middle, "
+    "so read its slot and every change between versions as a smoke test, not a forecast."
+)
 REAL_NOTE = "REAL means Google's own results, with their source and the time they were pulled."
 CRAWL_NOTE = "Stored means we hold a copy of the page HTML. Pages we could not fetch are listed, never invented."
 # Features a page edit can move. Everything else is a site or link signal.
@@ -96,6 +116,13 @@ SITE_FIXES = {
     "navboost_prior": "Past click signal. Not used for a new page.",
 }
 MIN_GAP = 0.02
+TOP_DEPTH = 10  # only REAL positions 1 to 10 are incumbents; deeper rows are listed but never used to place a page
+BOARD_SCHEMA = 2  # 2: headline counts come from the on-topic check plus site history, not the content model
+TRACKING_PARAMS = ("utm_", "fbclid", "gclid", "msclkid", "mc_cid", "mc_eid", "_ga", "ref_src")
+TOP10_NOTE = (
+    "The tester places a page among pages that already made Google's top 10, so it cannot say whether a page makes page one at all. "
+    "An off-topic page is PREDICTED not to."
+)
 
 ProgressFn = Callable[["ProgressEvent"], None]
 InsertionFn = Callable[[float, Sequence[float | None]], int]
@@ -357,19 +384,32 @@ class PullReport:
     total_seconds: float = 0.0
     notes: list[str] = field(default_factory=list)
     site_urls: list[str] = field(default_factory=list)
+    engines_note: str = ""
+    engines_status: dict[str, str] = field(default_factory=dict)
+    engines_step: StepTiming | None = None  # ran in the background, alongside crawl and train
 
     def to_dict(self) -> dict:
         return clean(asdict(self))
+
+    def all_steps(self) -> list[StepTiming]:
+        """Every timed step in run order: google, engines, crawl, train, save."""
+        found = list(self.steps)
+        if self.engines_step is not None:
+            found.insert(1 if found else 0, self.engines_step)
+        return found
 
     @classmethod
     def from_dict(cls, data: dict) -> "PullReport":
         metrics = EngineMetrics.from_dict(data["metrics"]) if data.get("metrics") else None
         known = {item.name for item in fields(cls)}
-        values = {key: value for key, value in data.items() if key in known and key not in {"urls", "steps", "metrics"}}
+        skip = {"urls", "steps", "metrics", "engines_step"}
+        values = {key: value for key, value in data.items() if key in known and key not in skip}
+        engines_step = StepTiming(**data["engines_step"]) if data.get("engines_step") else None
         return cls(
             urls=[UrlStatus(**item) for item in data.get("urls") or []],
             steps=[StepTiming(**item) for item in data.get("steps") or []],
             metrics=metrics,
+            engines_step=engines_step,
             **values,
         )
 
@@ -384,6 +424,20 @@ class PullInfo:
     google_note: str
     pairwise: float | None
     total_seconds: float | None
+    google_kind: str = ""  # 'api' (Google asked now), 'carried' (REAL results reused), 'import'
+    carried_from: str | None = None
+    finished: bool = True  # google.json written; a pull still being written is not 'the last pull'
+
+    @property
+    def what(self) -> str:
+        """Plain words for what this pull did."""
+        if self.google_kind == "api":
+            return "Google asked now"
+        if self.google_kind == "carried":
+            return f"recrawl only: Google not asked, REAL results reused from pull {self.carried_from}" if self.carried_from else "recrawl only: Google not asked"
+        if self.google_kind == "import":
+            return "REAL results imported from a file"
+        return self.kind or "unknown"
 
 
 @dataclass
@@ -393,6 +447,7 @@ class ProjectStatus:
     google: GoogleSnapshot | None
     report: PullReport | None
     coverage: dict[str, dict]
+    site_backtest: SlotBacktest | None = None
 
     def to_dict(self) -> dict:
         return clean(
@@ -402,6 +457,7 @@ class ProjectStatus:
                 "google": self.google.to_dict() if self.google else None,
                 "report": asdict(self.report) if self.report else None,
                 "coverage": self.coverage,
+                "site_backtest": asdict(self.site_backtest) if self.site_backtest else None,
             }
         )
 
@@ -425,7 +481,17 @@ class ProjectContext:
     load_seconds: float = 0.0
     notes: list[str] = field(default_factory=list)
     database: str | None = None
+    site_index: SiteIndex | None = field(default=None, repr=False)
+    site_model: SiteHistoryModel | None = None
+    site_backtest: SlotBacktest | None = None
+    content_backtest: SlotBacktest | None = None
+    topic: TopicModel | None = field(default=None, repr=False)
     _gains: dict = field(default_factory=dict, repr=False)
+
+    @property
+    def slot_method(self) -> str:
+        """Which predictor gives the headline PREDICTED slot."""
+        return SITE_METHOD if self.site_model is not None else CONTENT_METHOD
 
     def model_for(self, search: str) -> tuple[object | None, str]:
         if search in self.fit.models:
@@ -460,6 +526,7 @@ class RealResult:
     tested_url: bool = False
     our_site: bool = False
     model_scores_above_you: bool | None = None  # PREDICTED, None when not stored
+    beyond_top10: bool = False  # REAL position deeper than 10: listed, never used to place a page
 
 
 @dataclass
@@ -496,6 +563,58 @@ class Comparison:
     page_gaps: list[FeatureGap] = field(default_factory=list)
     site_signals: list[FeatureGap] = field(default_factory=list)
     note: str = ""
+    # Site history (what actually sets the headline slot): REAL counts and the PREDICTED odds.
+    their_site_searches: int | None = None  # other searches whose REAL top 10 lists their site
+    your_site_searches: int | None = None
+    p_above_you: float | None = None  # PREDICTED chance they rank above you, from site history only
+    own_site: bool = False  # this REAL result is a page of your own site
+    facts: list[str] = field(default_factory=list)  # REAL facts about their page next to yours
+
+
+@dataclass
+class EngineRow:
+    """One AI answer engine on one search. REAL when status is ok, else 'not run: needs <ENV VAR>' or an error."""
+
+    engine: str
+    name: str
+    status: str
+    label: str = ""
+    pull_id: str = ""
+    pulled_at: str = ""
+    model: str = ""
+    runs: int = 0
+    ok_runs: int = 0
+    our_cited_runs: int = 0
+    our_share: float | None = None
+    our_mean_position: float | None = None
+    brand_mentioned_runs: int = 0
+    top_domains: list[str] = field(default_factory=list)
+    our_urls: list[str] = field(default_factory=list)
+    cited: list[dict] = field(default_factory=list)  # position, url, domain, title from the latest answer
+    note: str = ""
+
+
+@dataclass
+class SimSummary:
+    """PREDICTED: our own LLM answering from the stored Google top 10 plus your page. Not the real engine."""
+
+    status: str
+    label: str = ""
+    provider: str = ""
+    model: str = ""
+    runs: int = 0
+    ok_runs: int = 0
+    your_cited_runs: int = 0
+    your_share: float | None = None
+    your_mean_position: float | None = None
+    domain_share_without: float | None = None
+    domain_share_with: float | None = None
+    domain_delta: float | None = None
+    sources: list[dict] = field(default_factory=list)  # domain, url, google_position, share_with, share_without, is_yours
+    agreement: list[dict] = field(default_factory=list)
+    flags: list[str] = field(default_factory=list)
+    notes: list[str] = field(default_factory=list)
+    cost_usd: float | None = None
 
 
 @dataclass
@@ -531,6 +650,45 @@ class SearchBoard:
     flag: str = ""
     error: str = ""
     model_check: str = ""  # when this URL already ranks: the stored copy's PREDICTED slot vs its REAL position
+    # Headline slot (site history, the predictor that did best in backtests). Content blind.
+    site_position: int | None = None
+    site_position_of: int = 0
+    site_position_low: int | None = None
+    site_position_high: int | None = None
+    your_site_searches: int | None = None
+    site_note: str = ""
+    site_above: Neighbor | None = None
+    site_below: Neighbor | None = None
+    above_slot: list[Comparison] = field(default_factory=list)  # REAL results above the headline slot, compared
+    site_check: str = ""  # when this URL already ranks: the site history slot vs its REAL position
+    # AI answer engines: REAL citations per engine, and the PREDICTED simulation.
+    engines: list[EngineRow] = field(default_factory=list)
+    simulation: SimSummary | None = None
+    # The on-topic check (PREDICTED). An off-topic page gets no slot at all.
+    topic: TopicCheck | None = None
+    topic_regression: str = ""
+    # Google positions implied by the slot's REAL neighbors. Equal to the slot when the REAL list has no gaps;
+    # high is None when the REAL list stops before the slot and deeper positions are unknown.
+    site_google_low: int | None = None
+    site_google_high: int | None = None
+    google_low: int | None = None
+    google_high: int | None = None
+
+    def headline(self) -> int | None:
+        """The slot to lead with: site history when it ran, else the content model."""
+        return self.site_position if self.site_position is not None else self.predicted_position
+
+    def headline_google(self) -> tuple[int | None, int | None]:
+        """(low, high) Google position of the headline slot. high None means 'or lower'."""
+        if self.site_position is not None:
+            return self.site_google_low, self.site_google_high
+        if self.predicted_position is not None:
+            return self.google_low, self.google_high
+        return None, None
+
+    def headline_label(self) -> str:
+        low, high = self.headline_google()
+        return google_label(low, high)
 
 
 @dataclass
@@ -547,6 +705,13 @@ class BoardSummary:
     worse: int = 0
     same: int = 0
     baseline: str = ""
+    method: str = CONTENT_METHOD
+    content_top3: int = 0
+    content_top10: int = 0
+    ai_text: str = ""
+    on_topic: int = 0
+    off_topic: int = 0
+    not_checked: int = 0
 
 
 @dataclass
@@ -576,6 +741,19 @@ class ProjectBoard:
     timing: dict[str, float] = field(default_factory=dict)
     predicted_note: str = PREDICTED_NOTE
     real_note: str = REAL_NOTE
+    slot_method: str = CONTENT_METHOD
+    slot_backtest: SlotBacktest | None = None
+    content_backtest: SlotBacktest | None = None
+    content_note: str = CONTENT_MODEL_NOTE
+    ai_real_note: str = ""
+    ai_sim_label: str = ""
+    engines_pulls: list[str] = field(default_factory=list)
+    schema: int = BOARD_SCHEMA
+    todo: list[TodoItem] = field(default_factory=list)
+    topic_backtest: TopicBacktest | None = None
+    topic_regressions: list[str] = field(default_factory=list)
+    slot_group_text: str = ""  # the backtest subgroup that matches this page (new site, or new page on a known site)
+    top10_note: str = TOP10_NOTE
 
     def to_dict(self) -> dict:
         return clean(asdict(self))
@@ -592,8 +770,19 @@ def projects_root(root: str | Path | None = None) -> Path:
 
 
 def slugify(name: str) -> str:
-    slug = re.sub(r"[^a-z0-9]+", "-", str(name).lower()).strip("-")
-    return slug[:60] or "project"
+    """ASCII slug. Accents fold ('Excavación' -> 'excavacion'); a name with no Latin letters gets a short hash,
+    so two Japanese or Greek project names never share one slug."""
+    import unicodedata
+
+    text = str(name or "")
+    folded = unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode("ascii")
+    slug = re.sub(r"[^a-z0-9]+", "-", folded.lower()).strip("-")[:60].strip("-")
+    if slug:
+        return slug
+    stripped = " ".join(text.split())
+    if not stripped:
+        return "project"
+    return "project-" + hashlib.sha1(stripped.casefold().encode("utf-8")).hexdigest()[:8]
 
 
 def clean_site(site: str) -> str:
@@ -611,7 +800,10 @@ def clean_site(site: str) -> str:
     return host
 
 
-def clean_searches(searches: Iterable[str]) -> list[str]:
+def clean_searches(searches: Iterable[str] | str) -> list[str]:
+    if isinstance(searches, str):
+        # One string is a list of searches separated by ';' or new lines, never a list of letters.
+        searches = re.split(r"[;\n]", searches)
     seen: dict[str, str] = {}
     for item in searches:
         text = " ".join(str(item or "").split())
@@ -772,7 +964,7 @@ def list_pulls(project: Project) -> list[PullInfo]:
     pulls_dir = project.dir / "pulls"
     if not pulls_dir.is_dir():
         return found
-    for folder in sorted(item for item in pulls_dir.iterdir() if item.is_dir()):
+    for folder in sorted((item for item in pulls_dir.iterdir() if item.is_dir()), key=_pull_order):
         google = _read_json(folder / "google.json")
         report = _read_json(folder / "pull.json") or {}
         metrics = report.get("metrics") or {}
@@ -786,9 +978,18 @@ def list_pulls(project: Project) -> list[PullInfo]:
                 google_note=str(report.get("google_note") or (google or {}).get("note") or ""),
                 pairwise=metrics.get("pairwise"),
                 total_seconds=report.get("total_seconds"),
+                google_kind=str((google or {}).get("kind") or report.get("google_kind") or ""),
+                carried_from=(google or {}).get("carried_from"),
+                finished=google is not None,
             )
         )
     return found
+
+
+def _pull_order(folder: Path) -> tuple[str, int]:
+    """20261104T120000Z-10 sorts after 20261104T120000Z-9 (text order would put it before -2)."""
+    base, _sep, suffix = folder.name.partition("-")
+    return base, int(suffix) if suffix.isdigit() else (1 if not suffix else 0)
 
 
 def latest_google(project: Project) -> GoogleSnapshot | None:
@@ -828,11 +1029,24 @@ def project_status(project: Project) -> ProjectStatus:
             coverage[search] = {
                 "results": len(results),
                 "stored": sum(1 for item in results if _key(item.url) in stored_keys) if report else None,
-                "pulled": entry.pulled_label if entry else None,
+                "pulled": entry.pulled_label if entry and results else None,
                 "source": entry.source if entry else None,
                 "error": (entry.error if entry else NOT_RUN_GOOGLE) or ("" if results else NOT_RUN_GOOGLE),
             }
-    return ProjectStatus(project=project.to_dict(), pulls=pulls, google=google, report=report, coverage=coverage)
+    site_backtest = site_history_backtest(site_index(google, project.searches)) if google is not None else None
+    return ProjectStatus(project=project.to_dict(), pulls=pulls, google=google, report=report, coverage=coverage, site_backtest=site_backtest)
+
+
+def site_index(google: GoogleSnapshot, searches: Iterable[str] | None = None) -> SiteIndex:
+    """Which sites each search lists in its REAL top 10. Only the project's current searches count."""
+    keep = set(searches) if searches is not None else None
+    return SiteIndex(
+        lists_from_pairs(
+            (entry.search, [(item.position, item.url) for item in entry.results])
+            for entry in google.searches
+            if entry.results and (keep is None or entry.search in keep)
+        )
+    )
 
 
 def import_serp_csv(
@@ -867,9 +1081,13 @@ def import_serp_csv(
             grouped[search].append(label)
     if snapshot_date:
         try:
-            pulled_at: str | None = date.fromisoformat(snapshot_date.strip()).isoformat()
+            seen_on = date.fromisoformat(snapshot_date.strip())
         except ValueError as exc:
             raise ProjectError(f"--snapshot-date must be YYYY-MM-DD, not {snapshot_date}.") from exc
+        today = (now or datetime.now(timezone.utc)).astimezone(timezone.utc).date()
+        if seen_on > today:
+            raise ProjectError(f"--snapshot-date {seen_on.isoformat()} is in the future. Give the day the positions were seen.")
+        pulled_at: str | None = seen_on.isoformat()
     else:
         pulled_at = None
     source = source_label or _default_source(path, pulled_at)
@@ -881,9 +1099,9 @@ def import_serp_csv(
         results: list[SerpResult] = []
         seen: set[str] = set()
         for row in rows:
-            if _key(row.url) in seen:
-                continue
-            seen.add(_key(row.url))
+            if loose_key(row.url) in seen:
+                continue  # http/https, www, slash or tracking-tag twins of one page: keep the best position
+            seen.add(loose_key(row.url))
             results.append(SerpResult(position=int(round(row.position)), url=row.url, domain=domain_of(row.url)))
         searches.append(
             SearchResults(
@@ -970,17 +1188,29 @@ def pull(
     delay_seconds: float = 0.4,
     today: date | None = None,
     now: datetime | None = None,
+    engines: Sequence[str] | None = None,
+    engine_runs: int = 1,
+    brand: str | None = None,
+    engine_client=None,
+    engine_cache_dir: str | Path | None = None,
+    engine_use_cache: bool = True,
+    engine_models: dict[str, str] | None = None,
 ) -> PullReport:
-    """Pull REAL Google results, crawl what is missing or stale, and train the mini engine.
+    """Pull REAL Google results, crawl what is missing or stale, ask the AI engines, and train the mini engine.
 
-    Steps, each timed: google, crawl, train, save. progress gets a ProgressEvent
-    per step message, per search, and per crawled URL (done and total counts for
-    a progress bar). It is called from the calling thread, one call at a time.
+    Steps, each timed: google, engines, crawl, train, save. The engines step
+    (REAL AI answer citations, aeo.ranksim.engines) runs in a background thread
+    while the crawl and the training run, so it adds little wall time. engines
+    picks which ones (default all four; an empty list skips the step); an engine
+    without its key is recorded as 'not run: needs <ENV VAR>' and nothing else.
+    progress gets a ProgressEvent per step message, per search, and per crawled
+    URL (done and total counts for a progress bar). Calls are serialized by a
+    lock; engine events come from the engines thread.
 
     With no Google key and no earlier results, raises ProviderConfigError naming
-    the env vars. Nothing is invented. serp_provider and fetcher are for tests and
-    for callers that bring their own; fetcher takes a list of URLs on one host and
-    returns one FetchResult per URL, in order.
+    the env vars. Nothing is invented. serp_provider, fetcher and engine_client
+    are for tests and for callers that bring their own; fetcher takes a list of
+    URLs on one host and returns one FetchResult per URL, in order.
     """
     database = database or settings.ranksim_database_url
     started = time.perf_counter()
@@ -989,6 +1219,12 @@ def pull(
     steps: list[StepTiming] = []
     notes: list[str] = []
     previous = latest_google(project)
+    chosen_engines = _chosen_engines(engines)
+    if chosen_engines:
+        from aeo.ranksim.engines import MAX_RUNS
+
+        if not 1 <= int(engine_runs) <= MAX_RUNS:
+            raise ValueError(f"AI engine runs must be between 1 and {MAX_RUNS}, not {engine_runs}.")
 
     # 1. REAL Google results
     step_start = time.perf_counter()
@@ -1001,9 +1237,42 @@ def pull(
         raise
     with_results = sum(1 for item in snapshot.searches if item.results)
     steps.append(StepTiming("google", _round(time.perf_counter() - step_start), google_note))
-    emit("google", google_note, len(project.searches), len(project.searches))
+    if snapshot.kind == "api":
+        emit("google", google_note, len(project.searches), len(project.searches))
+    else:
+        emit("google", google_note, 0, 0)  # Google was not asked: no full progress bar for work that did not happen
 
-    # 2. Crawl result pages and our own pages
+    # 2. REAL AI engine citations, in the background while we crawl and train
+    engines_box: dict = {}
+    engines_thread: threading.Thread | None = None
+    if chosen_engines:
+        from aeo.ranksim.project_engines import run_engines_step
+
+        def _engines() -> None:
+            began = time.perf_counter()
+            try:
+                engines_box["snapshot"] = run_engines_step(
+                    project,
+                    settings,
+                    pull_id=pull_id,
+                    engines=chosen_engines,
+                    n_runs=engine_runs,
+                    brand=brand,
+                    cache_dir=engine_cache_dir,
+                    client=engine_client,
+                    use_cache=engine_use_cache,
+                    models=engine_models,
+                    emit=emit,
+                    now=now,
+                )
+            except Exception as exc:  # noqa: BLE001 - the engines must not sink the Google pull
+                engines_box["error"] = _safe_error(exc)
+            engines_box["seconds"] = time.perf_counter() - began
+
+        engines_thread = threading.Thread(target=_engines, name=f"engines-{project.slug}", daemon=True)
+        engines_thread.start()
+
+    # 3. Crawl result pages and our own pages
     step_start = time.perf_counter()
     site_urls, site_notes = _site_urls(project, snapshot, fetcher, settings, delay_seconds, database)
     notes.extend(site_notes)
@@ -1020,19 +1289,49 @@ def pull(
     steps.append(StepTiming("crawl", _round(time.perf_counter() - step_start), crawl_detail))
     emit("crawl", crawl_detail, len(statuses), len(statuses))
 
-    # 3. Train the mini engine
+    # 4. Train the mini engine (or reuse the last one when nothing it learns from changed)
     step_start = time.perf_counter()
-    emit("train", "Training the mini search engine, one held-out model per search.", 0, len(project.searches))
-    engine = _train_engine(project, snapshot, database, site_urls, today or _today(), statuses)
+    engine = None
+    train_detail = ""
+    reuse = _reusable_engine(project, previous, snapshot, counts, site_urls)
+    if reuse is not None:
+        engine, reused_from = reuse
+        train_detail = (
+            f"Reused the engine of pull {reused_from}: no new Google results and no newly fetched pages, "
+            f"so training again would give the same model. {engine.metrics.text}"
+        )
+    else:
+        emit("train", "Training the mini search engine, one held-out model per search.", 0, len(project.searches))
+        engine = _train_engine(project, snapshot, database, site_urls, today or _today(), statuses)
+        train_detail = engine.metrics.text
     metrics = engine.metrics
-    steps.append(StepTiming("train", _round(time.perf_counter() - step_start), metrics.text))
-    emit("train", metrics.text, len(project.searches), len(project.searches))
+    steps.append(StepTiming("train", _round(time.perf_counter() - step_start), train_detail))
+    emit("train", train_detail, len(project.searches), len(project.searches))
 
-    # 4. Save
+    engines_note = "AI engines step skipped (no engines chosen)."
+    engines_status: dict[str, str] = {}
+    engines_snapshot = None
+    engines_step: StepTiming | None = None
+    if engines_thread is not None:
+        engines_thread.join()
+        engines_snapshot = engines_box.get("snapshot")
+        if engines_snapshot is not None:
+            engines_note = engines_snapshot.note
+            engines_status = dict(engines_snapshot.status)
+        else:
+            engines_note = f"AI engines step failed ({engines_box.get('error', 'unknown error')}). No engine answers were invented."
+        # Timed on its own: it ran alongside crawl and train, so it is not part of their sum.
+        engines_step = StepTiming("engines", _round(engines_box.get("seconds", 0.0)), engines_note)
+
+    # 5. Save. google.json goes last: a pull without it is still being written and is never 'the latest'.
     step_start = time.perf_counter()
     folder = project.dir / "pulls" / pull_id
+    if engines_snapshot is not None:
+        from aeo.ranksim.project_engines import save_engines
+
+        save_engines(folder, engines_snapshot)
+    _save_engine_atomic(folder / "engine", engine)
     _write_json(folder / "google.json", clean(snapshot.to_dict()))
-    _save_engine(folder / "engine", engine)
     steps.append(StepTiming("save", _round(time.perf_counter() - step_start), f"Saved to {folder}."))
     finished_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
     sources = sorted({item.source for item in snapshot.searches if item.results})
@@ -1054,10 +1353,27 @@ def pull(
         total_seconds=_round(time.perf_counter() - started),
         notes=notes,
         site_urls=site_urls,
+        engines_note=engines_note,
+        engines_status=engines_status,
+        engines_step=engines_step,
     )
     _write_json(folder / "pull.json", report.to_dict())
     emit("done", f"Pull {pull_id} finished in {report.total_seconds:.1f} s.", 1, 1)
     return report
+
+
+def _chosen_engines(engines: Sequence[str] | str | None) -> list[str]:
+    """None means all four AI engines. 'none' or an empty list skips the step."""
+    from aeo.ranksim.engines import ENGINE_KEYS, engine_key
+
+    if engines is None:
+        return list(ENGINE_KEYS)
+    if isinstance(engines, str):
+        engines = [part for part in re.split(r"[,\s]+", engines) if part]
+    names = [str(item).strip() for item in engines if str(item).strip()]
+    if not names or [item.lower() for item in names] == ["none"]:
+        return []
+    return list(dict.fromkeys(engine_key(item) for item in names))
 
 
 class _Emitter:
@@ -1084,9 +1400,27 @@ def _google_step(project, settings, previous, pull_id, depth, skip_google, serp_
     if provider is None:
         carried = [by_previous[search] for search in project.searches if search in by_previous and by_previous[search].results]
         if not carried:
+            borrowed = borrow_real_results(project)
+            if borrowed:
+                searches = []
+                for search in project.searches:
+                    entry = borrowed.get(search)
+                    searches.append(entry if entry is not None else SearchResults(search=search, results=[], source="", provider="", pulled_at=None, error=NOT_RUN_GOOGLE))
+                donors = sorted({entry.source.rsplit("copied from project ", 1)[-1].rstrip(")") for entry in borrowed.values()})
+                why = "skipped (--skip-google)" if skip_google else (reason or NOT_RUN_GOOGLE)
+                note = (
+                    f"Google step {why}. This project had no REAL results yet, so the REAL results other projects in this app hold "
+                    f"for the same searches were copied, with their own source and pull date: {len(borrowed)} of {len(project.searches)} "
+                    f"searches, from project {', '.join(donors)}."
+                )
+                missing = len(project.searches) - len(borrowed)
+                if missing:
+                    note += f" {missing} searches have no REAL results: {NOT_RUN_GOOGLE}."
+                snapshot = GoogleSnapshot(pull_id=pull_id, written_at=written, kind="carried", searches=searches, carried_from=None, note=note)
+                return snapshot, note
             raise ProviderConfigError(
                 f"No REAL Google results for {project.name}. Google step {NOT_RUN_GOOGLE}. "
-                "No results were imported either. Set one of those env vars, or run: "
+                "No results were imported either, and no other project here has REAL results for these searches. Set one of those env vars, import a CSV of Google positions (query,url,position) on the project page, or run: "
                 f"python -m aeo.ranksim project import-serp {project.slug} FILE.csv (query,url,position). "
                 "Nothing was invented."
             )
@@ -1122,6 +1456,36 @@ def _google_step(project, settings, previous, pull_id, depth, skip_google, serp_
         note += f" {len(failed)} searches have no REAL results: " + "; ".join(f"{item.search} ({item.error})" for item in failed) + "."
     snapshot = GoogleSnapshot(pull_id=pull_id, written_at=written, kind="api", searches=searches, note=note)
     return snapshot, note
+
+
+def borrow_real_results(project: Project) -> dict[str, SearchResults]:
+    """REAL results other projects in the same folder hold for this project's searches (same words, any case).
+
+    Each keeps its own source and pull date, and says which project it was copied from. Nothing is invented:
+    a search no other project has stays without results.
+    """
+    wanted = {_fold(search): search for search in project.searches}
+    found: dict[str, SearchResults] = {}
+    for summary in list_projects(root=project.root or None):
+        if summary.slug == project.slug:
+            continue
+        try:
+            other = load_project(summary.slug, root=project.root or None)
+        except ProjectError:
+            continue
+        snapshot = latest_google(other)
+        if snapshot is None:
+            continue
+        for entry in snapshot.searches:
+            search = wanted.get(_fold(entry.search))
+            if search is None or search in found or not entry.results:
+                continue
+            copied = copy.deepcopy(entry)
+            copied.search = search
+            copied.source = f"{entry.source} (copied from project {other.slug})"
+            copied.error = ""
+            found[search] = copied
+    return found
 
 
 def _google_provider(settings: Settings, serp_provider):
@@ -1163,10 +1527,16 @@ def _pull_google(project, provider, by_previous, depth, emit) -> list[SearchResu
                 kept.error = f"fresh pull failed ({error}); kept the earlier REAL results pulled {earlier.pulled_label}"
                 return kept
             return SearchResults(search=search, results=[], source=provider.name, provider=provider.name, pulled_at=None, error=f"pull failed: {error}")
-        results = [
-            SerpResult(position=int(hit.position), url=hit.url, domain=domain_of(hit.url), title=plain_dashes(hit.title), snippet=plain_dashes(hit.snippet))
-            for hit in hits
-        ]
+        results = []
+        seen: set[str] = set()
+        for hit in sorted(hits, key=lambda item: int(item.position)):
+            key = loose_key(hit.url)
+            if key in seen:
+                continue  # the same page twice (http and https, tracking tags): keep its best position
+            seen.add(key)
+            results.append(
+                SerpResult(position=int(hit.position), url=hit.url, domain=domain_of(hit.url), title=plain_dashes(hit.title), snippet=plain_dashes(hit.snippet))
+            )
         return SearchResults(
             search=search,
             results=results,
@@ -1592,6 +1962,49 @@ def _save_engine(folder: Path, engine: _Engine) -> None:
     _write_json(folder / "fit.json", asdict(engine.metrics))
 
 
+def _save_engine_atomic(folder: Path, engine: _Engine) -> None:
+    """Write the engine into a temp folder, then rename it into place, so a reader never sees half an engine."""
+    import shutil
+
+    temp = folder.with_name(folder.name + ".tmp")
+    if temp.exists():
+        shutil.rmtree(temp, ignore_errors=True)
+    _save_engine(temp, engine)
+    if folder.exists():
+        shutil.rmtree(folder, ignore_errors=True)
+    temp.replace(folder)
+
+
+def _result_lists(snapshot: GoogleSnapshot, searches: Iterable[str]) -> dict[str, list[tuple[int, str]]]:
+    by_search = snapshot.by_search()
+    return {search: [(item.position, item.url) for item in (by_search[search].results if search in by_search else [])] for search in searches}
+
+
+def _reusable_engine(
+    project: Project, previous: GoogleSnapshot | None, snapshot: GoogleSnapshot, counts: dict[str, int], site_urls: Sequence[str] = ()
+) -> tuple[_Engine, str] | None:
+    """The previous pull's engine, when this pull added nothing it learns from: no new Google data, nothing fetched,
+    and the same pages of your own site (another project may have stored more of them in the shared database)."""
+    if previous is None or snapshot.kind != "carried" or counts.get("fetched_now", 0) or counts.get("kept_stored", 0):
+        return None
+    if _result_lists(previous, project.searches) != _result_lists(snapshot, project.searches):
+        return None
+    report = load_pull_report(project, previous.pull_id)
+    if report is None or sorted(_unique(report.site_urls)) != sorted(_unique(site_urls)):
+        return None
+    folder = project.dir / "pulls" / previous.pull_id / "engine"
+    if not (folder / "fit.json").is_file():
+        return None
+    engine = _load_engine(folder)
+    if engine is None or set(engine.fit.models) - set(project.searches):
+        return None
+    return engine, previous.pull_id
+
+
+def _engine_files_complete(folder: Path) -> bool:
+    return all((folder / name).is_file() for name in ("fit.json", "pages.json", "models.json"))
+
+
 def _load_engine(folder: Path) -> _Engine | None:
     import lightgbm as lgb
 
@@ -1664,8 +2077,10 @@ def load_project_context(
         engine = _load_engine(engine_dir)
         if engine is not None:
             loaded_from = f"saved engine from pull {google.pull_id}"
-        else:
+        elif _engine_files_complete(engine_dir):
             notes.append("The saved engine was built with a different feature list, so it was retrained now.")
+        else:
+            notes.append(f"The saved engine of pull {google.pull_id} is incomplete, so it was retrained now.")
     if engine is None:
         from aeo.ranksim.store import RsPage, open_session
 
@@ -1684,7 +2099,8 @@ def load_project_context(
     stale = [item.search for item in google.searches if item.search not in current]
     if stale:
         notes.append(f"Searches dropped from the project since this pull are ignored: {', '.join(stale)}.")
-    return ProjectContext(
+    index = site_index(google, project.searches)
+    ctx = ProjectContext(
         project=project,
         pull_id=chosen,
         google=google,
@@ -1697,10 +2113,86 @@ def load_project_context(
         seeded=engine.seeded,
         today=today or _today(),
         loaded_from=loaded_from,
-        load_seconds=_round(time.perf_counter() - started),
         notes=notes,
         database=database,
+        site_index=index,
+        site_model=fit_site_history(index),
+        site_backtest=site_history_backtest(index),
     )
+    ctx.content_backtest = content_insertion_backtest(ctx)
+    ctx.topic = topic_model(google, engine.pages, project.searches)
+    if ctx.site_model is None:
+        notes.append(
+            "The site history slot needs REAL results for at least 2 searches, so the headline slot is the content model's."
+        )
+    ctx.load_seconds = _round(time.perf_counter() - started)
+    return ctx
+
+
+def content_insertion_backtest(ctx: ProjectContext) -> SlotBacktest:
+    """The lab's insertion protocol for the content model, scored the way the board scores a page.
+
+    For each search, the held-out model (it never saw that search) scores the
+    stored REAL results. Each one is hidden in turn and slotted at 1 + the other
+    stored results it scores above it. Measured against the REAL order of the
+    stored results, next to always guessing the middle.
+    """
+    found = SlotErrors()
+    by_search = ctx.google.by_search()
+    for search in ctx.project.searches:
+        entry = by_search.get(search)
+        model = ctx.fit.models.get(search)
+        if entry is None or model is None:
+            continue
+        stored: list[tuple[SerpResult, PageDoc]] = []
+        seen: set[str] = set()
+        for item in sorted(entry.results, key=lambda result: result.position):
+            doc = _lookup(ctx.pages, item.url)
+            if doc is None or not (doc.title or doc.body or "").strip() or _key(item.url) in seen:
+                continue
+            seen.add(_key(item.url))
+            stored.append((item, doc))
+        if len(stored) < 3:
+            continue
+        intent = ctx.project.intents.get(search) or guess_intent(search)
+        docs = [doc for _item, doc in stored]
+        raw = raw_features(search, intent, docs, ctx.today)
+        examples = [RankExample(search, doc.url, 0.0, row, intent) for doc, row in zip(docs, raw)]
+        scores = predict_scores(model, examples)
+        values = [scores[id(example)] for example in examples]
+        found.searches += 1
+        for index, (item, _doc) in enumerate(stored):
+            others = [other for other in range(len(stored)) if other != index]
+            predicted = 1 + sum(1 for other in others if values[other] > values[index])
+            true_slot = 1 + sum(1 for other in others if stored[other][0].position < item.position)
+            new_site = known_site = False
+            if ctx.site_index is not None:
+                new_site = ctx.site_index.count(site_key(item.url), frozenset({search})) == 0
+                known_site = ctx.site_index.count(site_key(item.url), frozenset({search}), item.url) > 0
+            found.add(predicted, true_slot, len(others), new_site, known_site)
+    return found.summary(CONTENT_METHOD, population="stored REAL results")
+
+
+def topic_model(google: GoogleSnapshot, pages: dict, searches: Iterable[str]) -> TopicModel:
+    """The on-topic check, calibrated on the stored REAL top 10 pages of each search."""
+    wanted = set(searches)
+    by_search: dict[str, list[PageDoc]] = {}
+    titles: dict[str, list[str]] = {}
+    for entry in google.searches:
+        if entry.search not in wanted:
+            continue
+        docs = []
+        names = []
+        for item in entry.results:
+            if not 1 <= item.position <= TOP_DEPTH:
+                continue
+            doc = _lookup(pages, item.url)
+            if doc is not None:
+                docs.append(doc)
+            names.append(item.title or (doc.title if doc is not None else ""))
+        by_search[entry.search] = docs
+        titles[entry.search] = names
+    return TopicModel(by_search, titles)
 
 
 def _snapshot(project: Project, pull_id: str) -> GoogleSnapshot | None:
@@ -1731,18 +2223,35 @@ def test_page(
     insertion: InsertionFn = insertion_position,
     save: bool = True,
     now: datetime | None = None,
+    llm=None,
+    sim_runs: int = 3,
+    settings: Settings | None = None,
+    ai: bool = True,
+    progress: Callable[[str, int, int], None] | None = None,
+    sim_off: str = "",
 ) -> ProjectBoard:
     """Score a page on ALL of the project's searches. Every slot is PREDICTED.
 
     The REAL top 10 of each search stays in its REAL order; the model only says
-    where this page slots in. When the URL already ranks, this HTML stands in for
-    the stored copy. Each version is saved under the project (TesterHistory) and
-    compared with the previous version and with the stored copy of the URL, all
-    rescored now on the same engine.
+    where this page slots in. The headline slot comes from site history (the
+    predictor that did best in backtests; content blind); the content model's
+    slot is kept as predicted_position. When the URL already ranks, this HTML
+    stands in for the stored copy. Each version is saved under the project
+    (TesterHistory) and compared with the previous version and with the stored
+    copy of the URL, all rescored now on the same content model.
+
+    With ai=True each search also gets the latest REAL AI engine citations from
+    the project's pulls (or 'not run: needs <ENV VAR>'), and, when llm is a
+    configured LLM, the PREDICTED citation simulation (sim_runs runs per search).
+    sim_off is the status to show when llm is None on purpose (for example
+    'not run: switched off for this test'). progress(message, done, total)
+    reports the simulation.
     """
     began = time.perf_counter()
     project = ctx.project
     stamp = (now or datetime.now(timezone.utc)).isoformat(timespec="seconds")
+    typed = url
+    url, url_note = resolve_test_url(ctx, url)
     base = page_from_html(url, html or "", is_ours=True)
     rows = [_score_search(ctx, search, base, url, insertion) for search in project.searches]
     score_s = time.perf_counter() - began
@@ -1773,14 +2282,18 @@ def test_page(
         entries = entries[:-1]
     previous = PageScore.from_dict(entries[-1]) if entries else None
     previous_rows = None
+    previous_topic: dict[str, bool | None] = {}
     if previous is not None:
         previous_html = _version_html(history, previous.content_hash)
         if previous_html is not None:
             previous_base = page_from_html(url, previous_html, is_ours=True)
-            previous_rows = {row.search: row.predicted_position for row in (_score_search(ctx, search, previous_base, url, insertion, compare=False) for search in project.searches)}
+            rescored = [_score_search(ctx, search, previous_base, url, insertion, compare=False) for search in project.searches]
+            previous_rows = {row.search: row.predicted_position for row in rescored}
+            previous_topic = {row.search: (row.topic.on_topic if row.topic is not None else None) for row in rescored}
         else:
             previous_rows = {row.query: row.predicted_rank for row in previous.scores}
     stored_positions = {row.search: row.predicted_position for row in stored_rows} if stored_rows else {}
+    stored_topic = {row.search: (row.topic.on_topic if row.topic is not None else None) for row in stored_rows} if stored_rows else {}
 
     baseline = "the stored copy" if stored_rows else (previous.version if previous else "")
     better = worse = same = 0
@@ -1808,9 +2321,42 @@ def test_page(
             row.flag = "same"
             same += 1
 
+    # On-topic regressions: the baseline was on topic for a search and this version is not. This, not the
+    # unvalidated content model, is what --fail-on-regression checks.
+    topic_baseline = stored_topic if stored_rows else previous_topic
+    topic_regressions: list[str] = []
+    if baseline and topic_baseline:
+        for row in rows:
+            if topic_baseline.get(row.search) is True and row.topic is not None and row.topic.on_topic is not True:
+                row.topic_regression = f"{row.search}: on topic in {baseline}, not now. {row.topic.text}"
+                topic_regressions.append(row.topic_regression)
+
+    ai_real_note = ai_sim_label = ""
+    engines_pulls: list[str] = []
+    ai_seconds = 0.0
+    if ai:
+        from aeo.ranksim.project_engines import attach_ai
+
+        ai_began = time.perf_counter()
+        ai_real_note, ai_sim_label, engines_pulls = attach_ai(
+            ctx, rows, html, url, llm=llm, sim_runs=sim_runs, settings=settings, progress=progress, sim_off=sim_off
+        )
+        ai_seconds = time.perf_counter() - ai_began
+
     summary = _summary(ctx, rows, url)
     summary.better, summary.worse, summary.same, summary.baseline = better, worse, same, baseline
+    if ai:
+        from aeo.ranksim.project_engines import ai_summary_text
+
+        summary.ai_text = ai_summary_text(rows)
     notes = list(ctx.notes)
+    if url_note:
+        notes.append(url_note)
+    if not project.is_our_url(url):
+        notes.append(
+            f"This URL is not on your project site ({project.site}). 'Your site' numbers on this board are about {project.domain}; "
+            f"the PREDICTED slot uses the site of the URL you gave ({domain_of(url) or typed})."
+        )
     if base.word_count < THIN_WORD_GATE:
         notes.append(f"This page has {base.word_count} words. The engine ranks pages under {THIN_WORD_GATE} words behind every fuller page.")
     if _lookup(ctx.pages, url) is None and project.is_our_url(url):
@@ -1841,9 +2387,132 @@ def test_page(
         history_path=str(history.path),
         new_version_saved=saved,
         notes=notes,
-        timing={"load_seconds": ctx.load_seconds, "score_seconds": _round(score_s), "total_seconds": _round(time.perf_counter() - began)},
+        timing={
+            "load_seconds": ctx.load_seconds,
+            "score_seconds": _round(score_s),
+            "ai_seconds": _round(ai_seconds),
+            "total_seconds": _round(time.perf_counter() - began),
+        },
+        slot_method=ctx.slot_method,
+        slot_backtest=ctx.site_backtest if ctx.site_model is not None else ctx.content_backtest,
+        content_backtest=ctx.content_backtest,
+        ai_real_note=ai_real_note,
+        ai_sim_label=ai_sim_label,
+        engines_pulls=engines_pulls,
+        todo=todo_list([row.topic for row in rows if row.topic is not None]),
+        topic_backtest=ctx.topic.backtest if ctx.topic is not None else None,
+        topic_regressions=topic_regressions,
+        slot_group_text=slot_group_text(ctx, rows),
     )
     return board
+
+
+def slot_group_text(ctx: ProjectContext, rows: list[SearchBoard]) -> str:
+    """The backtest number for pages like this one: a new page on a site that already ranks, or a brand new site."""
+    backtest = ctx.site_backtest
+    if ctx.site_model is None or backtest is None or backtest.mae is None:
+        return ""
+    counts = [row.your_site_searches for row in rows if row.your_site_searches is not None]
+    if not counts:
+        return ""
+    if max(counts) > 0:
+        if not backtest.known_site_n:
+            return ""
+        verdict = "no better than" if backtest.known_site_mae >= backtest.known_site_middle_mae - 0.1 else "better than"
+        return (
+            f"Pages like yours (a new page on a site that already ranks for other searches): in backtests the slot was off by "
+            f"{backtest.known_site_mae:.1f} places on average, against {backtest.known_site_middle_mae:.1f} for always guessing the middle "
+            f"of the list ({backtest.known_site_n} pages), so it is {verdict} the middle guess."
+        )
+    if not backtest.new_site_n:
+        return ""
+    verdict = "no better than" if backtest.new_site_mae >= backtest.new_site_middle_mae - 0.1 else "better than"
+    return (
+        f"Pages like yours (a site that is in none of your other searches): in backtests the slot was off by "
+        f"{backtest.new_site_mae:.1f} places on average, against {backtest.new_site_middle_mae:.1f} for always guessing the middle "
+        f"({backtest.new_site_n} pages), so it is {verdict} the middle guess."
+    )
+
+
+def loose_key(url: str) -> str:
+    """The same page whatever the spelling: no scheme, no www, no trailing slash, no tracking tags, no fragment."""
+    from urllib.parse import urlsplit
+
+    text = str(url or "").strip()
+    try:
+        parts = urlsplit(text)
+        host = (parts.hostname or "").lower()
+        port = parts.port
+    except ValueError:
+        return text.lower()
+    if not host:
+        return text.lower()
+    if host.startswith("www."):
+        host = host[4:]
+    netloc = host + (f":{port}" if port and port not in (80, 443) else "")
+    path = (parts.path or "/").rstrip("/") or "/"
+    query = "&".join(sorted(pair for pair in parts.query.split("&") if pair and not _tracking(pair.split("=", 1)[0])))
+    return netloc + path + (f"?{query}" if query else "")
+
+
+def _tracking(name: str) -> bool:
+    name = name.lower()
+    return any(name.startswith(prefix) if prefix.endswith("_") else name == prefix for prefix in TRACKING_PARAMS)
+
+
+def strip_tracking(url: str) -> str:
+    """url without tracking tags (utm_*, gclid ...) and without a #fragment."""
+    from urllib.parse import urlsplit, urlunsplit
+
+    try:
+        parts = urlsplit(str(url or "").strip())
+    except ValueError:
+        return str(url or "").strip()
+    query = "&".join(pair for pair in parts.query.split("&") if pair and not _tracking(pair.split("=", 1)[0]))
+    return urlunsplit((parts.scheme, parts.netloc, parts.path, query, ""))
+
+
+def resolve_test_url(ctx: ProjectContext, url: str) -> tuple[str, str]:
+    """The URL to test under, and a note when it differs from what was typed.
+
+    http vs https, www vs no www, a trailing slash and tracking tags all name the same page. When a REAL result,
+    a stored page or an earlier tested version is that page, its spelling is used, so the stored copy is replaced
+    (not counted as a competitor) and versions stay in one history.
+    """
+    key = loose_key(url)
+    candidates: list[str] = []
+    for entry in ctx.google.searches:
+        candidates.extend(item.url for item in entry.results)
+    candidates.extend(doc.url for doc in ctx.pages.values())
+    candidates.extend(_tested_urls(ctx.project))
+    for candidate in candidates:
+        if loose_key(candidate) == key:
+            if candidate == url:
+                return url, ""
+            if _key(candidate) == _key(url):
+                return candidate, ""
+            return candidate, f"You gave {url}; it is tested as {candidate}, the same page (scheme, www, trailing slash and tracking tags ignored)."
+    cleaned = strip_tracking(url)
+    if cleaned != str(url).strip():
+        return cleaned, f"You gave {url}; it is tested as {cleaned} (tracking tags and #fragment removed)."
+    return url, ""
+
+
+def _tested_urls(project: Project) -> list[str]:
+    found: list[str] = []
+    folder = project.dir / "tests"
+    if not folder.is_dir():
+        return found
+    for path in sorted(folder.glob("*.jsonl")):
+        try:
+            with path.open(encoding="utf-8") as handle:
+                first = handle.readline()
+            value = json.loads(first).get("url") if first.strip() else None
+        except (OSError, ValueError, AttributeError):
+            value = None
+        if isinstance(value, str) and value:
+            found.append(value)
+    return found
 
 
 test_page.__test__ = False  # a product function, not a pytest test
@@ -1858,12 +2527,18 @@ def _score_search(ctx: ProjectContext, search: str, base: PageDoc, url: str, ins
     if entry is None or not entry.results:
         board.error = (entry.error if entry and entry.error else "") or NOT_RUN_GOOGLE
         return board
-    our_key = _key(url)
+    our_key = loose_key(url)
     incumbents: list[tuple[SerpResult, PageDoc | None]] = []
-    for item in entry.results:
+    seen: set[str] = set()
+    for item in sorted(entry.results, key=lambda result: result.position):
+        key = loose_key(item.url)
+        if key in seen:
+            continue  # the same page listed twice (http and https, tracking tags): keep its best REAL position
+        seen.add(key)
         doc = _lookup(ctx.pages, item.url)
         stored = doc is not None and bool((doc.title or doc.body or "").strip())
-        is_ours = _key(item.url) == our_key
+        is_ours = key == our_key
+        deep = not 1 <= item.position <= TOP_DEPTH
         board.real_results.append(
             RealResult(
                 position=item.position,
@@ -1874,11 +2549,14 @@ def _score_search(ctx: ProjectContext, search: str, base: PageDoc, url: str, ins
                 stored_at=ctx.stored_at.get(_key(item.url)) if stored else None,
                 tested_url=is_ours,
                 our_site=project.is_our_url(item.url),
+                beyond_top10=deep,
             )
         )
         if is_ours:
             if board.real_position is None:
                 board.real_position = item.position
+            continue
+        if deep:
             continue
         incumbents.append((item, doc if stored else None))
     site_hits = [row for row in board.real_results if row.our_site]
@@ -1889,10 +2567,25 @@ def _score_search(ctx: ProjectContext, search: str, base: PageDoc, url: str, ins
     board.coverage_stored = sum(1 for _item, doc in incumbents if doc is not None)
     board.thin = board.coverage_total > 0 and board.coverage_stored < board.coverage_total * THIN_SHARE
     board.coverage_text = (
-        f"{board.coverage_stored} of {board.coverage_total} REAL results are stored and scored"
-        + (". THIN: under half, so the PREDICTED slot says little." if board.thin else ".")
+        f"{board.coverage_stored} of {board.coverage_total} REAL top 10 results are stored and scored"
+        + (". THIN: under half, so the content model slot says little." if board.thin else ".")
     )
     board.predicted_of = len(incumbents) + 1
+    if not incumbents:
+        if board.real_position is not None:
+            board.error = (
+                f"This URL is the only REAL top {TOP_DEPTH} result recorded for this search (REAL #{board.real_position}), "
+                "so there is no other page to place it against. No position invented."
+            )
+        else:
+            board.error = f"No REAL results in positions 1 to {TOP_DEPTH} were recorded for this search, so nothing to place against. No position invented."
+        return board
+    if ctx.topic is not None:
+        board.topic = ctx.topic.check(search, base)
+        if board.topic.on_topic is not True:
+            board.error = board.topic.text
+            return board
+    _site_slot(ctx, board, search, url, incumbents, base, compare)
     model, model_kind = ctx.model_for(search)
     board.model = model_kind
     scored = [(item, doc) for item, doc in incumbents if doc is not None]
@@ -1900,7 +2593,7 @@ def _score_search(ctx: ProjectContext, search: str, base: PageDoc, url: str, ins
         board.error = "The engine has no model yet: fewer than two searches have two or more stored REAL results. No position invented."
         return board
     if not scored:
-        board.error = "None of the REAL results for this search are stored, so there is nothing to compare with. No position invented."
+        board.error = "None of the other REAL results for this search are stored, so the content model has nothing to compare with. No position invented."
         return board
     ours = _our_doc(ctx, base, url)
     docs = [doc for _item, doc in scored] + [ours]
@@ -1911,16 +2604,21 @@ def _score_search(ctx: ProjectContext, search: str, base: PageDoc, url: str, ins
     your_score = values[-1]
     score_by_key = {_key(item.url): values[index] for index, (item, _doc) in enumerate(scored)}
     in_order = [score_by_key.get(_key(item.url)) for item, _doc in incumbents]
-    position = int(insertion(your_score, in_order))
-    position = max(1, min(position, len(incumbents) + 1))
+    limit = len(incumbents) + 1
+    position = max(1, min(int(insertion(your_score, in_order)), limit))
     board.predicted_position = position
-    above_scored = sum(1 for score in in_order if score is not None and score > your_score)
-    unscored = sum(1 for score in in_order if score is None)
-    board.predicted_best = 1 + above_scored
-    board.predicted_worst = 1 + above_scored + unscored
+    board.google_low, board.google_high = google_range(
+        [item.position for item, _doc in incumbents], position, any(row.beyond_top10 for row in board.real_results)
+    )
+    # The range over the unstored incumbents, from the same insertion rule: none of them above you, then all of them.
+    low_fill = [score if score is not None else -math.inf for score in in_order]
+    high_fill = [score if score is not None else math.inf for score in in_order]
+    best = max(1, min(int(insertion(your_score, low_fill)), limit))
+    worst = max(1, min(int(insertion(your_score, high_fill)), limit))
+    board.predicted_best, board.predicted_worst = min(best, worst, position), max(best, worst, position)
     for row in board.real_results:
         score = score_by_key.get(_key(row.url))
-        if score is not None and not row.tested_url:
+        if score is not None and not row.tested_url and not row.beyond_top10:
             row.model_scores_above_you = score > your_score
     if position > 1:
         board.above = _neighbor(incumbents[position - 2])
@@ -1938,7 +2636,152 @@ def _score_search(ctx: ProjectContext, search: str, base: PageDoc, url: str, ins
             if their is None or their <= your_score:
                 continue
             board.beaten_by.append(_comparison(item, doc, raw_by_key.get(_key(item.url)), ours, raw[-1], gains, their, your_score, project))
+        score_of = {comp.url: comp for comp in board.above_slot}
+        for item, _doc in incumbents:
+            comp = score_of.get(item.url)
+            their = score_by_key.get(_key(item.url))
+            if comp is not None and their is not None:
+                comp.model_scores_above_you = their > your_score
+                comp.score_gap = _round(their - your_score, 4)
     return board
+
+
+def google_range(positions: Sequence[int], slot: int, deeper: bool = False) -> tuple[int, int | None]:
+    """The Google positions a slot stands for, from the REAL positions of its neighbors (incumbents in REAL order).
+
+    With no gaps in the REAL list this is (slot, slot). Below REAL #a and above REAL #b it is a + 1 to b. Past the
+    last REAL result of a list with gaps, or when deeper REAL results exist past unknown ones (deeper=True),
+    the positions in between are unknown, so high is None ('or lower').
+    """
+    above = positions[slot - 2] if slot > 1 else 0
+    low = above + 1
+    if slot - 1 < len(positions):
+        return low, max(low, int(positions[slot - 1]))
+    contiguous = list(positions) == list(range(1, len(positions) + 1))
+    return low, (low if contiguous and not deeper else None)
+
+
+def google_label(low: int | None, high: int | None) -> str:
+    if low is None:
+        return "none"
+    if high is None:
+        return f"#{low} or lower"
+    if high == low:
+        return f"#{low}"
+    return f"#{low} to #{high}"
+
+
+def _site_slot(
+    ctx: ProjectContext,
+    board: SearchBoard,
+    search: str,
+    url: str,
+    incumbents: list[tuple[SerpResult, PageDoc | None]],
+    base: PageDoc | None = None,
+    compare: bool = True,
+) -> None:
+    """The headline PREDICTED slot from site history. Needs REAL results only, not stored HTML."""
+    if ctx.site_model is None or ctx.site_index is None or not incumbents:
+        return
+    band = ctx.site_backtest.band if ctx.site_backtest is not None else 3
+    slot = site_history_position(ctx.site_model, ctx.site_index, url, search, [item.url for item, _doc in incumbents], band=band)
+    if slot is None:
+        return
+    board.site_position = slot.position
+    board.site_position_of = slot.of
+    board.site_position_low = slot.low
+    board.site_position_high = slot.high
+    board.your_site_searches = slot.your_site_searches
+    board.site_google_low, board.site_google_high = google_range(
+        [item.position for item, _doc in incumbents], slot.position, any(row.beyond_top10 for row in board.real_results)
+    )
+    others = count_of(slot.your_site_searches, "other search", "other searches")
+    board.site_note = (
+        f"PREDICTED from where your site and these sites appear across your {ctx.site_model.n_searches} searches "
+        f"(your site is in the REAL top 10 of {others}, not counting this URL). {CONTENT_BLIND_NOTE}"
+    )
+    if slot.position > 1:
+        board.site_above = _neighbor(incumbents[slot.position - 2])
+    if slot.position - 1 < len(incumbents):
+        board.site_below = _neighbor(incumbents[slot.position - 1])
+    if board.real_position is not None:
+        board.site_check = site_check_text(slot.position, board.real_position, board.real_pulled)
+    if compare:
+        excluded = frozenset({search})
+        for index, (item, doc) in enumerate(incumbents[: slot.position - 1]):
+            theirs = ctx.site_index.count(site_key(item.url), excluded, url)
+            board.above_slot.append(
+                _site_comparison(
+                    ctx.project, item, doc, base, url, search, slot.your_site_searches, theirs, 1.0 - slot.p_above[index], slot.expected_above
+                )
+            )
+
+
+def _site_comparison(
+    project: Project,
+    item: SerpResult,
+    doc: PageDoc | None,
+    base: PageDoc | None,
+    url: str,
+    search: str,
+    yours: int,
+    theirs: int,
+    p_above_you: float,
+    expected_above: float | None = None,
+) -> Comparison:
+    """A REAL result above the headline slot: the site counts that put it there, then REAL facts next to yours."""
+    from aeo.ranksim.relevance import search_words, words_found
+
+    domain = item.domain or domain_of(item.url)
+    comp = Comparison(
+        real_position=item.position,
+        url=item.url,
+        domain=domain,
+        title=plain_dashes(item.title or (doc.title if doc else "") or ""),
+        stored=doc is not None,
+        model_scores_above_you=None,
+        their_site_searches=theirs,
+        your_site_searches=yours,
+        p_above_you=_round(p_above_you, 3),
+        own_site=project.is_our_url(item.url),
+    )
+    if comp.own_site:
+        comp.note = (
+            "This is a page of your own site. A new page would compete with it for this search; "
+            "Google usually shows only one or two pages of a site."
+        )
+    else:
+        expected = (
+            f" Your slot keeps the REAL order and comes after the {expected_above:.1f} pages site history expects to outrank you in all, "
+            "so the REAL results ahead of that point sit above you."
+            if expected_above is not None
+            else ""
+        )
+        comp.note = (
+            f"Site history: its site is in the REAL top 10 of {count_of(theirs, 'other search', 'other searches')}, yours in {yours}, "
+            f"so it gets a {round(100 * p_above_you)}% PREDICTED chance of outranking you.{expected} Editing your page does not change this."
+        )
+    words = search_words(search)
+    if words:
+        their_title = item.title or (doc.title if doc else "")
+        theirs_found = len(words_found(words, their_title)[0])
+        yours_found = len(words_found(words, f"{base.title} {base.h1}")[0]) if base is not None else None
+        fact = f"Search words in the title: theirs {theirs_found} of {len(words)}"
+        if yours_found is not None:
+            fact += f", yours (title or main heading) {yours_found} of {len(words)}"
+        comp.facts.append(fact + ".")
+    if doc is not None and base is not None and doc.word_count:
+        comp.facts.append(f"Words on the page: theirs {doc.word_count}, yours {base.word_count}.")
+    return comp
+
+
+def site_check_text(predicted: int, real: int, pulled: str) -> str:
+    """This URL already ranks: how far the site history slot is from its REAL position here."""
+    if predicted == real:
+        return f"Check (site history): PREDICTED #{predicted} and REAL #{real} ({pulled}). It matches here."
+    gap = abs(real - predicted)
+    side = "optimistic" if predicted < real else "pessimistic"
+    return f"Check (site history): PREDICTED #{predicted} but REAL #{real} ({pulled}), {gap} {'place' if gap == 1 else 'places'} {side} here."
 
 
 def _our_doc(ctx: ProjectContext, base: PageDoc, url: str) -> PageDoc:
@@ -2033,6 +2876,8 @@ def _comparison(item, doc, raw_pair, ours: PageDoc, our_raw: dict, gains: dict, 
 def _gaps(names, their_raw: dict, our_raw: dict, their_doc: PageDoc, our_doc: PageDoc, gains: dict, limit: int) -> list[FeatureGap]:
     found: list[tuple[float, FeatureGap]] = []
     for name in names:
+        if name == "speed" and our_doc.fetch_ms is None:
+            continue  # your page was uploaded, never fetched, so its speed is unknown, not slow
         theirs = their_raw.get(name)
         yours = our_raw.get(name)
         if theirs is None or yours is None:
@@ -2118,6 +2963,7 @@ def _query_score(row: SearchBoard) -> QueryScore:
         in_set=row.coverage_stored,
         missing=row.coverage_total - row.coverage_stored,
         labeled_position=float(row.real_position) if row.real_position is not None else None,
+        on_topic=row.topic.on_topic if row.topic is not None else None,
     )
 
 
@@ -2149,21 +2995,36 @@ def _stored_copy(ctx: ProjectContext, url: str) -> tuple[PageDoc | None, str | N
     return page_from_html(url, html, is_ours=True), text
 
 
+def _within(low_high: tuple[int | None, int | None], limit: int) -> bool:
+    _low, high = low_high
+    return high is not None and high <= limit
+
+
 def _summary(ctx: ProjectContext, rows: list[SearchBoard], url: str) -> BoardSummary:
+    """Counts use the headline slot (site history when it ran) in Google positions. Off-topic searches count as not placed."""
     total = len(rows)
-    scored = [row for row in rows if row.predicted_position is not None]
-    top3 = sum(1 for row in scored if row.predicted_position <= 3)
-    top10 = sum(1 for row in scored if row.predicted_position <= 10)
+    scored = [row for row in rows if row.headline() is not None]
+    top3 = sum(1 for row in scored if _within(row.headline_google(), 3))
+    top10 = sum(1 for row in scored if _within(row.headline_google(), 10))
+    content = [row for row in rows if row.predicted_position is not None]
     real10 = sum(1 for row in rows if row.real_position is not None and row.real_position <= 10)
     site10 = sum(1 for row in rows if row.real_site_position is not None and row.real_site_position <= 10)
+    on = sum(1 for row in rows if row.topic is not None and row.topic.on_topic is True)
+    off = sum(1 for row in rows if row.topic is not None and row.topic.on_topic is False)
+    unchecked = sum(1 for row in rows if row.topic is not None and row.topic.on_topic is None)
     pulled = _pulled_text([item for item in ctx.google.searches if item.results and item.search in set(ctx.project.searches)])
     text = (
         f"PREDICTED top 3 on {top3} of {total} searches, top 10 on {top10} of {total}. "
-        f"REAL today ({pulled}): top 10 on {real10} of {total}."
+        f"REAL ({pulled}): top 10 on {real10} of {total}."
     )
     text += f" Your site ({ctx.project.domain}) has some page in the REAL top 10 on {site10} of {total}."
-    if len(scored) < total:
-        text += f" {total - len(scored)} searches got no PREDICTED position (see each search)."
+    if off:
+        text += f" PREDICTED off topic on {off} of {total}, so not in the top 10 there."
+    if unchecked:
+        text += f" {unchecked} could not be checked (no readable text)."
+    rest = total - len(scored) - off - unchecked
+    if rest > 0:
+        text += f" {rest} searches got no PREDICTED position (see each search)."
     return BoardSummary(
         text=text,
         searches=total,
@@ -2173,7 +3034,53 @@ def _summary(ctx: ProjectContext, rows: list[SearchBoard], url: str) -> BoardSum
         real_top10=real10,
         real_site_top10=site10,
         real_pulled=pulled,
+        method=ctx.slot_method,
+        content_top3=sum(1 for row in content if _within((row.google_low, row.google_high), 3)),
+        content_top10=sum(1 for row in content if _within((row.google_low, row.google_high), 10)),
+        on_topic=on,
+        off_topic=off,
+        not_checked=unchecked,
     )
+
+
+def plain_lead(board: ProjectBoard) -> str:
+    """One sentence a founder can read first. Every number in it is labeled."""
+    return plain_lead_from_dict(board.to_dict())
+
+
+def plain_lead_from_dict(data: dict) -> str:
+    """plain_lead() for a board stored as JSON (ProjectBoard.to_dict())."""
+    summary = data.get("summary") or {}
+    total = int(summary.get("searches") or 0)
+    pulled = summary.get("real_pulled") or PULL_DATE_NOT_RECORDED
+    real = (
+        f" REAL ({pulled}): this exact URL is in the top 10 for {summary.get('real_top10', 0)} of them; "
+        f"some page of your site is for {summary.get('real_site_top10', 0)}."
+    )
+    if int(data.get("schema") or 1) < 2:
+        if not summary.get("scored"):
+            return f"No PREDICTED positions yet: none of the {total} searches has REAL Google results to compare with."
+        return (
+            f"Older result (made before the on-topic check): PREDICTED top 3 on {summary.get('predicted_top3', 0)} of {total} key searches "
+            "from site history alone, which does not read the page." + real
+        )
+    on = int(summary.get("on_topic") or 0)
+    off = int(summary.get("off_topic") or 0)
+    unchecked = int(summary.get("not_checked") or 0)
+    if not summary.get("scored") and not off and not unchecked:
+        return f"No PREDICTED positions yet: none of the {total} searches has REAL Google results to compare with." + (real if summary.get("real_top10") or summary.get("real_site_top10") else "")
+    lead = f"PREDICTED: your page is on topic for {on} of your {total} key searches"
+    if off:
+        lead += f" and off topic for {off}, where it is PREDICTED not to make the top 10"
+    if unchecked:
+        lead += f"; {unchecked} could not be checked because the page has almost no readable text"
+    lead += "."
+    if on and summary.get("scored"):
+        lead += (
+            f" Where it is on topic, your site's track record puts it in Google's top 3 on {summary.get('predicted_top3', 0)}"
+            " (that slot comes from your site, not the page text)."
+        )
+    return lead + real
 
 
 def model_check_text(predicted: int | None, real: int | None, pulled: str) -> str:
@@ -2221,18 +3128,33 @@ def _version_html(history: TesterHistory, digest: str) -> str | None:
 
 
 def render_board_text(board: ProjectBoard, *, detail_limit: int = 3) -> str:
+    """detail_limit: how many pages per search to explain; a negative number explains all of them."""
     lines = [
         f"{board.project_name} ({board.site}): how {board.url} does on {board.summary.searches} key searches",
         PREDICTED_NOTE,
         f"{REAL_NOTE} Here: {board.google_source or 'no REAL results yet'}.",
         "",
+        plain_lead(board),
+        "",
         board.summary.text,
+        board.top10_note,
         "",
-        f"How much to trust a PREDICTED slot: {board.backtest.text}",
-        f"Confidence: {board.backtest.calibration_note}",
-        "",
-        f"This version: {board.version}, {board.word_count} words, from {board.source}, tested {_stamp(board.tested_at)}.",
     ]
+    if board.todo:
+        lines.append("To do, most searches first (from the on-topic check and what the REAL top 10 pages share):")
+        for number, item in enumerate(board.todo, start=1):
+            shown = ", ".join(item.searches[:4]) + (f" and {len(item.searches) - 4} more" if len(item.searches) > 4 else "")
+            lines.append(f"  {number}. [{item.label}] {item.text} ({shown})")
+        lines.append("")
+    lines.extend(_accuracy_lines(board))
+    if board.summary.ai_text:
+        lines.append(f"AI engines: {board.summary.ai_text}")
+    lines.extend(
+        [
+            "",
+            f"This version: {board.version}, {board.word_count} words, from {board.source}, tested {_stamp(board.tested_at)}.",
+        ]
+    )
     if board.stored_copy:
         lines.append(f"Compared with the {board.stored_copy}, scored now on the same engine.")
     if board.previous_version:
@@ -2240,71 +3162,113 @@ def render_board_text(board: ProjectBoard, *, detail_limit: int = 3) -> str:
     for note in board.notes:
         lines.append(note)
     lines.append("")
-    table = [["search", "PREDICTED slot", "PREDICTED range", "REAL now", "change vs stored", "change vs prev", "sure?", "linear check", "pages stored"]]
+    table = [["search", "on topic?", "PREDICTED slot", "likely", "content model", "REAL now", "change vs stored", "change vs prev"]]
     for row in board.searches:
-        if row.predicted_position is None:
+        head = row.headline()
+        if head is None:
             slot = "none"
             span = "n/a"
+        elif row.site_position is not None:
+            slot = f"{row.headline_label()} of {row.site_position_of}"
+            span = f"#{row.site_position_low} to #{row.site_position_high}"
         else:
-            slot = f"#{row.predicted_position} of {row.predicted_of}"
+            slot = f"{row.headline_label()} of {row.predicted_of}"
             span = "exact" if row.predicted_best == row.predicted_worst else f"#{row.predicted_best} to #{row.predicted_worst}"
+        topic = row.topic.status if row.topic is not None else ("n/a" if row.error else "not checked")
         table.append(
             [
                 row.search,
+                topic,
                 slot,
                 span,
-                f"#{row.real_position}" if row.real_position is not None else ("not in top 10" if not row.error else "n/a"),
+                google_label(row.google_low, row.google_high) if row.predicted_position is not None else "none",
+                f"#{row.real_position}" if row.real_position is not None else ("not in top 10" if row.real_results else "n/a"),
                 row.change_vs_stored,
                 row.change_vs_previous,
-                row.confidence,
-                f"#{row.linear_position}" if row.linear_position is not None else "n/a",
-                f"{row.coverage_stored} of {row.coverage_total}" + (" THIN" if row.thin else ""),
             ]
         )
-    lines.append("PREDICTED slot = where the model puts your page among the REAL results, which keep their REAL order.")
-    lines.append("REAL now = this URL's own REAL Google position. Every slot, range, change, and linear check below is PREDICTED.")
-    lines.append("PREDICTED range = the slot if none, or all, of the unstored REAL results beat you. Linear check = an independent hand-weighted scorer.")
+    lines.append("on topic? = the PREDICTED on-topic check. An off-topic page gets no slot: it is PREDICTED not to make the top 10.")
+    lines.append(f"PREDICTED slot = where the {board.slot_method} predictor puts an on-topic page among the REAL results, which keep their REAL order.")
+    lines.append("likely = the slot plus or minus the error the backtest misses by 80% of the time.")
+    lines.append("content model = the page-text model (unvalidated, no better than guessing the middle). Changes vs the stored copy and the previous version come from it.")
+    lines.append("REAL now = this URL's own REAL Google position. Every slot, range and change here is PREDICTED.")
     lines.extend(_table(table))
     lines.append("")
+    for line in board.topic_regressions:
+        lines.append(f"NO LONGER ON TOPIC: {line}")
     if board.summary.baseline:
         lines.append(
-            f"Against {board.summary.baseline}: better on {board.summary.better}, worse on {board.summary.worse}, same on {board.summary.same} searches (PREDICTED)."
+            f"Against {board.summary.baseline}: better on {board.summary.better}, worse on {board.summary.worse}, "
+            f"same on {board.summary.same} searches (PREDICTED by the content model, unvalidated; it does not decide pass or fail)."
         )
     for line in board.regressions:
-        lines.append(f"WORSE: {line}")
+        lines.append(f"WORSE (content model): {line}")
     for index, row in enumerate(board.searches, start=1):
         lines.append("")
         lines.extend(_search_text(index, len(board.searches), row, board, detail_limit))
     lines.append("")
     lines.append(f"Engine: pull {board.pull_id}. History: {board.history_path}.")
     lines.append(
-        ("Saved as " if board.new_version_saved else "Same HTML as ")
+        ("Saved as " if board.new_version_saved else ("Same HTML as " if board.version != "unsaved" else "Not saved: "))
         + f"{board.version}. Load {board.timing.get('load_seconds', 0):.1f} s, scoring {board.timing.get('score_seconds', 0):.1f} s."
     )
     return plain_dashes("\n".join(lines) + "\n")
 
 
+def _accuracy_lines(board: ProjectBoard) -> list[str]:
+    """How much to trust a PREDICTED slot, measured on this project's REAL results."""
+    lines: list[str] = []
+    topic = board.topic_backtest
+    if topic is not None and topic.text:
+        lines.append(f"On-topic check: {topic.text}")
+    if board.slot_method == SITE_METHOD and board.slot_backtest is not None:
+        lines.append(f"How the PREDICTED slot is made: site history. {CONTENT_BLIND_NOTE}")
+        lines.append(f"How accurate it is: {board.slot_backtest.text}")
+        if board.slot_group_text:
+            lines.append(board.slot_group_text)
+    content = board.content_backtest
+    if content is not None and content.mae is not None:
+        lines.append(f"Content model (unvalidated): {content.text}")
+    lines.append(f"Content model order backtest: {board.backtest.text}")
+    lines.append(f"Confidence (content model): {board.backtest.calibration_note}")
+    return lines
+
+
 def _search_text(index: int, total: int, row: SearchBoard, board: ProjectBoard, limit: int) -> list[str]:
     lines = [f'{index}/{total} "{row.search}"']
-    if row.error and row.predicted_position is None and not row.real_results:
+    if row.error and row.predicted_position is None and row.site_position is None and not row.real_results:
         lines.append(f"   REAL results: {row.error}.")
         return lines
-    if row.predicted_position is not None:
-        where = f"   PREDICTED: your page slots in at #{row.predicted_position} of {row.predicted_of}"
-        if row.above and row.below:
-            where += f", between REAL #{row.above.real_position} {_short(row.above)} and REAL #{row.below.real_position} {_short(row.below)}"
-        elif row.above:
-            where += f", below REAL #{row.above.real_position} {_short(row.above)}, under every REAL result"
-        elif row.below:
-            where += f", above REAL #{row.below.real_position} {_short(row.below)}, first"
-        lines.append(where + f". Confidence {row.confidence}. Linear check PREDICTED #{row.linear_position}.")
-        if row.predicted_best != row.predicted_worst:
-            missing = count_of(row.coverage_total - row.coverage_stored, "REAL result is", "REAL results are")
-            lines.append(f"   {missing} not stored, so the slot could be anywhere from #{row.predicted_best} to #{row.predicted_worst}.")
-    else:
+    if row.topic is not None:
+        lines.append(f"   {row.topic.text}")
+    if row.topic_regression:
+        lines.append(f"   NO LONGER ON TOPIC against {board.baseline}.")
+    if row.site_position is not None:
+        where = f"   PREDICTED: your page slots in at {row.headline_label()} of {row.site_position_of} ({SITE_METHOD})"
+        where += _between(row.site_above, row.site_below)
+        lines.append(where + f". Likely #{row.site_position_low} to #{row.site_position_high}.")
+        lines.append(f"   {row.site_note}")
+        if row.predicted_position is not None:
+            lines.append(
+                f"   Content model (unvalidated) PREDICTED {google_label(row.google_low, row.google_high)} of {row.predicted_of}"
+                f"{_between(row.above, row.below)}. Confidence {row.confidence}. Linear check PREDICTED #{row.linear_position}."
+            )
+        elif row.error:
+            lines.append(f"   Content model: no position. {row.error}")
+    elif row.predicted_position is not None:
+        where = f"   PREDICTED: your page slots in at {google_label(row.google_low, row.google_high)} of {row.predicted_of} ({CONTENT_METHOD})"
+        lines.append(where + _between(row.above, row.below) + f". Confidence {row.confidence}. Linear check PREDICTED #{row.linear_position}.")
+    elif row.topic is None or row.topic.on_topic is True:
         lines.append(f"   PREDICTED: no position. {row.error}")
+    if row.predicted_position is not None and row.predicted_best != row.predicted_worst:
+        missing = count_of(row.coverage_total - row.coverage_stored, "REAL result is", "REAL results are")
+        lines.append(
+            f"   {missing} not stored, so the content model slot could be anywhere from #{row.predicted_best} to #{row.predicted_worst}."
+        )
     if row.real_position is not None:
         lines.append(f"   REAL ({row.real_pulled}): this URL is #{row.real_position}.")
+        if row.site_check:
+            lines.append(f"   {row.site_check}")
         if row.model_check:
             lines.append(f"   {row.model_check}")
     else:
@@ -2318,9 +3282,11 @@ def _search_text(index: int, total: int, row: SearchBoard, board: ProjectBoard, 
         )
     lines.append(f"   REAL top {len(row.real_results)} ({source_and_date(row.real_source, row.real_pulled)}):")
     inserted = False
+    head = row.headline()
+    you = f"      >>  YOUR PAGE (PREDICTED {row.headline_label()})"
     for result in row.real_results:
-        if row.predicted_position is not None and not inserted and _slot_before(result, row):
-            lines.append(f"      >>  YOUR PAGE (PREDICTED #{row.predicted_position})")
+        if head is not None and not inserted and _slot_before(result, row):
+            lines.append(you)
             inserted = True
         mark = "stored" if result.stored else "not stored"
         tags = []
@@ -2328,52 +3294,107 @@ def _search_text(index: int, total: int, row: SearchBoard, board: ProjectBoard, 
             tags.append("this URL")
         elif result.our_site:
             tags.append("your site")
+        if result.beyond_top10:
+            tags.append("beyond the top 10, not used")
         tag = f" [{', '.join(tags)}]" if tags else ""
         title = f"  {result.title[:60]}" if result.title else ""
         lines.append(f"      #{result.position:<3} {result.domain}{tag}{title}  ({mark})")
-    if row.predicted_position is not None and not inserted:
-        lines.append(f"      >>  YOUR PAGE (PREDICTED #{row.predicted_position})")
-    unscored = [result for result in row.real_results if not result.stored and not result.tested_url]
+    if head is not None and not inserted:
+        lines.append(you)
+    shown = row.above_slot if limit < 0 else row.above_slot[:limit]
+    if shown:
+        lines.append(f"   Why these pages sit above your slot (site history, REAL counts; editing the page does not change it):")
+        for comp in shown:
+            lines.append(f"      REAL #{comp.real_position} {comp.domain}: {comp.note}")
+            for fact in comp.facts:
+                lines.append(f"         REAL: {fact}")
+        hidden = len(row.above_slot) - len(shown)
+        if hidden > 0:
+            lines.append(f"   {count_of(hidden, 'more page above your slot is', 'more pages above your slot are')} listed with --details -1 or in --json.")
+    unscored = [result for result in row.real_results if not result.stored and not result.tested_url and not result.beyond_top10]
     if row.predicted_position is not None:
         if row.beaten_by:
             lines.append(
-                f"   PREDICTED to beat you: {count_of(len(row.beaten_by), 'stored page', 'stored pages')} (REAL #"
+                f"   Content model (unvalidated) scores these above you: {count_of(len(row.beaten_by), 'stored page', 'stored pages')} (REAL #"
                 + ", #".join(str(comp.real_position) for comp in row.beaten_by)
                 + ")."
             )
         else:
-            lines.append("   PREDICTED to beat you: none of the stored pages.")
+            lines.append("   Content model (unvalidated) scores none of the stored pages above you.")
         if unscored:
             lines.append("   Not stored, so unknown: REAL #" + ", #".join(str(result.position) for result in unscored) + ".")
-    nearest = sorted(row.beaten_by, key=lambda comp: (comp.score_gap if comp.score_gap is not None else 0.0))[:limit] if limit else []
+    ordered = sorted(row.beaten_by, key=lambda comp: (comp.score_gap if comp.score_gap is not None else 0.0))
+    nearest = ordered if limit < 0 else ordered[:limit]
     if nearest:
-        lines.append(f"   Closest to overtake ({len(nearest)}), and why the model puts them above you (PREDICTED):")
+        lines.append(f"   Content model (unvalidated) reasons for the {len(nearest)} closest, not proven to move your rank:")
         for comp in nearest:
             lines.append(f"      REAL #{comp.real_position} {comp.domain}:")
             if comp.note:
                 lines.append(f"         {comp.note}")
             if comp.page_gaps:
-                lines.append("         You can change on the page:")
                 for gap in comp.page_gaps:
                     lines.append(f"           {gap.label}: yours {gap.yours_text}, theirs {gap.theirs_text}. {gap.fix}")
             elif comp.stored:
                 lines.append("         On the page: no feature where they are clearly ahead.")
-            signals = [gap for gap in comp.site_signals if gap.feature != "domain"]
-            if comp.stored:
-                lines.append(f"         Site signals, not changed by editing: domain {comp.domain} vs {comp.site_signals[0].yours_text if comp.site_signals else ''}.")
-                for gap in signals:
-                    lines.append(f"           {gap.label}: yours {gap.yours_text}, theirs {gap.theirs_text}. {gap.fix}")
         hidden = len(row.beaten_by) - len(nearest)
         if hidden > 0:
-            lines.append(f"   {count_of(hidden, 'more page that beats you is', 'more pages that beat you are')} compared in the JSON output (--json).")
+            lines.append(f"   {count_of(hidden, 'more page is', 'more pages are')} explained with --details -1 or in --json.")
+    lines.extend(_ai_text(row))
     return lines
+
+
+def _ai_text(row: SearchBoard) -> list[str]:
+    lines: list[str] = []
+    not_run = [engine for engine in row.engines if engine.status.startswith("not run")]
+    if not_run:
+        lines.append("   AI engines not run here: " + "; ".join(f"{engine.name}: {engine.status}" for engine in not_run) + ".")
+    for engine in row.engines:
+        if engine in not_run:
+            continue
+        if engine.status != "ok":
+            lines.append(f"   {engine.name}: {engine.status}")
+            continue
+        cited = (
+            f"cites your site in {engine.our_cited_runs} of {engine.ok_runs} answers"
+            + (f", first at citation #{engine.our_mean_position:.0f}" if engine.our_mean_position is not None else "")
+            if engine.our_cited_runs
+            else f"does not cite your site ({engine.ok_runs} answers)"
+        )
+        top = ", ".join(engine.top_domains[:4]) or "nothing"
+        lines.append(f"   {engine.name} REAL ({_stamp(engine.pulled_at)}, {engine.model}): {cited}. Most cited: {top}.")
+        if engine.note:
+            lines.append(f"      {engine.note}")
+    sim = row.simulation
+    if sim is not None:
+        if sim.status != "ok":
+            lines.append(f"   AI answer simulation (PREDICTED): {sim.status}")
+        else:
+            share = "n/a" if sim.your_share is None else f"{round(100 * sim.your_share)}%"
+            lines.append(
+                f"   AI answer simulation (PREDICTED, our own LLM {sim.model} answering from the Google top 10, not the real engine): "
+                f"your page cited in {sim.your_cited_runs} of {sim.ok_runs} runs ({share})."
+            )
+        for flag in sim.flags:
+            lines.append(f"   WARNING, instruction-like text in a source (the simulation may be swayed by it): {flag}")
+    return lines
+
+
+def _between(above: Neighbor | None, below: Neighbor | None) -> str:
+    if above and below:
+        return f", between REAL #{above.real_position} {_short(above)} and REAL #{below.real_position} {_short(below)}"
+    if above:
+        return f", below REAL #{above.real_position} {_short(above)}, under every REAL result"
+    if below:
+        return f", above REAL #{below.real_position} {_short(below)}, first"
+    return ""
 
 
 def _slot_before(result: RealResult, row: SearchBoard) -> bool:
     if result.tested_url:
         return False
-    if row.below is not None:
-        return result.url == row.below.url
+    below = row.site_below if row.site_position is not None else row.below
+    if below is not None:
+        return result.url == below.url
     return False
 
 
@@ -2384,8 +3405,9 @@ def _short(neighbor: Neighbor) -> str:
 def render_pull_text(report: PullReport) -> str:
     lines = [f"Pull {report.pull_id} for {report.project}: {report.total_seconds:.1f} s in total."]
     lines.append(f"Google: {report.google_note}")
-    for step in report.steps:
-        lines.append(f"  {step.step}: {step.seconds:.1f} s. {step.detail}")
+    for step in report.all_steps():
+        extra = " (in the background, alongside crawl and train)" if step.step == "engines" else ""
+        lines.append(f"  {step.step}: {step.seconds:.1f} s{extra}. {step.detail}")
     lines.append(CRAWL_NOTE)
     problems = [item for item in report.urls if item.code not in {"stored", "fetched_now"}]
     if problems:
@@ -2426,13 +3448,17 @@ def render_status_text(status: ProjectStatus) -> str:
             ]
         )
     lines.extend(_table(table))
+    if status.site_backtest is not None:
+        lines.append(f"PREDICTED slot (site history): {status.site_backtest.text}")
     if status.report is not None and status.report.metrics is not None:
-        lines.append(f"Mini engine (pull {status.report.pull_id}): {status.report.metrics.text}")
+        lines.append(f"Content model (pull {status.report.pull_id}): {status.report.metrics.text}")
+    if status.report is not None and status.report.engines_note:
+        lines.append(f"AI engines (pull {status.report.pull_id}): {status.report.engines_note}")
     lines.append("Pulls:")
     for item in status.pulls:
         engine = "engine saved" if item.has_engine else "no engine"
         took = f", {item.total_seconds:.1f} s" if item.total_seconds else ""
-        lines.append(f"  {item.pull_id}: {item.kind}, {item.searches_with_results} searches with REAL results, {engine}{took}.")
+        lines.append(f"  {item.pull_id}: {item.what}; {item.searches_with_results} searches have REAL results; {engine}{took}.")
     return plain_dashes("\n".join(lines) + "\n")
 
 

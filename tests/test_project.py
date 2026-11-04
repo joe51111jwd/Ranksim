@@ -30,6 +30,14 @@ FORBIDDEN = "https://forbidden.example/excavation-crew-app"
 BROKEN = "https://broken.example/grading-job-costing"
 DASHES = ("\u2014", "\u2013")
 SENTENCE = "Crews log hours on each job and the office sees cost by phase and machine every day."
+OFF_TOPIC_HTML = (
+    "<html><head><title>Lemon tart recipe</title></head><body><h1>Lemon tart</h1>"
+    + "".join(
+        f"<p>Step {n}: zest {n} lemons, whisk butter with sugar, fold almonds into pastry, chill it {n} hours, then bake golden.</p>"
+        for n in range(1, 30)
+    )
+    + "</body></html>"
+)
 
 
 def page_html(title: str, h1: str, paragraphs: int = 14, extra: str = "") -> str:
@@ -412,7 +420,7 @@ def test_page_scores_every_search_in_real_order(ctx):
     assert not blocked.stored and blocked.model_scores_above_you is None
     summary = board.summary.text
     assert summary.startswith(f"PREDICTED top 3 on {board.summary.predicted_top3} of 4 searches, top 10 on {board.summary.predicted_top10} of 4.")
-    assert "REAL today (" in summary and "top 10 on 1 of 4" in summary
+    assert "REAL (" in summary and "today" not in summary and "top 10 on 1 of 4" in summary
 
 
 def test_neighbors_and_comparisons(ctx):
@@ -496,7 +504,7 @@ def test_board_json_and_text_are_labeled_and_dash_free(ctx):
     assert data["searches"][0]["real_results"][0]["position"] == 1
     rendered = proj.render_board_text(board)
     assert not any(dash in rendered for dash in DASHES)
-    assert "PREDICTED top 3 on" in rendered and "REAL today (" in rendered
+    assert "PREDICTED top 3 on" in rendered and "REAL (" in rendered
     assert "PREDICTED: your page slots in at #" in rendered
     assert "YOUR PAGE (PREDICTED #" in rendered
     for line in rendered.splitlines():
@@ -568,15 +576,31 @@ def test_cli_project_flow(tmp_path, monkeypatch, capsys):
     page.write_text(page_html("Dirt Work Software", "Dirt Work Software"))
     cli.main([*base, "test", "dirt-crew", str(page), "--url", OUR_URL, "--projects-dir", root])
     out = capsys.readouterr().out
-    assert "PREDICTED top 3 on" in out and "REAL today (" in out and "pull date not recorded" in out
+    assert "PREDICTED top 3 on" in out and "REAL (pull date not recorded)" in out
     assert not any(dash in out for dash in DASHES)
 
+    # A weaker but still on-topic page: the content model (unvalidated) calls it worse, which fails only
+    # with --fail-on-content-regression. --fail-on-regression checks the on-topic test.
     page.write_text(page_html("Hi", "Hi", paragraphs=2))
+    cli.main([*base, "test", "dirt-crew", str(page), "--url", OUR_URL, "--projects-dir", root, "--json", "--fail-on-regression"])
+    data = json.loads(capsys.readouterr().out)
+    assert data["version"] == "v2" and data["regressions"] and not data["topic_regressions"]
+    with pytest.raises(SystemExit) as stopped:
+        cli.main([*base, "test", "dirt-crew", str(page), "--url", OUR_URL, "--projects-dir", root, "--json", "--fail-on-content-regression"])
+    assert stopped.value.code == 1
+    capsys.readouterr()
+    # An off-topic page fails --fail-on-regression: no longer on topic where the stored copy was.
+    page.write_text(OFF_TOPIC_HTML)
     with pytest.raises(SystemExit) as stopped:
         cli.main([*base, "test", "dirt-crew", str(page), "--url", OUR_URL, "--projects-dir", root, "--json", "--fail-on-regression"])
     assert stopped.value.code == 1
     data = json.loads(capsys.readouterr().out)
-    assert data["version"] == "v2" and data["regressions"]
+    assert data["topic_regressions"] and data["summary"]["off_topic"] == 4
+    # A usage error is exit 2, never 1.
+    with pytest.raises(SystemExit) as stopped:
+        cli.main([*base, "test", "dirt-crew", str(page), "--projects-dir", root])
+    assert stopped.value.code == 2
+    assert "needs --url" in capsys.readouterr().err
 
     cli.main([*base, "show", "dirt-crew", "--projects-dir", root])
     assert "Pulls:" in capsys.readouterr().out

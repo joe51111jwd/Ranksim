@@ -87,8 +87,10 @@ def test_link_graph_respects_depth_and_records_orphans():
     assert "hcss alternative" in graph.nodes["https://www.smartcrewhq.com/a"].anchors
 
 
-def test_cheap_model_defaults_and_disk_cache(tmp_path):
+def test_cheap_model_defaults_and_disk_cache(tmp_path, monkeypatch):
     from aeo.ranksim.llm import CachingLlm, LlmClient, LlmReply, estimate_cost, resolve_llm
+
+    monkeypatch.chdir(tmp_path)  # resolve_llm's default cache folder is relative: keep it out of the caller's folder
 
     openai = resolve_llm(Settings(openai_api_key="sk-test", anthropic_api_key=None, openrouter_api_key=None, ranksim_llm_model=None))
     assert openai.model == "gpt-4o-mini"

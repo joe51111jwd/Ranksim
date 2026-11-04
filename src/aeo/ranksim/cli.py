@@ -14,11 +14,14 @@ Examples:
   python -m aeo.ranksim project import-serp smartcrew smartcrew/serp.csv
   python -m aeo.ranksim project pull smartcrew --skip-google
   python -m aeo.ranksim project test smartcrew page.html --url https://www.smartcrewhq.com/all-in-one-dirt-work-software/
+  python -m aeo.ranksim project engines smartcrew
+  python -m aeo.ranksim serve            (the web UI on http://127.0.0.1:8765/)
 """
 
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from pathlib import Path
 
@@ -189,10 +192,17 @@ def main(argv: list[str] | None = None) -> None:
 
     _add_project_parser(sub)
 
-    serve = sub.add_parser("serve", help="Serve the pre-publish rank check demo")
-    serve.add_argument("--host", default="0.0.0.0")
+    serve = sub.add_parser("serve", help="Serve the web UI: projects, Pull now, Test a page. The old demo is at /demo.")
+    serve.add_argument("--host", default="127.0.0.1", help="Default 127.0.0.1 (this computer only). 0.0.0.0 exposes it with no login.")
+    serve.add_argument(
+        "--allow-host",
+        action="append",
+        default=[],
+        help="With a wider --host: a host name browsers may use besides IP addresses and localhost (repeatable)",
+    )
     serve.add_argument("--port", type=int, default=8765)
-    serve.add_argument("--serp", default="smartcrew/serp.csv")
+    serve.add_argument("--serp", default="smartcrew/serp.csv", help="Labeled Google file for the old demo at /demo")
+    serve.add_argument("--projects-dir", default=None, help="Default data/projects, or RANKSIM_PROJECTS_DIR")
 
     args = parser.parse_args(argv)
     settings = get_settings()
@@ -309,6 +319,14 @@ def _add_project_parser(sub) -> None:
     pull_cmd.add_argument("--fresh-days", type=float, default=7.0, help="Refetch stored pages older than this")
     pull_cmd.add_argument("--workers", type=int, default=8)
     pull_cmd.add_argument("--delay", type=float, default=0.4, help="Seconds between requests to one host")
+    pull_cmd.add_argument(
+        "--engines",
+        default="chatgpt,claude,perplexity,gemini",
+        help="AI engines to ask for REAL citations, comma separated, or none. An engine without its key is recorded as not run.",
+    )
+    pull_cmd.add_argument("--runs", type=int, default=1, help="Times to ask each engine each search (1 to 20). Answers vary run to run.")
+    pull_cmd.add_argument("--brand", default=None, help="Brand name to look for in AI answers. Default: the project name.")
+    pull_cmd.add_argument("--fresh-engines", action="store_true", help="Do not reuse AI answers cached earlier the same UTC day")
     pull_cmd.add_argument("--json", action="store_true")
 
     show = psub.add_parser("show", parents=[common], help="Show a project, its REAL results, and its pulls")
@@ -320,9 +338,24 @@ def _add_project_parser(sub) -> None:
     test.add_argument("source", help="A local HTML file (needs --url) or an http(s) URL")
     test.add_argument("--url", default=None, help="The URL the page lives or will live at")
     test.add_argument("--json", action="store_true")
-    test.add_argument("--fail-on-regression", action="store_true", help="Exit 1 when a search is PREDICTED worse than the stored copy, or the previous version")
+    test.add_argument(
+        "--fail-on-regression",
+        action="store_true",
+        help="Exit 1 when the page is no longer on topic for a search where the stored copy (or the previous version) was",
+    )
+    test.add_argument(
+        "--fail-on-content-regression",
+        action="store_true",
+        help="Also exit 1 when the content model (unvalidated) PREDICTS a search worse than the stored copy or previous version",
+    )
     test.add_argument("--no-save", action="store_true", help="Do not record this version")
-    test.add_argument("--details", type=int, default=3, help="Pages above you to explain per search in the text output")
+    test.add_argument("--details", type=int, default=3, help="Pages above you to explain per search in the text output (-1 for all)")
+    test.add_argument("--sim-runs", type=int, default=3, help="PREDICTED AI answer simulation runs per search (needs an LLM key)")
+    test.add_argument("--no-sim", action="store_true", help="Skip the PREDICTED AI answer simulation (no LLM calls)")
+
+    engines = psub.add_parser("engines", parents=[common], help="Show the latest REAL AI engine citations per search")
+    engines.add_argument("name")
+    engines.add_argument("--json", action="store_true")
 
     lst = psub.add_parser("list", parents=[common], help="List projects")
     lst.add_argument("--json", action="store_true")
@@ -404,11 +437,24 @@ def _project(settings, database: str, args) -> int:
             fresh_days=args.fresh_days,
             workers=args.workers,
             delay_seconds=args.delay,
+            engines=args.engines,
+            engine_runs=args.runs,
+            brand=args.brand,
+            engine_use_cache=not args.fresh_engines,
         )
         if args.json:
             print(json.dumps(report.to_dict(), indent=2))
         else:
             print(proj.render_pull_text(report), end="")
+        return 0
+    if command == "engines":
+        from aeo.ranksim.project_engines import latest_engines, latest_engines_dict, render_engines_text
+
+        latest = latest_engines(project, settings=settings)
+        if args.json:
+            print(json.dumps(latest_engines_dict(latest), indent=2))
+        else:
+            print(render_engines_text(project, latest), end="")
         return 0
     if command == "show":
         status = proj.project_status(project)
@@ -421,14 +467,35 @@ def _project(settings, database: str, args) -> int:
         html, url, label = _load_source(settings, args.source, args.url)
         started = time.perf_counter()
         ctx = proj.load_project_context(project, database=database)
-        board = proj.test_page(ctx, html, url, source=label, save=not args.no_save)
+        llm = None
+        if not args.no_sim:
+            from aeo.ranksim.llm import resolve_llm
+
+            llm = resolve_llm(settings)
+        board = proj.test_page(
+            ctx,
+            html,
+            url,
+            source=label,
+            save=not args.no_save,
+            llm=llm,
+            sim_runs=args.sim_runs,
+            settings=settings,
+            sim_off="not run: switched off with --no-sim" if args.no_sim else "",
+        )
         board.timing["wall_seconds"] = round(time.perf_counter() - started, 2)
         if args.json:
             print(json.dumps(board.to_dict(), indent=2))
         else:
             print(proj.render_board_text(board, detail_limit=args.details), end="")
-        if args.fail_on_regression and board.regressions:
-            print(f"Failing: {len(board.regressions)} searches are PREDICTED worse than {board.baseline}.", file=sys.stderr)
+        if args.fail_on_regression and board.topic_regressions:
+            print(f"Failing: {len(board.topic_regressions)} searches are no longer on topic against {board.baseline}.", file=sys.stderr)
+            return 1
+        if args.fail_on_content_regression and board.regressions:
+            print(
+                f"Failing: {len(board.regressions)} searches are PREDICTED worse than {board.baseline} by the content model (unvalidated).",
+                file=sys.stderr,
+            )
             return 1
         return 0
     raise SystemExit(f"Unknown project command {command}")
@@ -880,15 +947,27 @@ def _now() -> str:
 def _serve(settings, database: str, args) -> None:
     import uvicorn
 
-    from aeo.ranksim.serve import DemoState, create_app
+    from aeo.ranksim.serve import DemoState, bound_hosts, create_app, loopback_hosts
 
-    print("Fitting the leave-one-query-out model. This does not call an LLM or a SERP API.")
-    state = DemoState(settings, args.serp, database)
-    print(state.accuracy_line())
-    print(state.llm_note())
-    print(state.relevance_note)
-    app = create_app(state)
-    print(f"Demo: http://127.0.0.1:{args.port}/")
+    def legacy():
+        print("Fitting the leave-one-query-out model for the old demo. This does not call an LLM or a SERP API.", flush=True)
+        return DemoState(settings, args.serp, database)
+
+    loopback = args.host in {"127.0.0.1", "localhost", "::1"}
+    app = create_app(
+        settings=settings,
+        database=database,
+        projects_root=args.projects_dir,
+        legacy_factory=legacy,
+        allowed_hosts=loopback_hosts(args.port) if loopback else bound_hosts(args.host, getattr(args, "allow_host", [])),
+    )
+    if not loopback:
+        print(
+            f"Warning: listening on {args.host}. Anyone who can reach this address can use the tool; there is no login. "
+            "Browsers must use an IP address, localhost, or a name given with --allow-host (other names are refused, which blocks DNS rebinding)."
+        )
+    shown = "127.0.0.1" if loopback else args.host
+    print(f"Ranksim: http://{shown}:{args.port}/  (old demo at /demo)", flush=True)
     uvicorn.run(app, host=args.host, port=args.port, log_level="warning")
 
 
@@ -914,8 +993,22 @@ def _gaps() -> None:
         print(f"GAP\t{row.query}\t{row.suggested_target_page}")
 
 
-def _collect(settings, database: str, args) -> None:
+SYNTHETIC_ENV = "RANKSIM_ALLOW_SYNTHETIC"
+
+
+def _serp_choice(args) -> str:
+    """--mock (or --provider mock) writes synthetic SERPs. That is for tests only, so it needs an explicit opt-in."""
     choice = "mock" if args.mock else args.provider
+    if str(choice).strip().lower() == "mock" and os.environ.get(SYNTHETIC_ENV) != "1":
+        raise _usage_error(
+            f"--mock writes synthetic SERPs, not Google results, and is for tests only. Set {SYNTHETIC_ENV}=1 to use it anyway. "
+            "For REAL results set SERPAPI_KEY, SERPER_API_KEY, or DATAFORSEO_LOGIN and DATAFORSEO_PASSWORD."
+        )
+    return choice
+
+
+def _collect(settings, database: str, args) -> None:
+    choice = _serp_choice(args)
     provider = resolve_serp(settings, choice)
     keywords = build_keywords()
     depth = args.depth or settings.ranksim_serp_depth
@@ -1155,7 +1248,7 @@ def _page_statuses(session) -> dict[str, tuple[str, str | None]]:
 
 
 def _track(settings, database: str, args) -> None:
-    choice = "mock" if args.mock else args.provider
+    choice = _serp_choice(args)
     provider = resolve_serp(settings, choice)
     depth = args.depth or settings.ranksim_serp_depth
     session = open_session(database)
@@ -1270,19 +1363,27 @@ def _report(database: str, out: str | None) -> None:
     print(f"Wrote {target}")
 
 
+def _usage_error(message: str) -> SystemExit:
+    """A usage or input error exits 2, so a script can tell it from a regression (exit 1)."""
+    print(message, file=sys.stderr)
+    return SystemExit(2)
+
+
 def _load_source(settings, source: str, url: str | None) -> tuple[str, str, str]:
     path = Path(source)
+    if url and "://" not in url:
+        url = "https://" + url.lstrip("/")
     if path.exists() and path.is_file():
         if not url:
-            raise SystemExit("A local HTML file needs --url, the canonical page you are testing.")
+            raise _usage_error("A local HTML file needs --url, the canonical page you are testing, for example --url https://www.example.com/page/.")
         return path.read_text(), url, f"file:{path}"
     if source.startswith("http://") or source.startswith("https://"):
         fetched = _fetch_one(settings, source)
         if fetched.status != "fetched":
-            raise SystemExit(f"Fetch failed for {source}: {fetched.error or fetched.status}")
+            raise _usage_error(f"Fetch failed for {source}: {fetched.error or fetched.status}")
         canonical = url or source
         return fetched.html, canonical, source
-    raise SystemExit(f"Source not found: {source}")
+    raise _usage_error(f"Source not found: {source}")
 
 
 def _fetch_one(settings, url: str) -> FetchResult:

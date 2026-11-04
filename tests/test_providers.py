@@ -10,7 +10,8 @@ from aeo.providers.llm import OpenAICompatibleLLM
 from aeo.providers.search import BRAVE_ENDPOINT, BraveSearchProvider, MockSearchProvider
 
 
-def test_auto_without_keys_is_mock_and_labeled():
+def test_auto_without_keys_never_falls_back_to_mock_output():
+    """House rule: a missing key means 'not run: needs <ENV VAR>', never mock output shown as a result."""
     settings = Settings(
         database_url="sqlite:///:memory:",
         search_provider="auto",
@@ -19,10 +20,11 @@ def test_auto_without_keys_is_mock_and_labeled():
         brave_api_key=None,
         openai_api_key=None,
     )
-    search, llm, embedding, warnings = resolve_provider_names(settings)
-    assert (search, llm, embedding) == ("mock", "mock", "mock")
-    assert warnings
-    assert any("mock" in warning.lower() or "synthetic" in warning.lower() or "deterministic" in warning.lower() for warning in warnings)
+    with pytest.raises(ProviderConfigError, match="not run: needs OPENAI_API_KEY"):
+        resolve_provider_names(settings)
+    search, llm, embedding, warnings = resolve_provider_names(settings, llm="mock")
+    assert (search, llm, embedding) == ("none", "mock", "mock")  # mock only when asked for by name (tests)
+    assert any("not run: needs BRAVE_API_KEY" in warning for warning in warnings)
 
 
 def test_brave_without_a_key_refuses_to_invent_results():

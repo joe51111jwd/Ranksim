@@ -1,75 +1,76 @@
 # Ranksim: the $1M+ MRR version
 
-*Plan date: 2026-11-02. Revised 2026-11-03 after the founder's correction: the product is the tester. "You update, it indexes in minutes, you see what works, and a rapid iteration version that runs until you're top N on your top searches." Audience: the founder. Labels: **REAL** means pulled from Google or an AI engine. **PREDICTED** means a model output. **UNVERIFIED** means a single unconfirmed or secondary source. Funnel rates, churn and CAC are assumptions to test with design partners; none of them are sourced.*
+*Plan date: 2026-11-02. Revised 2026-11-03 after the founder's correction that the product is the tester. Revised 2026-11-04 after the project tester, the AI engines, the local web UI and the accuracy lab were built: sections 1, 2, 3, 6 and 7 are rewritten, section 5 gains a cost check, and section 9's accuracy triggers use the new gate metric. Pricing and the MRR math are unchanged. Audience: the founder. Labels: **REAL** means pulled from Google or an AI engine. **PREDICTED** means a model output. **UNVERIFIED** means a single unconfirmed or secondary source. Funnel rates, churn and CAC are assumptions to test with design partners; none of them are sourced.*
 
 ---
 
 ## 1. TL;DR
 
-- **The sandbox tester is the product and the hook.** You edit a page. The tester puts that version into the stored competitor set, re-indexes it, and re-scores it in seconds. You see the PREDICTED rank on your top searches with UNSURE/CLEARER, an independent linear check, how much of each Google result set is stored, and the backtest, printed on every board. Every version is saved, and CI can fail a preview that is PREDICTED worse. Built as v1 (`tester.py`, `ranksim tester`).
-- **`optimize` is the rapid iteration version.** It rewrites the page, re-scores each version, and keeps the best one until every target query is PREDICTED top N, or a stop rule ends the run. Guards reject stuffing, hidden text, shrinkage, new claims, any target query getting worse, and any version the independent linear scorer likes less. Built as v1 (`optimize.py`, `ranksim optimize`). "Goal reached" is a PREDICTED sandbox result. It is marketed only with that label until the accuracy gates in section 6 pass.
-- **The Change Ledger is the verification loop, not the headline.** After a version ships, Ranksim tracks the REAL rank, grades the frozen tester call with difference-in-differences against a noise band, and retrains on the result. The ledger is how the tester earns trust, and it is the training-data flywheel. It needs no model, so it is also the floor of the product if prediction never passes its gates.
-- **Honest status today.** On the pages stored in this repo, the tester's backtest is pairwise 0.485 on 12 queries, a coin flip (0.534 on a larger crawl that is not in the repo). Every SmartCrew target query set tried on 2026-11-03 was THIN: fewer than half of its labeled Google results have stored HTML. Five rules-only optimize runs that day tried 8 rewrites and accepted none. Until G1 passes, the tester is sold as a fast, guarded workbench that prints its own grade, not as a rank forecast.
-- **Base case: $1.00M recurring MRR at month 33 (Aug 2029).** That is 1,205 logos at about $833 ARPA (930 Team, 185 Growth, 60 Agency, 30 Enterprise), plus about $70K a month of migration project revenue that is not counted as MRR. M24 is about $626K. Reaching $1M at M24 is a stretch case only. Tester checks and optimize runs are metered limits inside each tier. Gross margin is about 71% on data and infrastructure, and about 66% once support staff are counted.
-- **The moat is the record of tester calls that were frozen and graded afterwards.** Each published version's PREDICTED ranks are frozen with a model version before the outcome is known. They are graded with difference-in-differences on change events, both backfilled history and live changes. Optimize outputs are graded as their own slice. The results, misses included, are published weekly. None of this exists yet, so the moat is thin in year 1.
-- **First 90 days:** store the labeled pages so target sets stop being THIN, make SmartCrew tenant #1 by removing the hardcodes, wire DataForSEO with cost metering, label 300 queries (about 25K page crawls), measure the noise ceiling, put the tester board in a web UI, and put the tester plus the ledger in front of 10 paying design partners. **Stop marketing PREDICTED ranks and "goal reached" at M9** if CLEARER change-direction precision is below 0.68.
+- **The product is the project tester, and it is built.** The founder's version: "these are my key searches. It runs the searches through Google, pulls the top 10 pages for all those searches ... now you upload your page and you can see how it fares on all those searches." That is what exists. You add key searches. One button (Pull now) records Google's REAL top 10 for each, stores every page on them and trains a mini search engine. You upload or paste a page and see, on every search, whether it is on topic, where it is PREDICTED to land among the REAL results, which pages and sites sit above it and why, and what ChatGPT, Claude, Perplexity and Gemini cite. Versions are saved and compared, and CI can fail a version that stops being on topic. It runs as a CLI and a local web UI (`project.py`, `serve.py`). On SmartCrew's 16 searches a test takes about 3 s, a repeat pull about 10 s and a cold pull 37.7 s, well inside the founder's five-minute goal.
+- **Honest accuracy: it predicts and proves its hit rate. It does not know.** No tool can know Google's ranking before Google ranks a page, because Google uses links, site reputation and clicks that are not on the page. The accuracy lab's insertion backtest hides a REAL result, predicts its slot, and never trains on that search. On SmartCrew the headline slot (site history) misses by 1.83 places on average [1.60, 2.02] and lands within 2 places 68% of the time. Always guessing the middle misses by 2.02 (62%), and the old content-model slot by 2.57. For brand-new sites: 1.43 against 2.39 for the middle. For a new page on an established site, which is SmartCrew's case: 1.88 against 1.92, no better than the middle. No on-page model beats guessing the middle, so the tester cannot yet say whether an edit moves you up. The board prints all of this.
+- **The scorecard is how it earns the right to say it knows.** Publish, then track: freeze each tested version's PREDICTED slots, pull again after publishing, and grade each call against the REAL position and against the middle guess, misses included. This is the Change Ledger of earlier drafts, now graded with the insertion metric. It is not built yet; it is the next build, together with a SERP key and deeper results.
+- **Not run yet.** No Google, AI engine or LLM key exists in this environment. The live Google pull, the four engines and the simulation have run only against fakes. Bing Copilot has no public citation API and is not covered. The web UI runs on one computer with no login.
+- **Base case unchanged: $1.00M recurring MRR at month 33 (Aug 2029).** That is 1,205 logos at about $833 ARPA (930 Team, 185 Growth, 60 Agency, 30 Enterprise), plus about $70K a month of migration project revenue that is not counted as MRR. M24 is about $626K. Reaching $1M at M24 is a stretch case only. Tester checks and optimize runs are metered limits inside each tier. Gross margin is about 71% on data and infrastructure, and about 66% once support staff are counted. **One cost decision is open (section 5):** the cost lines assume DataForSEO's LLM scraper for AI answers. The engine APIs built now cost at least 3.65 times as much per answer in search fees alone, which would take the M33 blended margin from about 71% to about 61% before token costs.
+- **The moat is the record of frozen slots graded afterwards.** Each published version's PREDICTED slots are frozen with the engine version before the outcome is known, then graded against REAL positions and published weekly, misses included. None of this exists yet, so the moat is thin in year 1.
+- **First 90 days:** buy a SERP key and run the first live pull; pull positions 11 to 100 and repeat pulls to measure the noise floor; build the scorecard; commit the accuracy lab as a script that reruns on every project; host the web UI with tenancy and auth; put it in front of 10 paying design partners. **Stop marketing PREDICTED slots at M9** if the pooled insertion backtest (G1) or the live scorecard (G2) does not beat always guessing the middle beyond noise.
 
 ---
 
 ## 2. What you actually have today
 
-About 7,550 committed lines in `src/aeo/ranksim`, plus about 2,900 uncommitted lines for the tester and the optimize loop (10,468 lines in the working tree on 2026-11-03), and about 4,580 lines in the AEO track. Most of the infrastructure needed for SaaS already exists. The core loop now exists as a CLI. The rest of the product does not. Line numbers below are for the working tree on 2026-11-03.
+On 2026-11-04 `src/aeo/ranksim` is 20,196 lines. All of it is committed on the branch `claude/bold-einstein-oi5qoj`. Line numbers below are as of 2026-11-04.
 
 | Component | Files | Status | Evidence |
 |---|---|---|---|
-| **Sandbox tester** | `tester.py` `load_sim_context` :113, `pick_targets` :250, `score_page` :356, `TesterHistory` :546, `board_dict` :639, `watch` :849; `cli.py` `_tester` :502 | Built v1, uncommitted, CLI only | Scores one page version on its target queries against the stored set, in memory. Measured on 2026-11-03: model load 2.4 s, scoring 42 to 196 ms for 2 queries. Saves v1, v2, ... in `data/tester/`. `--watch` re-scores when a file or preview URL changes. `--json --fail-on-regression` exits 1 when a target query is PREDICTED worse than the stored copy, or than v1. Every SmartCrew target set tried was THIN. |
-| **Optimize loop** | `optimize.py` `Guards` :108, `check_guards` :225, `judge_candidate` :438, `LlmRewriter` :498, `RulesRewriter` :545, `optimize` :762; `cli.py` `_optimize` :614 | Built v1, uncommitted. The LLM path has run only against test fakes | Keeps the best version, not the last. Stops at the goal, at `--max-rounds` (8), after `--patience` (3) rejected rounds, at `--budget-usd`, or when the rewriter has nothing new to try. On 2026-11-03 the rules rewriter ran 5 times on SmartCrew pages: 8 rounds, 0 accepted. None of the 8 improved the PREDICTED objective. One also failed the stuffing guard and two also made the linear check worse. No LLM key is set in this environment. |
-| Bundle what-if (live vs PR HTML) | `whatif.py` `score_many` :150, `worse_than_live` :846, `render_regression` :945 | Works, text only | `pr8-v2-compare.txt` flags 3 ship blockers. `pr8-v3` has 0 BLOCK lines but 3 "clearly worse than live" CLEAR lines, so a grep for BLOCK would pass v3. `test --regression` still exits non-zero only on bad input (`SystemExit(2)` at `cli.py:252` and `:255`), so a bundle cannot fail CI yet. One page can, through `tester --fail-on-regression`. |
-| Draft check | `check.py` `check_draft` :160, `assemble_query_docs` :129, `suggest_links` :254, `_top_gaps` :411 | Works. It is the scoring engine under the tester | `serve.py:143` still refuses any query not in the stored export ("No rank was invented"). |
-| Competitor share view | `space.py` `build_space` :129 | Works | REAL top-3/top-10 columns (hcss.com holds 8 of 16 top-3 spots). PREDICTED columns are mostly n/a because HTML is missing. |
-| SERP ingestion | `serp.py` :41-201, `resolve_serp` :277-300 | Partial | SerpAPI, DataForSEO and Serper are wired; no key is configured. No cost metering. DataForSEO depth is capped at 20 (`serp.py:144`). No AI Overview or AI Mode parsing. |
-| Rank tracker | `loop.py` `track_ranks` :386 | Partial | Stores only our best organic position at depth 10, through a SmartCrew-bound `is_our_url`. No link to a page version, so a tester call cannot be graded yet. |
-| Model | `lambdamart.py`, `features.py` (34 features), `groundtruth.py` | Works, weak | LightGBM lambdarank with `min_data_in_leaf=1` on about 135 rows. `hash_embed` is a hashing bag of words. Authority is 0.0 when missing (`features.py:276`). |
-| Linear validator | `score.py` `HAND_WEIGHTS`, `score_pages` | Works | An independent hand-weighted scorer. The tester shows it next to every PREDICTED rank and the optimize loop rejects any version it likes less. On the PR8 v3 compare page it puts SmartCrew 1 of 5 for "hcss alternative" where LambdaMART puts it 5 of 5. |
-| Confidence and noise | `confidence.py`, `noise.py` | Present, not audited | The noise ceiling has never been measured on real repeat pulls. |
-| LLM layer | `llm.py` `CachingLlm` :167-243 | Works | Content-hash cache plus a JSONL cost log. `LIST_RATES` prices only gpt-4o-mini and claude-3-5-haiku; any other model logs as unpriced, and `optimize --budget-usd` then stops. The Anthropic client caps replies at 1,200 tokens (`llm.py:145`), which may cut off a rewrite of a long page opening. Cost per check and per optimize run has never been measured. |
-| Crawler | `crawl/fetch.py`, `urls.py`, `robots.py`, `extract.py` | Works | SSRF-safe and re-validates every redirect hop. One gap remains: DNS rebinding (`urls.py:88`). `jsrender.py` is a 38-line optional stub. The tester fetches preview URLs through it. |
-| Queue and store | `jobs.py`, `worker.py`, `db.py` | Works | Postgres `SKIP LOCKED`, tsvector and pgvector. No ANN index. |
-| AEO sandbox | `pipeline.py`, `sim/fanout.py`, `providers/llm.py` :28 | Works in mock mode only | `citation_share=0.8` is a mock artifact. It measures our own RAG pipeline, not any real engine. |
-| AI-answer parsing and calibration | `sim/citations.py`, `sim/calibrate.py` | Partial | Calibration takes manual POSTs only, and covers no Gemini and no AI Mode (`calibrate.py:14-20`). |
-| Demo server | `serve.py` | Works, unsafe to expose | Binds 0.0.0.0 with no auth. The check form (`serve.py:146-148`) calls `_fetch_html` on any URL a visitor submits. It does not show the tester board. |
+| **Project tester (the product)** | `project.py` `create_project` :847, `import_serp_csv` :1052, `pull` :1176, `borrow_real_results` :1461, `_crawl_step` :1628, `load_project_context` :2044, `test_page` :2217, `_score_search` :2521, `_summary` :3003; `cli.py` `_add_project_parser` :284, `_project` :364 | Built and committed. CLI and local web UI | A pull runs timed steps (google, engines, crawl, train, save) and saves `google.json`, `pull.json` and the trained engine per pull. On SmartCrew: repeat pull 10.1 s, cold pull 37.7 s, `project test` 3.0 to 3.4 s wall for all 16 searches. REAL results keep their source and pull time; the committed file is labeled "pull date not recorded". Without a Google key, a pull reuses saved, imported or another project's REAL results and says Google was not asked. |
+| **On-topic check** | `relevance.py` `TopicModel` :152, `todo_list` :383 | Built | Calibrated per project from the REAL top 10 pages: search words used, TF-IDF topic match, repetition. Leave-one-out on SmartCrew: 119 of 120 readable REAL pages pass. A cake recipe is off topic on 16 of 16 searches, SmartCrew's homepage on 3 of 16. Never tested on pages that failed to rank, because the data holds none. |
+| **Site-history slot (the headline)** | `site_history.py` `fit_site_history` :128, `site_history_position` :200, `site_history_backtest` :320; `project.py` `_site_slot` :2674 | Built | A two-parameter pairwise logistic on how many of the project's other searches list each site in their REAL top 10. Needs only REAL result lists, so results with no stored HTML still count. Content blind: editing the page does not move it. Reproduces the lab on the 128 stored pages: miss 1.836 vs 2.023 for the middle guess. |
+| **Content-model slot** | `project.py` `insertion_position` :2206, `content_insertion_backtest` :2132; `confidence.py` `loo_fit` :49; `lambdamart.py`; `features.py` (34 features) | Kept, labeled "content model (unvalidated)" | Insertion miss 2.5 places vs 2.0 for the middle guess (128 stored results). Order backtest pairwise 0.528 on 458 pairs. Every call UNSURE. Drives version-to-version changes and `--fail-on-content-regression` only. |
+| **AI engines, REAL** | `engines.py` `ENGINE_SPECS` :107, rate tables :149 to :163, `ask_engine` :909, `ask_engines` :1150; `project_engines.py` `run_engines_step` :111, `latest_engines` :242 | Built. Tested only against mocks | ChatGPT (OpenAI Responses API, web search), Claude (Messages API, web search tool), Perplexity (Agent API, Sonar), Gemini (Interactions API, Google Search). Without a key: `not run: needs <ENV VAR>` and no call. Empty or refused answers are errors, never "not cited". Bing Copilot is not covered. |
+| **AI simulation, PREDICTED** | `engines.py` `simulate_citations` :1865, `agreement_with_real` :1792; `project_engines.py` `attach_ai` :361 | Built. Fake LLM only | Our LLM answers from the stored Google top 10 plus your page, all page text fenced as data, labeled as our model. 96 LLM calls per SmartCrew test at the default 3 runs. Ungraded until REAL engine answers exist; `agreement_with_real` is the grading hook. |
+| **Web UI** | `serve.py` `create_app` :624, routes :656 to :903, `GuardMiddleware` :502, `JobManager` :282 | Built. One computer, no login | Pull now with a progress bar per step; Test a page (upload, paste, or preview URL); results, versions, compare, AI engines, CSV import. Binds 127.0.0.1 with a Host allowlist, CSRF on every POST, 5 MB cap, strict CSP. Measured: Pull now 10.8 s, Test a page 3.6 s from click to results. |
+| Older single-page tester | `tester.py` `load_sim_context` :116, `pick_targets` :255, `score_page` :361, `TesterHistory` :551, `board_dict` :670, `watch` :887; `cli.py` `_tester` :748 | Works. Superseded by `project test` | Up to 5 target queries per page. Backtest pairwise 0.528 on 458 pairs. |
+| Optimize loop | `optimize.py` `Guards` :108, `check_guards` :225, `judge_candidate` :438, `LlmRewriter` :498, `RulesRewriter` :545, `optimize` :762; `cli.py` `_optimize` :860 | Works. Parked as a product claim | It rewrites toward the content model, which the insertion backtest puts behind the middle guess. Not wired into projects. The LLM rewriter has run only against fakes. |
+| Bundle what-if | `whatif.py` `score_many` :150, `worse_than_live` :846, `render_regression` :945 | Works, text only | Unchanged since 2026-11-03. |
+| SERP ingestion | `serp.py` `resolve_serp` :277; depth cap of 20 at :122, :144 and :198 | Wired, never run live | SerpAPI, then DataForSEO, then Serper. Brave is refused for projects because it is not Google. No cost metering. No AI Overview parsing. Positions 11 to 100 need the cap raised. |
+| Rank tracker | `loop.py` `track_ranks` :386, `is_our_url` :65 | Partial | Stores only our best position, through a SmartCrew-bound `is_our_url`. Not linked to tested versions, so the scorecard does not exist yet. |
+| LLM layer | `llm.py` `LIST_RATES` :21, Anthropic reply cap :145, `CachingLlm` :167, `resolve_llm` :273 | Works | `LIST_RATES` prices only gpt-4o-mini and claude-3-5-haiku; any other model logs as unpriced. |
+| Crawler | `crawl/fetch.py` `_get_capped` :245; `crawl/urls.py` `assert_safe_url` :63 | Works | Respects robots.txt, refuses private, CGNAT and IPv4-mapped addresses, streams with a 2 MB cap. One gap remains: the host is resolved and checked at `urls.py:94`, then httpx resolves it again to connect, so DNS rebinding is still possible. |
+| Queue and store | `jobs.py`, `worker.py`, `db.py` | Works | Postgres `SKIP LOCKED`, tsvector and pgvector. Used by the older AEO API, not by projects yet. |
+| AEO sandbox (older API) | `pipeline.py`, `sim/fanout.py`, `providers/llm.py` `mock_include_passage` :28 | Parked | `auto` no longer falls back to mock output; a missing key gives `not run: needs ...`. |
+| AI-answer calibration (older API) | `sim/calibrate.py` `ENGINE_ALIASES` :13 | Partial | Manual POSTs only; no Gemini engine. Superseded by the REAL engine rows above. |
 
 **Tests and reproducibility**
-- 2026-11-02, fresh clone of the committed code: `pip install -e '.[dev]' && pytest -q` passes all **63 tests**.
-- 2026-11-03, working tree with the uncommitted tester and optimize work: **124 tests pass**, 61 of them in `tests/test_tester_optimize.py`.
-- `python -m aeo.ranksim evaluate smartcrew/serp.csv` gives pairwise **0.485**, NDCG@10 0.814, Spearman 0.032, top-3 0.917, on 12 queries and 33 pairs. The tester and optimize print the same backtest.
-- In a fresh clone only 35 of 135 labeled URLs have stored HTML; the other 100 are uncovered. The documented 0.534 needs the larger stored crawl (122 rows), which is not in the repo. Today, nobody else can reproduce the headline number.
+- 2026-11-04: `python -m pytest -q .` passes **265 tests** in 11.5 s, with no network.
+- `python -m aeo.ranksim evaluate smartcrew/serp.csv` gives pairwise **0.524** on 458 pairs, NDCG at 10 0.725, Spearman 0.080, top-3 0.562, on 128 of 135 labeled rows. Seven rows are uncovered (two g2.com HTTP 403, capterra HTTP 404, thedigitalprojectmanager HTTP 403, facebook blocked by robots.txt).
+- `data/` is gitignored, so a fresh clone has no stored pages and no projects. The README quickstart rebuilds the SmartCrew project from the committed file in about a minute. A cold crawl today stores fewer pages than the shared database holds (30 of 137 REAL results had no stored HTML in the cold run, and its content backtest was pairwise 0.516 on 306 pairs instead of 0.528 on 458), so a fresh clone does not reproduce the numbers above exactly.
+- The accuracy lab's scripts live outside the repo. The simple versions of its two insertion backtests run in the product at every engine load.
 
-**Accuracy** (`docs/accuracy.md`, `ACCURACY_PLAN.md`):
+**Accuracy** (SmartCrew, 16 searches, REAL file with no pull date; full protocol in section 6):
 
 | Measure | Value |
 |---|---|
-| Leave-one-query-out pairwise (16 queries, 414 pairs) | **0.534** (0.5 is a coin flip) |
-| NDCG@10 / Spearman / top-3 hit | 0.695 / 0.075 / 0.500 |
-| Pairs with score gap ≥ 2.0 | 0.716, on 33% of pairs |
-| Fresh-clone `evaluate`, demo startup and tester backtest (12 queries, 33 pairs) | Pairwise **0.485**, worse than a coin flip. 100 of 135 labeled rows have no stored HTML. The tester says a PREDICTED move here "is a smoke test, not evidence of a Google move". |
+| Headline slot (site history), lab, new URL, 128 stored pages | Miss **1.83** places [1.60, 2.02]; within 2 places 68% |
+| Always guessing the middle | Miss 2.02; within 2 places 62% |
+| Old content-model slot | Miss 2.57 [2.19, 2.90]; within 2 places 54% |
+| Headline slot on brand-new sites (28 pages) | Miss 1.43 [1.03, 1.81] vs 2.39 for the middle |
+| Headline slot on a new page of an established site | 1.88 vs 1.92 for the middle: noise |
+| What the board prints today (all 135 REAL results) | Miss 2.0 vs 2.1 for the middle; within 2 places 64% vs 59% |
+| Content-model order, `evaluate` | Pairwise 0.524 on 458 pairs (0.5 is a coin flip) |
+| On-topic check | 119 of 120 readable REAL pages pass; untested on pages that failed to rank |
 
-**Single-tenant hardcodes.** All of these must move to tenant config:
+**Single-tenant hardcodes.** The project flow has none: `project.py`, `site_history.py`, `relevance.py`, `project_engines.py` and the project routes in `serve.py` take any site and any searches. The only SmartCrew string there is the source label for the committed file (`project.py:79` and `:1166`). Hardcodes remain in the older commands:
 
-- `__init__.py:6`
-- `check.py:260`
-- `space.py:135`
-- `serve.py:27-29, 59-67`
-- `lambdamart.py:369-370`, plus its uses in `whatif.py:20, 113, 333-438`
-- `whatif.py:258, 470-557, 796-838, 870-939`
-- `cli.py:36, 62-189, 379, 417, 425, 718, 853, 896`
-- `tester.py:113` (default `smartcrew/linkgraph.json`), `:493` (`seed_origin` reads `smartcrew/pr8_v3`), `:938` (targets from SmartCrew's `keywords.csv`)
-- `llm.py:121-122`
-- `bootstrap.py:16`
+- `__init__.py:6` (`OUR_DOMAIN`, used by `loop.py:65`)
+- `check.py:262`, `space.py:135`
+- `lambdamart.py:346` and `:369-370`
+- `llm.py:121-122`, `bootstrap.py:16`, `tester.py:120`
+- `engines.py:1335` (the default file for `load_incumbents`)
+- `serve.py:67-70` and `:147-155` (the old demo only)
+- `whatif.py` (36 mentions), `keywords.py` (62), and the older subcommands in `cli.py` (39 mentions, none in the project parser at :284 to :502)
 - `scripts/ai_eval.sh`
-- `loop.py` `is_our_url`
 
-**Bottom line:** the honesty labeling, now including the tester board, the crawler, the queue and `space.py` are product-grade. The tester and optimize are a working v1 CLI, not a product yet. Prediction is not product-grade, and the optimizer makes that weakness easier to exploit (section 6).
+**Bottom line:** the project flow, the honesty labeling, the crawler and the local web UI are product-grade for one user on one computer. Prediction is not: the headline slot beats guessing the middle only for sites that are new to the searches, and nothing yet tells a better page from a worse one. Hosting, tenancy, auth, the scorecard and any live data pull do not exist.
 
 ---
 
@@ -77,101 +78,90 @@ About 7,550 committed lines in `src/aeo/ranksim`, plus about 2,900 uncommitted l
 
 **Name:** Ranksim.
 
-**One-liner:** Ranksim is a rank tester for B2B SaaS pages. Edit a page and see in seconds how it is PREDICTED to rank on your top searches against the pages that rank there now, or let it rewrite the page until it is PREDICTED top N. Then it tracks what REAL Google did and publishes how often the tester was right.
+**One-liner:** Ranksim tests a page against the searches you want to win before you publish it. Add your key searches; one click pulls Google's REAL top 10 for each and stores every page on them; upload a draft and see, per search, whether it is on topic, where it is PREDICTED to land among the pages there now, which pages and sites sit above it and why, and what ChatGPT, Claude, Perplexity and Gemini cite. After you publish, it tracks what REAL Google did and publishes how often its call was right.
 
-**Core loop**
+**Core loop.** Steps 1 to 4 are built. Steps 5 to 7 are the scorecard, which is next.
 
-1. **Edit, or let `optimize` rewrite.** A person edits a draft or a preview deploy. Or `optimize` proposes versions: the rules rewriter edits the title, H1, one H2 and a visible date, and the LLM rewriter edits the title and the page opening. Guards reject stuffing, hidden text, shrinkage, new claims and model instructions.
-2. **Sandbox re-index in seconds.** The tester puts that version into the stored competitor set for each target query, in place of the stored copy of the URL, or added when the URL is not in that set, and re-scores it. Measured on SmartCrew: 2.4 s to load the models, then 42 to 196 ms per version for 2 target queries. Google's own crawl and indexing are not in our control. Step 5 records what Google did once it did.
-3. **PREDICTED rank on your top searches.** One row per target query: stored or live copy, previous version, this version, the change, UNSURE/CLEARER, the linear check, the stored set size (THIN when under half), and the biggest gap as a fix. The backtest is printed on every board. A PREDICTED regression can fail CI.
-4. **Publish the best version.** A person reviews `best.html` for accuracy and wording. Nothing publishes itself.
-5. **REAL rank tracked.** Daily Google pulls and GSC record what the published version actually did. Competitor pages that change on the same SERP are re-crawled, so the stored set stays current.
-6. **Graded.** The tester call for the published version was frozen with its model version before any outcome existed. It is graded at +7, +14, +28 and +56 days:
-   - Google: difference-in-differences against untouched pages on the same site and against competitors on the same SERP, with a published noise band.
-   - AI: topic level only, never attributed to a single page.
-7. **Retrained.** The model retrains on the graded events. The tester's backtest and the calibration ledger are published, misses included. The next board is scored by the retrained model.
+1. **Project.** A site plus its key searches, from the web form or `project create`. Searches can be added or removed later.
+2. **Pull now.** One button. The REAL Google top 10 for every search (SerpAPI, DataForSEO or Serper), a crawl of every result page and of your own site's pages, the mini search engine trained on exactly those pages, and the AI engines asked every search. Each step is timed and shown with a progress bar. Measured on SmartCrew: about 10 s for a repeat pull, 37.7 s for a cold one; the Google API step itself has not been timed because no key is set.
+3. **Test a page.** Upload, paste or give a preview URL, plus the URL the page will live at. About 3 s for 16 searches. Per search: the on-topic check, the PREDICTED slot among the REAL results with a likely range, the REAL top 10 with your page marked, the pages above you and why, the content model's slot (labeled unvalidated), the REAL AI citations per engine, and an optional PREDICTED AI answer simulation. A to-do list ranks the fixes from the on-topic check.
+4. **Iterate.** Every version is saved (v1, v2, and so on) and rescored against the stored copy of the URL and the previous version on the same engine. The compare page puts two versions side by side. `--fail-on-regression` fails a CI build when a version stops being on topic for a search.
+5. **Publish.** A person ships the version. Nothing publishes itself.
+6. **Scorecard (to build).** The published version's PREDICTED slots are frozen with the engine that made them, before any outcome exists. Later pulls record the REAL position at +7, +14, +28 and +56 days. Each call is graded against always guessing the middle and against the noise band measured from repeated pulls. Results are published, misses included.
+7. **Retrain.** Graded launches become training data, and the backtest printed on every board is recomputed.
 
-Two numbers stay separate and are never blended: **Google share** (REAL top-3 and top-10 share across tracked queries, which `space.py` already computes) and **AI citation share** (the fraction of sampled answers that cite the domain, per topic, with at least 20 prompts, 3 repeats, a 4-week window and a 95% binomial interval).
+**What the tester can say today, and what it cannot**
 
-Provable facts (noindex, a canonical moved, a 404 without a redirect, an inlink collapse on a page that ranks) can fail a merge by default. The PREDICTED regression gate (`tester --fail-on-regression`) is opt-in in hosted CI and posts a warning, not a failed status, until G3 passes.
+| Question | Today | Basis |
+|---|---|---|
+| Is my page about this search, the way the ranked pages are? | Yes or no per search, PREDICTED | 119 of 120 REAL top 10 pages pass the check. Never tested on pages that failed to rank |
+| Where will it land among the REAL top 10? | A PREDICTED slot, plus or minus 3 places | Miss 1.83 vs 2.02 for the middle guess. For a new page on an established site, no better than the middle |
+| Who is above me, and why? | The REAL pages, how many of your searches their site appears in vs yours, and the PREDICTED odds they outrank you | Site history, the only signal with measured lift |
+| Will this edit move me up? | No | No on-page model beats guessing the middle (section 6) |
+| Will it make page one at all? | Only "off topic means no" | All labeled pages are pages that ranked |
+| What do the AI engines cite? | REAL, per engine and search, with a key | Not run here: no keys |
+| Would an AI answer cite my page? | A PREDICTED simulation from the Google top 10 | Ungraded until REAL engine answers exist |
+
+**Why the scorecard is how it earns the right to say it knows.** No tool can know Google's ranking before Google ranks the page, because Google uses signals that are not on the page: links, the site's reputation, and clicks. So Ranksim does not claim to know. It claims a measured hit rate, printed on every board. Today that rate comes from backtests on pages that already rank. The scorecard turns it into a rate measured on real launches: the slot frozen before publishing, the REAL position afterwards, both on the record. Only when the scorecard passes its gates (section 6) may the product say it knows where a page will land, and then only with the measured rate next to the claim. Until then the PREDICTED slot is sold as what it is: the best measured guess, with its miss rate.
+
+Two numbers stay separate and are never blended: **Google share** (REAL top-3 and top-10 share across tracked searches, which `space.py` already computes) and **AI citation share** (the fraction of sampled answers that cite the domain, per topic, with at least 20 prompts, 3 repeats, a 4-week window and a 95% binomial interval).
+
+Provable facts (noindex, a canonical moved, a 404 without a redirect, an inlink collapse on a page that ranks) can fail a merge by default. So can `project test --fail-on-regression`, which fires when a version stops being on topic for a search. The content-model gate (`--fail-on-content-regression`) is opt-in in hosted CI and posts a warning, not a failed status, until G3 passes.
 
 **Who uses it and when**
 
 | Who | When | What they see |
 |---|---|---|
-| SEO/content lead (main user) | Every draft; when a page sits below its goal; Monday ledger email | The tester board on each version; optimize runs; what last month's published versions did |
+| SEO/content lead (main user) | Every draft; when a page sits below its goal; Monday scorecard email | The project board for each version; the pages and sites in the way; what last month's published versions did |
 | VP Marketing (buyer) | Monthly, QBR, board prep | Google and AI share by topic vs competitors; the tester's published hit rate |
-| Marketing-site engineer (Growth tier) | Every PR or preview deploy | `tester --json` on the changed pages, provable facts, blast radius; the PREDICTED gate when the team opts in |
-| Agency account manager | Client work; monthly report; migration pitch | Tester and optimize per client workspace, white-label report, Snapshot, Migration Sign-off |
+| Marketing-site engineer (Growth tier) | Every PR or preview deploy | `project test --json --fail-on-regression` on the changed pages, provable facts, blast radius |
+| Agency account manager | Client work; monthly report; migration pitch | One project per client workspace, white-label report, Snapshot, Migration Sign-off |
 
-**What the tester shows** (example output from `ranksim tester` on SmartCrew's stored data on 2026-11-03. All ranks are PREDICTED. `draft.html` is the PR8 v3 page with its title cut to "SmartCrew" and a new H1, a deliberately bad edit made for this example. Paths are shortened and a few lines are left out.)
-
-```
-$ python -m aeo.ranksim tester draft.html --url https://www.smartcrewhq.com/all-in-one-dirt-work-software/ --fail-on-regression
-Sandbox index. Ranks are PREDICTED on the stored competitor set. They are not live Google ranks.
-Page: https://www.smartcrewhq.com/all-in-one-dirt-work-software/
-This version: v1, draft from file:draft.html, 2195 words, sha1 91d09c147c2b, scored 2026-11-03T18:31:15.
-The stored copy of this URL is rank database row https://www.smartcrewhq.com/all-in-one-dirt-work-software/, seeded from smartcrew/pr8_v3/all-in-one-dirt-work-software.html, not crawled from the live site. It is not the live site. The stored column and the change are measured against that copy.
-Change is measured against the stored copy.
-Backtest on the pages stored now, leave-one-query-out, PREDICTED: pairwise 0.485, NDCG at 10 0.814, Spearman 0.032, top-3 hit rate 0.917. 12 queries, 33 pairs, 100 labeled rows had no stored HTML. Pairwise 0.500 is a coin flip. This backtest is no better than a coin flip, so a PREDICTED move here is a smoke test, not evidence of a Google move. Store more labeled pages to make it useful.
-
-query                          stored  prev  now  change  flag   confidence  linear  stored set   biggest gap
-all in one dirt work software  2/3     n/a   2/3  same    same   UNSURE      2/3     2 of 8 THIN  Pages PREDICTED ahead share less text with other pages. Say what is specific to this product.
-dirt work contractor software  2/3     n/a   3/3  down 1  WORSE  UNSURE      2/3     2 of 9 THIN  Put the query in the title, near the start.
-
-Better on 0, worse on 1, same on 1, of 2 target queries.
-WORSE: dirt work contractor software: PREDICTED 3 of 3, worse than the stored copy at PREDICTED 2 of 3.
-THIN: all in one dirt work software: 2 of 8 labeled Google results are stored and scored, 6 have no stored HTML and were left out. A PREDICTED rank on this set says little.
-THIN: dirt work contractor software: 2 of 9 labeled Google results are stored and scored, 7 have no stored HTML and were left out. A PREDICTED rank on this set says little.
-Saved as v1 in data/tester/<url hash>.jsonl. Model load 2.4 s. Scoring 50 ms.
-Failing: 1 target query is PREDICTED worse than the stored copy.
-(exit code 1)
-```
-
-**What an optimize run shows** (example output from `ranksim optimize` on the committed PR8 v1 build of the same page, 2026-11-03. All ranks are PREDICTED. Some round lines are shortened and a few lines are left out.)
+**What the tester shows** (a `project test` run on SmartCrew's stored data on 2026-11-04, `--no-save --no-sim`. Everything below is real output. Lines are shortened with [...] and some lines are left out.)
 
 ```
-$ python -m aeo.ranksim optimize smartcrew/pr8/all-in-one-dirt-work-software.html --url https://www.smartcrewhq.com/all-in-one-dirt-work-software/ --rewriter rules --goal 1
-Rapid iteration in the sandbox. Ranks are PREDICTED on the stored competitor set. They are not live Google ranks.
-Rewriter: rules rewriter, not an LLM.
-Goal: PREDICTED rank 1 or better on every one of 2 target queries, and never last in its stored set.
-Start: all in one dirt work software PREDICTED 2/3, dirt work contractor software PREDICTED 2/3. Linear check: all in one dirt work software 1/3, dirt work contractor software 2/3.
-The starting page already has "all in one dirt work software" 1.6 times per 100 words.
+$ python -m aeo.ranksim project test smartcrew smartcrew/pr8_v3/compare-hcss-heavyjob-alternative.html --url https://www.smartcrewhq.com/compare/hcss-heavyjob-alternative/ --no-save --no-sim
+PREDICTED: your page is on topic for 16 of your 16 key searches. Where it is on topic, your site's track record puts it in Google's top 3 on 0 (that slot comes from your site, not the page text). REAL (pull date not recorded): this exact URL is in the top 10 for 1 of them; some page of your site is for 5.
 
-Round 1: rejected. [...] title set to "Dirt Work Contractor Software | SmartCrew".
-  Why rejected: Not better on the objective [...]. The linear check disagrees: its rank sum went from 3 to 4.
-Round 2: rejected. [...] put the query at the start of the H1: "Dirt Work Contractor Software: All-in-one dirt work software".
-  Why rejected: Not better on the objective: 0 at goal with a PREDICTED rank sum of 4, the best has 0 at goal and 4.
-Round 3: rejected. [...] added an H2 "Dirt Work Contractor Software" after the H1.
-  Why rejected: Guard: Keyword stuffing: the exact phrase "all in one dirt work software" appears 17 times, 1.7 per 100 words. The limit is 1.5. [...]
+PREDICTED top 3 on 0 of 16 searches, top 10 on 16 of 16. REAL (pull date not recorded): top 10 on 1 of 16. [...]
+The tester places a page among pages that already made Google's top 10, so it cannot say whether a page makes page one at all. An off-topic page is PREDICTED not to.
 
-query                          start  best  change  linear start  linear best  stored set
-all in one dirt work software  2/3    2/3   same    1/3           1/3          2 of 8 THIN
-dirt work contractor software  2/3    2/3   same    2/3           2/3          2 of 9 THIN
+How accurate it is: In backtests this predictor put a hidden page within 2 places of its REAL Google position 64% of the time (135 REAL results over 16 searches, each search held out). It was off by 2.0 places on average and exactly right 15% of the time. Always guessing the middle is off by 2.1 and within 2 places 59% of the time. [...]
 
-Stop: 3 rejected rounds in a row, the patience limit.
-PREDICTED at the goal on 0 of 2 target queries.
-Accepted 0 of 3 rounds. The best version is the starting page, unchanged.
-Estimated rewriter cost: $0.0000.
-No accepted change. best.html is the starting page. Nothing new to publish.
-Reaching the goal here is a PREDICTED rank in the sandbox, not a Google result.
+4/16 "hcss heavyjob alternative"
+   On topic (PREDICTED): your page uses 3 of the 3 search words (hcss, heavyjob, alternative); pages Google ranks here use at least 1. [...]
+   PREDICTED: your page slots in at #4 of 9 (site history), between REAL #3 truein.com [...] and REAL #4 constructionbids.ai [...]. Likely #1 to #7.
+   Content model (unvalidated) PREDICTED #5 of 9 [...]. Confidence UNSURE. Linear check PREDICTED #1.
+   REAL (pull date not recorded): this URL is #7.
+   Check (site history): PREDICTED #4 but REAL #7 (pull date not recorded), 3 places optimistic here.
+   REAL top 9 (smartcrew/serp.csv (committed 2026-10-29, pull date not recorded)):
+      #1   getonecrew.com  10 HCSS HeavyJob Alternatives: Top Picks for 2026 - OneCrew  (stored)
+      #2   reddit.com  Estimating software options? : r/estimators  (stored)
+      #3   truein.com  7 Best Heavy Civil Construction Time Tracking Software (2026  (stored)
+      >>  YOUR PAGE (PREDICTED #4)
+      #4   constructionbids.ai  HCSS Alternatives for Heavy Civil Contractors (2026)  (stored)
+      [...]
+      #7   smartcrewhq.com [this URL]  HCSS Alternative for Dirtwork Contractors | SmartCrew  (stored)
+      [...]
+   Why these pages sit above your slot (site history, REAL counts; editing the page does not change it):
+      REAL #2 reddit.com: Site history: its site is in the REAL top 10 of 13 other searches, yours in 4, so it gets a 58% PREDICTED chance of outranking you. [...]
+         REAL: Search words in the title: theirs 0 of 3, yours (title or main heading) 2 of 3.
 ```
 
-What these examples show:
-- The loop is fast enough to use on every edit: 2.4 s to load, 50 ms to score.
-- The regression gate fires on a bad edit and exits 1, so CI can use it.
-- The guards and the linear check do their job: one rewrite was stuffing, one was a version the linear scorer liked less.
-- The numbers themselves are weak today. Every set is THIN, the backtest is a coin flip, and at the start the two scorers disagree on "all in one dirt work software" (2/3 vs 1/3). That is why the board prints all of it.
-- No SmartCrew run has reached a goal yet, and the LLM rewriter has not run on a real page, because no LLM key is set here. Neither result is shown because neither exists.
+What this example shows:
+- The loop is fast enough to use on every edit: about 3 s for 16 searches.
+- The board names the pages in the way and says why, in REAL counts.
+- It grades itself where it can. This URL already ranks REAL #7 for this search, and the board says the slot is 3 places optimistic here. That is the scorecard in miniature: a frozen guess next to a REAL outcome.
+- The slot comes from the site, not the text. The board says so, and says the content model's own slot is unvalidated.
 
-**What a ledger entry will look like** (format only. No SmartCrew version has been published and graded yet, so there are no numbers.)
+**What a scorecard entry will look like** (format only. No version has been published and graded yet, so there are no numbers.)
 
 ```
-Change Ledger: /all-in-one-dirt-work-software/   v[n] published [date]   graded at +28 days
-  Frozen tester call (model [version], [date]): dirt work contractor software, PREDICTED [rank] of [n], UNSURE, up
-  REAL GSC 28-day avg position: [before] -> [after]
-  Untouched pages, same site (median): [delta]   DiD: [delta]   Noise band: ±[band]   -> UP / FLAT / DOWN
-  Grade: direction correct / wrong. Source: human edit / optimize (rules) / optimize (LLM)
+Scorecard: /all-in-one-dirt-work-software/   v[n] published [date]   graded at +28 days
+  Frozen call (engine [pull id], [date]): all in one dirt work software, PREDICTED slot #[s] of [n], likely #[low] to #[high], on topic
+  REAL position at +28 days: #[p] ([source], pulled [date and time])
+  Miss: [|s - p|] places   Middle guess miss: [m] places   Noise band: [band] places   -> BEAT MIDDLE / TIED / MISSED
+  Source of the version: human edit / optimize (rules) / optimize (LLM)
 ```
 
 ---
@@ -220,7 +210,7 @@ We do not claim "nobody sells Google + AI together". Semrush and Ahrefs already 
 ## 5. Pricing and the $1M MRR math
 
 **Units.** Three metered units sit inside each tier.
-- **Tester check:** one page version re-scored against the stored competitor set. No new SERP pull. A `--watch` re-score counts as one check.
+- **Tester check:** one page version tested on all of a project's key searches against the stored REAL top 10, with the AI answer simulation off. No new SERP pull. Scoring took 0.6 s for 16 searches on 2026-11-04; the production cost is unmeasured.
 - **Optimize run:** one `optimize` call, up to 8 rewrite rounds (the default `--max-rounds`), each version re-scored by the tester.
 - **Live check:** one PR, preview or draft check that also pulls fresh SERPs for the touched queries (the old "draft check").
 
@@ -348,6 +338,16 @@ $72K enterprise ACV is upside, available only once the ledger shows measured lif
 
 **Path to 75%+ margin:** share one SERP and prompt cache across tenants in the same vertical, share one stored competitor set per SERP across tenants, and lean on the `llm.py` content-hash cache. **Caveat:** LLM cost per check and per optimize run, DataForSEO depth billing and real AI-answer token costs are all unmeasured. Meter them in month 1.
 
+**Cost check on what was built (2026-11-04).** The tiers, the MRR table and the cost lines in this section are unchanged. Two things built since then could change what a unit costs, and neither is in the lines above:
+
+- **AI answers.** The AI panel lines assume DataForSEO's LLM scraper at $0.0025 per answer. The engines built in `engines.py` call each vendor's own API instead. Their published per-search fees alone (`SEARCH_FEES`, `engines.py:158`) are $0.010 for ChatGPT, $0.010 for Claude, $0.0025 for Perplexity and $0.014 for Gemini. That averages $0.009125 per answer across the four, 3.65 times the budget, before any token cost (the default ChatGPT model is listed at $10 in and $50 out per million tokens, and search results count as input). Gemini's first 5,000 searches a month are free, which changes the totals below by at most $70 a month. If the hosted AI panel used these APIs, search fees alone would make:
+  - Team: AI panel $70.63 instead of $19.35 (7,740 answers), cost to serve about $161 instead of about $110, 68% GM instead of 78%.
+  - Growth: $235.43 instead of $64.50 (25,800 answers), cost to serve about $571 instead of about $400, 68% GM instead of 78%.
+  - Enterprise: $706.28 instead of $193.50 (77,400 answers), cost to serve about $1,716 instead of about $1,203, 62% GM instead of 73.3%.
+  - Blended at M33: about $94.7K a month more (Team, Growth and Enterprise; the Agency panel is not broken out), about $390K in total, so about 61% GM instead of about 71%, before token costs.
+  - **Founder decision:** run the hosted panel through DataForSEO (keeps this plan's math, but its answers must first be checked against the engine APIs), or use the engine APIs with cheaper models and fewer prompts or repeats, or reprice. Until that is decided, the plan keeps the DataForSEO line.
+- **The PREDICTED AI answer simulation.** One SmartCrew test with the simulation on is 96 LLM calls (16 searches × 3 runs × with and without your page). At gpt-4o-mini's list price and the token sizes the web UI assumes (3,000 in and 300 out per call, `serve.py:1509-1511`), that is about $0.06 per test, against a $0.005 budget per tester check. So the simulation is off by default, as built, and is not part of a tester check. It would be sold as its own metered unit.
+
 **Funding and team** (assumption: a $3.5M seed; the repo says nothing about funding)
 
 | Quarter | Headcount | Gross burn per month | MRR at end |
@@ -364,68 +364,117 @@ $72K enterprise ACV is upside, available only once the ledger shows measured lif
 
 ## 6. The accuracy problem and the moat
 
-**What the price buys at 0.534.** The tester is the product, but its PREDICTED number is not yet worth paying for on its own. Until G1 passes, the price buys things that do not depend on the model being right:
-- Re-index and re-score in seconds, with every version saved
-- The guards: stuffing, hidden text, shrinkage, new claims, model instructions
-- The gap list, the stored set size, and the linear check beside every rank
-- Provable-fact checks and blast radius
-- The Change Ledger (REAL, difference-in-differences, noise band), which grades every published call
-- Google share and AI citation share as two separate numbers
-- The competitor change feed, the Snapshot and Migration Sign-off
+**What no tool can do.** No tool can know where Google will rank a page before Google ranks it. Google uses signals that are not on the page: links from other sites, the reputation of the whole site, and how searchers click (DOJ trial testimony describes Navboost as a table of about 13 months of clicks; see `docs/accuracy.md`). Ranksim sees none of those directly. So the product's claim is narrower and checkable: it predicts, and it proves its hit rate, on every board.
 
-The PREDICTED rank is always labeled PREDICTED, shown as UNSURE unless a gate below has passed, and printed next to its own backtest. It is never sold as a Google forecast.
+**What the price buys before any gate passes.** Nothing below depends on the model being right:
+- One click for the REAL Google top 10 of every key search, every page stored and dated
+- The on-topic check and its to-do list
+- The pages and sites above you on each search, with REAL counts and REAL facts
+- REAL AI citations per engine and search (with keys)
+- Version history, compare, and the on-topic CI gate
+- Once built: the scorecard, Google share and AI citation share as separate numbers, the competitor change feed, the Snapshot and Migration Sign-off
 
-**The Goodhart risk.** An optimizer pointed at a model with about 0.5 pairwise accuracy will game it. Each round keeps whatever raises the model's score, so `optimize` searches for the model's blind spots, not for what Google rewards. Once the PREDICTED rank is the target, it stops measuring rank. Three things keep the loop honest:
-1. **Guards** (`optimize.py` `check_guards` :225) reject a version before its score counts: term share and exact-phrase rate over the whole body, over the first 8,000 characters the model reads, and over every run of 200 words; repeated blocks and headings; headings inside nav, footer or form; hidden text; link farms and empty anchors; a body that shrinks below 80% of the start; a page without exactly one title and one H1; and new numbers, prices, ratings, review markup or model instructions.
-2. **Acceptance rules** (`judge_candidate` :438): no target query may get worse, the independent linear validator (`score.py` `HAND_WEIGHTS`) may not get worse, last place in a stored set never counts as the goal, and the best version is kept, not the last. The validator is a separate scorer, not ground truth. It only makes a version that games one model's quirks harder to accept.
-3. **The accuracy gates below.** "Goal reached" is marketed only as a PREDICTED sandbox result until the gates pass: "PREDICTED top 3 in the sandbox", never "top 3 on Google". After G2, the measured precision of such calls may be shown next to it. It is never a promise of a Google rank.
+The PREDICTED slot is always labeled PREDICTED and printed next to its own backtest. It is never sold as a Google forecast.
 
-Optimizer outputs also bias the grade. A version chosen because the model scored it highest will look better to that model than it is (winner's curse). So the ledger grades optimize outputs as their own slice, apart from human edits, and no gate counts optimize precision until that slice has its own events.
+**Why no on-page model works yet.** Google's top 10 is already filtered for relevance, so relevance features cannot order pages inside it. Pairwise agreement with Google's order over the 458 SmartCrew pairs, where 0.5 is a coin flip:
+- Content signals: title BM25 0.465, embedding similarity 0.463, hand content weights 0.445, LambdaMART 0.524
+- Site and link signals: how many other searches list the site 0.684 [0.622, 0.744], corpus PageRank 0.585, corpus domain rank 0.586, Tranco popularity 0.562
+
+More training searches do not help the content model: its pairwise was 0.531 with 4 training searches and 0.524 with 15. The site signal did improve with more searches, from 0.627 to 0.687.
+
+**The accuracy protocol. This is the metric for every gate below.**
+1. **Unit: an insertion.** In a held-out search, hide one REAL top 10 result and predict its slot among the search's other REAL results, whose order is known. The true slot is its rank among them. This is exactly what a page test asks.
+2. **Never train on the held-out search** (leave-one-search-out). Every tuned choice (model settings, insertion rule, shrinkage) is picked in inner folds over the training searches only.
+3. **Settings.**
+   - **New URL (S1)** is the headline: every row of the hidden URL is removed from training and from the priors.
+   - **New site:** the hidden page's site appears in no other search. This is the honest number for a new customer.
+   - **Known site:** a new page on a site that ranks for other searches. This is the honest number for SmartCrew.
+   - **S2:** every row of the hidden page's domain removed. This is a stress test for content models.
+4. **Metrics per hidden page:** miss in places (MAE), exact, within 1, within 2, and top-3 correct. Always saying "not top 3" already scores 62% on top-3, so that metric is reported but never gated alone.
+5. **Baselines:** always the middle slot, (n + 1) // 2, and a random slot.
+6. **Intervals:** 4,000 bootstrap resamples of searches. Differences between methods use a paired bootstrap on the same resamples. A method beats a baseline only when the whole 95% interval of the difference is below 0.
+7. **Live version (the scorecard):** the same metrics on frozen slots, graded against the REAL position at +28 days, leave-one-site-out, next to the noise band from repeated pulls.
+8. **In the product today:** `site_history_backtest` (`site_history.py:320`) and `content_insertion_backtest` (`project.py:2132`) recompute the simple version (no nesting, no intervals) for each project at engine load and print it on every board. The lab's nested, bootstrapped version is a set of scripts outside the repo; committing it is a G0 item.
+
+**Where it stands** (accuracy lab, 2026-11-04, SmartCrew's 16 searches, 128 stored REAL pages, setting S1):
+
+| Method | Miss in places [95% CI] | Within 2 places | Difference vs middle [95% CI] |
+|---|---|---|---|
+| Site history, the headline slot | 1.83 [1.60, 2.02] | 68% | -0.20 [-0.32, -0.09] |
+| Stacker with every component | 1.87 [1.68, 2.04] | 67% | -0.16 [-0.25, -0.07] |
+| Always the middle | 2.02 [1.88, 2.17] | 62% | 0 |
+| Ridge on page features, nested | 2.05 [1.85, 2.25] | 62% | +0.02 [-0.06, +0.10] |
+| LambdaMART, 10 configurations, nested | 2.24 [1.92, 2.51] | 59% | +0.22 [-0.02, +0.40] |
+| Content model with isotonic calibration (the best content rescue) | 2.30 [2.02, 2.53] | 58% | +0.28 [+0.07, +0.47] |
+| Content model, old default slot | 2.57 [2.19, 2.90] | 54% | +0.55 [+0.25, +0.83] |
+| Random | 2.68 [2.48, 2.86] | 53% | +0.65 [+0.61, +0.70] |
+
+By group, for site history:
+- **New site** (28 pages): 1.43 [1.03, 1.81] vs 2.39 for the middle, difference -0.96 [-1.38, -0.63]; within 2 places 86%.
+- **Known site** (a new page on an established site): 1.88 vs 1.92, difference -0.04 [-0.18, +0.08]. Noise.
+- **S2:** 1.97 vs 2.02, difference -0.05 [-0.11, -0.01]. Marginal.
+- **The board's own backtest** (all 135 REAL results, including the 7 with no stored copy): 2.0 vs 2.1 for the middle; within 2 places 64% vs 59%; new sites 1.9 vs 2.4 (27 pages); known sites 2.1 vs 2.2 (70 pages).
+
+The stacker's LambdaMART weight came out slightly negative, so the headline is the one-feature site-history model.
+
+**What grows it, in order**
+1. **Positions 11 to 100 per search.** About 10 times more pages per search, real negatives, and the only way to test "will it make the top 10" and the on-topic check's false-pass rate.
+2. **Before and after observations of the same URL.** Repeated pulls of the same searches, and Search Console positions for the customer's own pages. This is the only way to validate content edits and to measure the noise floor, which is unknown today: with 16 searches, differences under about 0.2 places cannot be detected.
+3. **Hundreds of searches across distinct topics.** SmartCrew's 16 are near duplicates of one topic, which is why the site signal's learning curve flattens.
+4. **Backlink and authority data per URL and domain.** Link and site signals are the only family with measured signal, and the corpus link graph is sparse (PageRank takes only 18 distinct values).
+
+**The Goodhart risk.** An optimizer pointed at a model that is worse than guessing the middle will game it. That describes today's content model, so `optimize` stays out of the project flow and out of marketing until G1c passes. The headline slot cannot be gamed by page edits, because it ignores the page. The on-topic check can be gamed (a page can repeat search words), which is why it has a repetition floor and why the guards in `optimize.py` (`check_guards` :225, `judge_candidate` :438) stay in force for any automated rewrite:
+- stuffing, measured as term share and exact-phrase rate
+- hidden text, link farms and empty anchors
+- a body that shrinks
+- new numbers, prices, ratings, review markup or model instructions
+- any version the independent linear scorer likes less
+
+A version chosen because a model scored it highest looks better to that model than it is (winner's curse). So the scorecard grades optimize outputs as their own slice, apart from human edits.
 
 **Fixing the label cost.**
-- 300 queries at top-100 depth costs $0.18 to $6 in SERP fees, depending on billing mode.
-- It also requires about 20-25K unique competitor pages to be crawled, because `lambdamart.py:92-97` drops any URL without HTML. That is about $10-30 in fees plus 1-2 engineer-weeks for fetch failures and JS rendering.
-- The depth cap at `serp.py:144` must be raised first.
-- The same crawl fixes THIN: the tester can only score pages that are stored.
+- 300 searches at top-100 depth costs $0.18 to $6 in SERP fees, depending on billing mode.
+- The depth cap of 20 in `serp.py` (:122, :144, :198) must be raised first.
+- The content model can only learn from pages with stored HTML (`lambdamart.py:92-96` skips the rest), so deeper results also mean about 20 to 25K page crawls for 300 searches. That is about $10 to $30 in fees, plus 1 to 2 engineer-weeks for fetch failures and JS rendering.
+- Site history needs no HTML, so it benefits from deeper results at SERP cost alone.
 
 **How the label flywheel is designed**
-1. **Backfill on day 1.** GSC holds 16 months of position history per page and query. Pair it with git history, CMS revisions or Wayback snapshots to reconstruct historical change events at onboarding.
-   - These events train the model and feed gate G2.
-   - They never count toward the BLOCK gate, because no prediction was frozen before their outcome.
-2. **Every published tester version is a frozen prediction.** Its PREDICTED ranks, model version and stored set are saved at publish time, before any outcome exists.
-3. **Difference-in-differences labels.** The changed URL's delta, minus the median delta of untouched URLs on the same site and of competitors on the same SERP. Exclude ±14 days around confirmed Google core updates.
-4. **Bucketed direction labels:** up beyond the noise band, flat, or down beyond the noise band. The band comes from `noise.py` on 28-day GSC average position.
-5. **Unbiased evaluation slice.** Once the tester warns, bad versions mostly do not ship, so precision measured on shipped versions is inflated. Overridden and shipped-anyway versions form the only unbiased slice; report it separately. Optimize outputs are a third slice.
-6. **Realistic volume.** Expect 1-3 gradeable tenant events per site per month, plus competitor-change events. Plan on about 15-40K events a month at about 600 paying sites, not 100K+. Tester and optimize runs that are never published produce no labels.
+1. **Backfill on day 1.** Search Console holds 16 months of position history per page and query. Paired with git history, CMS revisions or Wayback snapshots, that reconstructs before and after events at onboarding. These events train and calibrate. They never count toward a gate's live slice, because no slot was frozen before their outcome.
+2. **Every published version is a frozen prediction.** Its PREDICTED slots, engine version and REAL result lists are saved at publish time, before any outcome exists.
+3. **Grading.** The miss of the frozen slot vs the REAL position, next to the middle-guess miss and the noise band. For edit direction: the changed URL's move, minus the median move of untouched URLs on the same site and of competitors on the same results page. Exclude 14 days either side of confirmed Google core updates.
+4. **Unbiased evaluation slice.** Once the tester warns, bad versions mostly do not ship, so precision measured on shipped versions is inflated. Overridden and shipped-anyway versions form the only unbiased slice; report it separately. Optimize outputs are a third slice.
+5. **Realistic volume.** Expect 1 to 3 gradeable launches per site per month, plus competitor-change events. Plan on about 15 to 40K events a month at about 600 paying sites, not 100K or more. Versions that are never published produce no labels.
 
 **Pitfalls to design around**
+- **Survivorship:** every labeled page today made the top 10. Nothing measured so far says anything about pages that did not.
 - **Label delay:** 28 days, which the backfill offsets.
 - **Confounders:** core updates, competitor moves and seasonality.
-- **Noise ceiling:** never measured, so no target can be published above it.
-- **THIN sets:** a PREDICTED rank among 2 or 3 stored pages says little. The board marks it and the grade should report THIN calls apart.
+- **Noise floor:** never measured, so no target can be published above it.
+- **Content blindness:** a scorecard grade of the site-history slot says nothing about edits. Edit claims need G1c and G3.
 - **AI-side power:** 3 repeats per prompt gives a standard error of about ±0.29. Even 20 prompts × 3 repeats × 4 weeks gives roughly ±6 points at best. Hence topic-level reporting only.
-- **API vs UI:** API answers missed brands about 8% of the time vs UI answers (Surfer's measurement).
-- **GSC terms:** whether GSC data may be used for pooled training is **UNVERIFIED**, so training is explicit opt-in. Competitor-change labels do not need GSC.
+- **API vs UI:** API answers missed brands about 8% of the time vs UI answers (Surfer's measurement). Every REAL engine row says so.
+- **GSC terms:** whether Search Console data may be used for pooled training is **UNVERIFIED**, so training is explicit opt-in. Competitor-change labels do not need it.
 
-**Accuracy gates.** Each gate unlocks a claim; nothing is promised before its gate passes.
+**Accuracy gates.** Each gate unlocks a claim. Nothing is promised before its gate passes. Every bar uses the insertion protocol above.
 
-| Gate | Target date | Bar | Unlocks |
-|---|---|---|---|
-| G0 | M1 | Make `evaluate` reproduce from a fresh clone (commit the stored crawl or a rebuild script); measure the noise ceiling with repeated pulls; tester target sets for design partners not THIN | Publishing any target at all |
-| G1 | M3 | Static pairwise ≥ 0.60 on 300+ queries, top-50 candidates, bucketed labels | CLEARER tags in the tester, with coverage disclosed |
-| G2 | M6-M9 | Change-direction precision ≥ 0.70 on CLEARER calls, ≥ 25% coverage, ≥ 1,000 backfilled + live events, leave-one-site-out | Measured precision shown next to "goal reached", which stays labeled PREDICTED; PREDICTED column in paid reports |
-| G3 | ~M15 | ≥ 0.80 precision, ≥ 30% coverage, on ≥ 500 held-out **live** frozen events, with the optimize slice reported apart | Opt-in predictive BLOCK in CI (`--fail-on-regression` as a failed status); the predicted half of Migration Sign-off |
-| G4 | ~M21 | ≥ 0.80 at ≥ 40% coverage on ≥ 1,000 live events; override slice ≥ 0.75; optimize slice ≥ 0.70 | Predictive BLOCK eligible to be on by default |
+| Gate | Target date | Bar | Unlocks | Status on 2026-11-04 |
+|---|---|---|---|---|
+| G0 | M1 | The lab is a committed script that reruns on any project. `evaluate` and the site-history backtest reproduce from a fresh clone (committed snapshot or rebuild script). Two pulls of the same searches at least 7 days apart measure the noise floor. Positions 11 to 100 are pulled for every SmartCrew search | Publishing any accuracy number outside the product | Not met: no SERP key, no repeat pull, lab scripts outside the repo, `data/` gitignored |
+| G1 | M3 | Pooled over at least 300 searches from at least 10 projects in different topics, setting S1: the headline slot's miss is below always-middle (whole paired 95% interval below 0) overall **and** in the known-site group; within 2 places at least 70% | The measured hit rate, with its interval and the middle baseline, may be quoted outside the product; the PREDICTED slot appears in paid reports | SmartCrew alone (16 searches, one topic): overall passes at -0.20 [-0.32, -0.09], within 2 places 68%; known-site group fails at -0.04 [-0.18, +0.08] |
+| G1c | M6 | On the G1 data, a page-dependent predictor (its slot moves when the text changes) beats the site-history slot beyond noise in the known-site group and beats always-middle in S2 | "Edit the page and see the slot move"; CLEARER tags on content calls; optimize marketed as a PREDICTED rank lever | Not met: no tested content model beats the middle (best: ridge, +0.02 [-0.06, +0.10]) |
+| G2 | M6 to M9 | Live scorecard: at least 300 published pages with frozen slots, graded at +28 days, leave-one-site-out. The frozen slot's miss is below always-middle beyond noise on pages that reached the REAL top 10. The share of PREDICTED on-topic pages that reach the REAL top 10, and of PREDICTED off-topic pages that do (from positions 11 to 100), are measured and published | The measured live hit rate is printed next to every PREDICTED slot | Scorecard not built |
+| G3 | ~M15 | Edit direction: on at least 500 live frozen before and after pairs of the same URL, the PREDICTED change in slot has the right sign beyond the noise band at least 80% of the time on CLEARER calls, at coverage of at least 30%, with the optimize slice reported apart | Opt-in predictive BLOCK in CI (`--fail-on-content-regression` as a failed status); the predicted half of Migration Sign-off | Not started |
+| G4 | ~M21 | At least 80% at coverage of at least 40% on at least 1,000 live pairs; override slice at least 75%; optimize slice at least 70% | Predictive BLOCK eligible to be on by default | Not started |
 
-No plan number depends on reaching 0.70 overall or 0.85 precision, and neither is promised.
+No plan number depends on G1c, G3 or G4 passing, and none of them is promised.
 
 **The moat, stated honestly**
-- **Frozen, versioned tester calls with graded outcomes.** A company that starts in 2028 cannot backfill 2027 predictions.
-- **A public ledger that includes misses,** including the optimizer's. Incumbents have little incentive to publish theirs.
-- **Lock-in from sitting in the edit and deploy path,** through the tester in CI, CMS hooks and the version history.
-- **Cost:** per-vertical cache sharing makes each new tenant cheaper to serve.
+- **Frozen, versioned slots with graded outcomes.** A company that starts in 2028 cannot backfill 2027 predictions.
+- **A public scorecard that includes misses,** including the optimizer's. Incumbents have little incentive to publish theirs.
+- **Lock-in from sitting in the edit and deploy path,** through the page test in CI, CMS hooks and the version history.
+- **Cost:** per-vertical sharing of pulled results and stored pages makes each new tenant cheaper to serve. `pull` already reuses REAL results another project holds for the same searches.
 
-In year 1 the moat is workflow plus trust. The data advantage only exists if G2 and G3 pass.
+In year 1 the moat is workflow plus trust. The data advantage only exists if G1 and G2 pass.
 
 ---
 
@@ -433,66 +482,62 @@ In year 1 the moat is workflow plus trust. The data advantage only exists if G2 
 
 | Action | Files | Change |
 |---|---|---|
-| **Built (v1, uncommitted)** | `ranksim/tester.py`; `cli.py` `_tester` :502; `check.py` `assemble_query_docs` :129; `tests/test_tester_optimize.py` | Sandbox tester: target picking and pinning, in-memory scoring on the stored set, stored or live baseline, THIN coverage, linear check, gap fixes, JSONL version history, `--watch`, `--json`, `--fail-on-regression` |
-| **Built (v1, uncommitted)** | `ranksim/optimize.py`; `cli.py` `_optimize` :614 | Optimize loop: rules and LLM rewriters, guards, acceptance rules, best-not-last, goal, patience, max rounds, `--budget-usd`, `best.html`, `round-NN.html`, `log.json`, `report.txt` |
-| **Next** | New web app over `tester.py` | Web UI for the tester board: paste HTML or a preview URL, see the board, compare versions, start an optimize run. Behind auth; replaces `serve.py` as the surface |
-| **Next** | GitHub App, Vercel/Netlify webhooks, CMS hooks | Call `tester --json --fail-on-regression` on every preview of a changed page. Post the board as a comment. A warning, not a failed status, until G3 |
-| **Next** | `loop.py`, the page-version store, `tester.py` `TesterHistory` | Real-rank grading of optimize outputs and human edits: freeze the published version's tester call, link it to `page_version_id`, grade at +7/14/28/56 days, report the optimize slice apart |
-| **Next** | `index_serp.py`, `lambdamart.py` | Store the labeled pages so target sets stop being THIN, then re-measure the backtest the tester prints |
-| **Keep, fix** | `llm.py` | Add more models to `LIST_RATES` so `--budget-usd` works beyond two. Size the Anthropic reply cap (1,200 tokens, `llm.py:145`) to the 12,000-character rewrite window. Measure real tokens per optimize round |
-| **Keep** | `ranksim/serp.py` | Add per-call cost metering. Raise the depth cap at :144 from 20 to 100. Add AI Overview and AI Mode item parsing |
-| **Keep** | `crawl/*`, `extract.py`, `sim/diagnostics.py` | Page-version store with content-hash change detection. Fix DNS rebinding (`urls.py:88`) before the tester fetches customer previews in a hosted service. Add response size caps and an egress proxy. New rules: noindex/robots, sitemap removal, redirect chains, inlink diff |
-| **Keep** | `whatif.py`, `check.py`, `space.py` | One verdict enum (FAIL/WARN/PASS × CLEARER/UNSURE). JSON output and exit codes for bundles too. Remove the `our_domain` defaults |
-| **Keep, fix** | `lambdamart.py`, `features.py`, `groundtruth.py` | Candidates beyond the ranked set (:92-97); bucketed labels (:65-70); snapshot-date freshness (:87); `min_data_in_leaf` above 1 (:253); inferred intent (:126,134); real embedding (`features.py:9,176`); Common Crawl and backlink authority (:276); close the partial-leak hole (`groundtruth.py:64`) |
-| **Keep** | `confidence.py`, `noise.py`, `score.py` | Drive UNSURE/CLEARER and the published noise band. Keep `score.py` as the independent validator |
-| **Rebuild** | `loop.py` `track_ranks` :386 | Store full SERPs keyed to `page_version_id`; tenant-configurable ownership; +7/14/28/56-day grader |
-| **Keep, extend** | `sim/calibrate.py`, `sim/citations.py`, `sim/diff.py` | Automated, versioned predictions; Gemini and AI Mode; parse real panel answers |
-| **Keep** | `jobs.py`, `worker.py`, `db.py` | Per-tenant cost metering; run optimize as a queued job; keep each tenant's models loaded so a tester check does not pay the load time; ANN index later |
-| **Kill** | `sim/fanout.py`, `providers/llm.py:28`, `pipeline.py` synthetic share, `providers/search.py`, `examples/run_local.py` | No longer sold as a product claim; the code stays parked |
-| **Kill** | `serve.py` as a product surface; `scripts/ai_eval.sh`; the 19-subcommand CLI as the main interface outside CI; any bare "Predicted #N of M" headline without confidence, stored set size and backtest; `hash_embed`; `check.py` `_fix_loop` :485, which discards the HTML it writes and is replaced by `optimize` | |
-| **Kill** | Every SmartCrew hardcode (section 2) | Move to tenant config; SmartCrew becomes tenant #1 |
-| **Build** | New | Tenancy (tenant, site, page_versions, queries, observations, predictions) with RLS and auth; `ranksim check --base --head` for bundles with JSON/SARIF output and exit codes 0, 1 and 78; GSC OAuth plus backfill; AI panel through DataForSEO; ledger UI and email; Snapshot with a tester board; preview auto-manifest; white-label reports; Stripe with metered tester checks and optimize runs |
+| **Built** | `ranksim/project.py`; `cli.py` project subcommands (:284 to :502); `tests/test_project.py` | Projects; REAL Google pull and CSV import; borrowing REAL results across projects; crawl with a status per URL; an engine saved per pull; test on every search; versions, compare, JSON output, the on-topic CI gate |
+| **Built** | `ranksim/relevance.py`, `ranksim/site_history.py`; `tests/test_site_history.py`, `tests/test_review_fixes.py` | On-topic check with its to-do list; the site-history headline slot with its backtest printed on every board |
+| **Built** | `ranksim/engines.py`, `ranksim/project_engines.py`; `tests/test_engines.py`, `tests/test_project_ai.py` | REAL citations from ChatGPT, Claude, Perplexity and Gemini; the PREDICTED simulation; `not run: needs <ENV VAR>` without keys |
+| **Built** | `ranksim/serve.py`; `tests/test_serve_project.py` | Local web UI: Pull now, Test a page, results, versions, compare, AI engines, CSV import |
+| **Next 1** | A SERP key; `serp.py` :122, :144, :198 | The first live pull. Raise the depth cap from 20 to 100. Meter cost per call. Time the Google step against the five-minute goal at 16 and at 250 searches |
+| **Next 2** | New `ranksim/scorecard.py`; `project.py` version history; `loop.py` `track_ranks` :386 | The scorecard: mark a version published, freeze its slots with the engine's pull id, grade against later pulls at +7, +14, +28 and +56 days against the middle guess and the noise band, show it per project, publish it. Grade optimize outputs as their own slice |
+| **Next 3** | New `scripts/accuracy_lab.py`, from the lab scripts | Commit the lab. Run it per project and pooled across projects. Report G0 and G1 |
+| **Next 4** | `project.py` `pull`; a scheduler | Weekly repeat pulls of every project's searches, for the noise floor and the scorecard |
+| **Next 5** | Tenancy, auth, RLS; `jobs.py`, `worker.py` | Run pulls and tests as queued jobs per tenant; keep each tenant's engine loaded; replace the per-process CSRF token and in-memory jobs |
+| **Next** | Search Console OAuth plus backfill | Before and after events for training, and the edit-direction data for G3 |
+| **Next** | `authority.py` (`RANKSIM_AUTHORITY=dataforseo`) | Backlink and authority data per URL and domain, the only signal family with measured lift |
+| **Next** | AI panel data path | The founder decision in section 5: engine APIs as built, or DataForSEO's LLM scraper |
+| **Keep, fix** | `crawl/urls.py:94`, `crawl/fetch.py` | Close DNS rebinding (pin the checked address for the connection) before a hosted service fetches customer preview URLs. Add an egress proxy |
+| **Keep, fix** | `llm.py` | Add more models to `LIST_RATES` (:21) so costs and `--budget-usd` work beyond two models. Measure real tokens per simulation call and per optimize round |
+| **Keep, fix** | `lambdamart.py`, `features.py`, `groundtruth.py` | Only once deep results and backlinks exist: candidates beyond the ranked set (`lambdamart.py:92-96`); fill `orphan`, `link_depth` and `crawl_inlinks` when `build_examples` rebuilds each page (`lambdamart.py:104-124` leaves them out, so they are unset in training); `min_data_in_leaf` above 1 (:253); a real embedding instead of `hash_embed` (`features.py:176`); backlink authority instead of 0.0 (`features.py:276`) |
+| **Keep** | `tester.py`, `optimize.py`, `whatif.py`, `check.py`, `space.py` | Older single-page tools. `optimize` stays parked until G1c. `space.py` feeds Google share |
+| **Keep** | `confidence.py`, `noise.py`, `score.py` | UNSURE and CLEARER for content calls; the noise band once repeated pulls exist; `score.py` as the independent linear check |
+| **Kill** | `sim/fanout.py`, `pipeline.py` synthetic share, `providers/search.py`, `examples/run_local.py` | No longer sold as a product claim; the code stays parked |
+| **Kill** | `scripts/ai_eval.sh`; `check.py` `_fix_loop` :481, which discards the HTML it writes; any PREDICTED slot shown without its backtest | |
+| **Kill** | The SmartCrew hardcodes in the older commands (section 2) | Projects already take any site; SmartCrew is project #1 |
+| **Build** | New | Tenancy (tenant, project, page versions, pulls, frozen slots, observations) with RLS and auth; GitHub App and Vercel/Netlify hooks that run `project test --json --fail-on-regression` on changed pages; a free Snapshot with one project test on the domain's top page; white-label reports; Stripe with metered tester checks |
+
+**What is built now (2026-11-04).** Steps 1 to 4 of the core loop in section 3, end to end, on one computer: project, Pull now, Test a page, versions. 265 tests pass. Nothing has run against a live Google, AI engine or LLM API.
 
 **30 / 60 / 90 / 180 days**
 
 **Days 0-30 (to Dec 2, 2026)**
-- Commit the tester and optimize v1.
-- Make `evaluate` reproducible: commit the stored crawl, or a script that rebuilds it, so a fresh clone gets the documented number instead of 0.485.
-- Run `index-serp` on the labeled file so SmartCrew's target sets stop being THIN, and re-measure the tester's backtest.
-- Move hardcodes into tenant config, including `tester.py`.
-- Wire DataForSEO with cost metering and raise the depth cap.
-- Label 300 queries and crawl about 25K pages.
-- Apply the `lambdamart` fixes.
-- Measure the noise ceiling.
-- Run the LLM rewriter on SmartCrew pages with a key and a budget, and measure tokens and cost per run.
+- Commit the project tester, the web UI and the review fixes.
+- Buy a SERP key, run the first live pull on SmartCrew, raise the depth cap and pull positions 11 to 100.
+- Pull the same searches again a week later and measure the noise floor.
+- Commit the accuracy lab as a script, and make `evaluate` reproducible from a fresh clone (G0).
+- Put a key on one AI engine and the simulation, and measure cost per answer and per test.
+- Decide the AI panel data path (section 5).
 
 **Days 31-60 (to Jan 1, 2027)**
-- Tenancy, auth and RLS.
-- Web UI for the tester board and optimize runs.
-- Page-version store and change detection; tester history moves into it.
-- GSC OAuth plus the 16-month backfill.
-- Rebuild `loop.py` so each published version is tracked.
-- Ledger v1 on SmartCrew.
-- DNS-rebinding fix.
-- Free Snapshot with one tester board (Google only).
+- Scorecard v1 on SmartCrew: mark published versions, freeze slots, grade on later pulls.
+- Tenancy, auth and RLS; host the web UI.
+- Close DNS rebinding in the crawler.
+- Search Console OAuth plus the 16-month backfill.
+- Projects for 10 design partners, in different topics, to start the pooled G1 data.
 
 **Days 61-90 (to Jan 31, 2027)**
-- 10 paying design partners using the tester weekly.
-- Preview hooks that call `tester --json --fail-on-regression`, as warnings.
-- Weekly ledger email.
-- Competitor change feed.
-- AI Overview parsing.
-- Publish the G1 result and the first public ledger.
+- 10 paying design partners testing pages weekly.
+- Preview hooks that call `project test --json --fail-on-regression`.
+- Weekly scorecard email.
+- Competitor change feed from repeated pulls.
+- Publish the first G1 measurement and the first public scorecard.
 
 **Days 91-180 (to May 1, 2027)**
-- Real-rank grading of the first published optimize outputs, reported as their own slice.
-- Topic-level AI panel with confidence intervals.
-- GitHub App and Vercel integration (deterministic FAIL, blast radius, tester board).
+- Topic-level AI panel with confidence intervals, and the first agreement numbers between the PREDICTED simulation and REAL engine answers.
+- GitHub App and Vercel integration.
 - Migration Sign-off SKU.
-- Stripe with metered tester checks and optimize runs.
+- Stripe with metered tester checks.
 - Agency white-label.
-- Pooled difference-in-differences model v1.
-- Measure G2.
+- Backlink data in the model.
+- Measure G1c and G2.
 - Hire 2 AEs at M6.
 
 ---
@@ -541,8 +586,8 @@ In year 1 the moat is workflow plus trust. The data advantage only exists if G2 
 
 | Month | MRR | Logos | Team churn | Data / accuracy |
 |---|---|---|---|---|
-| M3 | ~$7.5K | 10 | n/a | G1 measured; ≥1,000 backfilled events; design-partner target sets not THIN |
-| M6 | ~$48K | 71 | ≤5% | Public ledger live, with tester calls graded |
+| M3 | ~$7.5K | 10 | n/a | G0 met and G1 measured; ≥1,000 backfilled events; design-partner projects not THIN |
+| M6 | ~$48K | 71 | ≤5% | Public scorecard live, with frozen slots graded; G1c measured |
 | M9 | ~$116K | 158 | ≤5% | **G2 decision** |
 | M12 | ~$199K | 259 | ≤4.5% | Live events ≥ 2K/month |
 | M18 | ~$386K | 481 | ≤4% | G3 measured, optimize slice reported apart |
@@ -554,13 +599,13 @@ In year 1 the moat is workflow plus trust. The data advantage only exists if G2 
 | When | Trigger | Action |
 |---|---|---|
 | M6 | Fewer than 6 of 10 design partners renew at list price, or Free→Team below 2% of GSC-connected free accounts | Stop pushing self-serve Team; sell Growth and Migration Sign-off |
-| M6 | Fewer than half of design partners score 3+ versions a week in the tester | The tester is not the hook. Lead with the ledger and the deploy check |
-| M9 | CLEARER change-direction precision below 0.68 on ≥500 events, or pooled static pairwise below 0.62 | Remove PREDICTED ranks and "goal reached" from all pricing and marketing. The tester stays as a guarded edit workbench with version history and provable-fact checks, plus the ledger (the downside case) |
+| M6 | Fewer than half of design partners test 3+ versions a week | The tester is not the hook. Lead with the scorecard and the deploy check |
+| M9 | G1 fails on the pooled data (the headline slot does not beat always guessing the middle beyond noise in setting S1), or the G2 live scorecard's frozen slots miss by as much as the middle guess or more on ≥300 graded pages | Remove PREDICTED slots and "goal reached" from all pricing and marketing. The tester stays as a REAL top 10 workbench: on-topic check, the pages in your way, version history, REAL AI citations and provable-fact checks, plus the scorecard (the downside case) |
 | M9 | Fewer than 25% of Git installs run 3+ checks within 14 days | Demote the PR gate to migration-only |
 | M12 | MRR below $150K, or Team churn above 5% a month | Go Growth/Enterprise plus migrations only; cut burn |
 | M12 | Optimize outputs grade worse than human edits on the same pages for 2 months | Stop selling optimize as a rank lever; keep it as a draft assistant behind the same guards |
 | Any month | Agency workspace cost above $15; any tier's cost above 30% of price for 2 months; measured AI answer cost above $0.005; measured optimize run cost above $0.10 | Cut refresh frequency, repeats or rounds, switch model, or reprice |
-| Any vertical | CLEARER hit rate below 0.65 for 2 consecutive months | Pull forecasts for that vertical |
+| Any vertical | Live scorecard: frozen slots miss by more than the middle guess for 2 consecutive months | Pull PREDICTED slots for that vertical |
 
 ---
 
@@ -568,7 +613,7 @@ In year 1 the moat is workflow plus trust. The data advantage only exists if G2 
 
 1. **Prediction never earns its gates.**
    - This matters more now that the tester is the product.
-   - *Mitigation:* every paid tier is also justified by speed, guards, version history, the ledger and the deterministic gate.
+   - *Mitigation:* every paid tier is also justified by the one-click REAL top 10, the on-topic check, the pages in your way, version history, REAL AI citations, the scorecard and the deterministic gate.
    - The M9 kill rule is public, and the downside case is priced in.
 2. **The optimizer games the model (Goodhart).**
    - An optimizer finds what the model rewards, which at about 0.5 accuracy is not what Google rewards.
@@ -588,13 +633,15 @@ In year 1 the moat is workflow plus trust. The data advantage only exists if G2 
 6. **Click erosion lowers the value of a ranking.**
    - *Mitigation:* AI citation share is a first-class number from M4. If AI share comes to dominate, shift the product's weight toward it.
 
-**Also:** fetching customer preview URLs is an SSRF surface, and the tester does it on every check. Fix DNS rebinding (`urls.py:88`) and add an egress proxy before any public launch. Never expose `serve.py`. Page text and model text are data, not instructions: the LLM rewriter fences the page and the guards reject new model instructions, and that must stay true in the hosted product.
+**Also:** fetching customer preview URLs is an SSRF surface, and the tester does it on every check. Fix DNS rebinding (`crawl/urls.py:94`) and add an egress proxy before any public launch. Do not expose `serve.py` beyond one computer until tenancy and auth exist: it has no login. Page text and model text are data, not instructions: the LLM rewriter fences the page and the guards reject new model instructions, and that must stay true in the hosted product.
 
 ---
 
 ## 11. Sources
 
 **Repo:** `docs/accuracy.md`, `ACCURACY_PLAN.md`, `smartcrew/pr8-v2-compare.txt`, `smartcrew/pr8-v3-compare.txt`, the code audits cited by file and line above, and `tester` and `optimize` runs on the stored SmartCrew data on 2026-11-03.
+
+**2026-11-04 revision:** `project create`, `import-serp`, `pull`, `test`, `show` and `evaluate` runs on SmartCrew's stored data and on scratch copies of it on 2026-11-04; `python -m pytest -q .` (265 passed); the accuracy lab of 2026-11-04 (leave-one-search-out insertion backtest with nested tuning and a 4,000-resample search bootstrap; its scripts are outside the repo, and `site_history.py` reproduces its headline numbers on the stored pages); the engine API shapes and rate tables recorded in `engines.py` (checked against each vendor's documentation on 2026-11-04, never called live).
 
 **Semrush and Adobe**
 - https://www.businesswire.com/news/home/20260302904076/en/Semrush-Announces-Fourth-Quarter-and-Full-Year-2025-Financial-Results

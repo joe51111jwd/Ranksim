@@ -11,7 +11,10 @@ import csv
 import hashlib
 import json
 import math
+import re
+import threading
 import time
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
 from datetime import date
 from pathlib import Path
@@ -176,6 +179,7 @@ class QueryScore:
     missing: int = 0
     labeled_position: float | None = None
     gap_details: list[dict] = field(default_factory=list)
+    on_topic: bool | None = None  # the project tester's PREDICTED on-topic check; None when not checked
 
     @property
     def thin(self) -> bool:
@@ -229,6 +233,7 @@ class PageScore:
                     missing=int(item.get("missing") or 0),
                     labeled_position=_float_or_none(item.get("labeled_position")),
                     gap_details=[dict(gap) for gap in item.get("gap_details") or [] if isinstance(gap, dict)],
+                    on_topic=item.get("on_topic") if isinstance(item.get("on_topic"), bool) else None,
                 )
             )
         return cls(
@@ -593,15 +598,41 @@ class TesterHistory:
 
         Sets score.version either way. Returns True when a line was written.
         """
-        items = self.entries()
-        if items and items[-1].get("content_hash") == score.content_hash:
-            score.version = str(items[-1].get("version") or f"v{len(items)}")
-            return False
-        score.version = f"v{len(items) + 1}"
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        with self.path.open("a", encoding="utf-8") as handle:
-            handle.write(json.dumps(score.to_dict()) + "\n")
-        return True
+        with _history_lock(self.path):
+            items = self.entries()
+            if items and items[-1].get("content_hash") == score.content_hash:
+                score.version = str(items[-1].get("version") or f"v{len(items)}")
+                return False
+            score.version = f"v{len(items) + 1}"
+            with self.path.open("a", encoding="utf-8") as handle:
+                handle.write(json.dumps(score.to_dict()) + "\n")
+            return True
+
+
+_THREAD_LOCKS: dict[str, threading.Lock] = {}
+_THREAD_LOCKS_GUARD = threading.Lock()
+
+
+@contextmanager
+def _history_lock(path: Path):
+    """Read, number and append one version as one step, across threads and processes (fcntl where available)."""
+    key = str(Path(path).resolve())
+    with _THREAD_LOCKS_GUARD:
+        local = _THREAD_LOCKS.setdefault(key, threading.Lock())
+    with local:
+        lock_path = Path(path).with_suffix(Path(path).suffix + ".lock")
+        try:
+            import fcntl
+        except ImportError:  # pragma: no cover - not POSIX
+            yield
+            return
+        with lock_path.open("a+") as handle:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
 
 def baseline_for(current: PageScore, live: PageScore | None, first: PageScore | None) -> tuple[PageScore | None, str]:
@@ -841,9 +872,16 @@ def count_of(number: int, one: str, many: str) -> str:
     return f"{number} {one if number == 1 else many}"
 
 
+_CONTROL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f-\x9f]")
+
+
 def plain_dashes(text: str) -> str:
-    """House style: no em or en dashes in output, even when page text has them."""
-    return text.replace("\u2014", "-").replace("\u2013", "-")
+    """House style: no em or en dashes in output, even when page text has them.
+
+    Also drops control characters (escape sequences in a crawled title could
+    otherwise clear the terminal or rewrite its title). Newlines and tabs stay.
+    """
+    return _CONTROL.sub("", text.replace("\u2014", "-").replace("\u2013", "-"))
 
 
 def watch(

@@ -10,6 +10,10 @@ Examples:
   python -m aeo.ranksim report
   python -m aeo.ranksim tester page.html --url https://www.smartcrewhq.com/compare/hcss-heavyjob-alternative/ --watch
   python -m aeo.ranksim optimize page.html --url https://www.smartcrewhq.com/all-in-one-heavy-civil-software/ --rewriter rules --goal 1
+  python -m aeo.ranksim project create SmartCrew --site www.smartcrewhq.com --searches "dirt work software; hcss alternative"
+  python -m aeo.ranksim project import-serp smartcrew smartcrew/serp.csv
+  python -m aeo.ranksim project pull smartcrew --skip-google
+  python -m aeo.ranksim project test smartcrew page.html --url https://www.smartcrewhq.com/all-in-one-dirt-work-software/
 """
 
 from __future__ import annotations
@@ -183,6 +187,8 @@ def main(argv: list[str] | None = None) -> None:
     optimize_cmd.add_argument("--out-dir", default=None, help="Default data/optimize/<url slug>")
     optimize_cmd.add_argument("--serp", default="smartcrew/serp.csv", help="Labeled Google file")
 
+    _add_project_parser(sub)
+
     serve = sub.add_parser("serve", help="Serve the pre-publish rank check demo")
     serve.add_argument("--host", default="0.0.0.0")
     serve.add_argument("--port", type=int, default=8765)
@@ -245,6 +251,16 @@ def main(argv: list[str] | None = None) -> None:
             code = _optimize(settings, database, args)
             if code:
                 raise SystemExit(code)
+        elif args.command == "project":
+            from aeo.ranksim.project import ProjectError
+
+            try:
+                code = _project(settings, database, args)
+            except ProjectError as exc:
+                print(str(exc), file=sys.stderr)
+                raise SystemExit(2) from exc
+            if code:
+                raise SystemExit(code)
         else:
             parser.error(f"Unknown command {args.command}")
     except ProviderConfigError as exc:
@@ -253,6 +269,169 @@ def main(argv: list[str] | None = None) -> None:
     except ValueError as exc:
         print(str(exc), file=sys.stderr)
         raise SystemExit(2) from exc
+
+
+def _add_project_parser(sub) -> None:
+    common = argparse.ArgumentParser(add_help=False)
+    common.add_argument("--projects-dir", default=None, help="Default data/projects, or RANKSIM_PROJECTS_DIR")
+    project = sub.add_parser(
+        "project",
+        help="Projects: your key searches, the REAL Google top 10 for each, and a mini search engine to test pages on",
+    )
+    psub = project.add_subparsers(dest="project_command", required=True)
+
+    create = psub.add_parser("create", parents=[common], help="Create a project: a site and its key searches")
+    create.add_argument("name")
+    create.add_argument("--site", required=True, help="Your site, e.g. www.example.com")
+    create.add_argument("--searches", default=None, help="Key searches separated by ; e.g. 'dirt work software; hcss alternative'")
+    create.add_argument("--searches-file", default=None, help="Text file, one search per line")
+    create.add_argument("--slug", default=None)
+    create.add_argument("--sitemap-file", default=None, help="Local list of your site's URLs, one per line. Default reads /sitemap.xml at pull time.")
+    create.add_argument("--link-graph", default=None, help="Optional link graph JSON (python -m aeo.ranksim graph)")
+    create.add_argument("--max-site-pages", type=int, default=60)
+
+    searches = psub.add_parser("searches", parents=[common], help="Add or remove key searches")
+    searches.add_argument("name")
+    searches.add_argument("--add", default=None, help="Searches separated by ;")
+    searches.add_argument("--remove", default=None, help="Searches separated by ;")
+
+    imp = psub.add_parser("import-serp", parents=[common], help="Seed REAL Google results from a query,url,position CSV")
+    imp.add_argument("name")
+    imp.add_argument("file")
+    imp.add_argument("--snapshot-date", default=None, help="YYYY-MM-DD the positions were seen. Default: pull date not recorded.")
+    imp.add_argument("--source", default=None, help="Source label. Default names the file and says when it was pulled.")
+    imp.add_argument("--add-searches", action="store_true", help="Add searches in the file that the project does not have")
+
+    pull_cmd = psub.add_parser("pull", parents=[common], help="Pull REAL Google results, crawl the pages, train the mini engine")
+    pull_cmd.add_argument("name")
+    pull_cmd.add_argument("--skip-google", action="store_true", help="Reuse the REAL results already saved")
+    pull_cmd.add_argument("--depth", type=int, default=10)
+    pull_cmd.add_argument("--fresh-days", type=float, default=7.0, help="Refetch stored pages older than this")
+    pull_cmd.add_argument("--workers", type=int, default=8)
+    pull_cmd.add_argument("--delay", type=float, default=0.4, help="Seconds between requests to one host")
+    pull_cmd.add_argument("--json", action="store_true")
+
+    show = psub.add_parser("show", parents=[common], help="Show a project, its REAL results, and its pulls")
+    show.add_argument("name")
+    show.add_argument("--json", action="store_true")
+
+    test = psub.add_parser("test", parents=[common], help="Test a page on every key search. PREDICTED slot among the REAL top 10.")
+    test.add_argument("name")
+    test.add_argument("source", help="A local HTML file (needs --url) or an http(s) URL")
+    test.add_argument("--url", default=None, help="The URL the page lives or will live at")
+    test.add_argument("--json", action="store_true")
+    test.add_argument("--fail-on-regression", action="store_true", help="Exit 1 when a search is PREDICTED worse than the stored copy, or the previous version")
+    test.add_argument("--no-save", action="store_true", help="Do not record this version")
+    test.add_argument("--details", type=int, default=3, help="Pages above you to explain per search in the text output")
+
+    lst = psub.add_parser("list", parents=[common], help="List projects")
+    lst.add_argument("--json", action="store_true")
+
+
+def _project(settings, database: str, args) -> int:
+    """Project commands. REAL is Google data with its source and date. PREDICTED is the model."""
+    import json
+    import time
+    from dataclasses import asdict
+
+    from aeo.ranksim import project as proj
+
+    root = args.projects_dir
+    command = args.project_command
+    if command == "create":
+        searches = proj.split_searches(args.searches)
+        if args.searches_file:
+            searches += proj.split_searches(Path(args.searches_file).read_text(encoding="utf-8"))
+        made = proj.create_project(
+            args.name,
+            args.site,
+            searches,
+            root=root,
+            slug=args.slug,
+            sitemap_file=args.sitemap_file,
+            link_graph=args.link_graph,
+            max_site_pages=args.max_site_pages,
+        )
+        print(f"Created project {made.name} (slug {made.slug}) for {made.site} with {len(made.searches)} key searches in {made.dir}.")
+        print(f"Next: python -m aeo.ranksim project pull {made.slug} (needs {proj.GOOGLE_KEYS}),")
+        print(f"or import REAL results you already have: python -m aeo.ranksim project import-serp {made.slug} FILE.csv")
+        return 0
+    if command == "list":
+        rows = proj.list_projects(root=root)
+        if args.json:
+            print(json.dumps(proj.clean([asdict(row) for row in rows]), indent=2))
+        else:
+            print(proj.render_list_text(rows), end="")
+        return 0
+    project = proj.load_project(args.name, root=root)
+    if command == "searches":
+        updated = proj.update_searches(project, add=proj.split_searches(args.add), remove=proj.split_searches(args.remove))
+        print(f"{updated.name} has {len(updated.searches)} key searches:")
+        for search in updated.searches:
+            print(f"  {search} ({updated.intents.get(search, '')})")
+        print("New searches get REAL results on the next project pull.")
+        return 0
+    if command == "import-serp":
+        report = proj.import_serp_csv(project, args.file, args.snapshot_date, args.source, add_searches=args.add_searches)
+        print(f"Imported {report.rows} REAL Google results for {len(report.searches_imported)} searches into pull {report.pull_id}.")
+        print(f"Source: {report.source}.")
+        if report.searches_added:
+            print("Added searches from the file: " + ", ".join(report.searches_added) + ".")
+        for search in report.searches_missing:
+            print(f"Not in the file: {search}. {proj.NOT_RUN_GOOGLE}.")
+        if report.searches_ignored:
+            print("In the file but not in the project, ignored: " + ", ".join(report.searches_ignored) + ". Pass --add-searches to add them.")
+        print(f"Next: python -m aeo.ranksim project pull {project.slug} --skip-google to crawl the pages and train the mini engine.")
+        return 0
+    if command == "pull":
+        last = {"step": ""}
+
+        def progress(event) -> None:
+            if args.json:
+                return
+            if event.step != last["step"] or event.done == event.total or (event.step == "crawl" and event.done % 25 == 0):
+                count = f" [{event.done}/{event.total}]" if event.total else ""
+                print(f"{event.seconds:6.1f} s  {event.step}{count}: {event.message}", flush=True)
+                last["step"] = event.step
+
+        report = proj.pull(
+            project,
+            settings,
+            depth=args.depth,
+            progress=progress,
+            skip_google=args.skip_google,
+            database=database,
+            fresh_days=args.fresh_days,
+            workers=args.workers,
+            delay_seconds=args.delay,
+        )
+        if args.json:
+            print(json.dumps(report.to_dict(), indent=2))
+        else:
+            print(proj.render_pull_text(report), end="")
+        return 0
+    if command == "show":
+        status = proj.project_status(project)
+        if args.json:
+            print(json.dumps(status.to_dict(), indent=2))
+        else:
+            print(proj.render_status_text(status), end="")
+        return 0
+    if command == "test":
+        html, url, label = _load_source(settings, args.source, args.url)
+        started = time.perf_counter()
+        ctx = proj.load_project_context(project, database=database)
+        board = proj.test_page(ctx, html, url, source=label, save=not args.no_save)
+        board.timing["wall_seconds"] = round(time.perf_counter() - started, 2)
+        if args.json:
+            print(json.dumps(board.to_dict(), indent=2))
+        else:
+            print(proj.render_board_text(board, detail_limit=args.details), end="")
+        if args.fail_on_regression and board.regressions:
+            print(f"Failing: {len(board.regressions)} searches are PREDICTED worse than {board.baseline}.", file=sys.stderr)
+            return 1
+        return 0
+    raise SystemExit(f"Unknown project command {command}")
 
 
 def _graph(settings, database: str, args) -> None:

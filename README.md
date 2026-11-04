@@ -209,6 +209,37 @@ python -m aeo.ranksim gaps
 
 `keywords --refresh-sitemap` refetches `https://www.smartcrewhq.com/sitemap.xml` and rewrites the snapshot. It does not invent URLs.
 
+### Projects: test a page on all your key searches
+
+This is the main product. A project is your site plus the searches that matter to you. A pull records the REAL Google top 10 for every search, stores every result page in the shared rank database (`data/ranksim.db`, reused across projects), and trains a mini search engine on that set. Then you test a page, as a local file or a preview URL, and see where it would slot in on every search in seconds instead of waiting for Google to index it.
+
+```bash
+# 1. Create the project.
+python -m aeo.ranksim project create SmartCrew --site www.smartcrewhq.com --searches "all in one dirt work software; hcss heavyjob alternative"
+
+# 2a. Pull the REAL Google top 10 now. Needs SERPAPI_KEY, SERPER_API_KEY, or DATAFORSEO_LOGIN and DATAFORSEO_PASSWORD.
+python -m aeo.ranksim project pull smartcrew
+
+# 2b. Or seed REAL results you already have (query,url,position), then crawl and train without calling Google.
+python -m aeo.ranksim project import-serp smartcrew smartcrew/serp.csv --add-searches
+python -m aeo.ranksim project pull smartcrew --skip-google
+
+# 3. Test a page. Every search, every time. --json for a UI or CI, --fail-on-regression to block a worse version.
+python -m aeo.ranksim project test smartcrew draft.html --url https://www.smartcrewhq.com/all-in-one-dirt-work-software/
+
+python -m aeo.ranksim project show smartcrew
+python -m aeo.ranksim project list
+python -m aeo.ranksim project searches smartcrew --add "dirt work software" --remove "b2w alternative"
+```
+
+**What is REAL and what is PREDICTED.** The Google results are REAL and always carry their source and pull time. `smartcrew/serp.csv` is labeled `smartcrew/serp.csv (committed 2026-10-29, pull date not recorded)`. Pass `--snapshot-date YYYY-MM-DD` to `import-serp` when you know the day. Where your page slots in is PREDICTED. The incumbents keep their REAL order and the model only decides where your page goes: by default the slot is 1 plus the number of stored incumbents the model scores above you (`insertion_position` in `src/aeo/ranksim/project.py`, pluggable). REAL results with no stored HTML are listed, not scored, so the board also shows the range from none of them beating you to all of them beating you. With no Google key and no imported results, `pull` stops and names the env vars. A search with no REAL results shows `not run: needs SERPAPI_KEY, SERPER_API_KEY, or DATAFORSEO_LOGIN and DATAFORSEO_PASSWORD`. Nothing is invented.
+
+**Reading the project board.** The summary line reads `PREDICTED top 3 on X of N searches, top 10 on Y of N. REAL today (pull date): top 10 on Z of N.` Then one row per search: the PREDICTED slot, its range, this URL's REAL position, the change against the stored copy of the URL and against the previous version (both rescored now on the same engine), UNSURE or CLEARER, the independent linear check, and how many REAL results are stored (THIN under half). Under each search: the REAL top 10 with your page marked where it slots in, the stored pages PREDICTED to beat you, and for the closest ones what you can change on the page (model features, your value and theirs) apart from the site signals an edit does not change (domain, link signals). When the URL already ranks, a check line compares the stored copy's PREDICTED slot with its REAL position, which shows how far off the model is on that search. The backtest line says how much to trust any of it: on the SmartCrew file it is pairwise 0.528, barely better than a coin flip.
+
+**Pulls.** `pull` runs four timed steps: google, crawl, train, save. The crawl fetches every result URL and your own pages (results on your domain, pages already stored for it, `--sitemap-file` or `/sitemap.xml`) that are not stored or are older than `--fresh-days` (7). It runs hosts in parallel, respects robots.txt, refuses private addresses, and records a status per URL: stored, fetched now, blocked by robots, HTTP 403, or error. A failed refresh never erases a stored copy. Each pull is saved in `data/projects/<slug>/pulls/<UTC timestamp>/` as `google.json`, `pull.json` (statuses, step timings, backtest), and `engine/`, so `project test` loads in under a second. Tested versions go to `data/projects/<slug>/tests/`.
+
+**Measured in this checkout** (16 searches, 139 URLs, pages already stored): create 0.6 s, import 0.6 s, pull with `--skip-google` 9.9 s (crawl 1.2 s for the 5 pages that were not stored, train 7.8 s), engine load 0.4 s, `project test` 2.0 s wall for all 16 searches. A cold pull into an empty database, fetching all 137 pages, took 37.7 s (crawl 29.6 s, train 7.2 s). On that cold crawl 12 Reddit and Facebook results were blocked by robots.txt and 7 returned HTTP errors, so 30 REAL results had no stored HTML.
+
 ### Sandbox tester and optimize loop
 
 `tester` puts one version of a page into the stored competitor set and scores it on its target queries in under a second, after a few seconds of model loading. You edit the page, the tester re-indexes and re-scores it, and you see which version does better before anything is published. `optimize` is the rapid iteration version: it rewrites the page, scores each version, and keeps the best one until every target query is PREDICTED at `--goal` or better, or a stop rule ends the run.
@@ -248,6 +279,7 @@ A URL source is fetched by the crawler, so `robots.txt` is respected and private
 | --- | --- |
 | `SERPAPI_KEY` | Google organic results via SerpAPI. Preferred. |
 | `DATAFORSEO_LOGIN` and `DATAFORSEO_PASSWORD` | Google organic results via DataForSEO. Used when SerpAPI is unset. |
+| `SERPER_API_KEY` | Google organic results via Serper. Used when SerpAPI and DataForSEO are unset. |
 | `BRAVE_API_KEY` | Fallback web search. Positions are Brave order, not Google. |
 | `OPENROUTER_API_KEY` | Cheap AI layer via OpenRouter (`openai/gpt-4o-mini` by default). |
 | `OPENAI_API_KEY` | OpenAI, or OpenRouter when the key starts with `sk-or-`. |

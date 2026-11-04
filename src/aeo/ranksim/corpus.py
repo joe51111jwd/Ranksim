@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from collections.abc import Iterable
 from urllib.parse import urljoin
 
 from bs4 import BeautifulSoup
@@ -14,9 +15,23 @@ from aeo.ranksim.loop import page_from_row
 from aeo.ranksim.store import RsPage
 
 
-def load_corpus_docs(session: Session) -> dict[str, object]:
-    """PageDoc map keyed by stored URL and by normalized URL."""
+def load_corpus_docs(session: Session, urls: Iterable[str] | None = None) -> dict[str, object]:
+    """PageDoc map keyed by stored URL and by normalized URL.
+
+    With urls, only stored rows whose URL (or normalized URL) is in that set are
+    loaded, so the link features are computed on that page set alone. A project
+    uses this so pages stored for another project do not move its numbers.
+    """
     rows = session.query(RsPage).filter(RsPage.status == "fetched").all()
+    if urls is not None:
+        wanted = set()
+        for url in urls:
+            wanted.add(url)
+            try:
+                wanted.add(normalize_url(url))
+            except ValueError:
+                continue
+        rows = [row for row in rows if row.url in wanted or _normal_or_none(row.url) in wanted]
     docs = {row.url: page_from_row(row) for row in rows}
     html_by_url = {row.url: row.raw_html or "" for row in rows}
     known = set(docs)
@@ -66,6 +81,13 @@ def load_corpus_docs(session: Session) -> dict[str, object]:
             continue
         docs[key] = doc
     return docs
+
+
+def _normal_or_none(url: str) -> str | None:
+    try:
+        return normalize_url(url)
+    except ValueError:
+        return None
 
 
 def _anchors(html: str, base: str) -> list[tuple[str, str]]:

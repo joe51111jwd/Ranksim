@@ -21,6 +21,8 @@ class Settings(BaseSettings):
     anthropic_api_key: str | None = None
     openai_api_key: str | None = None
     openrouter_api_key: str | None = None
+    perplexity_api_key: str | None = None
+    gemini_api_key: str | None = None
     openai_base_url: str = "https://api.openai.com/v1"
     openai_model: str = "gpt-4o-mini"
     openai_embedding_model: str = "text-embedding-3-small"
@@ -48,6 +50,8 @@ class Settings(BaseSettings):
         "dataforseo_login",
         "dataforseo_password",
         "anthropic_api_key",
+        "perplexity_api_key",
+        "gemini_api_key",
         "ranksim_llm_model",
         mode="before",
     )

@@ -28,6 +28,12 @@ from aeo.ranksim.features import MODEL_FEATURES
 from aeo.ranksim.ledger import record_check
 from aeo.ranksim.store import RsPage, open_session
 
+LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
+CSP = (
+    "default-src 'none'; style-src 'unsafe-inline'; img-src 'self' data:; "
+    "form-action 'self'; frame-ancestors 'none'; base-uri 'none'"
+)
+
 SAMPLE_QUERY = "hcss heavyjob alternative"
 SAMPLE_URL = "https://www.smartcrewhq.com/compare/hcss-heavyjob-alternative/"
 SAMPLE_FILE = Path("smartcrew/pr8_v3/compare-hcss-heavyjob-alternative.html")
@@ -36,8 +42,11 @@ GRAPH_PATH = Path("smartcrew/linkgraph.json")
 
 class DemoState:
     def __init__(self, settings: Settings, serp_file: str, database: str) -> None:
+        import secrets
+
         self.settings = settings
         self.database = database
+        self.csrf = secrets.token_urlsafe(32)  # per process; the check form must echo it
         self.today = date.today()
         self.labels = load_serp_file(serp_file)
         self.queries = list(dict.fromkeys(row.query for row in self.labels))
@@ -137,6 +146,7 @@ class DemoState:
             fixes=self.fixes,
             error=error,
             freshness_note=self.freshness_note(),
+            csrf=self.csrf,
         )
         return HTMLResponse(html)
 
@@ -146,8 +156,40 @@ class DemoState:
         return "<html><head><title>HCSS alternative for dirtwork contractors</title></head><body><h1>HCSS alternative</h1><p>Draft.</p></body></html>"
 
 
-def create_app(state: DemoState) -> FastAPI:
+def _host_only(value: str) -> str:
+    value = value.strip().lower()
+    if value.startswith("["):
+        return value[1 : value.find("]")] if "]" in value else value
+    return value.rsplit(":", 1)[0] if value.count(":") == 1 else value
+
+
+def create_app(state: DemoState, *, allowed_hosts: set[str] | frozenset[str] | None = None) -> FastAPI:
+    """The demo app. Only requests whose Host header names an allowed host are served.
+
+    A page on another site can make a browser send requests to 127.0.0.1 (and DNS rebinding can
+    make a hostile name resolve there); checking Host refuses those. POST /check also needs the
+    per-process CSRF token from the form. The app has no user accounts: it is single-user.
+    """
+    from secrets import compare_digest
+
+    from fastapi.responses import PlainTextResponse
+
     app = FastAPI(title="Pre-publish rank check")
+    allowed = {host.lower() for host in (allowed_hosts or LOOPBACK_HOSTS)}
+
+    @app.middleware("http")
+    async def guard(request, call_next):
+        if _host_only(request.headers.get("host", "")) not in allowed:
+            return PlainTextResponse(
+                "Unknown host. Open this tool at http://127.0.0.1 on the computer running it.", status_code=400
+            )
+        response = await call_next(request)
+        response.headers["content-security-policy"] = CSP
+        response.headers["x-content-type-options"] = "nosniff"
+        response.headers["referrer-policy"] = "no-referrer"
+        response.headers["x-frame-options"] = "DENY"
+        response.headers["cache-control"] = "no-store"
+        return response
 
     from starlette.exceptions import HTTPException as StarletteHTTPException
     from starlette.requests import Request
@@ -190,7 +232,13 @@ def create_app(state: DemoState) -> FastAPI:
         return HTMLResponse(render_space_page(state.space, state.llm_note()))
 
     @app.post("/check", response_class=HTMLResponse)
-    def check(query: str = Form(""), url: str = Form(""), html: str = Form(""), ai: str = Form("")) -> HTMLResponse:
+    def check(
+        query: str = Form(""), url: str = Form(""), html: str = Form(""), ai: str = Form(""), csrf: str = Form("")
+    ) -> HTMLResponse:
+        if not csrf or not compare_digest(csrf, state.csrf):
+            response = state.page(selected="", url_value="", html_value="", error="This form expired. Reload the page and try again.")
+            response.status_code = 403
+            return response
         query = " ".join(query.split())
         url = url.strip()
         if query not in state.fit.models:

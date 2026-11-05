@@ -192,6 +192,12 @@ def main(argv: list[str] | None = None) -> None:
 
     serve = sub.add_parser("serve", help="Serve the pre-publish rank check demo")
     serve.add_argument("--host", default="127.0.0.1", help="Default is local only. The demo has no authentication.")
+    serve.add_argument(
+        "--allowed-host",
+        action="append",
+        default=[],
+        help="Extra Host header names to serve (required when --host is not a loopback address)",
+    )
     serve.add_argument("--port", type=int, default=8765)
     serve.add_argument("--serp", default="smartcrew/serp.csv")
 
@@ -682,14 +688,22 @@ def _ai_eval(settings, database: str, args) -> None:
 def _serve(settings, database: str, args) -> None:
     import uvicorn
 
-    from aeo.ranksim.serve import DemoState, create_app
+    from aeo.ranksim.serve import LOOPBACK_HOSTS, DemoState, create_app
 
+    allowed = set(LOOPBACK_HOSTS) | {name.lower() for name in args.allowed_host}
+    if args.host not in LOOPBACK_HOSTS:
+        if not args.allowed_host:
+            raise SystemExit(
+                f"Refusing to serve on {args.host} without --allowed-host. The demo has no authentication; "
+                "name the host people will use, and put it behind your own access control."
+            )
+        print(f"Warning: serving on {args.host}. There is no authentication; anyone who can reach it can use it.")
     print("Fitting the leave-one-query-out model. This does not call an LLM or a SERP API.")
     state = DemoState(settings, args.serp, database)
     print(state.accuracy_line())
     print(state.llm_note())
     print(state.relevance_note)
-    app = create_app(state)
+    app = create_app(state, allowed_hosts=allowed)
     print(f"Demo: http://127.0.0.1:{args.port}/")
     uvicorn.run(app, host=args.host, port=args.port, log_level="warning")
 

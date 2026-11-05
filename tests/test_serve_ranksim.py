@@ -25,9 +25,9 @@ def test_check_records_a_prediction_with_provenance(demo):
     state, db = demo
     assert state.fit.models, "the seeded demo corpus should still fit some query models"
     query = sorted(state.fit.models)[0]
-    client = TestClient(create_app(state))
+    client = TestClient(create_app(state), base_url="http://127.0.0.1")
     draft = (REPO / "smartcrew/pr8_v3/blog-best-software-small-dirt-work-contractors.html").read_text(errors="replace")
-    response = client.post("/check", data={"query": query, "url": "https://www.smartcrewhq.com/draft-test/", "html": draft})
+    response = client.post("/check", data={"query": query, "url": "https://www.smartcrewhq.com/draft-test/", "html": draft, "csrf": state.csrf})
     assert response.status_code == 200
     assert "PREDICTED" in response.text
     session = open_session(db)
@@ -43,8 +43,8 @@ def test_check_records_a_prediction_with_provenance(demo):
 
 def test_rejected_check_records_nothing(demo):
     state, db = demo
-    client = TestClient(create_app(state))
-    response = client.post("/check", data={"query": "a query nobody labeled", "url": "", "html": "<html></html>"})
+    client = TestClient(create_app(state), base_url="http://127.0.0.1")
+    response = client.post("/check", data={"query": "a query nobody labeled", "url": "", "html": "<html></html>", "csrf": state.csrf})
     assert response.status_code == 200
     assert "No rank was invented" in response.text
     session = open_session(db)
@@ -55,9 +55,9 @@ def test_rejected_check_records_nothing(demo):
 def test_result_screen_leads_with_uncertainty_and_coverage(demo):
     state, _db = demo
     query = sorted(state.fit.models)[0]
-    client = TestClient(create_app(state))
+    client = TestClient(create_app(state), base_url="http://127.0.0.1")
     pasted = "<html><head><title>Dirt work software for crews</title></head><body><h1>Dirt work</h1><p>" + "crew schedule " * 200 + "</p></body></html>"
-    page = client.post("/check", data={"query": query, "url": "", "html": pasted}).text
+    page = client.post("/check", data={"query": query, "url": "", "html": pasted, "csrf": state.csrf}).text
     hero = page[page.index('id="result"'):]
     assert "UNSURE: no supported call" in hero
     assert "Compared with" in hero and "not a Google position" in hero
@@ -72,7 +72,7 @@ def test_drafts_are_tagged_and_whole_site_ranks_match_a_check_of_the_same_html(d
     from aeo.ranksim.store import page_by_url
 
     state, db = demo
-    page = TestClient(create_app(state)).get("/").text
+    page = TestClient(create_app(state), base_url="http://127.0.0.1").get("/").text
     assert "DRAFT HTML, not the live page" in page
     assert state.site_rows, "the demo corpus should score at least one client page"
     session = open_session(db)
@@ -99,8 +99,8 @@ def test_drafts_are_tagged_and_whole_site_ranks_match_a_check_of_the_same_html(d
 
 def test_oversized_draft_gets_a_readable_error(demo):
     state, _db = demo
-    client = TestClient(create_app(state))
-    response = client.post("/check", data={"query": sorted(state.fit.models)[0], "url": "", "html": "x" * 1_200_000})
+    client = TestClient(create_app(state), base_url="http://127.0.0.1")
+    response = client.post("/check", data={"query": sorted(state.fit.models)[0], "url": "", "html": "x" * 1_200_000, "csrf": state.csrf})
     assert response.status_code == 413
     assert "1 MB form limit" in response.text
 
@@ -116,3 +116,27 @@ def test_report_escapes_summary_fields(tmp_path):
     session.close()
     html = render_report(db)
     assert "<script>alert(1)</script>" not in html and "<img src=x" not in html
+
+
+def test_unknown_hosts_and_missing_csrf_are_refused(demo):
+    state, db = demo
+    app = create_app(state)
+    rebinding = TestClient(app, base_url="http://evil.example").get("/")
+    assert rebinding.status_code == 400 and "Unknown host" in rebinding.text
+    client = TestClient(app, base_url="http://127.0.0.1")
+    home = client.get("/")
+    assert home.status_code == 200 and state.csrf in home.text
+    assert "frame-ancestors 'none'" in home.headers["content-security-policy"]
+    forged = client.post("/check", data={"query": sorted(state.fit.models)[0], "url": "", "html": "<html>x</html>"})
+    assert forged.status_code == 403
+    session = open_session(db)
+    assert session.query(RsPrediction).count() == 0
+    session.close()
+
+
+def test_serve_refuses_a_public_bind_without_named_hosts(tmp_path, monkeypatch):
+    from aeo.ranksim.cli import main
+
+    monkeypatch.chdir(REPO)
+    with pytest.raises(SystemExit, match="allowed-host"):
+        main(["--database", f"sqlite:///{tmp_path / 'x.db'}", "serve", "--host", "0.0.0.0", "--port", "8799"])

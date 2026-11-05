@@ -92,3 +92,62 @@ def test_missing_robots_txt_allows_crawling_and_status_is_reported():
     result = crawler.fetch("https://site.test/page")
     crawler.close()
     assert result.status_code == 200 and result.html and not result.blocked
+
+
+def test_large_bodies_are_streamed_and_capped_and_unreadable_types_are_not_downloaded():
+    from aeo.crawl import fetch as fetch_module
+
+    pulled = {"html": 0, "pdf": 0}
+
+    def body(kind, total):
+        def generate():
+            chunk = b"<p>" + b"x" * 65_000 + b"</p>"
+            sent = 0
+            while sent < total:
+                pulled[kind] += len(chunk)
+                sent += len(chunk)
+                yield chunk
+        return generate()
+
+    def handler(request):
+        if request.url.path == "/robots.txt":
+            return httpx.Response(404)
+        if request.url.path == "/big":
+            return httpx.Response(200, headers={"content-type": "text/html"}, content=body("html", 50_000_000))
+        return httpx.Response(200, headers={"content-type": "application/pdf"}, content=body("pdf", 20_000_000))
+
+    crawler = _crawler(handler)
+    big = crawler.fetch("https://site.test/big")
+    pdf = crawler.fetch("https://site.test/doc.pdf")
+    crawler.close()
+    assert len(big.html) <= fetch_module.MAX_BYTES
+    assert pulled["html"] < fetch_module.MAX_BYTES + 200_000  # stopped near the cap, not at 50 MB
+    assert "Unsupported content type" in pdf.error
+    assert pulled["pdf"] == 0
+
+
+def test_a_slow_drip_stops_at_the_total_deadline(monkeypatch):
+    from aeo.crawl import fetch as fetch_module
+
+    ticks = {"t": 0.0}
+
+    def clock():
+        ticks["t"] += 5.0  # every read takes 5 "seconds"
+        return ticks["t"]
+
+    def drip():
+        for _ in range(1000):
+            yield b"<p>a</p>"
+
+    def handler(request):
+        if request.url.path == "/robots.txt":
+            return httpx.Response(404)
+        return httpx.Response(200, headers={"content-type": "text/html"}, content=drip())
+
+    crawler = _crawler(handler)
+    crawler._clock = clock
+    result = crawler.fetch("https://site.test/slow")
+    crawler.close()
+    reads = int(ticks["t"] / 5.0)
+    assert reads < 20  # stopped after about TOTAL_DEADLINE_SECONDS / 5 reads, not 1000
+    assert result.html.count("<p>a</p>") < 20

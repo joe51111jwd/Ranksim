@@ -15,6 +15,10 @@ from aeo.errors import UnsafeURL
 
 MAX_BYTES = 2_000_000
 MAX_REDIRECTS = 5
+# Whole-response budget. httpx timeouts apply per read, so a server that drips one byte at a
+# time could otherwise hold a fetch open far longer than the configured timeout.
+TOTAL_DEADLINE_SECONDS = 30.0
+READABLE_TYPES = ("html", "xml", "text/plain")
 
 
 @dataclass
@@ -252,13 +256,7 @@ class Crawler:
         current = url
         for _ in range(MAX_REDIRECTS + 1):
             current = assert_safe_url(current, allow_private=self.allow_private, keep_trailing_slash=True)
-            response = self.client.get(
-                current,
-                headers={
-                    "User-Agent": self.user_agent,
-                    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-                },
-            )
+            response = self._get_capped(current)
             if response.status_code not in {301, 302, 303, 307, 308}:
                 return response, current
             location = response.headers.get("location")
@@ -266,6 +264,55 @@ class Crawler:
                 raise RedirectProblem(f"HTTP {response.status_code} redirect without a Location header")
             current = urljoin(current, location)
         raise RedirectProblem(f"Too many redirects (more than {MAX_REDIRECTS})")
+
+    def _get_capped(self, url: str) -> httpx.Response:
+        """Stream a GET and stop at MAX_BYTES or the total deadline, whichever comes first.
+
+        Bodies of errors, redirects and types we never read (images, PDFs, video) are not
+        downloaded at all. Ported from the unmerged claude/bold-einstein-oi5qoj branch, plus the
+        overall deadline. Returns a fully read, capped response.
+        """
+        request = self.client.build_request(
+            "GET",
+            url,
+            headers={
+                "User-Agent": self.user_agent,
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            },
+        )
+        clock = getattr(self, "_clock", time.monotonic)
+        started = clock()
+        response = self.client.send(request, stream=True)
+        chunks: list[bytes] = []
+        truncated = False
+        try:
+            content_type = response.headers.get("content-type", "")
+            readable = response.status_code < 300 and (
+                not content_type or any(kind in content_type for kind in READABLE_TYPES)
+            )
+            if readable:
+                size = 0
+                for chunk in response.iter_bytes():
+                    chunks.append(chunk)
+                    size += len(chunk)
+                    if size >= MAX_BYTES or clock() - started > TOTAL_DEADLINE_SECONDS:
+                        truncated = True
+                        break
+        finally:
+            response.close()
+        headers = [
+            (name, value)
+            for name, value in response.headers.items()
+            if name.lower() not in {"content-encoding", "content-length", "transfer-encoding"}
+        ]
+        capped = httpx.Response(
+            status_code=response.status_code,
+            headers=headers,
+            content=b"".join(chunks)[:MAX_BYTES],
+            request=request,
+        )
+        capped.extensions["truncated"] = truncated
+        return capped
 
     def _read_capped(self, response: httpx.Response) -> str:
         raw = response.content[:MAX_BYTES]

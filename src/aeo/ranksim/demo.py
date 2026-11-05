@@ -25,6 +25,7 @@ def render_page(
     fixes: list[LinkFix],
     error: str = "",
     freshness_note: str = "",
+    csrf: str = "",
 ) -> str:
     options = "\n".join(
         f'<option value="{escape(query)}"{" selected" if query == selected else ""}>{escape(query)}</option>'
@@ -49,7 +50,8 @@ def render_page(
         f"<section class=\"banner\"><p>{escape(freshness_note)}</p><p>{escape(accuracy_line)}</p><p>{escape(calibration_note)}</p>"
         f"<p>{escape(llm_note)}</p><p>{escape(relevance_note)}</p></section>"
     )
-    body.append("<form method=\"post\" action=\"/check\">")
+    body.append("<form method=\"post\" action=\"/check#result\">")
+    body.append(f"<input type=\"hidden\" name=\"csrf\" value=\"{escape(csrf)}\">")
     body.append("<label>Query<select name=\"query\">" + options + "</select></label>")
     body.append(f"<label>Draft URL<input name=\"url\" value=\"{escape(url_value)}\" placeholder=\"https://www.smartcrewhq.com/compare/hcss-heavyjob-alternative/\"></label>")
     body.append(f"<label>Pasted HTML<textarea name=\"html\" rows=\"8\">{escape(html_value)}</textarea></label>")

@@ -289,18 +289,28 @@ def _graph(settings, database: str, args) -> None:
         max_fetches=args.max_fetches,
     )
     save_graph(graph, args.out)
+    from aeo.ranksim.store import page_by_url
+
     session = open_session(database)
     try:
         stored = 0
+        kept = 0
         for url, node in graph.nodes.items():
             if node.status != "fetched" or not node.html:
+                continue
+            existing = page_by_url(session, url)
+            if existing is not None and existing.status == "fetched" and (existing.raw_html or "").strip():
+                # Keep the evaluation snapshot (and its URL spelling) that index-serp stored.
+                # A graph refetch used to add a trailing-slash twin and overwrite timings, which
+                # changed the benchmark without changing coverage.
+                kept += 1
                 continue
             store_fetched_page(session, FetchResult(url=url, html=node.html, status="fetched", source="graph_crawl"))
             stored += 1
     finally:
         session.close()
     print(f"Link graph: {len(graph.nodes)} pages, {len(graph.edges)} edges, {graph.fetches} fetches, {graph.blocked} robots blocks.")
-    print(f"Stored {stored} fetched pages into the rank database.")
+    print(f"Stored {stored} new pages into the rank database; kept {kept} existing snapshots unchanged.")
     print(f"Wrote {args.out}")
     for note in graph.notes:
         print(note)

@@ -179,8 +179,7 @@ class CachingLlm(LlmClient):
         self.cache_hits = 0
         self.estimated_usd = 0.0
         self.unpriced_calls = 0
-        cache_dir.mkdir(parents=True, exist_ok=True)
-        cost_log.parent.mkdir(parents=True, exist_ok=True)
+        # Directories are created on first write, so building a client never touches disk.
 
     def complete(self, system: str, user: str) -> LlmReply:
         key = hashlib.sha256(
@@ -209,6 +208,7 @@ class CachingLlm(LlmClient):
         reply.model = reply.model or self.model
         reply.estimated_usd = estimate_cost(reply.model, reply.input_tokens, reply.output_tokens)
         reply.cache_hit = False
+        self.cache_dir.mkdir(parents=True, exist_ok=True)
         path.write_text(
             json.dumps(
                 {
@@ -249,6 +249,7 @@ class CachingLlm(LlmClient):
             "output_tokens": reply.output_tokens,
             "estimated_usd": reply.estimated_usd,
         }
+        self.cost_log.parent.mkdir(parents=True, exist_ok=True)
         with self.cost_log.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(row) + "\n")
 

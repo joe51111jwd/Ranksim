@@ -111,7 +111,9 @@ def test_backlink_rank_parser_scales_and_ignores_empty_payloads():
 
 
 def test_auto_serp_refuses_to_invent_results_without_keys():
-    settings = Settings(brave_api_key=None, serpapi_key=None, dataforseo_login=None, dataforseo_password=None)
+    settings = Settings(
+        brave_api_key=None, serpapi_key=None, serper_api_key=None, dataforseo_login=None, dataforseo_password=None
+    )
     with pytest.raises(ProviderConfigError, match="Refusing to invent"):
         resolve_serp(settings, "auto")
     mock = resolve_serp(settings, "mock")

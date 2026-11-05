@@ -150,3 +150,14 @@ def test_relevance_experiment_refuses_instead_of_reporting_a_fake_null():
     no_pairs = [RankExample(f"q{q}", f"https://s{q}.example/", 1.0, {"bm25f": 1.0}) for q in range(4)]
     result = relevance_experiment(no_pairs, {(row.query, row.url): 0.5 for row in no_pairs}, bootstrap=50)
     assert result.measured is False and "no labeled pairs" in result.note
+
+
+def test_a_lone_unpaired_query_does_not_let_an_untrainable_experiment_through():
+    from aeo.ranksim.judge import relevance_experiment
+    from aeo.ranksim.lambdamart import RankExample
+
+    shared = [RankExample(f"q{q}", f"https://shared.example/{p}", float(p), {"bm25f": 1.0}) for q in range(3) for p in range(1, 6)]
+    lonely = [RankExample("lonely", "https://elsewhere.example/", 1.0, {"bm25f": 1.0})]
+    rows = shared + lonely
+    result = relevance_experiment(rows, {(row.query, row.url): 0.5 for row in rows}, bootstrap=20)
+    assert result.measured is False and "one query cluster" in result.note

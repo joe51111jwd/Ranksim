@@ -138,7 +138,11 @@ def relevance_experiment(
 
     if count_pairs(judged) == 0:
         return RelevanceExperiment(False, None, None, "LLM relevance was not measured: the judged rows contain no labeled pairs.")
-    usable_clusters = {clusters[row.query] for row in judged}
+    from aeo.ranksim.benchmark import _queries_with_pairs
+
+    # Count only queries that can be evaluated: folds are built from those, so a lone query with
+    # no pairs in another cluster must not let an untrainable fold through.
+    usable_clusters = {clusters[row.query] for row in _queries_with_pairs(judged)}
     if len(usable_clusters) < 2:
         return RelevanceExperiment(
             False, None, None, "LLM relevance was not measured: all judged queries fall in one query cluster, so no fold could train."

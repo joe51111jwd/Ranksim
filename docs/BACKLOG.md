@@ -56,8 +56,9 @@ Each item lists the problem, the change, acceptance criteria, dependencies, effo
   addresses; robots.txt fail-closed; demo Host allowlist, CSRF token and security headers; local
   bind by default and a refusal to bind publicly without named hosts.
 - Still open: the address guard resolves a name and httpx resolves it again, so DNS rebinding
-  against the crawler works in a local test; Retry-After and backoff are not honoured; the demo has
-  no user accounts or rate limit.
+  against the crawler works in a local test; the 30 s deadline starts counting only after response
+  headers arrive, so a server that drips its headers is bounded only by the per-read timeout;
+  Retry-After and backoff are not honoured; the demo has no user accounts or rate limit.
 - Change: connect to the vetted IP (Host header plus SNI); honour 429/503 Retry-After per host;
   add authentication and a rate limit before any shared deployment.
 - Acceptance: local tests for rebinding and a 429 storm pass; a shared deployment requires a token.

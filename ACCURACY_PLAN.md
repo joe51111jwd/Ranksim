@@ -8,11 +8,14 @@ On a fresh crawl of the 16-query SmartCrew file (`smartcrew/serp.csv`, 135 rows,
 2026-10-29; 128 rows covered, 458 pairs, 11 query clusters), `python -m aeo.ranksim benchmark` with
 the code on this branch (crawler-artifact features removed, corrected text extraction):
 
-| protocol | LambdaMART pairwise (95% CI) | BM25F only | random (95% of seeds) | range seen today |
-| --- | --- | --- | --- | --- |
-| leave one query out | 0.581 (0.499-0.648) | 0.478 | 0.424-0.572 | 0.544-0.592 |
-| leave one query cluster out | 0.559 (0.503-0.609) | 0.478 | 0.424-0.572 | 0.550-0.568 |
-| clusters and their URLs held out | 0.498 (0.404-0.584) | 0.478 | 0.424-0.572 | 0.498-0.566 |
+| protocol | LambdaMART pairwise (95% CI) | domain prior (no content) | BM25F only | random (95% of seeds) | LambdaMART range seen today |
+| --- | --- | --- | --- | --- | --- |
+| leave one query out | 0.581 (0.499-0.648) | 0.602 | 0.478 | 0.424-0.572 | 0.544-0.592 |
+| leave one query cluster out | 0.559 (0.503-0.609) | 0.571 | 0.478 | 0.424-0.572 | 0.550-0.568 |
+| clusters and their URLs held out | 0.498 (0.404-0.584) | 0.548 | 0.478 | 0.424-0.572 | 0.498-0.566 |
+
+Pairwise gives a score tie half credit (the domain prior ties often). The domain prior scores a page by
+how well its domain ranked in the training queries and reads no page content.
 
 "Range seen today" spans three same-day crawls, with and without the link-graph pages, and before
 and after the feature and extraction fixes. Re-extracting 4 pages alone moved the last row from
@@ -20,12 +23,13 @@ and after the feature and extraction fixes. Re-extracting 4 pages alone moved th
 
 What that means:
 
+- A content-free domain prior scores at least as well as the model under every protocol. On this
+  data, "which domains rank" explains more of Google's order than anything the model reads on the
+  page.
 - Under the protocol closest to scoring an unseen draft (query clusters and their URLs held out),
   the model is at chance and not distinguishable from BM25F alone. Under the looser protocols it
   beats BM25F by about 0.08-0.10 with paired intervals that barely exclude 0, on one of several
   comparisons, which is not enough to claim a product-level effect.
-- A domain prior with no page content matches the model under leave-one-query-out. Near-duplicate
-  queries and the same URLs across queries reward recognizing pages, not judging content.
 - The number moves with corpus contents: adding 58 unlabeled pages to the database moved the same
   458 pairs from 0.548 to 0.579, because in-corpus PageRank and anchor text use every stored page.
 - Earlier figures (0.534 on 414 pairs, 0.604 and 0.592 on 245 pairs, "gap >= 2.00 -> 0.716") came
@@ -81,8 +85,9 @@ against observations made after the prediction. That ledger is the track record;
 The old rule picked a score-gap threshold on the backtest pairs and reported accuracy on the same
 pairs. Held out by query cluster and URL, with the threshold chosen on other folds, those
 "confident" calls were right 20 of 41 and 16 of 47 times on two versions of the fresh crawl. A
-threshold is now used only if held-out confident calls are right at least 0.65 of the time on at
-least 30 calls. On current data every call is UNSURE.
+threshold is now used only if the threshold actually shipped, scored on held-out predictions, and a
+cross-fitted threshold both reach 0.65 on at least 30 calls. On the current corpus the shipped gap
+(1.00) was right on 122 of 232 held-out pairs, so every call is UNSURE.
 
 ## LLM relevance
 

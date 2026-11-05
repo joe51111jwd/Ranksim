@@ -159,3 +159,23 @@ Conventions for every entry:
 - Reading: with 11 independent query clusters, any single number here moves by several points
   with small, legitimate data changes. Only a larger, frozen, dated benchmark (BACKLOG P0-1, P0-2)
   can settle whether the model beats BM25F on unseen pages.
+
+## 2026-11-05 E10. Fair tie handling and the domain prior
+
+- An independent review found that benchmark pairwise counted score ties as wrong while the random
+  band has no ties, which penalized tie-heavy baselines. With ties at half credit (their expected
+  value under random tie-breaking), on the E9 corpus:
+
+  | protocol | LambdaMART | domain prior | BM25F | linear prior |
+  | --- | --- | --- | --- | --- |
+  | loqo | 0.581 | 0.602 | 0.478 | 0.474 |
+  | cluster | 0.559 | 0.571 | 0.478 | 0.474 |
+  | cluster-url | 0.498 | 0.548 | 0.478 | 0.474 |
+
+- The domain prior reads no page content: each domain's mean labeled relevance in the training
+  queries. It matches or beats the content model under every protocol. On this data, the model's
+  page features add nothing measurable over "which domains rank".
+- The same review found the confidence gate checked per-fold thresholds but shipped a different
+  one. Scored directly, the shipped gap of 1.00 was right on 122 of 232 held-out pairs (0.526).
+- Next measurement that matters: the same comparison on a frozen, dated, multi-site benchmark
+  (BACKLOG P0-1, P0-2), where a domain prior cannot memorize one niche's winners.

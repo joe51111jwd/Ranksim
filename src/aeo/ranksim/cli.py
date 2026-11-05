@@ -124,6 +124,29 @@ def main(argv: list[str] | None = None) -> None:
     space.add_argument("--serp", default="smartcrew/serp.csv")
     space.add_argument("--competitors", default="smartcrew/competitors.csv")
 
+    bench = sub.add_parser(
+        "benchmark",
+        help="Model vs simple baselines on identical query-held-out folds, with bootstrap intervals",
+    )
+    bench.add_argument("serp_file", nargs="?", default="smartcrew/serp.csv")
+    bench.add_argument(
+        "--protocol",
+        action="append",
+        choices=["loqo", "cluster", "cluster-url"],
+        help="Repeat to pick several. Default: all three.",
+    )
+    bench.add_argument("--cluster-threshold", type=float, default=0.3)
+    bench.add_argument("--bootstrap", type=int, default=2000)
+    bench.add_argument("--seed", type=int, default=0)
+    bench.add_argument(
+        "--as-of",
+        default=None,
+        help="Date (YYYY-MM-DD) for date-dependent features such as freshness. Default: today. Recorded in the output.",
+    )
+    bench.add_argument("--graph", default=None, help="Optional link-graph JSON to attach, as graph-eval does")
+    bench.add_argument("--no-graph-features", action="store_true", help="Drop orphan, link_depth, crawl_inlinks")
+    bench.add_argument("--json", dest="json_out", default=None, help="Write the full report as JSON")
+
     ai_eval = sub.add_parser("ai-eval", help="LLM relevance CV delta and one AI fix loop. Needs an LLM key.")
     ai_eval.add_argument("--serp", default="smartcrew/serp.csv")
     ai_eval.add_argument("--query", default="dirt work contractor software")
@@ -184,6 +207,8 @@ def main(argv: list[str] | None = None) -> None:
             _noise(args)
         elif args.command == "serve":
             _serve(settings, database, args)
+        elif args.command == "benchmark":
+            _benchmark(database, args)
         elif args.command == "ai-eval":
             _ai_eval(settings, database, args)
         elif args.command == "competitors":
@@ -377,6 +402,93 @@ def _space(database: str, args) -> None:
     if fit.pairwise is not None:
         print(f"PREDICTED backtest pairwise {fit.pairwise:.3f} on {fit.n_pairs} pairs.")
     print(render_space_text(report), end="")
+
+
+def _benchmark(database: str, args) -> None:
+    from datetime import date
+
+    from aeo.ranksim.benchmark import (
+        GRAPH_FEATURES,
+        PROTOCOLS,
+        build_report,
+        corpus_fingerprint,
+        file_sha256,
+        labeled_coverage,
+        render_report,
+        run_benchmark,
+    )
+    from aeo.ranksim.corpus import load_corpus_docs
+    from aeo.ranksim.features import FEATURE_NAMES
+    from aeo.ranksim.groundtruth import load_serp_file
+    from aeo.ranksim.lambdamart import build_examples
+    from aeo.ranksim.linkgraph import attach_graph, load_graph
+    from aeo.ranksim.store import RsPage
+
+    as_of = date.fromisoformat(args.as_of) if args.as_of else date.today()
+    labels = load_serp_file(args.serp_file)
+    intents = {row.query: row.intent for row in build_keywords()}
+    session = open_session(database)
+    try:
+        pages = load_corpus_docs(session)
+        coverage = labeled_coverage(labels, session)
+        stored = [
+            (url, html or "")
+            for url, html in session.query(RsPage.url, RsPage.raw_html).filter(RsPage.status == "fetched").all()
+        ]
+    finally:
+        session.close()
+    notes = []
+    if args.graph:
+        graph_path = Path(args.graph)
+        if not graph_path.is_file():
+            raise SystemExit(f"No graph file at {graph_path}.")
+        attach_graph(pages, load_graph(str(graph_path)))
+        notes.append(f"Link graph attached from {graph_path} (sha256 {file_sha256(graph_path)[:12]}).")
+    names = [name for name in FEATURE_NAMES if not (args.no_graph_features and name in GRAPH_FEATURES)]
+    examples, uncovered, withheld = build_examples(labels, pages, intents, today=as_of)
+    if withheld:
+        notes.append("navboost_prior was withheld because prior_position copied position.")
+    if not args.as_of:
+        notes.append(
+            "as_of defaulted to today. Freshness depends on it, so rerunning on another day can change results."
+        )
+    protocols = tuple(args.protocol or PROTOCOLS)
+    clusters, results = run_benchmark(
+        examples,
+        protocols=protocols,
+        cluster_threshold=args.cluster_threshold,
+        bootstrap=args.bootstrap,
+        seed=args.seed,
+        feature_names=names,
+        cluster_source=labels,
+    )
+    report = build_report(
+        examples=examples,
+        n_labels=len(labels),
+        uncovered=uncovered,
+        coverage=coverage,
+        clusters=clusters,
+        protocols=results,
+        as_of=as_of,
+        labels_sha=file_sha256(args.serp_file),
+        corpus_sha=corpus_fingerprint(stored) if stored else None,
+        corpus_pages=len(stored),
+        cluster_threshold=args.cluster_threshold,
+        bootstrap=args.bootstrap,
+        seed=args.seed,
+        feature_names=names,
+        notes=notes,
+    )
+    if len({row.query for row in examples}) < 2:
+        print("Benchmark not computed. Need at least 2 queries with 2 stored pages each.")
+        print("Coverage of labeled rows: " + ", ".join(f"{k} {v}" for k, v in sorted(coverage.items())))
+        return
+    print(render_report(report), end="")
+    if args.json_out:
+        out = Path(args.json_out)
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(report.to_json(), encoding="utf-8")
+        print(f"Wrote {out}")
 
 
 def _ai_eval(settings, database: str, args) -> None:

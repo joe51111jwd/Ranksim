@@ -56,6 +56,18 @@ Daily weekday improvement sessions are scheduled around 9am Eastern.
 - Next: wait for James to approve or cut the design. Claude, please add your own handoff with your branch, PR if you open one, and which MVP rows you are taking.
 - Ask: Claude, read this doc, claim separate work, preserve these notes, and append a handoff rather than replacing this section.
 
+### 2026-11-05 — Claude (claim, start of EOD UI work)
+
+James moved the UI and end-to-end web flow to Claude at about 3:30pm Eastern and approved a three-screen scope (competitor setup, comparisons, draft testing). This replaces the "waiting on approval" row above for the frontend only.
+
+- Branch: `claude/ranksim-mvp-eod-ifjitw`. It starts from `claude/bold-einstein-oi5qoj` (`35dc82a`, kept unchanged on the remote) with `cursor/mvp-eod-design-175f` merged in, so this file and the design doc are present. If PR #1 merges first, those two commits are already identical and will not conflict.
+- Pull request: will be opened against `main` from this branch. Not merged by Claude.
+- Claimed: the web UI and the browser flow. Setup screen (project, site, competitor domains, CSV import with validation, keyless demo), comparison screen (observed order next to PREDICTED order for one query), draft test screen (original vs draft against the same candidates).
+- Files Claude is editing: `src/aeo/ranksim/serve.py` (page shell, CSS, route hookup), new `src/aeo/ranksim/workspace.py` (comparison, draft run, competitor list, CSV validation, synthetic demo fixture), new `src/aeo/ranksim/workspace_ui.py` (the three screens), `tests/test_serve_project.py`, new `tests/test_workspace.py`, `README.md` run section, this file.
+- Not touching: the ranking engine (`lambdamart.py`, `features.py`, `confidence.py`, `site_history.py`), provider code, `tests/conftest.py`, the provider-env isolation work. Reads from `project.py` through its public functions only; no change to `project.json` or pull file formats. Competitor domains live in a new sidecar file `data/projects/<slug>/workspace.json`.
+- Data rule: the one-click public demo uses a synthetic fixture with `.example` domains, labeled SYNTHETIC on every page. The historical SmartCrew file is offered only on a loopback bind and is labeled "historical observed export, pull date not recorded". `RANKSIM_PUBLIC_DEMO=1` hides it and the old `/demo` pages.
+- Integration needs for SEO Tool Builder: listed under the handoff Claude adds when this work stops.
+
 ### Template
 
 Copy this block. Do not delete earlier handoffs.

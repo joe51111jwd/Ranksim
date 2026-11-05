@@ -174,3 +174,25 @@ def test_report_does_not_count_failed_checks_as_not_ranking(tmp_path):
     session.close()
     text = _track_block(db)
     assert "appeared in 1 of 1 collected queries" in text and "failed for 2 queries" in text
+
+
+def test_a_stuffed_draft_is_flagged_next_to_the_verdict():
+    from aeo.ranksim.check import stuffing_warnings
+    from aeo.ranksim.features import PageDoc
+
+    filler = " ".join(f"word{index}" for index in range(300))
+    stuffed = PageDoc(url="https://x.example/", title="dirt work software dirt work software dirt work software",
+                      body=("dirt work software " * 60) + filler)
+    normal = PageDoc(url="https://x.example/", title="Dirt work software for crews", body="Dirt work software for crews. " + filler)
+    assert len(stuffing_warnings("dirt work software", stuffed)) == 2
+    assert stuffing_warnings("dirt work software", normal) == []
+
+
+def test_labeled_query_without_pages_gets_an_accurate_message():
+    from aeo.ranksim.check import check_draft
+    from aeo.ranksim.confidence import Calibration
+
+    labels = [SerpLabel("dirt work software", "https://a.example/", 1, None, "manual_csv")]
+    result = check_draft(query="dirt work software", html="<html></html>", url="https://x.example/", labels=labels,
+                         pages={}, model=None, calibration=Calibration(None, None, None, ""), run_ai=False)
+    assert "is in the labeled file" in result.error

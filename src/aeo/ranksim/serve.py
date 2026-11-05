@@ -242,7 +242,14 @@ def create_app(state: DemoState, *, allowed_hosts: set[str] | frozenset[str] | N
         query = " ".join(query.split())
         url = url.strip()
         if query not in state.fit.models:
-            return state.page(selected=query, url_value=url, html_value=html, error="That query is not in the stored Google file. No rank was invented.")
+            labeled = query in state.queries
+            message = (
+                "That query is in the stored Google file, but fewer than two of its pages have stored HTML, so it has "
+                "no model. No rank was invented. Run index-serp to crawl its pages."
+                if labeled
+                else "That query is not in the stored Google file. No rank was invented."
+            )
+            return state.page(selected=query, url_value=url, html_value=html, error=message)
         draft = html.strip()
         if not draft and url:
             draft = _fetch_html(state.settings, url)

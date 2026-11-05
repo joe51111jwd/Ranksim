@@ -108,6 +108,30 @@ def rewrite_problems(query: str, original_html: str, rewritten_html: str, url: s
     return problems
 
 
+def stuffing_warnings(query: str, doc: PageDoc) -> list[str]:
+    """The simulator rewards query words in the title, H1 and body, so a stuffed draft can score
+    well here without being a better page. Flag it next to the verdict."""
+    from aeo.textutil import salient_terms, tokenize_for_search
+
+    terms = set(salient_terms(query))
+    if not terms:
+        return []
+    warnings = []
+    body = tokenize_for_search(doc.body)
+    if body:
+        share = sum(1 for token in body if token in terms) / len(body)
+        if share > MAX_QUERY_TERM_SHARE:
+            warnings.append(
+                f"Query words are {share:.0%} of this draft's body. The simulator rewards repetition; Google's spam "
+                "policies penalize keyword stuffing, so a slot earned this way is not evidence."
+            )
+    title = tokenize_for_search(doc.title)
+    repeated = sorted(term for term in terms if title.count(term) > MAX_TITLE_TERM_REPEATS)
+    if repeated:
+        warnings.append(f"The title repeats {', '.join(repeated)} more than twice.")
+    return warnings
+
+
 def _rewrite_input(url: str, html: str) -> str:
     """Readable draft text for the model, wrapped as untrusted data. Raw HTML heads are not sent."""
     doc = page_from_html(url, html, is_ours=True)
@@ -142,6 +166,7 @@ class CheckResult:
     added_draft: bool = False
     error: str = ""
     candidate_hashes: dict[str, str | None] = field(default_factory=dict)
+    warnings: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -190,7 +215,13 @@ def check_draft(
     today = today or date.today()
     result = CheckResult(query=query, url=url, predicted_rank=None, predicted_of=0, confidence="UNSURE", confidence_note=calibration.note)
     if model is None:
-        result.error = "This query is not in the labeled file, so no competitor set was scored and no position was invented."
+        labeled = any(label.query == query for label in labels)
+        result.error = (
+            "This query is in the labeled file, but fewer than two of its pages have stored HTML, so no model "
+            "could be trained for it and no position was invented. Run index-serp to crawl them."
+            if labeled
+            else "This query is not in the labeled file, so no competitor set was scored and no position was invented."
+        )
         return result
     try:
         draft_key = normalize_url(url)
@@ -233,6 +264,7 @@ def check_draft(
             row.confidence = calibration.label(abs(row.score_gap))
     result.candidate_hashes = {doc.url: doc.html_sha256 for doc in docs}
     result.gaps = _top_gaps(raw, ours, ranks, model, docs)
+    result.warnings = stuffing_warnings(query, docs[ours])
     neighbor = _neighbor_gap(scores, examples, order, ours)
     result.confidence = calibration.label(neighbor)
     result.confidence_note = calibration.note

@@ -181,6 +181,7 @@ def _result_html(result: CheckResult, freshness_note: str = "") -> str:
   <p class="rank">PREDICTED slot {escape(rank)} supplied pages</p>
   <p>{escape(result.query)}</p>
   <p class="coverage">{escape(coverage)} The slot is among those pages only; it is not a Google position.</p>
+  {''.join(f'<p class="warn" role="alert">{escape(item)}</p>' for item in result.warnings)}
   <p class="muted">{escape(freshness_note)}</p>
   {added}
   <p class="muted">{escape(result.confidence_note)}</p>

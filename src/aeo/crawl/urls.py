@@ -45,6 +45,9 @@ def same_site(left: str, right: str) -> bool:
     return domain_of(left) == domain_of(right) and domain_of(left) != ""
 
 
+_NAT64 = ipaddress.ip_network("64:ff9b::/96")
+
+
 def _is_public_ip(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
     """Only globally routable unicast addresses are public.
 
@@ -55,6 +58,16 @@ def _is_public_ip(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
     mapped = getattr(ip, "ipv4_mapped", None)
     if mapped is not None:
         ip = mapped
+    if ip.version == 6:
+        # NAT64 (64:ff9b::/96) and 6to4 (2002::/16) embed an IPv4 address that the network will
+        # actually reach; check that address too.
+        if ip in _NAT64:
+            embedded = ipaddress.IPv4Address(int(ip) & 0xFFFFFFFF)
+            if not (embedded.is_global and not embedded.is_multicast):
+                return False
+        sixtofour = ip.sixtofour
+        if sixtofour is not None and not (sixtofour.is_global and not sixtofour.is_multicast):
+            return False
     return bool(ip.is_global) and not ip.is_multicast
 
 

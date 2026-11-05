@@ -184,8 +184,10 @@ def test_a_stuffed_draft_is_flagged_next_to_the_verdict():
     stuffed = PageDoc(url="https://x.example/", title="dirt work software dirt work software dirt work software",
                       body=("dirt work software " * 60) + filler)
     normal = PageDoc(url="https://x.example/", title="Dirt work software for crews", body="Dirt work software for crews. " + filler)
-    assert len(stuffing_warnings("dirt work software", stuffed)) == 2
-    assert stuffing_warnings("dirt work software", normal) == []
+    peers = [PageDoc(url=f"https://p{index}.example/", title="Best dirt work software", body="Dirt work software for crews. " + filler) for index in range(3)]
+    assert len(stuffing_warnings("dirt work software", stuffed, peers)) == 2
+    assert stuffing_warnings("dirt work software", normal, peers) == []
+    assert stuffing_warnings("dirt work software", stuffed, []) == []  # nothing to compare with: no claim
 
 
 def test_labeled_query_without_pages_gets_an_accurate_message():
@@ -196,3 +198,51 @@ def test_labeled_query_without_pages_gets_an_accurate_message():
     result = check_draft(query="dirt work software", html="<html></html>", url="https://x.example/", labels=labels,
                          pages={}, model=None, calibration=Calibration(None, None, None, ""), run_ai=False)
     assert "is in the labeled file" in result.error
+
+
+def test_an_unchanged_on_topic_draft_passes_the_rewrite_guard():
+    from aeo.ranksim.check import rewrite_problems
+
+    sample = (REPO / "smartcrew/pr8_v3/compare-hcss-heavyjob-alternative.html").read_text(errors="replace")
+    assert rewrite_problems("hcss heavyjob alternative", sample, sample) == []
+
+
+def test_llm_budget_counts_every_attempt_and_fails_closed_for_unpriced_models(tmp_path):
+    from aeo.ranksim.llm import CachingLlm, LlmClient, LlmError, LlmReply
+
+    class Flaky(LlmClient):
+        name, available, model = "openai", True, "gpt-4o-mini"
+        sent = 0
+
+        def complete(self, system, user, validate=None, **kwargs):
+            self.sent += 1
+            raise LlmError("timed out", retryable=True)
+
+    flaky = Flaky()
+    client = CachingLlm(flaky, tmp_path / "c", tmp_path / "l.jsonl", "t", max_calls=2, sleep=lambda _s: None)
+    for index in range(5):
+        client.complete("s", f"u{index}")
+    assert flaky.sent == 2
+
+    class Unpriced(LlmClient):
+        name, available, model = "openrouter", True, "vendor/unpriced-model"
+        sent = 0
+
+        def complete(self, system, user, validate=None, **kwargs):
+            self.sent += 1
+            return LlmReply(text="ok", provider="openrouter", stub=False, model=self.model, input_tokens=300_000, output_tokens=1)
+
+    unpriced = Unpriced()
+    client = CachingLlm(unpriced, tmp_path / "c2", tmp_path / "l2.jsonl", "t", max_usd=0.01)
+    replies = [client.complete("s", f"u{index}") for index in range(5)]
+    assert unpriced.sent == 1 and "cannot be enforced" in replies[-1].note
+    disabled = CachingLlm(Unpriced(), tmp_path / "c3", tmp_path / "l3.jsonl", "t", max_usd=0)
+    assert not any(disabled.complete("s", f"u{index}").stub for index in range(3))
+
+
+def test_truncated_llm_replies_are_failures_not_rewrites(monkeypatch):
+    import aeo.ranksim.llm as llm_module
+
+    monkeypatch.setattr(llm_module, "_post", lambda *a, **k: {"choices": [{"message": {"content": "<html>half"}, "finish_reason": "length"}]})
+    with pytest.raises(llm_module.LlmError, match="cut off"):
+        llm_module.OpenAiLlm("k", "gpt-4o-mini", "https://example.invalid/v1").complete("s", "u", max_tokens=10)

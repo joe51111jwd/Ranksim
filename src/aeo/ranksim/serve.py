@@ -119,8 +119,17 @@ class DemoState:
 
     def freshness_note(self) -> str:
         dates = sorted({row.observed_on[:10] for row in self.labels if row.observed_on})
+        missing = [
+            name
+            for name, present in (
+                ("country", any(row.country for row in self.labels)),
+                ("device", any(row.device for row in self.labels)),
+            )
+            if not present
+        ]
+        missing_text = f" It also has no {' or '.join(missing)}." if missing else ""
         if not dates:
-            return "Google results: the label file has no collection date, country or device, so their age is unknown."
+            return f"Google results: the label file has no collection date, so their age is unknown.{missing_text}"
         newest = dates[-1]
         try:
             age = (self.today - date.fromisoformat(newest)).days
@@ -128,7 +137,7 @@ class DemoState:
         except ValueError:
             age_text = ""
         span = newest if len(dates) == 1 else f"{dates[0]} to {newest}"
-        return f"Google results collected {span}{age_text}."
+        return f"Google results collected {span}{age_text}.{missing_text}"
 
     def page(self, *, selected: str, url_value: str, html_value: str, result=None, error: str = "") -> HTMLResponse:
         html = render_page(
@@ -201,11 +210,14 @@ def create_app(state: DemoState, *, allowed_hosts: set[str] | frozenset[str] | N
                 selected="",
                 url_value="",
                 html_value="",
-                error="That draft is larger than the 1 MB form limit. Remove inline scripts and styles, or paste the visible content only.",
+                error=(
+                    "That draft is too large for the form: the limit is 1 MB after form encoding, which is roughly "
+                    "500 KB of HTML. Remove inline scripts and styles, or paste the visible content only."
+                ),
             )
             response.status_code = 413
             return response
-        return HTMLResponse(escape(str(exc.detail)), status_code=exc.status_code)
+        return HTMLResponse(escape(str(exc.detail)), status_code=exc.status_code, headers=getattr(exc, "headers", None))
 
     @app.get("/", response_class=HTMLResponse)
     def home(demo: int = 0) -> HTMLResponse:
@@ -235,7 +247,7 @@ def create_app(state: DemoState, *, allowed_hosts: set[str] | frozenset[str] | N
     def check(
         query: str = Form(""), url: str = Form(""), html: str = Form(""), ai: str = Form(""), csrf: str = Form("")
     ) -> HTMLResponse:
-        if not csrf or not compare_digest(csrf, state.csrf):
+        if not csrf or not compare_digest(csrf.encode("utf-8"), state.csrf.encode("utf-8")):
             response = state.page(selected="", url_value="", html_value="", error="This form expired. Reload the page and try again.")
             response.status_code = 403
             return response

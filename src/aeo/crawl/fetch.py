@@ -84,12 +84,17 @@ class Crawler:
 
         allowed, robots_status = self._allowed(current)
         if not allowed:
+            error = (
+                "robots.txt did not answer (5xx, 429 or network error), so the site was not crawled"
+                if robots_status == "unreachable"
+                else "Blocked by robots.txt"
+            )
             return Fetched(
                 url=current,
                 final_url=current,
                 blocked=True,
                 robots_status=robots_status,
-                error="Blocked by robots.txt",
+                error=error,
             )
 
         self._polite_wait(current)
@@ -106,6 +111,16 @@ class Crawler:
             return Fetched(url=current, final_url=current, error=f"Fetch failed: {exc}", robots_status=robots_status)
 
         content_type = response.headers.get("content-type", "")
+        if response.extensions.get("truncated") == "deadline":
+            # A page cut off mid-download is a fragment; storing it would score part of a page.
+            return Fetched(
+                url=current,
+                final_url=final_url,
+                status_code=response.status_code,
+                error=f"Download took longer than {TOTAL_DEADLINE_SECONDS:.0f} s; the partial page was not used",
+                robots_status=robots_status,
+                content_type=content_type,
+            )
         body = self._read_capped(response)
         if response.status_code >= 400:
             return Fetched(
@@ -117,7 +132,8 @@ class Crawler:
                 robots_status=robots_status,
                 content_type=content_type,
             )
-        if content_type and "html" not in content_type and "xml" not in content_type and "text/plain" not in content_type:
+        lowered = content_type.lower()
+        if content_type and "html" not in lowered and "xml" not in lowered and "text/plain" not in lowered:
             return Fetched(
                 url=current,
                 final_url=final_url,
@@ -221,7 +237,7 @@ class Crawler:
         robots_url = origin + "/robots.txt"
         try:
             safe = assert_safe_url(robots_url, allow_private=self.allow_private)
-            response, _final = self._get_following_redirects(safe)
+            response, _final = self._get_following_redirects(safe, any_type=True)
         except RedirectProblem:
             self._robots[origin] = None  # redirect loop: treat as unavailable
             return None
@@ -252,11 +268,11 @@ class Crawler:
             time.sleep(delay - elapsed)
         self._last_fetch[origin] = time.monotonic()
 
-    def _get_following_redirects(self, url: str) -> tuple[httpx.Response, str]:
+    def _get_following_redirects(self, url: str, *, any_type: bool = False) -> tuple[httpx.Response, str]:
         current = url
         for _ in range(MAX_REDIRECTS + 1):
             current = assert_safe_url(current, allow_private=self.allow_private, keep_trailing_slash=True)
-            response = self._get_capped(current)
+            response = self._get_capped(current, any_type=any_type)
             if response.status_code not in {301, 302, 303, 307, 308}:
                 return response, current
             location = response.headers.get("location")
@@ -265,7 +281,7 @@ class Crawler:
             current = urljoin(current, location)
         raise RedirectProblem(f"Too many redirects (more than {MAX_REDIRECTS})")
 
-    def _get_capped(self, url: str) -> httpx.Response:
+    def _get_capped(self, url: str, *, any_type: bool = False) -> httpx.Response:
         """Stream a GET and stop at MAX_BYTES or the total deadline, whichever comes first.
 
         Bodies of errors, redirects and types we never read (images, PDFs, video) are not
@@ -284,19 +300,23 @@ class Crawler:
         started = clock()
         response = self.client.send(request, stream=True)
         chunks: list[bytes] = []
-        truncated = False
+        truncated = ""
         try:
-            content_type = response.headers.get("content-type", "")
+            content_type = response.headers.get("content-type", "").lower()
+            # robots.txt is read whatever its declared type: hosts often serve it as octet-stream.
             readable = response.status_code < 300 and (
-                not content_type or any(kind in content_type for kind in READABLE_TYPES)
+                any_type or not content_type or any(kind in content_type for kind in READABLE_TYPES)
             )
             if readable:
                 size = 0
                 for chunk in response.iter_bytes():
                     chunks.append(chunk)
                     size += len(chunk)
-                    if size >= MAX_BYTES or clock() - started > TOTAL_DEADLINE_SECONDS:
-                        truncated = True
+                    if size >= MAX_BYTES:
+                        truncated = "size"
+                        break
+                    if clock() - started > TOTAL_DEADLINE_SECONDS:
+                        truncated = "deadline"
                         break
         finally:
             response.close()

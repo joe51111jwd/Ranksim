@@ -61,7 +61,7 @@ def test_result_screen_leads_with_uncertainty_and_coverage(demo):
     hero = page[page.index('id="result"'):]
     assert "UNSURE: no supported call" in hero
     assert "Compared with" in hero and "not a Google position" in hero
-    assert "label file has no collection date" in page
+    assert "label file has no collection date" in page and "no country or device" in page
     assert hero.index("UNSURE") < hero.index("PREDICTED slot")
     assert "crew schedule" in page[page.index("<textarea"):]  # the pasted draft is kept
     assert 'name="ai" value="1" checked' not in page          # AI off unless asked
@@ -102,7 +102,7 @@ def test_oversized_draft_gets_a_readable_error(demo):
     client = TestClient(create_app(state), base_url="http://127.0.0.1")
     response = client.post("/check", data={"query": sorted(state.fit.models)[0], "url": "", "html": "x" * 1_200_000, "csrf": state.csrf})
     assert response.status_code == 413
-    assert "1 MB form limit" in response.text
+    assert "500 KB of HTML" in response.text
 
 
 def test_report_escapes_summary_fields(tmp_path):
@@ -140,3 +140,12 @@ def test_serve_refuses_a_public_bind_without_named_hosts(tmp_path, monkeypatch):
     monkeypatch.chdir(REPO)
     with pytest.raises(SystemExit, match="allowed-host"):
         main(["--database", f"sqlite:///{tmp_path / 'x.db'}", "serve", "--host", "0.0.0.0", "--port", "8799"])
+
+
+def test_odd_csrf_values_and_method_errors_are_handled(demo):
+    state, _db = demo
+    client = TestClient(create_app(state), base_url="http://127.0.0.1")
+    odd = client.post("/check", data={"query": "q", "url": "", "html": "<html></html>", "csrf": "\u00e9"})
+    assert odd.status_code == 403
+    wrong_method = client.get("/check")
+    assert wrong_method.status_code == 405 and "POST" in wrong_method.headers.get("allow", "")

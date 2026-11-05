@@ -21,7 +21,7 @@ class Scripted(LlmClient):
         self.replies = list(replies)
         self.calls = 0
 
-    def complete(self, system, user, validate=None):
+    def complete(self, system, user, validate=None, **kwargs):
         self.calls += 1
         item = self.replies.pop(0)
         if isinstance(item, Exception):

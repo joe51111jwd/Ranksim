@@ -60,7 +60,7 @@ def _post(url: str, *, headers: dict, payload: dict, timeout: float) -> dict:
     try:
         return response.json()
     except ValueError:
-        raise LlmError("LLM provider returned a non-JSON body.", retryable=True) from None
+        raise LlmError("LLM provider returned a non-JSON body.") from None
 
 
 @dataclass
@@ -81,7 +81,9 @@ class LlmClient:
     available = False
     model = ""
 
-    def complete(self, system: str, user: str, validate: Callable[[str], bool] | None = None) -> LlmReply:
+    def complete(
+        self, system: str, user: str, validate: Callable[[str], bool] | None = None, max_tokens: int | None = None
+    ) -> LlmReply:
         raise RuntimeError("No LLM is configured.")
 
     def cost_summary(self) -> str:
@@ -93,7 +95,9 @@ class StubLlm(LlmClient):
     available = False
     model = ""
 
-    def complete(self, system: str, user: str, validate: Callable[[str], bool] | None = None) -> LlmReply:
+    def complete(
+        self, system: str, user: str, validate: Callable[[str], bool] | None = None, max_tokens: int | None = None
+    ) -> LlmReply:
         return LlmReply(text="", provider="stub", stub=True, model="", estimated_usd=0.0)
 
     def cost_summary(self) -> str:
@@ -113,7 +117,9 @@ class OpenAiLlm(LlmClient):
         self.base_url = base_url.rstrip("/")
         self.extra_headers = extra_headers or {}
 
-    def complete(self, system: str, user: str, validate: Callable[[str], bool] | None = None) -> LlmReply:
+    def complete(
+        self, system: str, user: str, validate: Callable[[str], bool] | None = None, max_tokens: int | None = None
+    ) -> LlmReply:
         headers = {"Authorization": f"Bearer {self.api_key}", **self.extra_headers}
         payload = _post(
             f"{self.base_url}/chat/completions",
@@ -121,7 +127,7 @@ class OpenAiLlm(LlmClient):
             payload={
                 "model": self.model,
                 "temperature": self.temperature,
-                "max_tokens": self.max_tokens,
+                "max_tokens": max_tokens or self.max_tokens,
                 "messages": [
                     {"role": "system", "content": system},
                     {"role": "user", "content": user},
@@ -130,9 +136,12 @@ class OpenAiLlm(LlmClient):
             timeout=60.0,
         )
         try:
-            text = payload["choices"][0]["message"]["content"]
+            choice = payload["choices"][0]
+            text = choice["message"]["content"]
         except (KeyError, IndexError, TypeError):
             raise LlmError("LLM provider returned an unexpected response shape.") from None
+        if choice.get("finish_reason") == "length":
+            raise LlmError("LLM reply was cut off at the token limit, so it was not used.")
         usage = payload.get("usage") or {}
         return LlmReply(
             text=str(text or ""),
@@ -173,7 +182,9 @@ class AnthropicLlm(LlmClient):
         self.api_key = api_key
         self.model = model
 
-    def complete(self, system: str, user: str, validate: Callable[[str], bool] | None = None) -> LlmReply:
+    def complete(
+        self, system: str, user: str, validate: Callable[[str], bool] | None = None, max_tokens: int | None = None
+    ) -> LlmReply:
         payload = _post(
             f"{self.base_url}/messages",
             headers={
@@ -183,13 +194,15 @@ class AnthropicLlm(LlmClient):
             },
             payload={
                 "model": self.model,
-                "max_tokens": self.max_tokens,
+                "max_tokens": max_tokens or self.max_tokens,
                 "temperature": self.temperature,
                 "system": system,
                 "messages": [{"role": "user", "content": user}],
             },
             timeout=60.0,
         )
+        if payload.get("stop_reason") == "max_tokens":
+            raise LlmError("LLM reply was cut off at the token limit, so it was not used.")
         parts = payload.get("content") or []
         text = "".join(str(part.get("text") or "") for part in parts if isinstance(part, dict))
         usage = payload.get("usage") or {}
@@ -239,14 +252,16 @@ class CachingLlm(LlmClient):
         self.retries = max(0, retries)
         self.sleep = sleep
         self.calls = 0
+        self.attempts = 0
         self.cache_hits = 0
         self.failures = 0
+        self.unpriced_seen = False
         self.budget_refusals = 0
         self.estimated_usd = 0.0
         self.unpriced_calls = 0
         # Directories are created on first write, so building a client never touches disk.
 
-    def cache_key(self, system: str, user: str) -> str:
+    def cache_key(self, system: str, user: str, max_tokens: int | None = None) -> str:
         return hashlib.sha256(
             json.dumps(
                 {
@@ -255,7 +270,7 @@ class CachingLlm(LlmClient):
                     "base_url": getattr(self.inner, "base_url", ""),
                     "model": self.model,
                     "temperature": getattr(self.inner, "temperature", None),
-                    "max_tokens": getattr(self.inner, "max_tokens", None),
+                    "max_tokens": max_tokens or getattr(self.inner, "max_tokens", None),
                     "system": system,
                     "user": user,
                 },
@@ -263,8 +278,10 @@ class CachingLlm(LlmClient):
             ).encode()
         ).hexdigest()
 
-    def complete(self, system: str, user: str, validate: Callable[[str], bool] | None = None) -> LlmReply:
-        key = self.cache_key(system, user)
+    def complete(
+        self, system: str, user: str, validate: Callable[[str], bool] | None = None, max_tokens: int | None = None
+    ) -> LlmReply:
+        key = self.cache_key(system, user, max_tokens)
         path = self.cache_dir / f"{key}.json"
         saved = None
         if path.is_file():
@@ -293,9 +310,14 @@ class CachingLlm(LlmClient):
             self.budget_refusals += 1
             return LlmReply(text="", provider=self.inner.name, stub=True, model=self.model, estimated_usd=0.0, note=refusal)
         reply = None
+        extra = {"max_tokens": max_tokens} if max_tokens else {}
         for attempt in range(self.retries + 1):
+            if attempt and self._over_budget():
+                break
+            # Every request sent counts toward the call cap: a failed or timed-out request can be billed too.
+            self.attempts += 1
             try:
-                reply = self.inner.complete(system, user)
+                reply = self.inner.complete(system, user, **extra)
                 break
             except LlmError as exc:
                 if exc.retryable and attempt < self.retries:
@@ -303,6 +325,9 @@ class CachingLlm(LlmClient):
                     continue
                 self.failures += 1
                 return LlmReply(text="", provider=self.inner.name, stub=True, model=self.model, estimated_usd=0.0, note=str(exc))
+        if reply is None:
+            self.failures += 1
+            return LlmReply(text="", provider=self.inner.name, stub=True, model=self.model, estimated_usd=0.0, note=self._over_budget())
         assert reply is not None
         reply.model = reply.model or self.model
         reply.estimated_usd = estimate_cost(reply.model, reply.input_tokens, reply.output_tokens)
@@ -323,16 +348,23 @@ class CachingLlm(LlmClient):
         self.calls += 1
         if reply.estimated_usd is None:
             self.unpriced_calls += 1
+            self.unpriced_seen = True
         else:
             self.estimated_usd += reply.estimated_usd
         self._log(reply)
         return reply
 
     def _over_budget(self) -> str:
-        if self.max_calls is not None and self.calls >= self.max_calls:
-            return f"LLM budget reached: {self.calls} fresh calls (limit {self.max_calls}). No more calls this run."
-        if self.max_usd is not None and self.estimated_usd >= self.max_usd:
-            return f"LLM budget reached: estimated ${self.estimated_usd:.4f} (limit ${self.max_usd:.2f}). No more calls this run."
+        if self.max_calls is not None and self.attempts >= self.max_calls:
+            return f"LLM budget reached: {self.attempts} requests sent (limit {self.max_calls}). No more calls this run."
+        if self.max_usd is not None and self.max_usd > 0:
+            if self.unpriced_seen:
+                return (
+                    f"LLM budget stop: model {self.model} has no published rate here, so the ${self.max_usd:.2f} cap "
+                    "cannot be enforced. Set RANKSIM_LLM_MAX_USD=0 to rely on the call cap alone."
+                )
+            if self.estimated_usd >= self.max_usd:
+                return f"LLM budget reached: estimated ${self.estimated_usd:.4f} (limit ${self.max_usd:.2f}). No more calls this run."
         return ""
 
     def cost_summary(self) -> str:

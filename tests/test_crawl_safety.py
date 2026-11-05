@@ -150,4 +150,43 @@ def test_a_slow_drip_stops_at_the_total_deadline(monkeypatch):
     crawler.close()
     reads = int(ticks["t"] / 5.0)
     assert reads < 20  # stopped after about TOTAL_DEADLINE_SECONDS / 5 reads, not 1000
-    assert result.html.count("<p>a</p>") < 20
+    assert result.html == "" and "longer than" in result.error  # a fragment is not stored as the page
+
+
+@pytest.mark.parametrize("content_type", ["application/octet-stream", "binary/octet-stream", "TEXT/PLAIN; charset=utf-8"])
+def test_robots_rules_apply_whatever_the_declared_content_type(content_type):
+    fetched = []
+
+    def handler(request):
+        if request.url.path == "/robots.txt":
+            return httpx.Response(200, text="User-agent: *\nDisallow: /private\n", headers={"content-type": content_type})
+        fetched.append(request.url.path)
+        return httpx.Response(200, text="<html><title>x</title><body>page</body></html>", headers={"content-type": "text/html"})
+
+    crawler = _crawler(handler)
+    result = crawler.fetch("https://site.test/private/page")
+    crawler.close()
+    assert result.blocked and result.robots_status == "disallowed" and fetched == []
+
+
+def test_unreachable_robots_is_not_reported_as_a_disallow():
+    def handler(request):
+        if request.url.path == "/robots.txt":
+            return httpx.Response(503)
+        return httpx.Response(200, text="<html></html>")
+
+    crawler = _crawler(handler)
+    result = crawler.fetch("https://site.test/page")
+    crawler.close()
+    assert "did not answer" in result.error and "Blocked by robots.txt" not in result.error
+
+
+@pytest.mark.parametrize("url", ["http://[64:ff9b::7f00:1]/", "http://[64:ff9b::a9fe:a9fe]/", "http://[2002:7f00:1::1]/"])
+def test_nat64_and_6to4_wrapped_private_addresses_are_refused(url):
+    with pytest.raises(UnsafeURL):
+        assert_safe_url(url, resolve=False)
+
+
+def test_public_addresses_still_pass():
+    for url in ("http://8.8.8.8/", "http://1.1.1.1/", "http://[2606:4700:4700::1111]/", "http://[64:ff9b::808:808]/"):
+        assert assert_safe_url(url, resolve=False)

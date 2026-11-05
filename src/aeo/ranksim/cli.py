@@ -355,10 +355,15 @@ def _noise(args) -> None:
     if not report.computed:
         print("No pairwise agreement, top-1 rate, or position change is reported.")
         return
+    def fmt(value):
+        return "n/a" if value is None else f"{value:.3f}"
+
     print(f"Queries compared: {report.n_queries}.")
-    print(f"Pairwise agreement: {report.pairwise_agreement:.3f}.")
-    print(f"Top-1 same rate: {report.top1_same_rate:.3f}.")
-    print(f"Mean absolute position change: {report.mean_abs_position_change:.3f}.")
+    print(f"Pairwise agreement, URLs present both days: {fmt(report.pairwise_agreement)} on {report.n_pairs} pairs.")
+    print(f"Pairwise agreement counting URLs that entered or left: {fmt(report.pairwise_with_churn)}.")
+    print(f"Mean list overlap: {fmt(report.mean_overlap)}. URLs entered: {report.entered}. URLs dropped: {report.dropped}.")
+    print(f"Top-1 same rate: {fmt(report.top1_same_rate)}.")
+    print(f"Mean absolute position change (URLs present both days): {fmt(report.mean_abs_position_change)}.")
 
 
 def _competitors(settings, database: str, args) -> None:
@@ -729,8 +734,9 @@ def _calibrate(database: str) -> None:
     print(f"Label: {label}")
     print(f"Provider: {provider}")
     print(f"Queries: {report.n_queries}. Pairs: {report.n_pairs}.")
-    print(f"Mean Spearman: {_num(report.spearman)}")
-    print(f"Mean NDCG at 10: {_num(report.ndcg_at_10)}")
+    print(f"Mean Spearman (in-sample): {_num(report.spearman)}")
+    print(f"Mean NDCG at 10 (in-sample): {_num(report.ndcg_at_10)}")
+    print("In-sample: the weights were fit and scored on the same queries. Use `benchmark` for held-out numbers.")
     if label != "calibrated_on_google_serp":
         print("This is not a Google accuracy number.")
 

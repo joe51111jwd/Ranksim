@@ -90,7 +90,7 @@ def _calibration_block(database_url: str | None) -> str:
         f"<p>Label: {escape(row.label)}. Provider: {escape(row.provider)}. "
         f"Source is {kind}.{synthetic} "
         f"Queries used: {row.n_queries}. Pairs: {row.n_pairs}. "
-        f"Mean Spearman: {spearman}. Mean NDCG at 10: {ndcg}. "
+        f"In-sample (fit and scored on the same queries, not held out): mean Spearman {spearman}, mean NDCG at 10 {ndcg}. "
         f"Authority feature used: {'yes' if row.authority_used else 'no'}.</p>"
     )
 

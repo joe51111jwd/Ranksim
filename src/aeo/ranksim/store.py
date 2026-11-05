@@ -269,7 +269,29 @@ def queries_with_serp(session: Session) -> list[str]:
 
 
 def page_by_url(session: Session, url: str) -> RsPage | None:
-    return session.get(RsPage, url)
+    """Find a stored page by URL, tolerating the trailing-slash and normalization variants.
+
+    Pages are stored under the URL they were labeled or fetched with (90 of 135 SmartCrew label
+    URLs end in "/"), while some callers look them up by normalize_url, which strips the slash.
+    An exact-key lookup alone missed most pages.
+    """
+    found = session.get(RsPage, url)
+    if found is not None:
+        return found
+    from aeo.crawl.urls import normalize_url
+
+    try:
+        candidates = [normalize_url(url), normalize_url(url, keep_trailing_slash=True)]
+    except ValueError:
+        return None
+    candidates += [candidate + "/" for candidate in candidates if not candidate.endswith("/")]
+    for candidate in dict.fromkeys(candidates):
+        if candidate == url:
+            continue
+        found = session.get(RsPage, candidate)
+        if found is not None:
+            return found
+    return None
 
 
 def save_rank_checks(session: Session, rows: list[RsRankCheck]) -> None:

@@ -123,3 +123,17 @@ def test_old_seeded_drafts_are_found_by_content(tmp_path, monkeypatch):
     assert session.get(RsPage, "https://other.example/").source == "crawl"
     session.close()
     assert flag_known_drafts(db) == 0
+
+
+def test_page_lookup_tolerates_trailing_slash_and_normalization(tmp_path):
+    from aeo.crawl.urls import normalize_url
+    from aeo.ranksim.store import page_by_url
+
+    session = open_session(f"sqlite:///{tmp_path / 'r.db'}")
+    store_fetched_page(session, FetchResult(url="https://x.example/a/", html=HTML.format("a " * 200), status="fetched"))
+    store_fetched_page(session, FetchResult(url="https://x.example/b", html=HTML.format("b " * 200), status="fetched"))
+    assert page_by_url(session, normalize_url("https://x.example/a/")).url == "https://x.example/a/"
+    assert page_by_url(session, "https://X.example/a").url == "https://x.example/a/"
+    assert page_by_url(session, "https://x.example/b/").url == "https://x.example/b"
+    assert page_by_url(session, "https://x.example/c") is None
+    session.close()

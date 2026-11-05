@@ -55,6 +55,7 @@ class CompetitorRow:
     stored_position: float | None
     predicted_rank: int
     outcome: str
+    score_gap: float | None = None  # checked page's score minus this competitor's score
 
 
 @dataclass
@@ -90,6 +91,7 @@ class CheckResult:
     fix_note: str = ""
     added_draft: bool = False
     error: str = ""
+    candidate_hashes: dict[str, str | None] = field(default_factory=dict)
 
 
 @dataclass
@@ -166,7 +168,9 @@ def check_draft(
     ours = next(index for index, doc in enumerate(docs) if normalize_url(doc.url) == draft_key or doc.url == url)
     result.predicted_rank = ranks[ours]
     result.predicted_of = len(docs)
-    result.competitors = _competitors(docs, ranks, positions, ours)
+    ordered_scores = [scores[id(example)] for example in examples]
+    result.competitors = _competitors(docs, ranks, positions, ours, ordered_scores)
+    result.candidate_hashes = {doc.url: doc.html_sha256 for doc in docs}
     result.gaps = _top_gaps(raw, ours, ranks, model)
     neighbor = _neighbor_gap(scores, examples, order, ours)
     result.confidence = calibration.label(neighbor)
@@ -352,7 +356,7 @@ def _html_from_doc(doc: PageDoc) -> str:
     )
 
 
-def _competitors(docs, ranks, positions, ours: int) -> list[CompetitorRow]:
+def _competitors(docs, ranks, positions, ours: int, scores: list[float] | None = None) -> list[CompetitorRow]:
     rows = []
     our_rank = ranks[ours]
     for index, doc in enumerate(docs):
@@ -369,6 +373,7 @@ def _competitors(docs, ranks, positions, ours: int) -> list[CompetitorRow]:
                 stored_position=positions.get(key),
                 predicted_rank=ranks[index],
                 outcome="beats" if our_rank < ranks[index] else "loses",
+                score_gap=None if scores is None else scores[ours] - scores[index],
             )
         )
     rows.sort(key=lambda row: row.predicted_rank)

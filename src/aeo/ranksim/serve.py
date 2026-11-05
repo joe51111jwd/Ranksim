@@ -21,7 +21,10 @@ from aeo.ranksim.keywords import build_keywords
 from aeo.ranksim.lambdamart import build_examples
 from aeo.ranksim.linkgraph import LinkGraph, attach_graph, load_graph
 from aeo.ranksim.llm import resolve_llm
-from aeo.ranksim.store import open_session
+from aeo.ranksim.benchmark import corpus_fingerprint, feature_names_sha, file_sha256, git_commit, lightgbm_version
+from aeo.ranksim.features import FEATURE_NAMES
+from aeo.ranksim.ledger import record_check
+from aeo.ranksim.store import RsPage, open_session
 
 SAMPLE_QUERY = "hcss heavyjob alternative"
 SAMPLE_URL = "https://www.smartcrewhq.com/compare/hcss-heavyjob-alternative/"
@@ -32,6 +35,7 @@ GRAPH_PATH = Path("smartcrew/linkgraph.json")
 class DemoState:
     def __init__(self, settings: Settings, serp_file: str, database: str) -> None:
         self.settings = settings
+        self.database = database
         self.today = date.today()
         self.labels = load_serp_file(serp_file)
         self.queries = list(dict.fromkeys(row.query for row in self.labels))
@@ -43,8 +47,23 @@ class DemoState:
         session = open_session(database)
         try:
             self.pages = load_corpus_docs(session)
+            stored = [
+                (url, html or "")
+                for url, html in session.query(RsPage.url, RsPage.raw_html).filter(RsPage.status == "fetched").all()
+            ]
         finally:
             session.close()
+        self.provenance = {
+            "labels_file": serp_file,
+            "labels_sha256": file_sha256(serp_file),
+            "corpus_sha256": corpus_fingerprint(stored),
+            "corpus_pages": len(stored),
+            "git_commit": git_commit(),
+            "lightgbm": lightgbm_version(),
+            "features_sha": feature_names_sha(list(FEATURE_NAMES)),
+            "model": "lambdamart leave-one-query-out (the checked query held out)",
+            "as_of": self.today.isoformat(),
+        }
         self.graph = load_graph(str(GRAPH_PATH)) if GRAPH_PATH.is_file() else LinkGraph(
             notes=["No linkgraph.json yet. Run python -m aeo.ranksim graph."]
         )
@@ -164,9 +183,21 @@ def create_app(state: DemoState) -> FastAPI:
             llm=state.llm,
             run_ai=ai == "1",
         )
+        _record(state, result, draft)
         return state.page(selected=query, url_value=url, html_value="" if url != "https://draft.local/page" else draft, result=result, error=result.error)
 
     return app
+
+
+def _record(state: DemoState, result, html: str) -> None:
+    """Append the check to the prediction ledger. A ledger failure never blocks the answer."""
+    session = open_session(state.database)
+    try:
+        record_check(session, result, html=html, calibration=state.fit.calibration, provenance=state.provenance)
+    except Exception as exc:  # pragma: no cover - defensive
+        print(f"Prediction ledger write failed: {exc}")
+    finally:
+        session.close()
 
 
 def _fetch_html(settings: Settings, url: str) -> str:

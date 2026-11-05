@@ -105,6 +105,7 @@ def page_from_row(row: RsPage) -> PageDoc:
         authority=row.authority,
         is_ours=is_our_url(row.url),
         source=row.source or "unknown",
+        html_sha256=row.html_sha256,
     )
 
 

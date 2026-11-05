@@ -87,6 +87,7 @@ class PageDoc:
     link_depth: int | None = None
     crawl_inlinks: int | None = None
     source: str = "crawl"
+    html_sha256: str | None = None
 
 
 def url_text(url: str) -> str:

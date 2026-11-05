@@ -1,6 +1,11 @@
 """Leave-one-query-out fit plus a margin check for when to say UNSURE.
 
 If large score gaps are not more accurate on the backtest, every check stays UNSURE.
+
+A threshold picked on the backtest pairs and then scored on those same pairs is optimistic.
+Before a threshold is used for CLEARER labels, ``validate_calibration`` re-checks it with
+query clusters and their URLs held out and the threshold chosen on other folds only. That
+is the closest backtest to scoring a page the model has never seen, such as a draft.
 """
 
 from __future__ import annotations
@@ -10,6 +15,10 @@ from dataclasses import dataclass, field
 from aeo.ranksim.features import FEATURE_NAMES
 from aeo.ranksim.lambdamart import RankExample, _ndcg, _pairs, _top3_hit, fit_lambdamart, predict_scores
 from aeo.ranksim.metrics import mean_metric, spearman
+
+
+MIN_CONFIDENT_ACCURACY = 0.65
+MIN_CONFIDENT_CALLS = 30
 
 
 @dataclass
@@ -51,6 +60,7 @@ def loo_fit(
     feature_names: list[str] | tuple[str, ...] | None = None,
     *,
     keep_models: bool = False,
+    validate: bool = True,
 ) -> LooFit:
     names = list(feature_names or FEATURE_NAMES)
     by_query: dict[str, list[RankExample]] = {}
@@ -87,8 +97,59 @@ def loo_fit(
     result.spearman = mean_metric(spearmans)
     result.top3 = sum(hits) / len(hits) if hits else None
     result.n_pairs = pair_total
-    result.calibration = calibrate(result.pairs)
+    in_sample = calibrate(result.pairs)
+    if validate:
+        rows = [row for group in usable.values() for row in group]
+        result.calibration = validate_calibration(in_sample, rows, names)
+    else:
+        result.calibration = in_sample
     return result
+
+
+def validate_calibration(in_sample: Calibration, examples: list[RankExample], feature_names: list[str]) -> Calibration:
+    """Keep a threshold only if it holds with query clusters and their URLs held out."""
+    if in_sample.threshold is None:
+        return in_sample
+    from aeo.ranksim.benchmark import lambdamart_scorer, query_clusters, run_protocol
+
+    clusters = query_clusters(examples)
+    if len(set(clusters.values())) < 2:
+        return Calibration(None, None, None, "Too few query clusters to check the confidence threshold. Calls stay UNSURE.")
+    held = run_protocol(
+        examples,
+        "cluster-url",
+        clusters,
+        {"lambdamart": lambdamart_scorer(feature_names)},
+        bootstrap=0,
+    ).confidence
+    in_sample_text = (
+        f"On the leave-one-query-out backtest a score gap of {in_sample.threshold:.2f} looked accurate "
+        f"({in_sample.confident_pairwise:.3f} on {in_sample.confident_coverage:.0%} of pairs), but that "
+        "threshold was chosen and scored on the same pairs."
+    )
+    if held is None or held.calls < MIN_CONFIDENT_CALLS or (held.accuracy or 0.0) < MIN_CONFIDENT_ACCURACY:
+        calls = 0 if held is None else held.calls
+        right = 0 if held is None else held.correct
+        return Calibration(
+            None,
+            None,
+            None,
+            (
+                f"{in_sample_text} With query clusters and their URLs held out and the threshold chosen on "
+                f"other folds, {right} of {calls} confident calls were right. That does not meet "
+                f"{MIN_CONFIDENT_ACCURACY:.2f} on at least {MIN_CONFIDENT_CALLS} calls, so every call stays UNSURE."
+            ),
+        )
+    return Calibration(
+        in_sample.threshold,
+        held.accuracy,
+        held.coverage,
+        (
+            f"Pairs with a score gap of at least {in_sample.threshold:.2f} are labeled CLEARER. Held out by "
+            f"query cluster and URL, {held.correct} of {held.calls} such calls were right ({held.accuracy:.3f}, "
+            f"{held.coverage:.0%} of pairs). Smaller gaps are UNSURE. Still PREDICTED, not a Google rank."
+        ),
+    )
 
 
 def calibrate(pairs: list[PairMargin]) -> Calibration:

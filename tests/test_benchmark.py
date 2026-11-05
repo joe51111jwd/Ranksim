@@ -175,3 +175,44 @@ def test_clusters_come_from_the_label_file_not_crawl_coverage():
     assert clusters["a"] == clusters["b"]
     alone, _ = run_benchmark(examples, bootstrap=0, scorers={"f": feature_scorer("signal")})
     assert alone["a"] != alone["b"]
+
+
+def _synthetic(signal_tracks_label: bool, queries: int = 14, per_query: int = 5):
+    import random as _random
+
+    rng = _random.Random(7)
+    examples = []
+    for q in range(queries):
+        for position in range(1, per_query + 1):
+            signal = (per_query - position) * 3.0 if signal_tracks_label else rng.random()
+            examples.append(
+                RankExample(
+                    f"query {q}",
+                    f"https://q{q}p{position}.example/page",
+                    float(position),
+                    {"bm25_title": signal, "bm25f": signal},
+                )
+            )
+    return examples
+
+
+def test_validated_calibration_drops_a_threshold_that_fails_held_out():
+    from aeo.ranksim.confidence import Calibration, validate_calibration
+
+    in_sample = Calibration(0.05, 0.9, 0.5, "in-sample")
+    checked = validate_calibration(in_sample, _synthetic(False), ["bm25_title"])
+    assert checked.threshold is None
+    assert checked.label(100.0) == "UNSURE"
+    assert "chosen and scored on the same pairs" in checked.note
+    assert "stays UNSURE" in checked.note
+
+
+def test_validated_calibration_keeps_a_threshold_that_holds_held_out():
+    from aeo.ranksim.confidence import loo_fit
+
+    fit = loo_fit(_synthetic(True), ["bm25_title"])
+    assert fit.calibration.threshold is not None
+    assert fit.calibration.confident_pairwise >= 0.65
+    assert "Held out by query cluster and URL" in fit.calibration.note
+    unvalidated = loo_fit(_synthetic(True), ["bm25_title"], validate=False)
+    assert unvalidated.calibration.threshold == fit.calibration.threshold

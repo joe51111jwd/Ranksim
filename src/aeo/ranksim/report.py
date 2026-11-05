@@ -136,14 +136,17 @@ def _track_block(database_url: str | None) -> str:
             "<code>python -m aeo.ranksim track</code> records positions only from a SERP provider. "
             "It does not backfill missing days.</p>"
         )
-    found = sum(1 for row in rows if row.our_position is not None)
+    collected = [row for row in rows if getattr(row, "status", None) != "error"]
+    failed = len(rows) - len(collected)
+    found = sum(1 for row in collected if row.our_position is not None)
     sample = rows[0]
     kind = "Google" if sample.is_google and not sample.synthetic else sample.provider
     synthetic = " Synthetic." if sample.synthetic else ""
+    failure = f" Collection failed for {failed} queries; those are not counted as not ranking." if failed else ""
     return (
         f"<p>Latest check {escape(sample.checked_on)} via {escape(kind)}.{synthetic} "
-        f"SmartCrew appeared in {found} of {len(rows)} stored queries. "
-        "A blank position means the domain was outside the fetched results, not that it ranks at the bottom.</p>"
+        f"SmartCrew appeared in {found} of {len(collected)} collected queries.{failure} "
+        "A blank position on a collected query means the domain was outside the fetched results, not that it ranks at the bottom.</p>"
     )
 
 

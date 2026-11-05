@@ -16,17 +16,24 @@ Calls are pairwise ("the subject page ranks above competitor X"), because that i
 product claims. The predicted rank is a slot in the supplied candidate set, never a Google
 position. Scoring against an outcome:
 - both URLs observed in the collected results: the call is right or wrong;
-- only one observed: the observed one is treated as above the other only when the outcome
-  says how deep results were collected (``depth``); otherwise unresolved;
-- neither observed: unresolved. Unresolved calls are counted, never dropped silently.
+- subject observed, competitor not: the subject is above it only when the outcome says how deep
+  results were collected (``depth``); otherwise unresolved;
+- subject not observed: unresolved, because the ledger cannot tell "published and not ranking"
+  from "never published at that URL";
+- outcomes count only if observed on a calendar date after the latest local date the
+  prediction could have been made on (UTC date plus 14 hours), so an earlier observation
+  recorded with a local date cannot score a later prediction.
+Unresolved calls are counted, never dropped silently. Checks of pasted HTML with no real URL
+are not recorded at all: they can never be observed.
 """
 
 from __future__ import annotations
 
 import hashlib
 import json
+import threading
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import DateTime, Integer, String, Text
 from sqlalchemy.orm import Mapped, Session, mapped_column
@@ -36,6 +43,8 @@ from aeo.crawl.urls import normalize_url
 from aeo.ranksim.store import Base
 
 GENESIS = "0" * 64
+PLACEHOLDER_SUBJECTS = frozenset({"https://draft.local/page"})
+_APPEND_LOCK = threading.Lock()
 
 
 def _now() -> datetime:
@@ -51,7 +60,7 @@ class RsPrediction(Base):
     query: Mapped[str] = mapped_column(String(500), index=True)
     subject_url: Mapped[str] = mapped_column(String(2000))
     payload: Mapped[dict] = mapped_column(JSON)
-    prev_hash: Mapped[str] = mapped_column(String(64))
+    prev_hash: Mapped[str] = mapped_column(String(64), unique=True)  # one successor per row: no forks
     row_hash: Mapped[str] = mapped_column(String(64), unique=True)
 
 
@@ -120,20 +129,31 @@ def record_prediction(
         "calibration_note": calibration_note,
         "provenance": provenance,
     }
-    previous = session.query(RsPrediction).order_by(RsPrediction.id.desc()).first()
-    prev_hash = previous.row_hash if previous else GENESIS
-    row = RsPrediction(
-        created_at=stamp,
-        kind=kind,
-        query=query,
-        subject_url=subject_url,
-        payload=payload,
-        prev_hash=prev_hash,
-        row_hash=_row_hash(prev_hash, stamp, kind, query, subject_url, payload),
-    )
-    session.add(row)
-    session.commit()
-    return row
+    from sqlalchemy.exc import IntegrityError
+
+    # Reading the head and appending must not interleave, or two checks share a parent and the
+    # chain forks (verify would then report tampering). A lock covers one process; the unique
+    # prev_hash constraint plus a retry covers several processes on one database.
+    with _APPEND_LOCK:
+        for _attempt in range(5):
+            previous = session.query(RsPrediction).order_by(RsPrediction.id.desc()).first()
+            prev_hash = previous.row_hash if previous else GENESIS
+            row = RsPrediction(
+                created_at=stamp,
+                kind=kind,
+                query=query,
+                subject_url=subject_url,
+                payload=payload,
+                prev_hash=prev_hash,
+                row_hash=_row_hash(prev_hash, stamp, kind, query, subject_url, payload),
+            )
+            session.add(row)
+            try:
+                session.commit()
+                return row
+            except IntegrityError:
+                session.rollback()
+        raise RuntimeError("Could not append to the prediction ledger after 5 attempts.")
 
 
 def record_outcome(
@@ -183,8 +203,9 @@ def score_ledger(session: Session) -> LedgerScore:
         by_query.setdefault(outcome.query, []).append(outcome)
     score = LedgerScore(predictions=len(predictions), calls=0, resolved=0, correct=0, unresolved=0)
     for prediction in predictions:
-        made_on = prediction.created_at[:10]
-        later = [row for row in by_query.get(" ".join(prediction.query.split()), []) if row.observed_on > made_on]
+        made = datetime.fromisoformat(prediction.created_at)
+        latest_local_day = (made + timedelta(hours=14)).date().isoformat()
+        later = [row for row in by_query.get(" ".join(prediction.query.split()), []) if row.observed_on > latest_local_day]
         calls = prediction.payload.get("calls", [])
         score.calls += len(calls)
         if not later:
@@ -227,13 +248,9 @@ def render_score(score: LedgerScore) -> str:
 def _relative(subject: int | None, rival: int | None, depth: int | None) -> str | None:
     if subject is not None and rival is not None:
         return "above" if subject < rival else "below"
-    if depth is None:
-        return None
-    if subject is not None and rival is None:
+    if subject is not None and rival is None and depth is not None:
         return "above"
-    if rival is not None and subject is None:
-        return "below"
-    return None
+    return None  # subject not observed: published-and-not-ranking and never-published look the same
 
 
 def _row_hash(prev_hash: str, created_at: str, kind: str, query: str, subject_url: str, payload: dict) -> str:
@@ -261,6 +278,8 @@ def record_check(session: Session, result, *, html: str, calibration, provenance
     """Append a draft check (check.CheckResult). Errors and empty checks are not predictions."""
     if result.error or result.predicted_rank is None or not result.competitors:
         return None
+    if result.url in PLACEHOLDER_SUBJECTS:
+        return None  # pasted HTML with no URL can never be observed in Google
     candidates = [
         {
             "url": row.url,

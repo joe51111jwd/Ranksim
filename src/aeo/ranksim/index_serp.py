@@ -16,7 +16,7 @@ from aeo.ranksim.keywords import load_sitemap_urls
 from aeo.ranksim.loop import FetchResult, store_fetched_page
 from aeo.ranksim.saved_html import load_saved_html
 from aeo.ranksim.serp import SerpHit
-from aeo.ranksim.store import RsPage, open_session, replace_serp
+from aeo.ranksim.store import EVALUATION_EXCLUDED_SOURCES, RsPage, open_session, replace_serp
 
 
 def index_serp_csv(
@@ -111,7 +111,13 @@ def _already_fetched(database: str) -> set[str]:
     session = open_session(database)
     try:
         rows = session.query(RsPage).filter(RsPage.status == "fetched").all()
-        return {row.url for row in rows if (row.raw_html or "").strip()}
+        # A draft stored under a live URL is not a crawl of that URL: crawl it so the live page
+        # can replace the draft as the evaluation snapshot.
+        return {
+            row.url
+            for row in rows
+            if (row.raw_html or "").strip() and (row.source or "unknown") not in EVALUATION_EXCLUDED_SOURCES
+        }
     finally:
         session.close()
 

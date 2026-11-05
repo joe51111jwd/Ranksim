@@ -292,13 +292,17 @@ class BraveFallbackProvider(SerpProvider):
             self.client.close()
 
     def search(self, query: str, count: int = 10) -> list[SerpHit]:
-        response = self.client.get(
-            "https://api.search.brave.com/res/v1/web/search",
-            params={"q": query, "count": min(max(count, 1), 20)},
-            headers={"X-Subscription-Token": self.api_key, "Accept": "application/json"},
+        payload = _send(
+            lambda: self.client.get(
+                "https://api.search.brave.com/res/v1/web/search",
+                params={"q": query, "count": min(max(count, 1), 20)},
+                headers={"X-Subscription-Token": self.api_key, "Accept": "application/json"},
+            ),
+            self.name,
         )
-        response.raise_for_status()
-        results = ((response.json().get("web") or {}).get("results")) or []
+        if payload.get("type") == "ErrorResponse" or "web" not in payload:
+            raise SerpCollectError(f"brave response has no web results: {str(payload.get('error') or payload.get('type') or '')[:200]}")
+        results = (payload.get("web") or {}).get("results") or []
         hits: list[SerpHit] = []
         for item in results:
             url = item.get("url")

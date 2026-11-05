@@ -117,10 +117,13 @@ def load_serp_file(path: str | Path, *, report: ImportReport | None = None) -> l
         meta_keys = {name: _pick(fields, aliases) for name, aliases in META_COLUMNS.items()}
         report.metadata_columns = sorted(name for name, key in meta_keys.items() if key and name != "result_type")
         gsc_markers = {"clicks", "impressions", "ctr"}
+        # Search Console exports carry click/impression columns or "Average Position", and use
+        # capitalized headers. A hand-collected file with a lowercase "page" column is a snapshot.
         is_gsc = (
             position_key == fields.get("average position")
             or bool(gsc_markers & set(fields))
-            or (fields.get("page") == url_key and query_key in (fields.get("query"), fields.get("top queries")) and not prior_key)
+            or {"Query", "Page", "Position"} <= set(reader.fieldnames)
+            or "Top queries" in reader.fieldnames
         )
         kind = "search_console_avg" if is_gsc and not prior_key else "serp_snapshot"
         report.kind = kind
@@ -194,15 +197,27 @@ def navboost_leaks(rows: list[SerpLabel]) -> bool:
     prior is used only when every row that has one also has ``prior_observed_on`` earlier
     than ``observed_on``.
     """
+    return navboost_withhold_reason(rows) is not None
+
+
+def navboost_withhold_reason(rows: list[SerpLabel]) -> str | None:
+    """Why prior_position is withheld, or None when every prior is dated earlier than its label."""
+    from datetime import date
+
     priors = [row for row in rows if row.prior_position is not None]
     if not priors:
-        return False
+        return None
     for row in priors:
         if not row.observed_on or not row.prior_observed_on:
-            return True
-        if row.prior_observed_on[:10] >= row.observed_on[:10]:
-            return True
-    return False
+            return "prior_position rows need both observed_on and prior_observed_on dates"
+        try:
+            observed = date.fromisoformat(row.observed_on[:10])
+            prior = date.fromisoformat(row.prior_observed_on[:10])
+        except ValueError:
+            return "observed_on and prior_observed_on must be ISO dates (YYYY-MM-DD)"
+        if prior >= observed:
+            return "a prior_observed_on date is not earlier than its observed_on date"
+    return None
 
 
 def _meta(raw: dict, key: str | None) -> str | None:

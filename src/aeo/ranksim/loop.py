@@ -15,6 +15,7 @@ from aeo.ranksim.keywords import Keyword
 from aeo.ranksim.score import HAND_WEIGHTS, best_our_position, fit_weights, score_pages
 from aeo.ranksim.serp import SerpCollectError, SerpProvider
 from aeo.ranksim.store import (
+    EVALUATION_EXCLUDED_SOURCES,
     RsPage,
     latest_weights,
     page_by_url,
@@ -253,6 +254,8 @@ def calibrate(session: Session, keywords: list[Keyword], today: date | None = No
             row = page_by_url(session, normalize_url(hit.url)) if _can_normalize(hit.url) else page_by_url(session, hit.url)
             if row is None or row.status != "fetched" or not row.body and not row.title:
                 continue
+            if (row.source or "unknown") in EVALUATION_EXCLUDED_SOURCES:
+                continue  # draft HTML is not the page Google ranked
             doc = page_from_row(row)
             if doc.authority is not None:
                 authority_used = True
@@ -494,6 +497,8 @@ def _candidates(session: Session, hits: list, replacement: PageDoc | None) -> li
             replaced = True
             continue
         row = page_by_url(session, url)
+        if row is not None and (row.source or "unknown") in EVALUATION_EXCLUDED_SOURCES:
+            row = None  # a stored draft is not this competitor's live page
         if row is None or row.status != "fetched":
             pages.append(
                 PageDoc(url=url, title=getattr(hit, "title", "") or "", body=getattr(hit, "snippet", "") or "", is_ours=is_our_url(url))

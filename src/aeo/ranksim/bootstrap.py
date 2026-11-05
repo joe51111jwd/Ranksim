@@ -38,7 +38,9 @@ def flag_known_drafts(database: str, folders: tuple[Path, ...] = DRAFT_FOLDERS) 
     flagged = 0
     try:
         for row in session.query(RsPage).filter(RsPage.status == "fetched").all():
-            if row.source == "draft_bundle" or not row.raw_html:
+            # Only rows written before provenance existed. A tagged crawl of a page that later
+            # went live with the draft's exact HTML is a real crawl and stays one.
+            if row.source not in (None, "unknown") or not row.raw_html:
                 continue
             digest = row.html_sha256 or hashlib.sha256(row.raw_html.encode("utf-8", "replace")).hexdigest()
             if digest in digests:

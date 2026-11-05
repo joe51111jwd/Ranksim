@@ -295,7 +295,7 @@ def _graph(settings, database: str, args) -> None:
         max_fetches=args.max_fetches,
     )
     save_graph(graph, args.out)
-    from aeo.ranksim.store import page_by_url
+    from aeo.ranksim.store import EVALUATION_EXCLUDED_SOURCES, page_by_url
 
     session = open_session(database)
     try:
@@ -305,7 +305,12 @@ def _graph(settings, database: str, args) -> None:
             if node.status != "fetched" or not node.html:
                 continue
             existing = page_by_url(session, url)
-            if existing is not None and existing.status == "fetched" and (existing.raw_html or "").strip():
+            if (
+                existing is not None
+                and existing.status == "fetched"
+                and (existing.raw_html or "").strip()
+                and (existing.source or "unknown") not in EVALUATION_EXCLUDED_SOURCES
+            ):
                 # Keep the evaluation snapshot (and its URL spelling) that index-serp stored.
                 # A graph refetch used to add a trailing-slash twin and overwrite timings, which
                 # changed the benchmark without changing coverage.
@@ -324,6 +329,7 @@ def _graph(settings, database: str, args) -> None:
 
 
 def _graph_eval(database: str, args) -> None:
+    _flag_old_drafts(database)
     from aeo.ranksim.confidence import loo_fit
     from aeo.ranksim.corpus import load_corpus_docs
     from aeo.ranksim.features import MODEL_FEATURES
@@ -432,6 +438,7 @@ def _competitors(settings, database: str, args) -> None:
 
 
 def _space(database: str, args) -> None:
+    _flag_old_drafts(database)
     from aeo.ranksim.confidence import loo_fit
     from aeo.ranksim.corpus import load_corpus_docs
     from aeo.ranksim.groundtruth import load_serp_file
@@ -465,7 +472,17 @@ def _space(database: str, args) -> None:
     print(render_space_text(report), end="")
 
 
+def _flag_old_drafts(database: str) -> None:
+    """Databases seeded before page provenance hold drafts as ordinary pages; mark them first."""
+    from aeo.ranksim.bootstrap import flag_known_drafts
+
+    flagged = flag_known_drafts(database)
+    if flagged:
+        print(f"{flagged} stored pages match bundled draft HTML and were marked as drafts, not evaluation rows.")
+
+
 def _benchmark(database: str, args) -> None:
+    _flag_old_drafts(database)
     from datetime import date
 
     from aeo.ranksim.benchmark import (
@@ -511,7 +528,9 @@ def _benchmark(database: str, args) -> None:
     names = list(FEATURE_NAMES) if args.with_crawl_artifacts else list(MODEL_FEATURES)
     examples, uncovered, withheld = build_examples(labels, pages, intents, today=as_of)
     if withheld:
-        notes.append("navboost_prior was withheld because prior_position copied position.")
+        from aeo.ranksim.groundtruth import navboost_withhold_reason
+
+        notes.append(f"navboost_prior was withheld: {navboost_withhold_reason(labels)}.")
     if not args.as_of:
         notes.append(
             "as_of defaulted to today. Freshness depends on it, so rerunning on another day can change results."
@@ -590,6 +609,11 @@ def _ledger(database: str, args) -> None:
         elif args.ledger_command == "observe":
             observed_on = date.fromisoformat(args.observed_on).isoformat()
             labels = load_serp_file(args.serp_file)
+            if any(label.kind == "search_console_avg" for label in labels):
+                raise SystemExit(
+                    "Search Console averages are not an observed results page and only cover your own URLs. "
+                    "Record a results snapshot (query,url,position) instead."
+                )
             grouped: dict[str, dict[str, int]] = defaultdict(dict)
             for label in labels:
                 grouped[label.query][label.url] = int(round(label.position))
@@ -778,6 +802,7 @@ def _collect(settings, database: str, args) -> None:
 
 
 def _calibrate(database: str) -> None:
+    _flag_old_drafts(database)
     session = open_session(database)
     try:
         report, label, provider = calibrate(session, build_keywords())
@@ -1018,6 +1043,7 @@ def _evaluate(database: str, args) -> None:
 
 
 def _score_file(database: str, path: str, *, fit: bool, model_out: str | None, folds: str = "loo"):
+    _flag_old_drafts(database)
     from aeo.ranksim.groundtruth import ImportReport, load_serp_file
     from aeo.ranksim.lambdamart import build_examples, cross_validate, fit_lambdamart, save_model
 
@@ -1038,7 +1064,9 @@ def _score_file(database: str, path: str, *, fit: bool, model_out: str | None, f
     report.uncovered_urls = uncovered
     report.navboost_withheld = withheld
     if withheld:
-        report.note += " Navboost prior was withheld because it copied the label position."
+        from aeo.ranksim.groundtruth import navboost_withhold_reason
+
+        report.note += f" The prior position was withheld: {navboost_withhold_reason(labels)}."
     if fit and examples and report.cross_validated and model_out:
         model = fit_lambdamart(examples)
         Path(model_out).parent.mkdir(parents=True, exist_ok=True)

@@ -179,3 +179,22 @@ Conventions for every entry:
   one. Scored directly, the shipped gap of 1.00 was right on 122 of 232 held-out pairs (0.526).
 - Next measurement that matters: the same comparison on a frozen, dated, multi-site benchmark
   (BACKLOG P0-1, P0-2), where a domain prior cannot memorize one niche's winners.
+
+## 2026-11-05 E11. Independent cross-check of the baselines
+
+- A separate agent recomputed baselines with its own scripts on its own same-day crawl (pre-branch
+  model code, 458 pairs, 16 queries, query bootstrap; numbers below are its, not `benchmark`'s):
+  LambdaMART LOQO 0.585 (0.519-0.644); BM25F 0.487; hand-weighted linear prior 0.489; domain prior
+  0.566 ties-as-wrong / 0.602 ties-as-half; URL prior (same URL's mean position in training
+  queries) 0.618 ties-as-half; random 0.499 (5th-95th 0.437-0.559).
+- Training without queries that share a labeled URL with the held-out query: 0.502 (0.438-0.568),
+  against 0.558 for dropping the same number of training queries at random. URL identity is what
+  carries between near-duplicate queries.
+- Feature-group ablations (paired against the full model): dropping all text-match features 0.592,
+  dropping quality/length features 0.605, dropping link features 0.546, dropping freshness 0.557.
+  None differs from the full model; after a Bonferroni correction over its 32 comparisons, no
+  difference against the model or against BM25F excludes 0.
+- It agrees with E4, E5, E9 and E10. It also found that confidence is calibrated on all pairs while
+  the product labels a check from the gap to the adjacent page (median adjacent gap 0.345; 17% at or
+  above 1.0), that 9 of the 16 labeled queries have no intent and default to "commercial", and that
+  the thin-page gate's synthetic score offsets count as confident gaps. These are in the backlog.

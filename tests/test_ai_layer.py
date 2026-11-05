@@ -134,3 +134,18 @@ def test_relevance_experiment_reports_an_interval():
     assert result.delta_low is not None and result.delta_high is not None
     assert "95% interval" in result.note and "Random scores" in result.note
     assert "too small" in result.note
+
+
+def test_relevance_experiment_refuses_instead_of_reporting_a_fake_null():
+    from aeo.ranksim.judge import relevance_experiment
+    from aeo.ranksim.lambdamart import RankExample
+
+    one_cluster = [
+        RankExample(f"q{q}", f"https://shared.example/{p}", float(p), {"bm25f": 1.0}) for q in range(3) for p in range(1, 6)
+    ]
+    scores = {(row.query, row.url): 0.5 for row in one_cluster}
+    result = relevance_experiment(one_cluster, scores, bootstrap=50)
+    assert result.measured is False and "one query cluster" in result.note
+    no_pairs = [RankExample(f"q{q}", f"https://s{q}.example/", 1.0, {"bm25f": 1.0}) for q in range(4)]
+    result = relevance_experiment(no_pairs, {(row.query, row.url): 0.5 for row in no_pairs}, bootstrap=50)
+    assert result.measured is False and "no labeled pairs" in result.note

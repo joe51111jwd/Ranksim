@@ -517,15 +517,23 @@ def _benchmark(database: str, args) -> None:
             "as_of defaulted to today. Freshness depends on it, so rerunning on another day can change results."
         )
     protocols = tuple(args.protocol or PROTOCOLS)
-    clusters, results = run_benchmark(
-        examples,
-        protocols=protocols,
-        cluster_threshold=args.cluster_threshold,
-        bootstrap=args.bootstrap,
-        seed=args.seed,
-        feature_names=names,
-        cluster_source=labels,
-    )
+    if len({row.query for row in examples}) < 2:
+        print("Benchmark not computed. Need at least 2 queries with 2 stored pages each.")
+        print("Coverage of labeled rows: " + ", ".join(f"{k} {v}" for k, v in sorted(coverage.items())))
+        return
+    try:
+        clusters, results = run_benchmark(
+            examples,
+            protocols=protocols,
+            cluster_threshold=args.cluster_threshold,
+            bootstrap=args.bootstrap,
+            seed=args.seed,
+            feature_names=names,
+            cluster_source=labels,
+        )
+    except ValueError as exc:
+        print(f"Benchmark not computed. {exc}")
+        return
     report = build_report(
         examples=examples,
         n_labels=len(labels),
@@ -631,7 +639,10 @@ def _ai_eval(settings, database: str, args) -> None:
     )
     llm = resolve_llm(settings, run_id="ai-eval")
     print(llm.cost_summary() if not llm.available else f"LLM {llm.name} model {llm.model}.")
-    if llm.available and n_pairs < MIN_JUDGE_PAIRS and not args.allow_small:
+    if llm.available and n_pairs == 0:
+        print("Judge not run: no labeled pairs have stored HTML, so nothing could be measured.")
+        scores = None
+    elif llm.available and n_pairs < MIN_JUDGE_PAIRS and not args.allow_small:
         print(
             f"Judge not run: {n_pairs} pairs is below {MIN_JUDGE_PAIRS}. On a sample this size random scores "
             "move pairwise accuracy by several points either way, so the result could not support a decision. "

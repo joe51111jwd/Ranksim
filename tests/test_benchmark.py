@@ -2,6 +2,8 @@
 
 import json
 
+import pytest
+
 from aeo.ranksim.benchmark import (
     corpus_fingerprint,
     cross_fitted_confidence,
@@ -79,14 +81,18 @@ def test_perfect_feature_scores_one_and_random_band_centres_on_half():
     assert band.low < 0.5 < band.high
 
 
-def test_score_ties_are_counted_and_scored_as_wrong():
+def test_score_ties_count_as_half_and_the_strict_figure_is_kept():
     examples = [_row("q", f"https://t.example/{index}", index + 1, 0) for index in range(3)]
     examples += [_row("r", f"https://u.example/{index}", index + 1, 3 - index) for index in range(3)]
     result = run_protocol(examples, "loqo", {"q": 0, "r": 1}, {"flat": feature_scorer("signal")}, bootstrap=0)
     row = result.scorers[0]
     assert row.n_ties == 3
     assert row.n_pairs == 6
-    assert row.pairwise.point == 0.5
+    assert row.pairwise.point == 0.75          # 3 right + 3 ties at half credit
+    assert row.pairwise_ties_wrong == 0.5      # what `evaluate` reports
+    flat_query = next(item for item in row.queries if item.query == "q")
+    assert flat_query.spearman == 0.0          # a constant scorer has no order, not a missing value
+    assert row.spearman_queries == 2
 
 
 def test_cross_fitted_confidence_never_uses_a_folds_own_pairs():
@@ -170,11 +176,19 @@ def test_clusters_come_from_the_label_file_not_crawl_coverage():
         for index, url in enumerate([f"https://{own}.example/1", f"https://{own}.example/2"] + shared):
             labels.append(SerpLabel(query, url, index + 1, None, "manual_csv"))
     # Only the non-shared pages were crawled, so covered rows alone show no overlap.
+    for index in range(3):
+        labels.append(SerpLabel("c", f"https://z.example/{index}", index + 1, None, "manual_csv"))
     examples = [_row(label.query, label.url, label.position, 0) for label in labels if "shared" not in label.url]
     clusters, _ = run_benchmark(examples, bootstrap=0, scorers={"f": feature_scorer("signal")}, cluster_source=labels)
-    assert clusters["a"] == clusters["b"]
+    assert clusters["a"] == clusters["b"] != clusters["c"]
     alone, _ = run_benchmark(examples, bootstrap=0, scorers={"f": feature_scorer("signal")})
     assert alone["a"] != alone["b"]
+
+
+def test_a_single_cluster_is_refused():
+    examples = [_row("only", f"https://o.example/{index}", index + 1, index) for index in range(4)]
+    with pytest.raises(ValueError, match="2 query clusters"):
+        run_benchmark(examples, bootstrap=0, scorers={"f": feature_scorer("signal")})
 
 
 def _synthetic(signal_tracks_label: bool, queries: int = 14, per_query: int = 5):
@@ -213,7 +227,7 @@ def test_validated_calibration_keeps_a_threshold_that_holds_held_out():
     fit = loo_fit(_synthetic(True), ["bm25_title"])
     assert fit.calibration.threshold is not None
     assert fit.calibration.confident_pairwise >= 0.65
-    assert "Held out by query cluster and URL" in fit.calibration.note
+    assert "With query clusters and their URLs held out, that gap was right" in fit.calibration.note
     unvalidated = loo_fit(_synthetic(True), ["bm25_title"], validate=False)
     assert unvalidated.calibration.threshold == fit.calibration.threshold
 
@@ -231,3 +245,21 @@ def test_ndcg_and_top3_do_not_leak_label_order_through_ties():
     perfect = [5.0, 4.0, 3.0, 2.0, 1.0]
     assert _ndcg(rows, perfect) == 1.0
     assert _top3_hit(rows, perfect) == 1.0
+
+
+def test_the_deployed_threshold_itself_must_hold_out_of_sample(monkeypatch):
+    """Per-fold thresholds can look accurate while the threshold actually shipped does not."""
+    import aeo.ranksim.benchmark as bench
+    from aeo.ranksim.benchmark import ConfidenceCheck, Interval, ProtocolResult, QueryResult, ScorerResult
+    from aeo.ranksim.confidence import Calibration, validate_calibration
+
+    # The deployed gap 0.05 covers every held-out pair and is right on only 58 of 100.
+    margins = [PairMargin(0.06, index < 58) for index in range(100)]
+    fake_queries = [QueryResult("q", 0, 0, 58, 0, 100, None, None, margins)]
+    scorer = ScorerResult("lambdamart", Interval(0.58, None, None), None, None, None, 100, 0, 1, queries=fake_queries)
+    rosy = ConfidenceCheck(calls=40, correct=34, total_pairs=100, folds_with_threshold=2, folds=2, note="")
+    monkeypatch.setattr(bench, "run_protocol", lambda *a, **k: ProtocolResult("cluster-url", 2, 2, 0, [scorer], rosy))
+    examples = [_row(f"q{q}", f"https://x{q}{p}.example/", p, p) for q in range(2) for p in range(1, 4)]
+    checked = validate_calibration(Calibration(0.05, 0.9, 0.5, "in-sample"), examples, ["signal"])
+    assert checked.threshold is None
+    assert "58 of 100" in checked.note and "34 of 40" in checked.note

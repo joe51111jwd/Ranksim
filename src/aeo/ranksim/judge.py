@@ -132,6 +132,15 @@ def relevance_experiment(
         features["llm_relevance"] = scores[(row.query, row.url)]
         judged.append(RankExample(row.query, row.url, row.position, features, row.intent))
     clusters = query_clusters(judged)
+    from aeo.ranksim.benchmark import count_pairs
+
+    if count_pairs(judged) == 0:
+        return RelevanceExperiment(False, None, None, "LLM relevance was not measured: the judged rows contain no labeled pairs.")
+    usable_clusters = {clusters[row.query] for row in judged}
+    if len(usable_clusters) < 2:
+        return RelevanceExperiment(
+            False, None, None, "LLM relevance was not measured: all judged queries fall in one query cluster, so no fold could train."
+        )
     names = list(MODEL_FEATURES)
     scorers = {
         "baseline": lambdamart_scorer(names),
@@ -140,7 +149,7 @@ def relevance_experiment(
     result = run_protocol(judged, "cluster", clusters, scorers, bootstrap=0, seed=seed)
     by_name = {row.name: row for row in result.scorers}
     base, after = by_name["baseline"], by_name["with_judge"]
-    cluster_ids = sorted(set(clusters.values()))
+    cluster_ids = sorted({row.cluster for row in base.queries})  # clusters that were evaluated
     diff = paired_diff(after.queries, base.queries, cluster_ids, bootstrap, seed)
     band = random_band(judged, seed=seed)
     measured_note = (

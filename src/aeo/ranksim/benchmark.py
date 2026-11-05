@@ -75,8 +75,13 @@ class QueryResult:
     margins: list[PairMargin] = field(default_factory=list)
 
     @property
+    def credit(self) -> float:
+        """Correct pairs plus half of tied pairs: the expected score under random tie-breaking."""
+        return self.correct + 0.5 * self.ties
+
+    @property
     def pairwise(self) -> float | None:
-        return self.correct / self.total if self.total else None
+        return self.credit / self.total if self.total else None
 
 
 @dataclass
@@ -88,6 +93,9 @@ class Interval:
 
 @dataclass
 class ScorerResult:
+    """`pairwise` counts a score tie as half right (what random tie-breaking scores on average,
+    and how the random band and NDCG treat ties). `pairwise_ties_wrong` matches `evaluate`."""
+
     name: str
     pairwise: Interval
     pairwise_macro: float | None
@@ -96,6 +104,8 @@ class ScorerResult:
     n_pairs: int
     n_ties: int
     n_queries: int
+    pairwise_ties_wrong: float | None = None
+    spearman_queries: int = 0
     diff_vs_bm25f: Interval | None = None
     diff_vs_model: Interval | None = None
     queries: list[QueryResult] = field(default_factory=list)
@@ -422,6 +432,8 @@ def run_benchmark(
 ) -> tuple[dict[str, int], list[ProtocolResult]]:
     usable = _queries_with_pairs(examples)
     all_clusters = query_clusters(cluster_source if cluster_source is not None else usable, cluster_threshold)
+    if len({all_clusters.get(row.query) for row in usable}) < 2:
+        raise ValueError("Need at least 2 query clusters with labeled pairs; a held-out fold would have nothing to train on.")
     used = {row.query for row in usable}
     missing = used - set(all_clusters)
     if missing:
@@ -588,8 +600,8 @@ def render_report(report: BenchmarkReport) -> str:
             f"features {report.feature_names_sha}."
         ),
         (
-            f"Pairwise: score ties count as wrong. 95% intervals: percentile bootstrap over query clusters, "
-            f"{report.bootstrap} resamples, seed {report.seed}."
+            f"Pairwise: a score tie counts as half right (random tie-breaking); `evaluate` counts ties as wrong. "
+            f"95% intervals: percentile bootstrap over query clusters, {report.bootstrap} resamples, seed {report.seed}."
         ),
     ]
     for protocol in report.protocols:
@@ -656,15 +668,17 @@ def _query_result(group: list[RankExample], scores: list[float], cluster: int) -
         ties=ties,
         total=total,
         ndcg=_ndcg(group, scores),
-        spearman=spearman(scores, [row.position for row in group]),
+        # A scorer that gives every page the same score has no order: expected rank correlation 0.
+        spearman=0.0 if len(set(scores)) == 1 else spearman(scores, [row.position for row in group]),
         margins=margins,
     )
 
 
 def _summarize(name: str, queries: list[QueryResult], cluster_ids: list[int], bootstrap: int, seed: int) -> ScorerResult:
-    correct = sum(row.correct for row in queries)
+    credit = sum(row.credit for row in queries)
+    strict = sum(row.correct for row in queries)
     total = sum(row.total for row in queries)
-    point = correct / total if total else None
+    point = credit / total if total else None
     macro_values = [row.pairwise for row in queries if row.pairwise is not None]
     ndcgs = [row.ndcg for row in queries if row.ndcg is not None]
     rhos = [row.spearman for row in queries if row.spearman is not None]
@@ -678,16 +692,18 @@ def _summarize(name: str, queries: list[QueryResult], cluster_ids: list[int], bo
         n_pairs=total,
         n_ties=sum(row.ties for row in queries),
         n_queries=len(queries),
+        pairwise_ties_wrong=strict / total if total else None,
+        spearman_queries=len(rhos),
         queries=queries,
     )
 
 
-def _cluster_totals(queries: list[QueryResult]) -> dict[int, tuple[int, int]]:
-    totals: dict[int, list[int]] = defaultdict(lambda: [0, 0])
+def _cluster_totals(queries: list[QueryResult]) -> dict[int, tuple[float, int]]:
+    totals: dict[int, list[float]] = defaultdict(lambda: [0.0, 0])
     for row in queries:
-        totals[row.cluster][0] += row.correct
+        totals[row.cluster][0] += row.credit
         totals[row.cluster][1] += row.total
-    return {key: (value[0], value[1]) for key, value in totals.items()}
+    return {key: (value[0], int(value[1])) for key, value in totals.items()}
 
 
 def _resamples(cluster_ids: list[int], bootstrap: int, seed: int) -> list[list[int]]:

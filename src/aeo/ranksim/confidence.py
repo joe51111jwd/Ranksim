@@ -115,39 +115,56 @@ def validate_calibration(in_sample: Calibration, examples: list[RankExample], fe
     clusters = query_clusters(examples)
     if len(set(clusters.values())) < 2:
         return Calibration(None, None, None, "Too few query clusters to check the confidence threshold. Calls stay UNSURE.")
-    held = run_protocol(
+    result = run_protocol(
         examples,
         "cluster-url",
         clusters,
         {"lambdamart": lambdamart_scorer(feature_names)},
         bootstrap=0,
-    ).confidence
+    )
+    cross = result.confidence
+    # Score the threshold that would actually be deployed on held-out predictions, not just
+    # the per-fold thresholds the cross-fitted check picks.
+    margins = [pair for row in result.scorers[0].queries for pair in row.margins]
+    deployed = [pair for pair in margins if pair.gap >= in_sample.threshold]
+    deployed_right = sum(1 for pair in deployed if pair.correct)
+    deployed_acc = deployed_right / len(deployed) if deployed else 0.0
+    deployed_cov = len(deployed) / len(margins) if margins else 0.0
     in_sample_text = (
         f"On the leave-one-query-out backtest a score gap of {in_sample.threshold:.2f} looked accurate "
         f"({in_sample.confident_pairwise:.3f} on {in_sample.confident_coverage:.0%} of pairs), but that "
         "threshold was chosen and scored on the same pairs."
     )
-    if held is None or held.calls < MIN_CONFIDENT_CALLS or (held.accuracy or 0.0) < MIN_CONFIDENT_ACCURACY:
-        calls = 0 if held is None else held.calls
-        right = 0 if held is None else held.correct
+    held_text = (
+        f"With query clusters and their URLs held out, that gap was right on {deployed_right} of {len(deployed)} "
+        f"pairs; with each fold's threshold chosen on the other folds, {0 if cross is None else cross.correct} of "
+        f"{0 if cross is None else cross.calls} confident calls were right."
+    )
+    passes = (
+        len(deployed) >= MIN_CONFIDENT_CALLS
+        and deployed_acc >= MIN_CONFIDENT_ACCURACY
+        and cross is not None
+        and cross.calls >= MIN_CONFIDENT_CALLS
+        and (cross.accuracy or 0.0) >= MIN_CONFIDENT_ACCURACY
+    )
+    if not passes:
         return Calibration(
             None,
             None,
             None,
             (
-                f"{in_sample_text} With query clusters and their URLs held out and the threshold chosen on "
-                f"other folds, {right} of {calls} confident calls were right. That does not meet "
-                f"{MIN_CONFIDENT_ACCURACY:.2f} on at least {MIN_CONFIDENT_CALLS} calls, so every call stays UNSURE."
+                f"{in_sample_text} {held_text} Both must reach {MIN_CONFIDENT_ACCURACY:.2f} on at least "
+                f"{MIN_CONFIDENT_CALLS} calls, so every call stays UNSURE."
             ),
         )
     return Calibration(
         in_sample.threshold,
-        held.accuracy,
-        held.coverage,
+        deployed_acc,
+        deployed_cov,
         (
-            f"Pairs with a score gap of at least {in_sample.threshold:.2f} are labeled CLEARER. Held out by "
-            f"query cluster and URL, {held.correct} of {held.calls} such calls were right ({held.accuracy:.3f}, "
-            f"{held.coverage:.0%} of pairs). Smaller gaps are UNSURE. Still PREDICTED, not a Google rank."
+            f"Pairs with a score gap of at least {in_sample.threshold:.2f} are labeled CLEARER. {held_text} "
+            f"(The gap was chosen on leave-one-query-out pairs from the same queries, so this is still "
+            "somewhat optimistic.) Smaller gaps are UNSURE. Still PREDICTED, not a Google rank."
         ),
     )
 

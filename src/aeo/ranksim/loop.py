@@ -531,3 +531,31 @@ def _can_normalize(url: str) -> bool:
     except ValueError:
         return False
     return True
+
+
+def reextract_pages(session: Session) -> tuple[int, int]:
+    """Re-run extraction on every stored page's saved HTML. No network.
+
+    Only derived fields change (title, headings, body, counts, date label). fetched_at,
+    html_sha256, source and the HTML itself stay as they were, because the snapshot did not
+    change. Returns (pages re-extracted, pages whose word count changed).
+    """
+    rows = session.query(RsPage).filter(RsPage.status == "fetched").all()
+    changed = 0
+    for row in rows:
+        if not (row.raw_html or "").strip():
+            continue
+        doc = page_from_html(row.url, row.raw_html, fetch_ms=row.fetch_ms)
+        if doc.word_count != row.word_count:
+            changed += 1
+        row.title = doc.title
+        row.h1 = doc.h1
+        row.headings_text = doc.headings
+        row.body = doc.body
+        row.word_count = doc.word_count
+        row.table_count = doc.table_count
+        row.has_faq = doc.has_faq
+        row.link_count = doc.link_count
+        row.updated_label = doc.updated
+    session.commit()
+    return len(rows), changed

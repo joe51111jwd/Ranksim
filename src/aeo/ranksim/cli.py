@@ -151,6 +151,10 @@ def main(argv: list[str] | None = None) -> None:
     )
     bench.add_argument("--json", dest="json_out", default=None, help="Write the full report as JSON")
 
+    sub.add_parser(
+        "reextract",
+        help="Re-run text extraction on stored HTML after an extractor change (no network)",
+    )
     ledger = sub.add_parser("ledger", help="Prediction track record: verify, list, record observed results, score")
     ledger_sub = ledger.add_subparsers(dest="ledger_command", required=True)
     ledger_sub.add_parser("verify", help="Check that no recorded prediction was changed, removed, or reordered")
@@ -238,6 +242,15 @@ def main(argv: list[str] | None = None) -> None:
             _benchmark(database, args)
         elif args.command == "ledger":
             _ledger(database, args)
+        elif args.command == "reextract":
+            from aeo.ranksim.loop import reextract_pages
+
+            session = open_session(database)
+            try:
+                total, changed = reextract_pages(session)
+            finally:
+                session.close()
+            print(f"Re-extracted {total} stored pages from their saved HTML. Word count changed on {changed}.")
         elif args.command == "ai-eval":
             _ai_eval(settings, database, args)
         elif args.command == "competitors":

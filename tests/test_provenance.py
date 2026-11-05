@@ -137,3 +137,19 @@ def test_page_lookup_tolerates_trailing_slash_and_normalization(tmp_path):
     assert page_by_url(session, "https://x.example/b/").url == "https://x.example/b"
     assert page_by_url(session, "https://x.example/c") is None
     session.close()
+
+
+def test_reextract_updates_derived_fields_but_not_the_snapshot(tmp_path):
+    from aeo.ranksim.loop import reextract_pages
+
+    session = open_session(f"sqlite:///{tmp_path / 'r.db'}")
+    store_fetched_page(session, FetchResult(url="https://x.example/", html=HTML.format("w " * 300), status="fetched"))
+    row = session.get(RsPage, "https://x.example/")
+    sha, at = row.html_sha256, row.fetched_at
+    row.word_count = 1  # as if an older extractor had undercounted
+    session.commit()
+    total, changed = reextract_pages(session)
+    row = session.get(RsPage, "https://x.example/")
+    assert (total, changed) == (1, 1) and row.word_count > 200
+    assert row.html_sha256 == sha and row.fetched_at == at
+    session.close()

@@ -125,3 +125,19 @@ def test_crawler_obeys_robots_and_stays_on_site():
     assert any(page.url.endswith("/secret") for page in blocked)
     assert all(not url.endswith("/secret") for url in requested)
     assert all("other.example" not in url for url in urls)
+
+
+def test_main_text_uses_the_fullest_main_or_article_not_the_first():
+    from aeo.crawl.extract import extract_html
+
+    filler = " ".join(f"word{index}" for index in range(300))
+    empty_first_main = f"<html><body><main></main><main><h1>Real</h1><p>{filler}</p></main></body></html>"
+    assert extract_html(empty_first_main, "https://x.example/").word_count >= 300
+    card_first = (
+        "<html><body><article><p>Related post card with a few words</p></article>"
+        f"<div class='post'><h1>Guide</h1><p>{filler}</p><p>{filler}</p></div></body></html>"
+    )
+    assert extract_html(card_first, "https://x.example/").word_count >= 600
+    normal = f"<html><body><nav>Home About</nav><main><h1>Guide</h1><p>{filler}</p></main><div>sidebar teaser</div></body></html>"
+    page = extract_html(normal, "https://x.example/")
+    assert 300 <= page.word_count < 310 and "teaser" not in page.main_text

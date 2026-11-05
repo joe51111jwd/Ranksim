@@ -178,7 +178,7 @@ def extract_html(html: str, base_url: str) -> ExtractedPage:
     for tag_name in _JUNK_TAGS:
         for tag in soup.find_all(tag_name):
             tag.decompose()
-    root = soup.find("main") or soup.find("article") or soup.body or soup
+    root = _content_root(soup)
     extracted.sections = _sections_from(root)
     structured = "\n\n".join(text for _, text in extracted.sections).strip()
     # Some saved pages put the article in divs. A short p/li must not hide that text.
@@ -189,3 +189,26 @@ def extract_html(html: str, base_url: str) -> ExtractedPage:
     extracted.main_text = structured
     extracted.word_count = word_count(extracted.main_text)
     return extracted
+
+
+def _content_root(soup):
+    """The element that holds the page's main text.
+
+    Taking the first <main> or <article> lost real content: a page with an empty first <main>
+    extracted 0 of 1,103 visible words, and a blog whose first <article> is a 16-word card
+    extracted 10 of 3,033. Use the <main>/<article> with the most words, and fall back to <body>
+    when that element holds under a quarter of the body's words and misses at least 150.
+    """
+    body = soup.body or soup
+
+    def words(node) -> int:
+        return word_count(node.get_text(" ", strip=True))
+
+    candidates = soup.find_all(["main", "article"])
+    if not candidates:
+        return body
+    best = max(candidates, key=words)
+    best_words, body_words = words(best), words(body)
+    if best_words < 0.25 * body_words and body_words - best_words >= 150:
+        return body
+    return best

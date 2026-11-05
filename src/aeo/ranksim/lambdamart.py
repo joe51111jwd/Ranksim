@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import math
 from dataclasses import dataclass, field
 from datetime import date
@@ -100,29 +101,9 @@ def build_examples(
         docs = []
         for label, page in pairs:
             prior = 0.0 if withhold else navboost_value(label.prior_position)
-            docs.append(
-                PageDoc(
-                    url=page.url,
-                    title=page.title,
-                    h1=page.h1,
-                    headings=page.headings,
-                    body=page.body,
-                    word_count=page.word_count,
-                    table_count=page.table_count,
-                    has_faq=page.has_faq,
-                    link_count=page.link_count,
-                    fetch_ms=page.fetch_ms,
-                    updated=page.updated,
-                    authority=page.authority,
-                    anchors=page.anchors,
-                    pagerank=page.pagerank,
-                    domain_rank=page.domain_rank,
-                    homepage_authority=page.homepage_authority,
-                    ad_hits=page.ad_hits,
-                    navboost_prior=prior,
-                    is_ours=page.is_ours,
-                )
-            )
+            # replace() carries every PageDoc field, including the link-graph fields
+            # (orphan, link_depth, crawl_inlinks) that a hand-written copy dropped.
+            docs.append(dataclasses.replace(page, navboost_prior=prior))
         raw = raw_features(query, intents.get(query, "commercial"), docs, today)
         for (label, _page), features in zip(pairs, raw):
             examples.append(

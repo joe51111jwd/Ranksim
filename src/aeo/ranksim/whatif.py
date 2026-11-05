@@ -121,7 +121,7 @@ def overrides_from_html(html_by_url: dict[str, str], pages: dict[str, PageDoc]) 
             overrides.append(Override(url=key, doc=doc, in_corpus=True))
             continue
         doc.pagerank = 0.0
-        doc.authority = 0.0
+        doc.authority = None
         doc.anchors = ""
         doc.navboost_prior = 0.0
         if donor is not None:
@@ -715,6 +715,9 @@ def _copy_graph(source: PageDoc, target: PageDoc) -> None:
     target.authority = source.authority
     target.ad_hits = source.ad_hits
     target.fetch_ms = source.fetch_ms
+    target.orphan = source.orphan
+    target.link_depth = source.link_depth
+    target.crawl_inlinks = source.crawl_inlinks
 
 
 def _domain_donor(pages: dict[str, PageDoc], domain: str) -> PageDoc | None:

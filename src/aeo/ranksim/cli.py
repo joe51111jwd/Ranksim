@@ -293,8 +293,8 @@ def _graph_eval(database: str, args) -> None:
         return
     graph = load_graph(str(path))
     attached = attach_graph(pages, graph)
-    varied = _graph_feature_varies(pages)
     after_examples, _uncovered, _withheld = build_examples(labels, pages, intents)
+    varied = _graph_feature_varies(after_examples)
     after = loo_fit(after_examples, FEATURE_NAMES)
     print(f"With link-graph features: pairwise {_fmt(after.pairwise)} on {after.n_pairs} pairs. Pages updated from the graph: {attached}.")
     if not varied:
@@ -304,17 +304,14 @@ def _graph_eval(database: str, args) -> None:
     print("Web-wide backlinks were not included. No DataForSEO key was used.")
 
 
-def _graph_feature_varies(pages: dict) -> bool:
-    seen = set()
-    depths = set()
-    for url, doc in pages.items():
-        if url != getattr(doc, "url", url):
-            continue
-        if doc.orphan is not None:
-            seen.add(doc.orphan)
-        if doc.link_depth is not None:
-            depths.add(doc.link_depth)
-    return len(seen) > 1 or len(depths) > 1
+def _graph_feature_varies(examples) -> bool:
+    """True when a link-graph feature takes more than one value on the labeled examples."""
+    for name in ("orphan", "link_depth", "crawl_inlinks"):
+        values = {row.features.get(name) for row in examples}
+        values = {value for value in values if value is not None and value == value}
+        if len(values) > 1:
+            return True
+    return False
 
 
 def _fmt(value) -> str:

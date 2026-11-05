@@ -273,7 +273,7 @@ def raw_features(query: str, intent: str, pages: list[PageDoc], today: date) -> 
             similarity = cosine(query_vector, page_vector)
         except ValueError:
             similarity = 0.0
-        authority = 0.0 if page.authority is None else float(page.authority)
+        authority = float("nan") if page.authority is None else float(page.authority)
         url_terms = set(tokenize_for_search(url_text(page.url)))
         exact = 0.0 if not query_terms else sum(1 for term in query_terms if term in url_terms) / len(query_terms)
         rows.append(

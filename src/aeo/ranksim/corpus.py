@@ -59,7 +59,8 @@ def load_corpus_docs(session: Session) -> dict[str, object]:
         doc.domain_rank = float(domains.get(host, 0.0))
         doc.homepage_authority = float(home_rank.get(host, 0.0))
         doc.anchors = " ".join(anchors.get(url, []))
-        doc.authority = doc.pagerank
+        # authority stays whatever the store holds (a backlink provider's value, or None).
+        # It used to be overwritten with in-corpus PageRank, which duplicated `pagerank`.
         try:
             key = normalize_url(url)
         except ValueError:

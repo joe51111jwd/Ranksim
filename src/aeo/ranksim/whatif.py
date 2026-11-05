@@ -949,9 +949,15 @@ def render_regression(live: WhatIfReport, v2: WhatIfReport, v3: WhatIfReport) ->
     """Short predicted check of live, v2, and v3. Same-set ranks omit new URLs."""
     lines = [
         "Predicted positions. Not live Google ranks.",
-        "Same leave-one-query-out fit as the v2 run. Cross-validation was not rerun.",
-        "CV from that fit: pairwise 0.534, NDCG at 10 0.695, Spearman 0.075, top-3 hit rate 0.500.",
-        "Coverage: 122 of 135 labeled rows, 13 uncovered, 414 pairs.",
+        "Leave-one-query-out fit on the pages stored now.",
+        (
+            f"CV from this fit: pairwise {_num(live.pairwise_accuracy)}, NDCG at 10 {_num(live.ndcg_at_10)}, "
+            f"Spearman {_num(live.spearman)}, top-3 hit rate {_num(live.top3_hit_rate)}."
+        ),
+        (
+            f"Coverage: {live.n_labeled_urls} of {live.n_labeled_urls + live.uncovered_urls} labeled rows, "
+            f"{live.uncovered_urls} uncovered, {live.n_pairs} pairs. See `benchmark` for baselines and intervals."
+        ),
         "Full-set ranks can include new SmartCrew URLs. Same-set ranks use only the live competitor set.",
         "A CLEAR line is a same-set rank number worse than live.",
         "",

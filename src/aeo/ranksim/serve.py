@@ -95,9 +95,10 @@ class DemoState:
         return (
             f"Backtest on the pages stored now, leave-one-query-out, PREDICTED: pairwise {pairwise}, "
             f"NDCG at 10 {ndcg}, Spearman {spearman}, top-3 hit rate {top3}. "
-            f"{self.fit.n_queries} queries, {self.fit.n_pairs} pairs, {self.uncovered} labeled rows had no stored HTML. "
-            "An earlier fuller crawl (122 of 135 rows) scored pairwise 0.534 after the monotone and thin-page fixes. "
-            "These are not the same test."
+            f"{self.fit.n_queries} queries, {self.fit.n_pairs} pairs, {self.uncovered} labeled rows had no usable stored HTML. "
+            "On a fresh crawl of this label file, the model was not distinguishable from a BM25F-only baseline or from "
+            "luck once near-duplicate queries and pages were held out (python -m aeo.ranksim benchmark). "
+            "Treat every call here as unproven."
         )
 
     def llm_note(self) -> str:

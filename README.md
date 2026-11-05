@@ -176,6 +176,8 @@ See `.env.example`. The important switches are `DATABASE_URL`, `SEARCH_PROVIDER`
 pytest
 ```
 
+The suite ignores provider keys in your environment and in `.env`, and fails any test that tries to open a network connection (including through a proxy). Tests that would call a paid provider must be marked `@pytest.mark.live` and only run with `RANKSIM_LIVE_TESTS=1`. CI runs the suite on Python 3.11-3.13 with and without fake keys.
+
 They cover Okapi BM25 (including a hand-checked `log(2)` score), reciprocal rank fusion, hybrid ordering, fan-out parsing, citation position and mention rate, the mock run-to-run variation, diagnostic branches, before/after diffs, calibration with an empty log and with known pairs, robots.txt, private-address blocking, the Brave and OpenAI request shapes, and an API run that recomputes citation share from the mock policy. Network is not required. Mock output is flagged `synthetic`.
 
 ## Google rank simulator (SmartCrew)
@@ -187,7 +189,9 @@ pip install -e ".[dev]"
 python -m aeo.ranksim serve
 ```
 
-Then open http://127.0.0.1:8765/ . The first start, on an empty database, loads the committed HTML in `smartcrew/saved_html` and `smartcrew/pr8_v3`. It does not crawl and it does not invent the pages that are not in those files.
+Then open http://127.0.0.1:8765/ . The first start, on an empty database, loads the committed HTML in `smartcrew/saved_html` and `smartcrew/pr8_v3`. It does not crawl and it does not invent the pages that are not in those files. The `pr8_v3` pages are unpublished drafts stored under live SmartCrew URLs; they are marked `draft_bundle` and never count as evaluation rows. That seed covers only 29 of 135 labeled rows, so it is a demo corpus, not an evaluation corpus. For real numbers, run `index-serp` first (it crawls about 120 public URLs politely, respecting robots.txt).
+
+The server binds 127.0.0.1 by default and has no authentication. Loading a page never calls an LLM; only the AI checkbox on a check does, within `RANKSIM_LLM_MAX_CALLS` and `RANKSIM_LLM_MAX_USD`.
 
 The AI eval, after you export a key:
 
@@ -219,7 +223,9 @@ python -m aeo.ranksim gaps
 | `OPENROUTER_API_KEY` | Cheap AI layer via OpenRouter (`openai/gpt-4o-mini` by default). |
 | `OPENAI_API_KEY` | OpenAI, or OpenRouter when the key starts with `sk-or-`. |
 | `ANTHROPIC_API_KEY` | Anthropic Haiku when no OpenRouter or OpenAI key is set. |
+| `SERPER_API_KEY` | Google organic results via Serper. |
 | `RANKSIM_LLM_MODEL` | Optional model override. |
+| `RANKSIM_LLM_MAX_CALLS`, `RANKSIM_LLM_MAX_USD` | Per-process caps on fresh LLM calls and estimated spend (default 200 calls, $1.00). |
 | `RANKSIM_AUTHORITY=dataforseo` | Optional backlink rank on the same DataForSEO account. Off by default. |
 
 If none of the SERP keys are set, `collect` and `track` exit with an error. They do not invent a Google top 10. `--mock` is explicit and every row is marked synthetic.
@@ -228,6 +234,10 @@ If none of the SERP keys are set, `collect` and `track` exit with an error. They
 
 ```bash
 python -m aeo.ranksim evaluate smartcrew/serp.csv
+python -m aeo.ranksim benchmark smartcrew/serp.csv --as-of 2026-10-29 --json bench.json
+python -m aeo.ranksim ledger verify
+python -m aeo.ranksim ledger observe later.csv --observed-on 2026-11-20 --provider serper --depth 10
+python -m aeo.ranksim ledger score
 python -m aeo.ranksim train smartcrew/serp.csv
 python -m aeo.ranksim test page.html --url https://www.smartcrewhq.com/dirtwork-software/
 python -m aeo.ranksim test https://www.smartcrewhq.com/dirtwork-software/
@@ -261,7 +271,7 @@ The tracker appends a row per query. It does not fill days you did not run.
 
 The HTML report is [http://127.0.0.1:8741/ranksim](http://127.0.0.1:8741/ranksim) and `smartcrew/report.html`.
 
-`smartcrew/serp.csv` is a 16-query Google US export from 2026-10-29 (135 rows). `index-serp` crawls those URLs and, when `smartcrew/saved_html/manifest.csv` has a file, stores that HTML instead. Leave-one-query-out accuracy on the stored pages, after missing heading and body matches, monotone match features, and the 150-word gate: pairwise accuracy 0.534, NDCG at 10 of 0.695, Spearman 0.075, top-3 hit rate 0.500, on 122 labeled rows and 414 pairs. Thirteen labeled rows are still uncovered. The previous fit, before those constraints, had pairwise accuracy 0.604. Do not treat either figure as a stable measure of Google accuracy. A later polite recrawl stored fewer pages (41 labeled rows still uncovered). On that smaller set, pairwise accuracy is 0.592 without link-graph features and 0.604 with them. The +0.012 delta is not a meaningful gain, and it is not comparable to the 0.534 above.
+`smartcrew/serp.csv` is a 16-query Google export from 2026-10-29 (135 rows; the file itself has no date, locale or device columns). `index-serp` crawls those URLs and, when `smartcrew/saved_html/manifest.csv` has a file, stores that HTML instead. On a fresh crawl (128 of 135 rows covered, 458 pairs), `python -m aeo.ranksim benchmark` puts LambdaMART at pairwise 0.579 leave-one-query-out and 0.566 with near-duplicate query clusters and their URLs held out, against 0.487 for BM25F alone and 0.424-0.572 for random scores on the same pairs. The model is not distinguishable from BM25F or from luck on this sample. Earlier figures (0.534, 0.604, 0.592) came from databases that are not in the repo and cannot be reproduced. See `ACCURACY_PLAN.md` and `docs/EXPERIMENTS.md`.
 
 ## What's next
 

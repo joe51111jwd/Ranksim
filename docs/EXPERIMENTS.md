@@ -100,3 +100,39 @@ Conventions for every entry:
 - `orphan`, `link_depth` and `crawl_inlinks` were NaN on every training example; `authority`
   was a copy of in-corpus PageRank. With the graph features actually in the model: LOQO 0.574
   vs 0.579 without, cluster-url 0.522 vs 0.566. No evidence the link-graph features help.
+
+## 2026-11-05 E7. Why AI relevance "hurt" (no LLM calls made)
+
+- No LLM key exists here, so the real judge was not re-run; its historical scores are not in the
+  repo. Instead `judge.relevance_experiment` was run on the E2 seed corpus (33 pairs) with
+  synthetic judges, 200 seeds each, `llm_relevance` unconstrained as shipped:
+
+  | judge | mean delta | 5th / 95th percentile | share of runs <= -0.091 |
+  | --- | --- | --- | --- |
+  | uniform random | +0.040 | -0.091 / +0.152 | 8.0% |
+  | true label + noise, sigma 0.1 | +0.222 | +0.061 / +0.364 | 0% |
+  | true label + noise, sigma 0.25 | +0.104 | -0.061 / +0.274 | 2.5% |
+  | true label + noise, sigma 0.5 | +0.048 | -0.092 / +0.212 | 10% |
+
+- Exact binomial intervals: 16/33 (0.485) is 0.308-0.665, 13/33 (0.394) is 0.229-0.579. A paired
+  sign test on at most 3 discordant pairs gives p = 0.25 at best.
+- Conclusion: the -9.1 point result is what chance produces routinely on 33 pairs, and even a
+  moderately useful judge is not reliably detectable at this size. It is not evidence that AI
+  relevance hurts or helps. Six of the 35 judged rows were unpublished drafts.
+- One `ai-eval` run makes 35 judge calls, 1 explanation and 1 rewrite call (37), matching the
+  historical count. The rewrite prompt sent only the first 6,000 characters of raw HTML, which for
+  the default draft is entirely `<head>`; the rewrite never saw the body.
+- Changes: the experiment now reports the paired interval and the random band, the judge feature is
+  monotone, `ai-eval` refuses the paid run below 100 pairs, and the rewrite loop sends extracted
+  text and rejects keyword stuffing. AI relevance stays out of the default score.
+- Cost: $0.
+
+## 2026-11-05 E8. Crawl-to-crawl variation and an accidental fast crawl
+
+- The test and audit sandboxes set a lowercase `https_proxy`, which overrides `HTTPS_PROXY=` in
+  httpx, so "network blocked" runs were not blocked. One audit run re-crawled the ~121 labeled URLs
+  with no delay (robots.txt still respected). That was not intended; the delay default (0.4 s per
+  host) should be used. Its LOQO result on its own same-day crawl was 0.544 on 458 pairs against
+  0.548 on mine before the graph crawl, so two same-day crawls differ by about 0.004 here.
+- A probe test reached openrouter.ai through the loopback proxy, past the socket guard. Tests now
+  drop proxy variables, and a regression test checks that httpx cannot reach the internet.

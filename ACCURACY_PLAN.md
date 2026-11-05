@@ -2,56 +2,96 @@
 
 Predicted agreement with labeled Google results. These are not live ranks.
 
-The current backtest is leave-one-query-out on the SmartCrew file from 2026-10-29: 16 queries, 122 stored rows out of 135, 414 pairs. Pairwise accuracy is 0.534. NDCG at 10 is 0.695. Spearman is 0.075. Top-3 hit rate is 0.500. Pairwise is the number that has to move. 0.70 is the bar for a product that can say a draft beats a competitor without a shrug.
+## Where we are (2026-11-05, reproducible)
 
-## Why 0.534 is the start
+On a fresh crawl of the 16-query SmartCrew file (`smartcrew/serp.csv`, 135 rows, collected
+2026-10-29; 128 rows covered, 458 pairs, 11 query clusters), `python -m aeo.ranksim benchmark`:
 
-Sixteen queries is a small training set. Several labeled URLs still have no HTML (G2 alternatives, one Facebook thread, Capterra BluVue, and a handful of 403s). Heading and body matches of zero are stored as missing, directional text features are monotone, and pages under 150 words rank behind fuller pages. That stopped a 27-word shell from winning on a missing-value bug. It also lowered pairwise from 0.604 to 0.534, because the old number was partly those unconstrained splits.
+| protocol | LambdaMART pairwise (95% CI) | BM25F only | random (95% of seeds) |
+| --- | --- | --- | --- |
+| leave one query out | 0.579 (0.490-0.649) | 0.487 | 0.424-0.572 |
+| leave one query cluster out | 0.568 (0.495-0.632) | 0.487 | 0.424-0.572 |
+| clusters and their URLs held out | 0.566 (0.466-0.657) | 0.487 | 0.424-0.572 |
+
+What that means:
+
+- The model is not distinguishable from BM25F alone (every paired interval includes 0), and under
+  the protocols closest to scoring an unseen draft it is inside the range luck reaches.
+- A domain prior with no page content matches the model under leave-one-query-out. Near-duplicate
+  queries and the same URLs across queries reward recognizing pages, not judging content.
+- The number moves with corpus contents: adding 58 unlabeled pages to the database moved the same
+  458 pairs from 0.548 to 0.579, because in-corpus PageRank and anchor text use every stored page.
+- Earlier figures (0.534 on 414 pairs, 0.604 and 0.592 on 245 pairs, "gap >= 2.00 -> 0.716") came
+  from databases that are not in the repo and cannot be reproduced. Do not quote them.
+
+Details, commands, costs and failures: `docs/EXPERIMENTS.md`.
+
+The bar for a product claim is not a single number. It is: on a held-out benchmark of several
+hundred queries across sites, the model beats BM25F-only and a domain prior with paired intervals
+that exclude 0, under the cluster-and-URL protocol, and its confident calls are right at the rate
+they claim on data that did not choose the threshold.
 
 ## 1. Scale the labeled set to 300+ queries
 
-Hold out by query, so more queries is the lever, not more copies of one query. Spread them across several niches (construction is the seed; add others only when you have real top-10s). Ten URLs per query.
+Hold out by query cluster, so more distinct queries is the lever, not more near-duplicates. Spread
+them across several sites and niches (construction is the seed) and across informational,
+commercial, comparison and transactional intent. Ten organic URLs per query.
 
-Collection is a pluggable `SerpProvider`. Google order comes from:
+Collection is a pluggable `SerpProvider` (`serper`, `dataforseo`, `serpapi`). A failed request or a
+provider error payload is a failure, not an empty result, and never overwrites a stored SERP.
+`BRAVE_API_KEY` is not Google and is not accepted as a label source. With no key, collect refuses to
+invent a top 10. Label files should carry `observed_on`, `country`, `language`, `device` and
+`provider` columns (see `smartcrew/serp-template.csv`); the import report says when they are missing.
 
-- `SERPER_API_KEY` (recommended for this volume). The adapter is `serper` and posts to `https://google.serper.dev/search`.
-- `DATAFORSEO_LOGIN` and `DATAFORSEO_PASSWORD` (already wired).
-- `SERPAPI_KEY` (already wired).
+What we need: one Google SERP key and the keyword lists. No key exists in this environment, so no
+new SERPs were collected.
 
-`BRAVE_API_KEY` is not Google and is not accepted as a label source. With no key, collect refuses to invent a top 10.
+## 2. Repeated snapshots and Google's own volatility
 
-What we need: one of those Google keys, plus the niche keyword lists. We do not have a key in this environment, so no new SERPs were collected.
+`python -m aeo.ranksim noise day-one.csv day-two.csv` reports pairwise agreement on URLs present
+both days, agreement counting URLs that entered or left, list overlap, top-1 stability and mean
+position change. It shows how stable the target is; it does not prove a hard ceiling on what a
+model can reach. One snapshot cannot estimate it. What we need: the same queries collected again on
+later days with the same locale and device.
 
-## 2. Daily snapshots and the noise ceiling
+## 3. Links and authority
 
-Google's own order moves. If two snapshots of the same queries only agree 0.80 of the time, a model at 0.85 is fitting noise. The metric is `python -m aeo.ranksim noise day-one.csv day-two.csv`. It reports pairwise agreement, how often the top URL is the same, and the mean absolute position change, on URLs present both days.
-
-One snapshot cannot estimate that. The 2026-10-29 file compared with itself is a perfect match, and the command says so. It is not a noise ceiling. What we need: the same queries exported again on a later day.
-
-## 3. Backlinks and domain authority
-
-Web-wide backlinks are not in the crawl. The authority feature stays empty unless `RANKSIM_AUTHORITY=dataforseo` and the DataForSEO login above is set. Until then it is not a measured accuracy gain.
-
-The link crawl does add in-crawl signals: internal PageRank, anchor text, orphan pages (no in-crawl inlinks, excluding the homepage), and link depth. Those are features on pages the crawl actually saw. They are not a substitute for a backlink index.
-
-A polite crawl on 2026-11-02 stored 68 HTML pages (70 fetches, 1 robots block, then the cap). 41 of 135 labeled rows are still uncovered. On that rebuilt corpus, leave-one-query-out pairwise accuracy is 0.592 without the link-graph features and 0.604 with them (245 pairs, 16 queries). The delta is +0.012. That is not a meaningful gain, and it is not comparable to the earlier 0.534, which was measured on a larger stored set (122 rows, 414 pairs) that is not in this environment. `python -m aeo.ranksim graph-eval` reprints both numbers. If the features do not vary, the command says a delta is not evidence.
+Web-wide backlinks are not in the crawl. `authority` stays missing (NaN) unless a backlink provider
+stored a value; it used to be a copy of in-crawl PageRank. In-crawl PageRank, anchors, orphan and
+link-depth features describe only the pages the crawl saw. With the link-graph features actually
+reaching the model (a plumbing bug kept three of them NaN before), they did not help on the fresh
+crawl (0.574 vs 0.579 leave-one-query-out, 0.522 vs 0.566 with clusters and URLs held out).
 
 ## 4. Did this change beat that competitor
 
-A pre-publish check asks a pairwise question: after the edit, does our page outscore competitor Y on the stored set. Scoring that question against reality needs a real before and after Google observation (the URL, the competitor URL, and whether Google then ranked us above them). We do not have that labeled change file. The demo rescores the draft and will not invent the Google outcome.
+The product's claim is pairwise. Every draft check in the demo is appended to the prediction
+ledger (`python -m aeo.ranksim ledger list|verify|observe|score`), with the candidate set, model and
+data fingerprints. Later observations are appended with their date, and calls are scored only
+against observations made after the prediction. That ledger is the track record; it starts empty.
 
-## 5. Calibrated confidence
+## 5. Confidence
 
-The ranker always emits a score. On the rebuilt crawl, pairs whose score gap is at least 2.00 had pairwise accuracy 0.716, and that is 33% of backtest pairs. Smaller gaps stay UNSURE. The SmartCrew sample draft on `hcss heavyjob alternative` is one of those: PREDICTED 1 of 7, labeled UNSURE. CLEARER is only the high-gap slice, and the page still says PREDICTED. Until the labeled set is larger, most checks should land on UNSURE.
+The old rule picked a score-gap threshold on the backtest pairs and reported accuracy on the same
+pairs. Held out by query cluster and URL, with the threshold chosen on other folds, those
+"confident" calls were right 20 of 41 and 16 of 47 times on two versions of the fresh crawl. A
+threshold is now used only if held-out confident calls are right at least 0.65 of the time on at
+least 30 calls. On current data every call is UNSURE.
 
 ## LLM relevance
 
-An optional judge can score how well a page satisfies the query and add `llm_relevance` for a second held-out run. It runs only with `OPENAI_API_KEY` or `ANTHROPIC_API_KEY`. Neither is set here, so no judge scores were created and no accuracy delta is reported.
+The historical "0.485 without vs 0.394 with" was 3 of 33 pairs on the bootstrap seed corpus, which
+included unpublished drafts. Random judges produce a drop that large in about 8% of runs; a judge
+equal to the true label plus noise (sigma 0.5) does in about 10%. That sample cannot detect a
+useful judge. `ai-eval` now reports the paired interval and refuses the paid judge run below 100
+labeled pairs. AI relevance stays out of the default score until held-out evidence supports it.
 
 ## What we need from you
 
-1. `SERPER_API_KEY`, or DataForSEO login and password, or `SERPAPI_KEY`, to collect 300+ real Google top 10s.
-2. Keyword lists for the extra niches.
-3. A second export of the same queries on a later day, for the noise ceiling.
-4. `OPENAI_API_KEY` or `ANTHROPIC_API_KEY` if you want the judge, the rewrite loop, and LLM explanations instead of the stub.
-5. Saved HTML for the URLs that still return 403 or block the crawler. Those rows stay uncovered. Nothing is filled in for them.
+1. `SERPER_API_KEY`, or DataForSEO login and password, or `SERPAPI_KEY`, to collect 300+ real
+   Google top 10s with dates and locale.
+2. Keyword lists for the extra sites and niches.
+3. Repeated collections of the same queries on later days, for volatility.
+4. An OpenRouter key only once there are at least a few hundred labeled pairs, so the judge can be
+   measured.
+5. Saved HTML for URLs that return 403 or block the crawler (currently the G2 alternatives pages,
+   thedigitalprojectmanager.com, and a Facebook answers page). Nothing is filled in for them.

@@ -9,7 +9,7 @@ from datetime import date
 from aeo.crawl.urls import normalize_url
 from aeo.ranksim.features import FEATURE_NAMES, MONOTONE_UP, PageDoc, raw_features
 from aeo.ranksim.groundtruth import SerpLabel, navboost_leaks
-from aeo.ranksim.metrics import mean_metric, ndcg_at_k, spearman
+from aeo.ranksim.metrics import expected_ndcg_at_k, expected_top_k_hit, mean_metric, spearman
 
 
 @dataclass
@@ -314,15 +314,15 @@ def load_model(path: str):
 
 
 def _ndcg(group: list[RankExample], scores: list[float]) -> float | None:
-    order = sorted(range(len(group)), key=lambda index: (-scores[index], index))
-    gains = {str(index): relevance(group[index].position) for index in range(len(group))}
-    return ndcg_at_k([str(index) for index in order], gains, k=10)
+    """Expected NDCG@10 over random orders of tied scores, so input order cannot leak labels."""
+    return expected_ndcg_at_k(scores, [relevance(row.position) for row in group], k=10)
 
 
 def _top3_hit(group: list[RankExample], scores: list[float]) -> float:
-    gold = min(range(len(group)), key=lambda index: (group[index].position, index))
-    order = sorted(range(len(group)), key=lambda index: (-scores[index], index))
-    return 1.0 if gold in order[:3] else 0.0
+    """Expected top-3 hit for the best-labeled row; ties are ordered at random, not by input."""
+    best = min(row.position for row in group)
+    golds = [index for index, row in enumerate(group) if row.position == best]
+    return sum(expected_top_k_hit(scores, gold, k=3) for gold in golds) / len(golds)
 
 
 def _pairs(group: list[RankExample], scores: list[float]) -> tuple[int, int]:

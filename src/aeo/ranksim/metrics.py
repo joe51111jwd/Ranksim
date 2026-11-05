@@ -70,3 +70,44 @@ def mean_metric(values: list[float | None]) -> float | None:
     if not usable:
         return None
     return sum(usable) / len(usable)
+
+
+def tie_groups(scores: list[float]) -> list[list[int]]:
+    """Indexes grouped by equal score, best score first. Order inside a group is not used."""
+    groups: dict[float, list[int]] = {}
+    for index, score in enumerate(scores):
+        groups.setdefault(score, []).append(index)
+    return [groups[score] for score in sorted(groups, reverse=True)]
+
+
+def expected_ndcg_at_k(scores: list[float], gains: list[float], k: int = 10) -> float | None:
+    """NDCG@k averaged over every order of tied scores (higher score is better).
+
+    Breaking ties by input order lets the label order leak into the metric when rows are
+    stored sorted by position: a constant scorer would get NDCG 1.0. The expectation is
+    exact: each tied block contributes its mean gain times the discounts it occupies.
+    """
+    if k < 1 or not gains or len(scores) != len(gains):
+        return None
+    ideal = _dcg(sorted(gains, reverse=True)[:k])
+    if ideal == 0:
+        return None
+    total = 0.0
+    start = 0
+    for group in tie_groups(scores):
+        mean_gain = sum(2 ** gains[index] - 1 for index in group) / len(group)
+        for slot in range(start, min(start + len(group), k)):
+            total += mean_gain / math.log2(slot + 2)
+        start += len(group)
+    return total / ideal
+
+
+def expected_top_k_hit(scores: list[float], gold: int, k: int = 3) -> float:
+    """Probability the gold row lands in the top k when tied scores are ordered at random."""
+    start = 0
+    for group in tie_groups(scores):
+        if gold in group:
+            slots_in_top = max(0, min(start + len(group), k) - start)
+            return slots_in_top / len(group)
+        start += len(group)
+    return 0.0

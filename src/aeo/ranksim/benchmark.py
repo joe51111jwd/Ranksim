@@ -129,6 +129,7 @@ class NoiseBand:
     mean: float | None
     low: float | None
     high: float | None
+    ndcg_mean: float | None = None
 
 
 @dataclass
@@ -304,16 +305,23 @@ def random_band(examples: list[RankExample], *, seeds: int = 1000, seed: int = 0
         return NoiseBand(seeds, None, None, None)
     rng = random.Random(seed)
     values = []
+    ndcgs = []
     for _ in range(seeds):
         correct = total = 0
+        run_ndcg = []
         for rows in usable.values():
             scores = [rng.random() for _ in rows]
             result = _query_result(rows, scores, 0)
             correct += result.correct
             total += result.total
+            if result.ndcg is not None:
+                run_ndcg.append(result.ndcg)
         values.append(correct / total)
+        if run_ndcg:
+            ndcgs.append(sum(run_ndcg) / len(run_ndcg))
     low, high = _percentiles(values)
-    return NoiseBand(seeds, sum(values) / len(values), low, high)
+    ndcg_mean = sum(ndcgs) / len(ndcgs) if ndcgs else None
+    return NoiseBand(seeds, sum(values) / len(values), low, high, ndcg_mean)
 
 
 # Running ---------------------------------------------------------------------------
@@ -598,7 +606,8 @@ def render_report(report: BenchmarkReport) -> str:
         if band is not None and band.mean is not None:
             lines.append(
                 f"  {'random':<14}{band.mean:.3f} mean over {band.seeds} seeds; 95% of seeds between "
-                f"{band.low:.3f} and {band.high:.3f} on these pairs (luck alone)"
+                f"{band.low:.3f} and {band.high:.3f} on these pairs (luck alone); "
+                f"random NDCG10 {_num(band.ndcg_mean)} for this query mix"
             )
         model = next((row for row in protocol.scorers if row.name == "lambdamart"), None)
         if model and model.diff_vs_bm25f is not None:

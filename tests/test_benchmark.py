@@ -216,3 +216,18 @@ def test_validated_calibration_keeps_a_threshold_that_holds_held_out():
     assert "Held out by query cluster and URL" in fit.calibration.note
     unvalidated = loo_fit(_synthetic(True), ["bm25_title"], validate=False)
     assert unvalidated.calibration.threshold == fit.calibration.threshold
+
+
+def test_ndcg_and_top3_do_not_leak_label_order_through_ties():
+    from aeo.ranksim.lambdamart import _ndcg, _top3_hit
+
+    rows = [RankExample("q", f"https://t.example/{i}", float(i + 1), {}) for i in range(5)]
+    flat = [0.0] * 5
+    forward = (_ndcg(rows, flat), _top3_hit(rows, flat))
+    backward = (_ndcg(list(reversed(rows)), flat), _top3_hit(list(reversed(rows)), flat))
+    assert forward == backward
+    assert forward[0] < 1.0
+    assert abs(forward[1] - 3 / 5) < 1e-9
+    perfect = [5.0, 4.0, 3.0, 2.0, 1.0]
+    assert _ndcg(rows, perfect) == 1.0
+    assert _top3_hit(rows, perfect) == 1.0

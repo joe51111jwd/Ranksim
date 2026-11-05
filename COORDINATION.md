@@ -47,7 +47,7 @@ Daily weekday improvement sessions are scheduled around 9am Eastern.
 ### 2026-11-05 — SEO Tool Builder
 
 - Branch: `cursor/mvp-eod-design-175f`
-- Pull request: see the PR that adds this file (do not guess the number here)
+- Pull request: https://github.com/joe51111jwd/Ranksim/pull/1
 - Claimed: coordination note and EOD MVP design only. No product code.
 - Files: `COORDINATION.md`, `docs/MVP_EOD_2026-11-05.md`
 - Tests: not run for product behavior. No app code changed.

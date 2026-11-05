@@ -153,3 +153,27 @@ def test_reextract_updates_derived_fields_but_not_the_snapshot(tmp_path):
     assert (total, changed) == (1, 1) and row.word_count > 200
     assert row.html_sha256 == sha and row.fetched_at == at
     session.close()
+
+
+def test_graph_command_keeps_existing_snapshots(tmp_path, monkeypatch):
+    import aeo.ranksim.linkgraph as linkgraph
+    from aeo.ranksim.cli import main
+    from aeo.ranksim.linkgraph import GraphNode, LinkGraph
+
+    db = f"sqlite:///{tmp_path / 'g.db'}"
+    session = open_session(db)
+    store_fetched_page(session, FetchResult(url="https://x.example/a/", html=HTML.format("original " * 200), status="fetched", fetch_ms=120.0))
+    session.close()
+    graph = LinkGraph()
+    graph.nodes["https://x.example/a"] = GraphNode(url="https://x.example/a", depth=0, status="fetched", html=HTML.format("refetched " * 200))
+    graph.nodes["https://x.example/new"] = GraphNode(url="https://x.example/new", depth=1, status="fetched", html=HTML.format("new " * 200))
+    monkeypatch.setattr(linkgraph, "collect_graph", lambda *a, **k: graph)
+    serp = tmp_path / "serp.csv"
+    serp.write_text("query,url,position\nq,https://x.example/a/,1\n")
+    main(["--database", db, "graph", "--serp", str(serp), "--out", str(tmp_path / "g.json")])
+    session = open_session(db)
+    urls = sorted(row.url for row in session.query(RsPage).all())
+    kept = session.get(RsPage, "https://x.example/a/")
+    session.close()
+    assert urls == ["https://x.example/a/", "https://x.example/new"]  # no slash twin
+    assert "original" in kept.raw_html and kept.fetch_ms == 120.0 and kept.source == "crawl"

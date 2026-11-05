@@ -416,6 +416,7 @@ class UiState:
         llm_factory: Callable[[], object] | None = None,
         max_upload_bytes: int = MAX_UPLOAD_BYTES,
         public_demo: bool = False,
+        csrf_token: str | None = None,
     ) -> None:
         from aeo.ranksim.project import projects_root as resolve_root
 
@@ -424,7 +425,8 @@ class UiState:
         self.settings = settings
         self.database = database
         self.root = Path(resolve_root(projects_root)).resolve()
-        self.csrf = secrets.token_urlsafe(32)
+        # One random token per process. A public multi-instance host passes a token shared by its instances.
+        self.csrf = csrf_token or secrets.token_urlsafe(32)
         self.jobs = JobManager(self.scrub)
         self.pull_options = dict(pull_options or {})
         self.preview_fetch = preview_fetch or (lambda url: fetch_preview(settings, url))
@@ -637,6 +639,7 @@ def create_app(
     llm_factory: Callable[[], object] | None = None,
     max_upload_bytes: int = MAX_UPLOAD_BYTES,
     public_demo: bool | None = None,
+    csrf_token: str | None = None,
 ) -> FastAPI:
     """The web UI. Passing a DemoState positionally (the old API) serves the old demo at /demo and /check.
 
@@ -659,6 +662,7 @@ def create_app(
         llm_factory=llm_factory,
         max_upload_bytes=max_upload_bytes,
         public_demo=public_demo,
+        csrf_token=csrf_token,
     )
     if public_demo:
         state = None
@@ -695,7 +699,7 @@ def create_app(
         # Every public instance builds its own copy of the synthetic demo, so any instance can serve it.
         from aeo.ranksim import workspace as ws
 
-        if not (ui.root / ws.DEMO_SLUG / "project.json").is_file():
+        if not ws.demo_ready(ui.root):
             try:
                 ws.load_synthetic_demo(ui.root, ui.settings, ui.database)
             except Exception as exc:  # noqa: BLE001 - the home page still offers the button

@@ -1016,6 +1016,17 @@ def offline_fetcher(urls: list[str]):
     return [FetchResult(url=url, html="", status="error", error="not fetched: offline demo, no stored copy") for url in urls]
 
 
+def demo_ready(root) -> bool:
+    """True when the synthetic demo project exists and has a trained engine."""
+    from aeo.ranksim.project import ProjectError, list_pulls, load_project
+
+    try:
+        project = load_project(DEMO_SLUG, root=root)
+    except (ProjectError, FileNotFoundError, OSError, ValueError):
+        return False
+    return any(item.has_engine for item in list_pulls(project))
+
+
 def load_synthetic_demo(root, settings, database: str):
     """Create (or rebuild) the synthetic demo project and build its engine. No keys, no network."""
     from aeo.ranksim.project import ProjectError, create_project, import_serp_csv, load_project, pull

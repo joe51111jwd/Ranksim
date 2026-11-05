@@ -22,7 +22,19 @@ pip install -e ".[dev]"
 python -m aeo.ranksim serve
 ```
 
-Open http://127.0.0.1:8765/ . It listens on this computer only. `--port` changes the port, `--projects-dir` the folder projects are kept in (default `data/projects`).
+Open http://127.0.0.1:8765/ . It listens on this computer only. `--port` changes the port, `--projects-dir` the folder projects are kept in (default `data/projects`). No API key is needed for anything below.
+
+The workspace has three screens, with the project and query carried across them:
+
+1. **Setup** (`/p/<slug>`). Create or pick a project: your site, competitor domains, and observed positions from a `query,url,position` CSV (Search Console's `Query,Page,Position` works too). The CSV is checked line by line before anything is saved, and problems are listed by line. **Load synthetic demo** builds a six-query project from invented `.example` sites with no keys and no network; every page of it is marked SYNTHETIC. On a loopback run, **Load historical SmartCrew export** loads `smartcrew/serp.csv` (pull date not recorded) with only the HTML saved in this repository. The coverage table shows, per query, how many candidates have stored HTML and which are missing. **Fetch pages and build** fetches the candidate pages (robots.txt respected) and trains the model.
+2. **Comparisons** (`/p/<slug>/comparisons?q=`). One query: a table of the candidates with the observed position and the PREDICTED position side by side, a shift column, stored-HTML date, and a detail panel with the signals the model reads and the limitations. PREDICTED ranks only order the candidates with stored HTML; missing pages show `n/a`; close calls show `UNSURE`.
+3. **Draft test** (`/p/<slug>/draft?q=`). Paste a draft (HTML or plain text), pick the query and the candidate set (all observed candidates, or named competitors only), and keep the original (the stored copy, a pasted original, or none). The result shows original and draft PREDICTED positions among the same candidates, both PREDICTED orders, a fact-by-fact diff, the on-topic check, and the limits of the claim. Each run is saved with its original and draft under `data/projects/<slug>/drafts/`. AI notes are offered only when an LLM key is set; otherwise the page says they are unavailable.
+
+The full older project page (pull log, keys, page tester, results boards, versions, AI engines) is at `/p/<slug>/advanced`.
+
+**Public synthetic demo.** `RANKSIM_PUBLIC_DEMO=1` (or `app.py`, the Vercel entry) serves only the synthetic demo: no project creation, imports, fetching, historical data, or old `/demo` pages, and every provider key is switched off. `.vercelignore` keeps `smartcrew/` out of any upload. On Vercel the data lives in `/tmp` per server instance, so saved draft tests there are not durable; the draft screen says so.
+
+The steps below describe the advanced page.
 
 1. **New project.** A name, your site (for example `www.smartcrewhq.com`), and your key searches, one per line.
 2. **Pull now** on the project page. A progress bar per step shows Google, AI engines, crawl, train and save. Without a Google key the Google step says `not run`, and the pull uses REAL results you imported (the **Import Google positions from a CSV** box takes `query,url,position`) or that another project here already holds for the same searches, each with its original source and date.

@@ -1303,6 +1303,13 @@ def register(app: FastAPI, ui) -> None:
         if not ui.llm_ready():
             run["ai"] = {"status": "unavailable", "text": f"No AI provider is configured on this server. Set {ws.AI_KEYS} to enable them."}
         run_id = await run_in_threadpool(ws.save_draft_run, project, run, original_html, values["draft_html"])
+        if ui.public_demo:
+            # A public host can route the next request to another instance with its own /tmp, so show the result now.
+            note = _alert(
+                "Public demo: this result is shown now and kept on one server instance only. A reload or the saved link may not find it.",
+                "info",
+            )
+            return shell(ui, f"Draft test: {run['search']}", note + draft_result_body(ui, project, meta, run), project=project, meta=meta, tab="draft", query=run["search"])
         return RedirectResponse(f"/p/{slug}/draft/{run_id}", status_code=303)
 
     def _draft_form_response(slug: str, q: str, values, *, error: str = "", status: int = 200, from_run: bool = False) -> Response:

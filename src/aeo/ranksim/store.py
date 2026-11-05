@@ -114,6 +114,9 @@ class RsRankCheck(Base):
     is_google: Mapped[bool] = mapped_column(Boolean, default=False)
     top_json: Mapped[list] = mapped_column(JSON, default=list)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    # "ok" or "error". NULL on rows written before this column existed.
+    status: Mapped[str | None] = mapped_column(String(16), nullable=True, default="ok")
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
 class RsTestRun(Base):

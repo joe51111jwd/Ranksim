@@ -13,7 +13,7 @@ from aeo.ranksim import OUR_DOMAIN
 from aeo.ranksim.features import PageDoc
 from aeo.ranksim.keywords import Keyword
 from aeo.ranksim.score import HAND_WEIGHTS, best_our_position, fit_weights, score_pages
-from aeo.ranksim.serp import SerpProvider
+from aeo.ranksim.serp import SerpCollectError, SerpProvider
 from aeo.ranksim.store import (
     RsPage,
     latest_weights,
@@ -174,7 +174,12 @@ def collect_corpus(
         if len(stored) >= max_pages:
             warnings.append(f"Stopped at {max_pages} stored pages. Later queries were not fetched.")
             break
-        hits = provider.search(keyword.query, depth)
+        try:
+            hits = provider.search(keyword.query, depth)
+        except SerpCollectError as exc:
+            # Keep whatever SERP was stored before; a failure is not an empty result.
+            warnings.append(f"'{keyword.query}': collection failed ({exc}). The stored SERP was kept.")
+            continue
         replace_serp(session, keyword.query, hits)
         hit_count += len(hits)
         queries_done += 1
@@ -399,7 +404,25 @@ def track_ranks(
     day = checked_on or date.today().isoformat()
     rows: list[RsRankCheck] = []
     for keyword in keywords:
-        hits = provider.search(keyword.query, depth)
+        try:
+            hits = provider.search(keyword.query, depth)
+        except SerpCollectError as exc:
+            # Recorded as a failed check, never as "not in the top N".
+            rows.append(
+                RsRankCheck(
+                    query=keyword.query,
+                    checked_on=day,
+                    our_position=None,
+                    our_url=None,
+                    provider=provider.name,
+                    synthetic=provider.synthetic,
+                    is_google=provider.is_google,
+                    top_json=[],
+                    status="error",
+                    error=str(exc),
+                )
+            )
+            continue
         ours = [hit for hit in hits if is_our_url(hit.url)]
         best = min(ours, key=lambda hit: hit.position) if ours else None
         rows.append(
@@ -409,6 +432,7 @@ def track_ranks(
                 our_position=best.position if best else None,
                 our_url=best.url if best else None,
                 provider=provider.name,
+                status="ok",
                 synthetic=provider.synthetic,
                 is_google=provider.is_google,
                 top_json=[

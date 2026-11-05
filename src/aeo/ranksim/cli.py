@@ -942,13 +942,17 @@ def _track(settings, database: str, args) -> None:
         close = getattr(provider, "close", None)
         if close:
             close()
-    found = sum(1 for row in rows if row.our_position is not None)
+    failed = [row for row in rows if row.status == "error"]
+    ok = [row for row in rows if row.status != "error"]
+    found = sum(1 for row in ok if row.our_position is not None)
     kind = "Google" if rows and rows[0].is_google and not rows[0].synthetic else provider.name
-    print(f"Recorded {len(rows)} queries from {kind}.")
+    print(f"Recorded {len(rows)} queries from {kind}: {len(ok)} collected, {len(failed)} failed.")
     if provider.synthetic:
         print("Synthetic mock tracker. Not a Google rank check.")
-    print(f"SmartCrew was inside the fetched results for {found} queries.")
-    print("A blank position means the domain was outside this fetch, not a made-up rank.")
+    print(f"SmartCrew was inside the fetched results for {found} of {len(ok)} collected queries.")
+    print("A blank position on a collected query means the domain was outside this fetch, not a made-up rank.")
+    for row in failed[:10]:
+        print(f"Failed: {row.query!r}: {row.error}. Not recorded as a rank.")
 
 
 def _train(database: str, args) -> None:

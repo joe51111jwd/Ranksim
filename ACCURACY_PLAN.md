@@ -5,18 +5,25 @@ Predicted agreement with labeled Google results. These are not live ranks.
 ## Where we are (2026-11-05, reproducible)
 
 On a fresh crawl of the 16-query SmartCrew file (`smartcrew/serp.csv`, 135 rows, collected
-2026-10-29; 128 rows covered, 458 pairs, 11 query clusters), `python -m aeo.ranksim benchmark`:
+2026-10-29; 128 rows covered, 458 pairs, 11 query clusters), `python -m aeo.ranksim benchmark` with
+the code on this branch (crawler-artifact features removed, corrected text extraction):
 
-| protocol | LambdaMART pairwise (95% CI) | BM25F only | random (95% of seeds) |
-| --- | --- | --- | --- |
-| leave one query out | 0.579 (0.490-0.649) | 0.487 | 0.424-0.572 |
-| leave one query cluster out | 0.568 (0.495-0.632) | 0.487 | 0.424-0.572 |
-| clusters and their URLs held out | 0.566 (0.466-0.657) | 0.487 | 0.424-0.572 |
+| protocol | LambdaMART pairwise (95% CI) | BM25F only | random (95% of seeds) | range seen today |
+| --- | --- | --- | --- | --- |
+| leave one query out | 0.581 (0.499-0.648) | 0.478 | 0.424-0.572 | 0.544-0.592 |
+| leave one query cluster out | 0.559 (0.503-0.609) | 0.478 | 0.424-0.572 | 0.550-0.568 |
+| clusters and their URLs held out | 0.498 (0.404-0.584) | 0.478 | 0.424-0.572 | 0.498-0.566 |
+
+"Range seen today" spans three same-day crawls, with and without the link-graph pages, and before
+and after the feature and extraction fixes. Re-extracting 4 pages alone moved the last row from
+0.559 to 0.498.
 
 What that means:
 
-- The model is not distinguishable from BM25F alone (every paired interval includes 0), and under
-  the protocols closest to scoring an unseen draft it is inside the range luck reaches.
+- Under the protocol closest to scoring an unseen draft (query clusters and their URLs held out),
+  the model is at chance and not distinguishable from BM25F alone. Under the looser protocols it
+  beats BM25F by about 0.08-0.10 with paired intervals that barely exclude 0, on one of several
+  comparisons, which is not enough to claim a product-level effect.
 - A domain prior with no page content matches the model under leave-one-query-out. Near-duplicate
   queries and the same URLs across queries reward recognizing pages, not judging content.
 - The number moves with corpus contents: adding 58 unlabeled pages to the database moved the same

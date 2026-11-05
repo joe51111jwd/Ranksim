@@ -132,7 +132,30 @@ Conventions for every entry:
 - The test and audit sandboxes set a lowercase `https_proxy`, which overrides `HTTPS_PROXY=` in
   httpx, so "network blocked" runs were not blocked. One audit run re-crawled the ~121 labeled URLs
   with no delay (robots.txt still respected). That was not intended; the delay default (0.4 s per
-  host) should be used. Its LOQO result on its own same-day crawl was 0.544 on 458 pairs against
+  host) should be used. A second audit run (the branch inventory) pulled about 137 third-party URLs
+  through the other branch's project command for the same reason, with the 0.4 s delay and robots
+  respected. Its LOQO result on its own same-day crawl was 0.544 on 458 pairs against
   0.548 on mine before the graph crawl, so two same-day crawls differ by about 0.004 here.
 - A probe test reached openrouter.ai through the loopback proxy, past the socket guard. Tests now
   drop proxy variables, and a regression test checks that httpx cannot reach the internet.
+
+## 2026-11-05 E9. Same-day crawl variation, feature artifacts and extraction
+
+- Three independent crawls of the same 135 labels on the same day (mine, and two by audit agents)
+  gave LOQO pairwise 0.548, 0.544 and 0.576 straight after `index-serp` (458 pairs each). Part of
+  that was the `speed` feature, which recorded our crawler's own timing (politeness sleep, the
+  first robots.txt fetch, the proxy) and so differed between crawls.
+- Removing `speed`, `orphan`, `link_depth` and `crawl_inlinks` from the model (they measure the
+  crawl, not the page) moved results by less than 0.02 under every protocol. The change was made
+  because of what the features measure, not because of the score.
+- The extractor took the first `<main>`/`<article>`; on this crawl 4 stored pages had their word
+  count corrected by `reextract`. That alone moved clusters-and-URLs-held-out pairwise from 0.559
+  to 0.498 and LOQO from 0.587 to 0.581.
+- Current code on the re-extracted corpus (fingerprint changes with re-extraction only through the
+  derived fields; HTML unchanged): LOQO 0.581 (0.499-0.648), cluster 0.559 (0.503-0.609),
+  cluster-url 0.498 (0.404-0.584); BM25F 0.478; random 0.424-0.572; LambdaMART minus BM25F
+  +0.103 (+0.012 to +0.185), +0.081 (+0.017 to +0.128), +0.020 (-0.076 to +0.099). Held-out
+  confident calls: 114 of 183, 62 of 88, 7 of 28 right.
+- Reading: with 11 independent query clusters, any single number here moves by several points
+  with small, legitimate data changes. Only a larger, frozen, dated benchmark (BACKLOG P0-1, P0-2)
+  can settle whether the model beats BM25F on unseen pages.

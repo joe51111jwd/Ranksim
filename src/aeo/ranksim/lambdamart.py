@@ -10,6 +10,7 @@ from datetime import date
 from aeo.crawl.urls import normalize_url
 from aeo.ranksim.features import FEATURE_NAMES, MONOTONE_UP, PageDoc, raw_features
 from aeo.ranksim.groundtruth import SerpLabel, navboost_leaks
+from aeo.ranksim.store import EVALUATION_EXCLUDED_SOURCES
 from aeo.ranksim.metrics import expected_ndcg_at_k, expected_top_k_hit, mean_metric, spearman
 
 
@@ -92,7 +93,8 @@ def build_examples(
     uncovered = 0
     for label in labels:
         page = _lookup_page(pages, label.url)
-        if page is None:
+        if page is None or getattr(page, "source", "crawl") in EVALUATION_EXCLUDED_SOURCES:
+            # A draft stored under a live URL is not the page Google ranked. Count it as uncovered.
             uncovered += 1
             continue
         grouped.setdefault(label.query, []).append((label, page))

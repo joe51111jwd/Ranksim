@@ -70,7 +70,7 @@ def index_serp_csv(
         for url in saved_used:
             store_fetched_page(
                 session,
-                FetchResult(url=url, html=saved[url], status="fetched", fetch_ms=None),
+                FetchResult(url=url, html=saved[url], status="fetched", fetch_ms=None, source="saved_html"),
             )
             counts["saved_html"] += 1
         for requested, result in fetched:

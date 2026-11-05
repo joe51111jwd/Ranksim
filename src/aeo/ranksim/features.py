@@ -86,6 +86,7 @@ class PageDoc:
     orphan: bool | None = None
     link_depth: int | None = None
     crawl_inlinks: int | None = None
+    source: str = "crawl"
 
 
 def url_text(url: str) -> str:

@@ -68,6 +68,20 @@ class RsPage(Base):
     authority: Mapped[float | None] = mapped_column(Float, nullable=True)
     authority_source: Mapped[str] = mapped_column(String(64), default="unavailable")
     fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    # Provenance. `source` says where the stored HTML came from: crawl, saved_html (a file a
+    # person saved, capture date unknown), draft_bundle (unpublished draft HTML stored under a
+    # live URL; never used as an evaluation example), graph_crawl, or unknown (rows written
+    # before this column existed). The last attempt fields record a failed refetch without
+    # erasing the last good snapshot.
+    source: Mapped[str | None] = mapped_column(String(32), nullable=True, default="crawl")
+    html_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    last_attempt_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_attempt_status: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    last_attempt_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+PAGE_SOURCES = ("crawl", "saved_html", "draft_bundle", "graph_crawl", "unknown")
+EVALUATION_EXCLUDED_SOURCES = frozenset({"draft_bundle"})
 
 
 class RsWeight(Base):
@@ -130,6 +144,7 @@ def session_factory(url: str) -> sessionmaker:
     if url not in _factories:
         engine = create_engine(url, future=True)
         Base.metadata.create_all(engine)
+        _add_missing_columns(engine)
         _factories[url] = sessionmaker(bind=engine, expire_on_commit=False, future=True)
     return _factories[url]
 
@@ -179,14 +194,56 @@ def replace_serp(session: Session, query: str, hits: list[SerpHit]) -> None:
     session.commit()
 
 
+def _add_missing_columns(engine) -> None:
+    """Additive migration: add columns that newer code declares to tables an older version made.
+
+    create_all creates missing tables but never alters existing ones, so a database from an
+    earlier checkout would fail on the new provenance columns. Only nullable columns are added.
+    Existing rows get NULL, which the code reads as source "unknown".
+    """
+    from sqlalchemy import inspect, text
+
+    inspector = inspect(engine)
+    for table in Base.metadata.sorted_tables:
+        if not inspector.has_table(table.name):
+            continue
+        present = {column["name"] for column in inspector.get_columns(table.name)}
+        for column in table.columns:
+            if column.name in present or not column.nullable:
+                continue
+            ddl = column.type.compile(dialect=engine.dialect)
+            with engine.begin() as connection:
+                connection.execute(text(f'ALTER TABLE {table.name} ADD COLUMN "{column.name}" {ddl}'))
+
+
 def upsert_page(session: Session, **fields) -> None:
+    """Store a page. A failed fetch never erases an earlier good snapshot.
+
+    A good fetch (status "fetched" with HTML) replaces the stored snapshot and stamps
+    fetched_at and html_sha256. A failed or empty fetch of a URL that already has a good
+    snapshot only records last_attempt_*; the old HTML stays and keeps its own fetched_at.
+    """
+    import hashlib
+
     url = fields["url"]
+    now = utcnow()
+    good = fields.get("status") == "fetched" and bool((fields.get("raw_html") or "").strip())
+    fields.setdefault("last_attempt_at", now)
+    fields.setdefault("last_attempt_status", fields.get("status"))
+    fields.setdefault("last_attempt_error", fields.get("error"))
+    if good:
+        fields.setdefault("fetched_at", now)
+        fields["html_sha256"] = hashlib.sha256(fields["raw_html"].encode("utf-8", "replace")).hexdigest()
     current = session.get(RsPage, url)
     if current is None:
         session.add(RsPage(**fields))
-    else:
+    elif good or not (current.status == "fetched" and (current.raw_html or "").strip()):
         for key, value in fields.items():
             setattr(current, key, value)
+    else:
+        current.last_attempt_at = fields["last_attempt_at"]
+        current.last_attempt_status = fields["last_attempt_status"]
+        current.last_attempt_error = fields["last_attempt_error"]
     session.commit()
 
 

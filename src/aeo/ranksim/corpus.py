@@ -11,14 +11,17 @@ from sqlalchemy.orm import Session
 from aeo.crawl.urls import domain_of, normalize_url
 from aeo.ranksim.graph import domain_pagerank, pagerank
 from aeo.ranksim.loop import page_from_row
-from aeo.ranksim.store import RsPage
+from aeo.ranksim.store import EVALUATION_EXCLUDED_SOURCES, RsPage
 
 
 def load_corpus_docs(session: Session) -> dict[str, object]:
     """PageDoc map keyed by stored URL and by normalized URL."""
     rows = session.query(RsPage).filter(RsPage.status == "fetched").all()
     docs = {row.url: page_from_row(row) for row in rows}
-    html_by_url = {row.url: row.raw_html or "" for row in rows}
+    # Draft HTML is not on the live web, so its outlinks do not feed PageRank or anchor text.
+    html_by_url = {
+        row.url: row.raw_html or "" for row in rows if (row.source or "unknown") not in EVALUATION_EXCLUDED_SOURCES
+    }
     known = set(docs)
     normalized = {}
     for url in list(known):

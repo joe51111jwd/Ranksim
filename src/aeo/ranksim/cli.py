@@ -253,7 +253,7 @@ def _graph(settings, database: str, args) -> None:
         for url, node in graph.nodes.items():
             if node.status != "fetched" or not node.html:
                 continue
-            store_fetched_page(session, FetchResult(url=url, html=node.html, status="fetched"))
+            store_fetched_page(session, FetchResult(url=url, html=node.html, status="fetched", source="graph_crawl"))
             stored += 1
     finally:
         session.close()

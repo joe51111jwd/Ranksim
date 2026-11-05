@@ -536,25 +536,28 @@ def build_report(
 def labeled_coverage(labels, session) -> dict[str, int]:
     """Why each labeled row does or does not have usable stored HTML.
 
-    covered: stored HTML. blocked: robots or URL safety refused it. error: fetch failed
+    covered: stored HTML. draft_only: the only stored HTML is an unpublished draft, which is
+    not the page Google ranked. blocked: robots or URL safety refused it. error: fetch failed
     (HTTP 403/404, timeout). empty: fetched but no HTML. not_attempted: never stored.
     """
-    from aeo.ranksim.store import RsPage
+    from aeo.ranksim.store import EVALUATION_EXCLUDED_SOURCES, RsPage
 
-    rows = session.query(RsPage.url, RsPage.status, RsPage.raw_html).all()
-    by_key: dict[str, tuple[str, bool]] = {}
-    for url, status, html in rows:
-        has_html = bool((html or "").strip())
-        by_key[url] = (status, has_html)
-        by_key.setdefault(_url_key(url), (status, has_html))
+    rows = session.query(RsPage.url, RsPage.status, RsPage.raw_html, RsPage.source).all()
+    by_key: dict[str, tuple[str, bool, str]] = {}
+    for url, status, html, source in rows:
+        entry = (status, bool((html or "").strip()), source or "unknown")
+        by_key[url] = entry
+        by_key.setdefault(_url_key(url), entry)
     counts: dict[str, int] = defaultdict(int)
     for label in labels:
         found = by_key.get(label.url) or by_key.get(_url_key(label.url))
         if found is None:
             counts["not_attempted"] += 1
             continue
-        status, has_html = found
-        if status == "fetched" and has_html:
+        status, has_html, source = found
+        if status == "fetched" and has_html and source in EVALUATION_EXCLUDED_SOURCES:
+            counts["draft_only"] += 1
+        elif status == "fetched" and has_html:
             counts["covered"] += 1
         elif status == "fetched":
             counts["empty"] += 1

@@ -37,6 +37,7 @@ class FetchResult:
     status: str
     error: str | None = None
     fetch_ms: float | None = None
+    source: str = "crawl"
 
 
 @dataclass
@@ -103,6 +104,7 @@ def page_from_row(row: RsPage) -> PageDoc:
         updated=row.updated_label,
         authority=row.authority,
         is_ours=is_our_url(row.url),
+        source=row.source or "unknown",
     )
 
 
@@ -117,6 +119,7 @@ def store_fetched_page(session: Session, fetched: FetchResult) -> None:
             raw_html=fetched.html or "",
             fetch_ms=fetched.fetch_ms,
             authority_source="unavailable",
+            source=fetched.source,
         )
         return
     doc = page_from_html(fetched.url, fetched.html, fetch_ms=fetched.fetch_ms)
@@ -139,6 +142,7 @@ def store_fetched_page(session: Session, fetched: FetchResult) -> None:
         updated_label=doc.updated,
         authority=None,
         authority_source="unavailable",
+        source=fetched.source,
     )
 
 

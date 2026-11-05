@@ -35,6 +35,13 @@ class CrawlBatch:
     warnings: list[str] = field(default_factory=list)
 
 
+class RedirectProblem(Exception):
+    """A redirect chain that ends without a page: a loop, too many hops, or no Location."""
+
+
+ROBOTS_UNREACHABLE = object()
+
+
 class Crawler:
     def __init__(
         self,
@@ -86,8 +93,13 @@ class Crawler:
             response, final_url = self._get_following_redirects(current)
         except UnsafeURL:
             raise
+        except RedirectProblem as exc:
+            return Fetched(url=current, final_url=current, error=str(exc), robots_status=robots_status)
+        except (ValueError, httpx.InvalidURL) as exc:
+            # A redirect to file:, mailto: or a malformed Location must not crash a whole crawl.
+            return Fetched(url=current, final_url=current, error=f"Unsupported redirect target: {exc}", robots_status=robots_status)
         except httpx.HTTPError as exc:
-            return Fetched(url=current, final_url=current, error=f"Fetch failed: {exc}", robots_status="allowed")
+            return Fetched(url=current, final_url=current, error=f"Fetch failed: {exc}", robots_status=robots_status)
 
         content_type = response.headers.get("content-type", "")
         body = self._read_capped(response)
@@ -98,7 +110,7 @@ class Crawler:
                 status_code=response.status_code,
                 html="",
                 error=f"HTTP {response.status_code}",
-                robots_status="allowed",
+                robots_status=robots_status,
                 content_type=content_type,
             )
         if content_type and "html" not in content_type and "xml" not in content_type and "text/plain" not in content_type:
@@ -107,7 +119,7 @@ class Crawler:
                 final_url=final_url,
                 status_code=response.status_code,
                 error=f"Unsupported content type {content_type.split(';')[0]}",
-                robots_status="allowed",
+                robots_status=robots_status,
                 content_type=content_type,
             )
         return Fetched(
@@ -115,7 +127,7 @@ class Crawler:
             final_url=final_url,
             status_code=response.status_code,
             html=body,
-            robots_status="allowed",
+            robots_status=robots_status,
             content_type=content_type,
         )
 
@@ -190,28 +202,35 @@ class Crawler:
     def _allowed(self, url: str) -> tuple[bool, str]:
         origin = self._origin(url)
         parser = self._robots_for(origin)
+        if parser is ROBOTS_UNREACHABLE:
+            return False, "unreachable"
         if parser is None:
             return True, "unavailable"
         allowed = parser.can_fetch(self.user_agent, url)
         return allowed, "allowed" if allowed else "disallowed"
 
     def _robots_for(self, origin: str):
+        """RFC 9309: 4xx (unavailable) allows everything; 5xx, 429 or a network failure
+        (unreachable) means assume complete disallow. The result is cached for this crawler."""
         if origin in self._robots:
             return self._robots[origin]
         robots_url = origin + "/robots.txt"
         try:
             safe = assert_safe_url(robots_url, allow_private=self.allow_private)
             response, _final = self._get_following_redirects(safe)
-        except (httpx.HTTPError, UnsafeURL, ValueError):
-            self._robots[origin] = None
+        except RedirectProblem:
+            self._robots[origin] = None  # redirect loop: treat as unavailable
             return None
-        if response.status_code == 404:
+        except (httpx.HTTPError, UnsafeURL, ValueError):
+            self._robots[origin] = ROBOTS_UNREACHABLE
+            return ROBOTS_UNREACHABLE
+        if response.status_code == 429 or response.status_code >= 500:
+            self._robots[origin] = ROBOTS_UNREACHABLE
+            return ROBOTS_UNREACHABLE
+        if response.status_code >= 400:
             parser = parse_robots("")
             self._robots[origin] = parser
             return parser
-        if response.status_code >= 400:
-            self._robots[origin] = None
-            return None
         parser = parse_robots(self._read_capped(response))
         self._robots[origin] = parser
         return parser
@@ -220,7 +239,7 @@ class Crawler:
         origin = self._origin(url)
         delay = self.delay_seconds
         parser = self._robots.get(origin)
-        if parser is not None:
+        if parser is not None and parser is not ROBOTS_UNREACHABLE:
             robots_delay = crawl_delay_seconds(parser, self.user_agent)
             if robots_delay is not None:
                 delay = max(delay, robots_delay)
@@ -244,9 +263,9 @@ class Crawler:
                 return response, current
             location = response.headers.get("location")
             if not location:
-                return response, current
+                raise RedirectProblem(f"HTTP {response.status_code} redirect without a Location header")
             current = urljoin(current, location)
-        return response, current
+        raise RedirectProblem(f"Too many redirects (more than {MAX_REDIRECTS})")
 
     def _read_capped(self, response: httpx.Response) -> str:
         raw = response.content[:MAX_BYTES]

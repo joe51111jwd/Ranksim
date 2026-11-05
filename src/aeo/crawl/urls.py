@@ -27,6 +27,8 @@ def normalize_url(url: str, *, keep_trailing_slash: bool = False) -> str:
     if not host:
         raise ValueError("URL is missing a host")
     port = parts.port
+    if ":" in host:
+        host = f"[{host}]"  # IPv6 literals keep their brackets, or the URL is malformed
     if port and not (
         (parts.scheme == "http" and port == 80) or (parts.scheme == "https" and port == 443)
     ):
@@ -44,14 +46,16 @@ def same_site(left: str, right: str) -> bool:
 
 
 def _is_public_ip(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
-    return not (
-        ip.is_private
-        or ip.is_loopback
-        or ip.is_link_local
-        or ip.is_reserved
-        or ip.is_multicast
-        or ip.is_unspecified
-    )
+    """Only globally routable unicast addresses are public.
+
+    is_global also excludes shared address space 100.64.0.0/10 (carrier-grade NAT, which
+    includes the 100.100.100.200 metadata address on some clouds), documentation and
+    benchmarking ranges. IPv4-mapped IPv6 addresses are checked as the IPv4 they wrap.
+    """
+    mapped = getattr(ip, "ipv4_mapped", None)
+    if mapped is not None:
+        ip = mapped
+    return bool(ip.is_global) and not ip.is_multicast
 
 
 def assert_safe_url(

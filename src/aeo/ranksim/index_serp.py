@@ -130,7 +130,10 @@ def _fetch_host(urls: list[str], settings: Settings, delay_seconds: float) -> li
             try:
                 result = crawler.fetch(url)
             except UnsafeURL as exc:
-                out.append((url, FetchResult(url=url, html="", status="blocked", error=str(exc))))
+                out.append((url, FetchResult(url=url, html="", status="blocked", error=f"Unsafe URL: {exc}")))
+                continue
+            except Exception as exc:  # noqa: BLE001 - one bad URL must not abort the whole crawl
+                out.append((url, FetchResult(url=url, html="", status="error", error=f"{type(exc).__name__}: {exc}")))
                 continue
             elapsed = (time.perf_counter() - started) * 1000
             if result.blocked:

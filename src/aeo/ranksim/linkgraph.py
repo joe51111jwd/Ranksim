@@ -192,12 +192,13 @@ def attach_graph(pages: dict, graph: LinkGraph) -> int:
                 doc = None
         if doc is None:
             continue
+        # Graph facts are annotations for link advice. They do not overwrite model inputs:
+        # the graph's PageRank is computed on a different node set (most edges point outside
+        # it), and its anchors include sitewide navigation. Corpus PageRank and anchors stay.
         doc.orphan = node.orphan
         doc.link_depth = node.depth
         doc.crawl_inlinks = node.inlinks
-        doc.pagerank = node.pagerank
-        if incoming.get(url):
-            doc.anchors = " ".join(incoming[url])
+        doc.graph_pagerank = node.pagerank
         updated += 1
     return updated
 

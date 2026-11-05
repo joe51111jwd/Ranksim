@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from aeo.ranksim.features import FEATURE_NAMES
+from aeo.ranksim.features import MODEL_FEATURES
 from aeo.ranksim.lambdamart import RankExample, _ndcg, _pairs, _top3_hit, fit_lambdamart, predict_scores
 from aeo.ranksim.metrics import mean_metric, spearman
 
@@ -62,7 +62,7 @@ def loo_fit(
     keep_models: bool = False,
     validate: bool = True,
 ) -> LooFit:
-    names = list(feature_names or FEATURE_NAMES)
+    names = list(feature_names or MODEL_FEATURES)
     by_query: dict[str, list[RankExample]] = {}
     for example in examples:
         by_query.setdefault(example.query, []).append(example)

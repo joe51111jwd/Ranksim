@@ -48,6 +48,13 @@ FEATURE_NAMES = (
 )
 
 # Higher values should raise the predicted score. Other features stay unconstrained.
+# Computed for every page but kept out of the default model. They measure our crawl, not the
+# page: `speed` is our crawler's wall time (politeness sleep, robots fetch, proxy) and is 0 for
+# saved HTML; orphan/link_depth/crawl_inlinks depend on which URLs were seeded and where the
+# crawl budget ran out, and on the committed graph they mostly encode "is this the client site".
+CRAWL_ARTIFACT_FEATURES = frozenset({"speed", "orphan", "link_depth", "crawl_inlinks"})
+MODEL_FEATURES = tuple(name for name in FEATURE_NAMES if name not in CRAWL_ARTIFACT_FEATURES)
+
 MONOTONE_UP = frozenset(
     {
         "bm25f",
@@ -88,6 +95,7 @@ class PageDoc:
     crawl_inlinks: int | None = None
     source: str = "crawl"
     html_sha256: str | None = None
+    graph_pagerank: float | None = None  # PageRank inside the link-graph crawl; not a model feature
 
 
 def url_text(url: str) -> str:

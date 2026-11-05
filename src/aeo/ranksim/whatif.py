@@ -13,7 +13,7 @@ from datetime import date
 
 from aeo.crawl.urls import domain_of, normalize_url
 from aeo.ranksim.attribution import LABELS
-from aeo.ranksim.features import FEATURE_NAMES, PageDoc, raw_features
+from aeo.ranksim.features import MODEL_FEATURES, PageDoc, raw_features
 from aeo.ranksim.groundtruth import SerpLabel
 from aeo.ranksim.lambdamart import (
     RankExample,
@@ -563,7 +563,7 @@ def _content_deltas(model, before: dict[str, float], after: dict[str, float], li
     before_c = _contrib(model, before)
     after_c = _contrib(model, after)
     rows = []
-    for name in FEATURE_NAMES:
+    for name in after_c:
         raw_before = before[name]
         raw_after = after[name]
         raw_delta = raw_after - raw_before
@@ -598,7 +598,7 @@ def _content_deltas(model, before: dict[str, float], after: dict[str, float], li
 
 def _new_page_lines(model, features: dict[str, float], limit: int = 5) -> list[str]:
     contrib = _contrib(model, features)
-    names = sorted(FEATURE_NAMES, key=lambda name: abs(contrib[name]), reverse=True)
+    names = sorted(contrib, key=lambda name: abs(contrib[name]), reverse=True)
     lines = []
     for name in names[:limit]:
         if abs(contrib[name]) < 1e-4:
@@ -610,7 +610,7 @@ def _new_page_lines(model, features: dict[str, float], limit: int = 5) -> list[s
 
 def _gap_lines(ours: dict[str, float], rival: dict[str, float], gain: dict[str, float], limit: int = 4) -> list[str]:
     rows = []
-    for name in FEATURE_NAMES:
+    for name in (list(gain) or list(MODEL_FEATURES)):
         if rival[name] != rival[name] or ours[name] != ours[name]:
             continue
         delta = rival[name] - ours[name]
@@ -630,9 +630,10 @@ def _gap_lines(ours: dict[str, float], rival: dict[str, float], gain: dict[str, 
 def _contrib(model, features: dict[str, float]) -> dict[str, float]:
     import numpy as np
 
-    matrix = np.asarray([[features.get(name, 0.0) for name in FEATURE_NAMES]], dtype=float)
+    names = list(model.feature_name())
+    matrix = np.asarray([[features.get(name, 0.0) for name in names]], dtype=float)
     row = model.predict(matrix, pred_contrib=True)[0]
-    return {name: float(row[index]) for index, name in enumerate(FEATURE_NAMES)}
+    return {name: float(row[index]) for index, name in enumerate(names)}
 
 
 def _scores(model, query: str, rows: list[dict[str, float]]) -> list[float]:

@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 from datetime import date
 
 from aeo.crawl.urls import normalize_url
-from aeo.ranksim.features import FEATURE_NAMES, MONOTONE_UP, PageDoc, raw_features
+from aeo.ranksim.features import FEATURE_NAMES, MODEL_FEATURES, MONOTONE_UP, PageDoc, raw_features
 from aeo.ranksim.groundtruth import SerpLabel, navboost_leaks
 from aeo.ranksim.store import EVALUATION_EXCLUDED_SOURCES
 from aeo.ranksim.metrics import expected_ndcg_at_k, expected_top_k_hit, mean_metric, spearman
@@ -207,7 +207,7 @@ def fit_lambdamart(
 ):
     import lightgbm as lgb
 
-    names = list(feature_names or FEATURE_NAMES)
+    names = list(feature_names or MODEL_FEATURES)
     increasing = MONOTONE_UP if monotone_up is None else frozenset(monotone_up)
     ordered = sorted(examples, key=lambda row: row.query)
     features = [[_feature_value(row.features, name) for name in names] for row in ordered]

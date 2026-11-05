@@ -144,7 +144,11 @@ def main(argv: list[str] | None = None) -> None:
         help="Date (YYYY-MM-DD) for date-dependent features such as freshness. Default: today. Recorded in the output.",
     )
     bench.add_argument("--graph", default=None, help="Optional link-graph JSON to attach, as graph-eval does")
-    bench.add_argument("--no-graph-features", action="store_true", help="Drop orphan, link_depth, crawl_inlinks")
+    bench.add_argument(
+        "--with-crawl-artifacts",
+        action="store_true",
+        help="Add speed, orphan, link_depth and crawl_inlinks back into the model (experiments only)",
+    )
     bench.add_argument("--json", dest="json_out", default=None, help="Write the full report as JSON")
 
     ledger = sub.add_parser("ledger", help="Prediction track record: verify, list, record observed results, score")
@@ -293,7 +297,7 @@ def _graph(settings, database: str, args) -> None:
 def _graph_eval(database: str, args) -> None:
     from aeo.ranksim.confidence import loo_fit
     from aeo.ranksim.corpus import load_corpus_docs
-    from aeo.ranksim.features import FEATURE_NAMES
+    from aeo.ranksim.features import MODEL_FEATURES
     from aeo.ranksim.groundtruth import load_serp_file
     from aeo.ranksim.keywords import build_keywords
     from aeo.ranksim.lambdamart import build_examples
@@ -307,7 +311,8 @@ def _graph_eval(database: str, args) -> None:
         pages = load_corpus_docs(session)
     finally:
         session.close()
-    base_names = [name for name in FEATURE_NAMES if name not in {"orphan", "link_depth", "crawl_inlinks"}]
+    base_names = list(MODEL_FEATURES)
+    graph_names = base_names + ["orphan", "link_depth", "crawl_inlinks"]
     before_examples, uncovered, _withheld = build_examples(labels, pages, intents)
     before = loo_fit(before_examples, base_names)
     print("Predicted metrics. Not live Google ranks.")
@@ -320,7 +325,7 @@ def _graph_eval(database: str, args) -> None:
     attached = attach_graph(pages, graph)
     after_examples, _uncovered, _withheld = build_examples(labels, pages, intents)
     varied = _graph_feature_varies(after_examples)
-    after = loo_fit(after_examples, FEATURE_NAMES)
+    after = loo_fit(after_examples, graph_names)
     print(f"With link-graph features: pairwise {_fmt(after.pairwise)} on {after.n_pairs} pairs. Pages updated from the graph: {attached}.")
     if not varied:
         print("Link features did not vary on the stored pages, so a change in pairwise accuracy is not evidence they helped.")
@@ -435,7 +440,6 @@ def _benchmark(database: str, args) -> None:
     from datetime import date
 
     from aeo.ranksim.benchmark import (
-        GRAPH_FEATURES,
         PROTOCOLS,
         build_report,
         corpus_fingerprint,
@@ -445,7 +449,7 @@ def _benchmark(database: str, args) -> None:
         run_benchmark,
     )
     from aeo.ranksim.corpus import load_corpus_docs
-    from aeo.ranksim.features import FEATURE_NAMES
+    from aeo.ranksim.features import FEATURE_NAMES, MODEL_FEATURES
     from aeo.ranksim.groundtruth import load_serp_file
     from aeo.ranksim.lambdamart import build_examples
     from aeo.ranksim.linkgraph import attach_graph, load_graph
@@ -475,7 +479,7 @@ def _benchmark(database: str, args) -> None:
             raise SystemExit(f"No graph file at {graph_path}.")
         attach_graph(pages, load_graph(str(graph_path)))
         notes.append(f"Link graph attached from {graph_path} (sha256 {file_sha256(graph_path)[:12]}).")
-    names = [name for name in FEATURE_NAMES if not (args.no_graph_features and name in GRAPH_FEATURES)]
+    names = list(FEATURE_NAMES) if args.with_crawl_artifacts else list(MODEL_FEATURES)
     examples, uncovered, withheld = build_examples(labels, pages, intents, today=as_of)
     if withheld:
         notes.append("navboost_prior was withheld because prior_position copied position.")

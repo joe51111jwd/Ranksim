@@ -8,7 +8,7 @@ from datetime import date
 from aeo.crawl.urls import domain_of, normalize_url
 from aeo.ranksim.attribution import LABELS
 from aeo.ranksim.confidence import Calibration
-from aeo.ranksim.features import FEATURE_NAMES, PageDoc, raw_features
+from aeo.ranksim.features import MODEL_FEATURES, PageDoc, raw_features
 from aeo.ranksim.groundtruth import SerpLabel
 from aeo.ranksim.lambdamart import RankExample, predict_scores
 from aeo.ranksim.linkgraph import LinkGraph
@@ -439,7 +439,7 @@ def _top_gaps(raw, ours: int, ranks, model, limit: int = 3) -> list[GapFix]:
     for index, row in enumerate(raw):
         if index == ours or ranks[index] > ranks[ours]:
             continue
-        for name in FEATURE_NAMES:
+        for name in (list(gains) or list(MODEL_FEATURES)):
             left = our.get(name, 0.0)
             right = row.get(name, 0.0)
             if left != left or right != right:

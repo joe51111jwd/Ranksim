@@ -22,7 +22,7 @@ from aeo.ranksim.lambdamart import build_examples
 from aeo.ranksim.linkgraph import LinkGraph, attach_graph, load_graph
 from aeo.ranksim.llm import resolve_llm
 from aeo.ranksim.benchmark import corpus_fingerprint, feature_names_sha, file_sha256, git_commit, lightgbm_version
-from aeo.ranksim.features import FEATURE_NAMES
+from aeo.ranksim.features import MODEL_FEATURES
 from aeo.ranksim.ledger import record_check
 from aeo.ranksim.store import RsPage, open_session
 
@@ -60,7 +60,7 @@ class DemoState:
             "corpus_pages": len(stored),
             "git_commit": git_commit(),
             "lightgbm": lightgbm_version(),
-            "features_sha": feature_names_sha(list(FEATURE_NAMES)),
+            "features_sha": feature_names_sha(list(MODEL_FEATURES)),
             "model": "lambdamart leave-one-query-out (the checked query held out)",
             "as_of": self.today.isoformat(),
         }

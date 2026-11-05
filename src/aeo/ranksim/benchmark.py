@@ -45,7 +45,7 @@ from typing import Callable
 
 from aeo.crawl.urls import domain_of, normalize_url
 from aeo.ranksim.confidence import PairMargin, calibrate
-from aeo.ranksim.features import FEATURE_NAMES, normalize_rows
+from aeo.ranksim.features import FEATURE_NAMES, MODEL_FEATURES, normalize_rows
 from aeo.ranksim.lambdamart import RankExample, _ndcg, fit_lambdamart, predict_scores, relevance
 from aeo.ranksim.metrics import spearman
 
@@ -227,7 +227,7 @@ def split_fold(usable: dict[str, list[RankExample]], fold: Fold, protocol: str) 
 
 
 def lambdamart_scorer(feature_names: list[str] | None = None, monotone_up: frozenset[str] | None = None) -> Scorer:
-    names = list(feature_names or FEATURE_NAMES)
+    names = list(feature_names or MODEL_FEATURES)
 
     def score(train: list[RankExample], test: list[RankExample]) -> list[float]:
         trainable = _queries_with_pairs(train)
@@ -430,7 +430,7 @@ def run_benchmark(
     for query in sorted(used):
         remap.setdefault(all_clusters[query], len(remap))
     clusters = {query: remap[all_clusters[query]] for query in sorted(used)}
-    names = list(feature_names or FEATURE_NAMES)
+    names = list(feature_names or MODEL_FEATURES)
     chosen = scorers or default_scorers(names, seed)
     band = random_band(usable, seed=seed)
     results = []

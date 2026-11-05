@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from datetime import date
 
-from aeo.ranksim.features import FEATURE_NAMES, PageDoc, raw_features
+from aeo.ranksim.features import MODEL_FEATURES, PageDoc, raw_features
 from aeo.ranksim.score import HAND_WEIGHTS
 
 LABELS = {
@@ -67,7 +67,7 @@ def feature_moves(
     if len(raw) < 2:
         return []
     moves: list[tuple[float, str]] = []
-    for name in FEATURE_NAMES:
+    for name in MODEL_FEATURES:
         before = raw[0][name]
         after = raw[1][name]
         if before != before and after != after:

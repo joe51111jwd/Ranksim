@@ -6,7 +6,7 @@ import json
 import re
 from dataclasses import dataclass
 
-from aeo.ranksim.features import FEATURE_NAMES, MONOTONE_UP
+from aeo.ranksim.features import MODEL_FEATURES, MONOTONE_UP
 from aeo.ranksim.lambdamart import RankExample
 from aeo.ranksim.llm import LlmClient
 
@@ -132,7 +132,7 @@ def relevance_experiment(
         features["llm_relevance"] = scores[(row.query, row.url)]
         judged.append(RankExample(row.query, row.url, row.position, features, row.intent))
     clusters = query_clusters(judged)
-    names = list(FEATURE_NAMES)
+    names = list(MODEL_FEATURES)
     scorers = {
         "baseline": lambdamart_scorer(names),
         "with_judge": lambdamart_scorer(names + ["llm_relevance"], frozenset(MONOTONE_UP | {"llm_relevance"})),

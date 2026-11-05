@@ -54,3 +54,27 @@ def test_authority_is_missing_unless_a_provider_stored_it(tmp_path):
     by_url = {row.url: row.features for row in examples}
     assert by_url["https://b.example/"]["authority"] == 0.9
     assert by_url["https://a.example/"]["authority"] != by_url["https://a.example/"]["authority"]  # NaN
+
+
+def test_crawl_artifacts_are_not_model_inputs_and_graph_does_not_overwrite_corpus_signals():
+    from aeo.ranksim.features import CRAWL_ARTIFACT_FEATURES, FEATURE_NAMES, MODEL_FEATURES
+    from aeo.ranksim.lambdamart import RankExample, fit_lambdamart
+    from aeo.ranksim.linkgraph import GraphNode, LinkGraph, attach_graph
+
+    assert not (set(MODEL_FEATURES) & CRAWL_ARTIFACT_FEATURES)
+    assert set(MODEL_FEATURES) | CRAWL_ARTIFACT_FEATURES == set(FEATURE_NAMES)
+    rows = [
+        RankExample(f"q{q}", f"https://s{q}{p}.example/", float(p), {name: float(p % 2) for name in FEATURE_NAMES})
+        for q in range(3)
+        for p in range(1, 4)
+    ]
+    assert list(fit_lambdamart(rows).feature_name()) == list(MODEL_FEATURES)
+
+    page = _page("https://a.example/")
+    page.pagerank, page.anchors = 0.3, "corpus anchor"
+    graph = LinkGraph()
+    graph.nodes["https://a.example/"] = GraphNode(url="https://a.example/", depth=1, orphan=False, inlinks=4, pagerank=0.9)
+    graph.edges.append(("https://b.example/", "https://a.example/", "nav anchor"))
+    attach_graph({"https://a.example/": page}, graph)
+    assert page.pagerank == 0.3 and page.anchors == "corpus anchor"
+    assert page.graph_pagerank == 0.9 and page.crawl_inlinks == 4

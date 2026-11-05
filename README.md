@@ -176,7 +176,7 @@ See `.env.example`. The important switches are `DATABASE_URL`, `SEARCH_PROVIDER`
 pytest
 ```
 
-The suite ignores provider keys in your environment and in `.env`, and fails any test that tries to open a network connection (including through a proxy). Tests that would call a paid provider must be marked `@pytest.mark.live` and only run with `RANKSIM_LIVE_TESTS=1`. CI runs the suite on Python 3.11-3.13 with and without fake keys.
+The suite ignores provider keys in your environment and in `.env`, ignores environment and system proxy settings, and fails any test that tries to open a non-loopback connection. DNS lookups are not blocked. Tests that would call a paid provider must be marked `@pytest.mark.live` and only run with `RANKSIM_LIVE_TESTS=1`. CI runs the suite on Python 3.11-3.13 with and without fake keys.
 
 They cover Okapi BM25 (including a hand-checked `log(2)` score), reciprocal rank fusion, hybrid ordering, fan-out parsing, citation position and mention rate, the mock run-to-run variation, diagnostic branches, before/after diffs, calibration with an empty log and with known pairs, robots.txt, private-address blocking, the Brave and OpenAI request shapes, and an API run that recomputes citation share from the mock policy. Network is not required. Mock output is flagged `synthetic`.
 

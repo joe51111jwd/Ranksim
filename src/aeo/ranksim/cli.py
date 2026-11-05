@@ -663,10 +663,13 @@ def _ai_eval(settings, database: str, args) -> None:
     )
     llm = resolve_llm(settings, run_id="ai-eval")
     print(llm.cost_summary() if not llm.available else f"LLM {llm.name} model {llm.model}.")
+    skip_reason = None
     if llm.available and n_pairs == 0:
+        skip_reason = "LLM relevance was not measured: no labeled pairs have stored HTML."
         print("Judge not run: no labeled pairs have stored HTML, so nothing could be measured.")
         scores = None
     elif llm.available and n_pairs < MIN_JUDGE_PAIRS and not args.allow_small:
+        skip_reason = f"LLM relevance was not measured: {n_pairs} labeled pairs is below {MIN_JUDGE_PAIRS}."
         print(
             f"Judge not run: {n_pairs} pairs is below {MIN_JUDGE_PAIRS}. On a sample this size random scores "
             "move pairwise accuracy by several points either way, so the result could not support a decision. "
@@ -676,7 +679,9 @@ def _ai_eval(settings, database: str, args) -> None:
         scores = None
     else:
         scores = collect_judge_scores(llm, examples, pages)
-    experiment = relevance_experiment(examples, scores)
+    if llm.available and scores is None and skip_reason is None:
+        skip_reason = "LLM relevance was not measured: the judge did not score every labeled page (see above)."
+    experiment = relevance_experiment(examples, scores, skip_reason=skip_reason)
     print("LLM relevance experiment. PREDICTED, not a live rank.")
     print(experiment.note)
     html_path = Path(args.html)

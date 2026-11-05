@@ -117,6 +117,7 @@ def test_ai_eval_refuses_a_paid_judge_run_on_a_tiny_sample(tmp_path, monkeypatch
     main(["--database", db, "ai-eval", "--html", str(tmp_path / "missing.html")])
     out = capsys.readouterr().out
     assert "Coverage:" in out and "Judge not run" in out
+    assert "key is set" not in out  # a key IS set; the run was refused for sample size
     assert fake.calls == 0
 
 

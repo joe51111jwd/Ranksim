@@ -58,13 +58,17 @@ def test_result_screen_leads_with_uncertainty_and_coverage(demo):
     client = TestClient(create_app(state), base_url="http://127.0.0.1")
     pasted = "<html><head><title>Dirt work software for crews</title></head><body><h1>Dirt work</h1><p>" + "crew schedule " * 200 + "</p></body></html>"
     page = client.post("/check", data={"query": query, "url": "", "html": pasted, "csrf": state.csrf}).text
-    hero = page[page.index('id="result"'):]
+    start = page.index('id="result"')
+    hero = page[start : page.index("</section>", start)]  # the result card only
     assert "UNSURE: no supported call" in hero
     assert "Compared with" in hero and "not a Google position" in hero
-    assert "label file has no collection date" in page and "no country or device" in page
+    assert "label file has no collection date" in hero and "no country or device" in hero
     assert hero.index("UNSURE") < hero.index("PREDICTED slot")
     assert "crew schedule" in page[page.index("<textarea"):]  # the pasted draft is kept
-    assert 'name="ai" value="1" checked' not in page          # AI off unless asked
+    import re
+
+    ai_box = re.search(r'<input[^>]*name="ai"[^>]*>', page).group(0)
+    assert "checked" not in ai_box  # AI off unless asked
 
 
 def test_drafts_are_tagged_and_whole_site_ranks_match_a_check_of_the_same_html(demo):
@@ -137,6 +141,15 @@ def test_unknown_hosts_and_missing_csrf_are_refused(demo):
 def test_serve_refuses_a_public_bind_without_named_hosts(tmp_path, monkeypatch):
     from aeo.ranksim.cli import main
 
+    import uvicorn
+
+    import aeo.ranksim.serve as serve_module
+
+    def must_not_run(*args, **kwargs):
+        raise AssertionError("serve started instead of refusing the public bind")
+
+    monkeypatch.setattr(uvicorn, "run", must_not_run)
+    monkeypatch.setattr(serve_module, "DemoState", must_not_run)
     monkeypatch.chdir(REPO)
     with pytest.raises(SystemExit, match="allowed-host"):
         main(["--database", f"sqlite:///{tmp_path / 'x.db'}", "serve", "--host", "0.0.0.0", "--port", "8799"])

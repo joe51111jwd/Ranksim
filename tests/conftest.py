@@ -41,15 +41,21 @@ def pytest_collection_modifyitems(config, items):
             item.add_marker(skip)
 
 
+# Read directly from os.environ by the code, outside Settings.
+_EXTRA_ENV = {"ranksim_root"}
+
+
 @pytest.fixture(autouse=True)
-def _isolate_settings_environment(monkeypatch):
+def _isolate_settings_environment(request, monkeypatch):
     """Normal tests never see a developer's provider keys, settings env vars, or .env file.
 
     Settings is a pydantic BaseSettings that reads every field from the environment
     (case-insensitive) and from ./.env. Without this, a machine with OPENROUTER_API_KEY or
     SERPER_API_KEY exported gets different test results from CI.
     """
-    fields = {name.lower() for name in Settings.model_fields}
+    if request.node.get_closest_marker("live"):
+        return  # live tests run with the developer's real keys on purpose
+    fields = {name.lower() for name in Settings.model_fields} | _EXTRA_ENV
     for name in list(os.environ):
         if name.lower() in fields:
             monkeypatch.delenv(name, raising=False)
@@ -64,6 +70,15 @@ def _block_external_network(request, monkeypatch):
     for name in list(os.environ):
         if name.lower() in _PROXY_VARS:
             monkeypatch.delenv(name, raising=False)
+    # On macOS and Windows, urllib (and so httpx) also reads the system proxy settings, which can
+    # point at a loopback proxy. Report no proxies at all for normal tests.
+    import urllib.request
+
+    import httpx._utils
+
+    monkeypatch.setattr(urllib.request, "getproxies", lambda: {})
+    monkeypatch.setattr(httpx._utils, "getproxies", lambda: {}, raising=False)
+    monkeypatch.setenv("NO_PROXY", "*")
     real_connect = socket.socket.connect
     real_connect_ex = socket.socket.connect_ex
 

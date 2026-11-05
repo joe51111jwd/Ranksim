@@ -101,6 +101,7 @@ def relevance_experiment(
     *,
     bootstrap: int = 2000,
     seed: int = 0,
+    skip_reason: str | None = None,
 ) -> RelevanceExperiment:
     """Held-out pairwise accuracy with and without an llm_relevance column, with uncertainty.
 
@@ -114,7 +115,8 @@ def relevance_experiment(
             False,
             None,
             None,
-            "LLM relevance was not measured. No OpenRouter, OpenAI, or Anthropic key is set, so no judge scores were created.",
+            skip_reason
+            or "LLM relevance was not measured. No OpenRouter, OpenAI, or Anthropic key is set, so no judge scores were created.",
         )
     missing = [row for row in examples if (row.query, row.url) not in scores]
     if missing:

@@ -150,6 +150,28 @@ def main(argv: list[str] | None = None) -> None:
         help="Add speed, orphan, link_depth and crawl_inlinks back into the model (experiments only)",
     )
     bench.add_argument("--json", dest="json_out", default=None, help="Write the full report as JSON")
+    bench.add_argument(
+        "--snapshot",
+        default=None,
+        help="Run on a frozen snapshot (benchmark-freeze) instead of the live database. Scores the dev split only.",
+    )
+    bench.add_argument(
+        "--final",
+        action="store_true",
+        help="With --snapshot: train on dev, score the final split once for this model configuration, and append to results.jsonl",
+    )
+
+    freeze = sub.add_parser(
+        "benchmark-freeze",
+        help="Freeze labels, every stored page and a dev/final query-cluster split into a directory (keep it out of git)",
+    )
+    freeze.add_argument("serp_file", nargs="?", default="smartcrew/serp.csv")
+    freeze.add_argument("--out", required=True, help="New directory for the snapshot. An existing snapshot is never overwritten.")
+    freeze.add_argument("--as-of", required=True, help="Date (YYYY-MM-DD) the labels describe; freshness features use it")
+    freeze.add_argument("--final-share", type=float, default=0.3, help="Share of query clusters held out as the final test set")
+    freeze.add_argument("--seed", type=int, default=0)
+    freeze.add_argument("--cluster-threshold", type=float, default=0.3)
+    freeze.add_argument("--graph", default=None, help="Optional link-graph JSON to freeze with the pages")
 
     sub.add_parser(
         "reextract",
@@ -245,7 +267,14 @@ def main(argv: list[str] | None = None) -> None:
         elif args.command == "serve":
             _serve(settings, database, args)
         elif args.command == "benchmark":
-            _benchmark(database, args)
+            if args.final and not args.snapshot:
+                parser.error("--final needs --snapshot: the final split exists only in a frozen snapshot")
+            if args.snapshot:
+                _benchmark_snapshot(args)
+            else:
+                _benchmark(database, args)
+        elif args.command == "benchmark-freeze":
+            _benchmark_freeze(database, args)
         elif args.command == "ledger":
             _ledger(database, args)
         elif args.command == "reextract":
@@ -481,33 +510,12 @@ def _flag_old_drafts(database: str) -> None:
         print(f"{flagged} stored pages match bundled draft HTML and were marked as drafts, not evaluation rows.")
 
 
-def _benchmark(database: str, args) -> None:
-    _flag_old_drafts(database)
-    from datetime import date
-
-    from aeo.ranksim.benchmark import (
-        PROTOCOLS,
-        build_report,
-        corpus_fingerprint,
-        file_sha256,
-        labeled_coverage,
-        render_report,
-        run_benchmark,
-    )
+def _bench_corpus(database: str, labels):
+    """Pages, labeled-row coverage and (url, html) of every stored page for the fingerprint."""
+    from aeo.ranksim.benchmark import labeled_coverage
     from aeo.ranksim.corpus import load_corpus_docs
-    from aeo.ranksim.features import FEATURE_NAMES, MODEL_FEATURES
-    from aeo.ranksim.groundtruth import load_serp_file
-    from aeo.ranksim.lambdamart import build_examples
-    from aeo.ranksim.linkgraph import attach_graph, load_graph
     from aeo.ranksim.store import RsPage
 
-    from aeo.ranksim.groundtruth import ImportReport
-
-    as_of = date.fromisoformat(args.as_of) if args.as_of else date.today()
-    import_report = ImportReport()
-    labels = load_serp_file(args.serp_file, report=import_report)
-    print("\n".join(import_report.lines()))
-    intents = {row.query: row.intent for row in build_keywords()}
     session = open_session(database)
     try:
         pages = load_corpus_docs(session)
@@ -518,41 +526,130 @@ def _benchmark(database: str, args) -> None:
         ]
     finally:
         session.close()
+    return pages, coverage, stored
+
+
+def _attach_graph_file(pages, graph_file, notes: list[str]) -> None:
+    from aeo.ranksim.benchmark import file_sha256
+    from aeo.ranksim.linkgraph import attach_graph, load_graph
+
+    graph_path = Path(graph_file)
+    if not graph_path.is_file():
+        raise SystemExit(f"No graph file at {graph_path}.")
+    attach_graph(pages, load_graph(str(graph_path)))
+    notes.append(f"Link graph attached from {graph_path} (sha256 {file_sha256(graph_path)[:12]}).")
+
+
+def _benchmark(database: str, args) -> None:
+    _flag_old_drafts(database)
+    from datetime import date
+
+    from aeo.ranksim.benchmark import file_sha256
+    from aeo.ranksim.groundtruth import ImportReport, load_serp_file
+
+    as_of = date.fromisoformat(args.as_of) if args.as_of else date.today()
+    import_report = ImportReport()
+    labels = load_serp_file(args.serp_file, report=import_report)
+    print("\n".join(import_report.lines()))
+    intents = {row.query: row.intent for row in build_keywords()}
+    pages, coverage, stored = _bench_corpus(database, labels)
     notes = []
     if args.graph:
-        graph_path = Path(args.graph)
-        if not graph_path.is_file():
-            raise SystemExit(f"No graph file at {graph_path}.")
-        attach_graph(pages, load_graph(str(graph_path)))
-        notes.append(f"Link graph attached from {graph_path} (sha256 {file_sha256(graph_path)[:12]}).")
-    names = list(FEATURE_NAMES) if args.with_crawl_artifacts else list(MODEL_FEATURES)
+        _attach_graph_file(pages, args.graph, notes)
+    if not args.as_of:
+        notes.append(
+            "as_of defaulted to today. Freshness depends on it, so rerunning on another day can change results."
+        )
+    report = _run_benchmark_report(
+        args,
+        labels=labels,
+        pages=pages,
+        coverage=coverage,
+        stored=stored,
+        intents=intents,
+        as_of=as_of,
+        labels_sha=file_sha256(args.serp_file),
+        notes=notes + [line.strip() for line in import_report.lines()[1:]],
+    )
+    if report is not None:
+        _print_benchmark(report, args)
+
+
+def _model_feature_names(args) -> list[str]:
+    from aeo.ranksim.features import FEATURE_NAMES, MODEL_FEATURES
+
+    return list(FEATURE_NAMES) if args.with_crawl_artifacts else list(MODEL_FEATURES)
+
+
+def _run_benchmark_report(
+    args,
+    *,
+    labels,
+    pages,
+    coverage,
+    stored,
+    intents,
+    as_of,
+    labels_sha,
+    notes,
+    final_queries=None,
+    cluster_labels=None,
+):
+    """Build examples, run the protocols, print the report. Returns the report, or None.
+
+    With ``final_queries`` (a snapshot's final split), trains on every other query and scores
+    those once (protocols ``final`` and ``final-url``).
+    """
+    from aeo.ranksim.benchmark import (
+        FINAL_PROTOCOLS,
+        PROTOCOLS,
+        build_report,
+        corpus_fingerprint,
+        default_scorers,
+        query_clusters,
+        run_benchmark,
+        run_final,
+    )
+    from aeo.ranksim.lambdamart import build_examples
+
+    names = _model_feature_names(args)
     examples, uncovered, withheld = build_examples(labels, pages, intents, today=as_of)
     if withheld:
         from aeo.ranksim.groundtruth import navboost_withhold_reason
 
         notes.append(f"navboost_prior was withheld: {navboost_withhold_reason(labels)}.")
-    if not args.as_of:
-        notes.append(
-            "as_of defaulted to today. Freshness depends on it, so rerunning on another day can change results."
-        )
-    protocols = tuple(args.protocol or PROTOCOLS)
     if len({row.query for row in examples}) < 2:
         print("Benchmark not computed. Need at least 2 queries with 2 stored pages each.")
         print("Coverage of labeled rows: " + ", ".join(f"{k} {v}" for k, v in sorted(coverage.items())))
-        return
+        return None
+    cluster_source = cluster_labels if cluster_labels is not None else labels
     try:
-        clusters, results = run_benchmark(
-            examples,
-            protocols=protocols,
-            cluster_threshold=args.cluster_threshold,
-            bootstrap=args.bootstrap,
-            seed=args.seed,
-            feature_names=names,
-            cluster_source=labels,
-        )
+        if final_queries is None:
+            clusters, results = run_benchmark(
+                examples,
+                protocols=tuple(args.protocol or PROTOCOLS),
+                cluster_threshold=args.cluster_threshold,
+                bootstrap=args.bootstrap,
+                seed=args.seed,
+                feature_names=names,
+                cluster_source=cluster_source,
+            )
+        else:
+            all_clusters = query_clusters(cluster_source, args.cluster_threshold)
+            used = {row.query for row in examples}
+            clusters = {query: cluster for query, cluster in all_clusters.items() if query in used}
+            results = run_final(
+                examples,
+                set(final_queries),
+                all_clusters,
+                default_scorers(names, args.seed),
+                protocols=FINAL_PROTOCOLS,
+                bootstrap=args.bootstrap,
+                seed=args.seed,
+            )
     except ValueError as exc:
         print(f"Benchmark not computed. {exc}")
-        return
+        return None
     report = build_report(
         examples=examples,
         n_labels=len(labels),
@@ -561,25 +658,209 @@ def _benchmark(database: str, args) -> None:
         clusters=clusters,
         protocols=results,
         as_of=as_of,
-        labels_sha=file_sha256(args.serp_file),
+        labels_sha=labels_sha,
         corpus_sha=corpus_fingerprint(stored) if stored else None,
         corpus_pages=len(stored),
         cluster_threshold=args.cluster_threshold,
         bootstrap=args.bootstrap,
         seed=args.seed,
         feature_names=names,
-        notes=notes + [line.strip() for line in import_report.lines()[1:]],
+        notes=notes,
     )
-    if len({row.query for row in examples}) < 2:
-        print("Benchmark not computed. Need at least 2 queries with 2 stored pages each.")
-        print("Coverage of labeled rows: " + ", ".join(f"{k} {v}" for k, v in sorted(coverage.items())))
-        return
+    return report
+
+
+def _print_benchmark(report, args) -> None:
+    from aeo.ranksim.benchmark import render_report
+
     print(render_report(report), end="")
     if args.json_out:
         out = Path(args.json_out)
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text(report.to_json(), encoding="utf-8")
         print(f"Wrote {out}")
+
+
+def _benchmark_freeze(database: str, args) -> None:
+    _flag_old_drafts(database)
+    from datetime import date
+
+    from aeo.ranksim.snapshot import SnapshotError, freeze
+
+    try:
+        date.fromisoformat(args.as_of)
+    except ValueError:
+        raise SystemExit(f"--as-of must be YYYY-MM-DD, got {args.as_of!r}.") from None
+    if not 0 < args.final_share < 1:
+        raise SystemExit("--final-share must be between 0 and 1.")
+    if args.graph and not Path(args.graph).is_file():
+        raise SystemExit(f"No graph file at {args.graph}.")
+    intents = {row.query: row.intent for row in build_keywords()}
+    try:
+        manifest = freeze(
+            database,
+            args.serp_file,
+            args.out,
+            as_of=args.as_of,
+            final_share=args.final_share,
+            seed=args.seed,
+            cluster_threshold=args.cluster_threshold,
+            intents=intents,
+            graph_file=args.graph,
+        )
+    except SnapshotError as exc:
+        raise SystemExit(str(exc)) from None
+    split = manifest["split"]
+    print(
+        f"Froze {manifest['labels_rows']} labels and {manifest['pages']} stored pages into {args.out}. "
+        f"{split['clusters']} query clusters: {len(split['dev_queries'])} dev queries, "
+        f"{len(split['final_queries'])} final queries (seed {split['seed']})."
+    )
+    print("The snapshot holds third-party page HTML. Keep it out of git and do not publish it.")
+    print(f"Develop with `benchmark --snapshot {args.out}` (dev split only). Score the final split once per model with --final.")
+
+
+def _benchmark_snapshot(args) -> None:
+    import tempfile
+    from datetime import date, datetime, timezone
+
+    from aeo.ranksim.benchmark import git_commit, lightgbm_version
+    from aeo.ranksim.groundtruth import ImportReport, load_serp_file
+    from aeo.ranksim.lambdamart import model_id
+    from aeo.ranksim.snapshot import SnapshotError, final_runs, graph_path, labels_path, load_manifest, materialize, record_final
+    from aeo.ranksim.store import close_database
+
+    try:
+        manifest = load_manifest(args.snapshot)
+    except SnapshotError as exc:
+        raise SystemExit(str(exc)) from None
+    if args.graph:
+        raise SystemExit("--graph is not used with --snapshot. Freeze the graph with the pages (benchmark-freeze --graph).")
+    split = manifest["split"]
+    if args.cluster_threshold != split["cluster_threshold"]:
+        raise SystemExit(
+            f"This snapshot's split used cluster threshold {split['cluster_threshold']}; pass that value or omit it."
+        )
+    notes = [
+        f"Frozen snapshot {args.snapshot}: created {manifest['created_at']}, split seed {split['seed']}, "
+        f"{len(split['dev_queries'])} dev and {len(split['final_queries'])} final queries."
+    ]
+    if args.as_of and args.as_of != manifest["as_of"]:
+        if args.final:
+            raise SystemExit(f"A final run uses the snapshot's as_of ({manifest['as_of']}). Omit --as-of.")
+        notes.append(f"as_of overridden to {args.as_of}; the snapshot was frozen with {manifest['as_of']}.")
+    as_of = date.fromisoformat(args.as_of or manifest["as_of"])
+    names = _model_feature_names(args)
+    model = model_id(names)
+    if args.final:
+        if args.protocol:
+            raise SystemExit("--protocol does not apply to --final, which runs final and final-url.")
+        previous = [row for row in final_runs(args.snapshot) if row.get("model_id") == model]
+        if previous:
+            raise SystemExit(
+                f"Model {model} was already scored on this final split ({previous[0].get('created_at')}). "
+                f"See {Path(args.snapshot) / 'results.jsonl'}. A final split is scored once per model configuration."
+            )
+    import_report = ImportReport()
+    labels = load_serp_file(labels_path(args.snapshot), report=import_report)
+    intents = dict(manifest.get("intents") or {})
+    with tempfile.TemporaryDirectory(prefix="ranksim-snapshot-") as tmp:
+        database = f"sqlite:///{Path(tmp) / 'snapshot.db'}"
+        try:
+            materialize(args.snapshot, database)
+            if args.final:
+                pages, coverage, stored = _bench_corpus(database, labels)
+            else:
+                dev = set(split["dev_queries"])
+                dev_labels = [row for row in labels if row.query in dev]
+                pages, coverage, stored = _bench_corpus(database, dev_labels)
+        except SnapshotError as exc:
+            raise SystemExit(str(exc)) from None
+        finally:
+            close_database(database)
+    graph = graph_path(args.snapshot, manifest)
+    if graph is not None:
+        _attach_graph_file(pages, graph, notes)
+    if args.final:
+        notes.append(
+            "Final split: trained on every dev query, scored the final queries once. The confidence threshold "
+            "was chosen on held-out dev pairs only."
+        )
+        report = _run_benchmark_report(
+            args,
+            labels=labels,
+            pages=pages,
+            coverage=coverage,
+            stored=stored,
+            intents=intents,
+            as_of=as_of,
+            labels_sha=manifest["labels_sha256"],
+            notes=notes,
+            final_queries=split["final_queries"],
+        )
+        if report is None:
+            return
+        entry = {
+            "model_id": model,
+            "created_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "git_commit": git_commit(),
+            "lightgbm_version": lightgbm_version(),
+            "feature_names": names,
+            "as_of": manifest["as_of"],
+            "labels_sha256": manifest["labels_sha256"],
+            "corpus_sha256": report.corpus_sha,
+            "bootstrap": args.bootstrap,
+            "seed": args.seed,
+            "protocols": [_final_summary(result) for result in report.protocols],
+        }
+        try:
+            record_final(args.snapshot, entry)
+        except SnapshotError as exc:
+            raise SystemExit(str(exc)) from None
+        _print_benchmark(report, args)
+        print(f"Recorded in {Path(args.snapshot) / 'results.jsonl'} as {model}.")
+        return
+    dev = set(split["dev_queries"])
+    notes.append(
+        "Dev split only. Final-split labels were not loaded or scored; their pages stay in the corpus as "
+        "unlabeled pages, because in-corpus links and PageRank use every stored page."
+    )
+    report = _run_benchmark_report(
+        args,
+        labels=[row for row in labels if row.query in dev],
+        pages=pages,
+        coverage=coverage,
+        stored=stored,
+        intents=intents,
+        as_of=as_of,
+        labels_sha=manifest["labels_sha256"],
+        notes=notes,
+        cluster_labels=labels,
+    )
+    if report is not None:
+        _print_benchmark(report, args)
+
+
+def _final_summary(result) -> dict:
+    band = result.random_band
+    return {
+        "protocol": result.protocol,
+        "dropped_train_rows": result.dropped_train_rows,
+        "scorers": [
+            {
+                "name": row.name,
+                "pairwise": row.pairwise.point,
+                "low": row.pairwise.low,
+                "high": row.pairwise.high,
+                "ndcg": row.ndcg,
+                "n_pairs": row.n_pairs,
+                "n_queries": row.n_queries,
+            }
+            for row in result.scorers
+        ],
+        "random_band": None if band is None else {"mean": band.mean, "low": band.low, "high": band.high},
+        "confidence": None if result.confidence is None else result.confidence.note,
+    }
 
 
 def _ledger(database: str, args) -> None:

@@ -41,6 +41,8 @@ Each item lists the problem, the change, acceptance criteria, dependencies, effo
 - Acceptance: two machines produce identical numbers from the same snapshot; a second `--final` run
   for the same model id is refused; README quotes only `--final` numbers.
 - Depends on: P0-1. Effort M.
+- Status 2026-11-05: built (`benchmark-freeze`, `benchmark --snapshot`, `--final`; E12). The split
+  is by query cluster only; splitting by site as well needs more labeled sites (P0-1).
 
 ### P0-3 Repeated snapshots for volatility and for the ledger
 - Problem: one snapshot cannot say how much Google itself moves, and the prediction ledger has no

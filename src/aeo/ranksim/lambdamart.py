@@ -233,18 +233,36 @@ def fit_lambdamart(
         group=group,
         feature_name=names,
     )
-    params = {
-        "objective": "lambdarank",
-        "metric": "ndcg",
-        "num_leaves": 15,
-        "learning_rate": 0.08,
-        "min_data_in_leaf": 1,
-        "verbose": -1,
-        "num_threads": 1,
-        "monotone_constraints": [1 if name in increasing else 0 for name in names],
-        "monotone_constraints_method": "advanced",
-    }
-    return lgb.train(params, dataset, num_boost_round=40)
+    params = dict(LAMBDAMART_PARAMS)
+    params["monotone_constraints"] = [1 if name in increasing else 0 for name in names]
+    return lgb.train(params, dataset, num_boost_round=NUM_BOOST_ROUND)
+
+
+# The model's configuration, in one place so a benchmark run can name exactly what it scored.
+LAMBDAMART_PARAMS = {
+    "objective": "lambdarank",
+    "metric": "ndcg",
+    "num_leaves": 15,
+    "learning_rate": 0.08,
+    "min_data_in_leaf": 1,
+    "verbose": -1,
+    "num_threads": 1,
+    "monotone_constraints_method": "advanced",
+}
+NUM_BOOST_ROUND = 40
+
+
+def model_id(feature_names: list[str] | tuple[str, ...], monotone_up: frozenset[str] | None = None) -> str:
+    """Stable id for a model configuration: features, monotone set, parameters and rounds."""
+    import hashlib
+    import json
+
+    increasing = sorted(MONOTONE_UP if monotone_up is None else monotone_up)
+    body = json.dumps(
+        {"features": list(feature_names), "monotone_up": increasing, "params": LAMBDAMART_PARAMS, "rounds": NUM_BOOST_ROUND},
+        sort_keys=True,
+    )
+    return "lgbm-" + hashlib.sha256(body.encode()).hexdigest()[:16]
 
 
 def predict_scores(model, examples: list[RankExample], feature_names: list[str] | None = None) -> dict[int, float]:

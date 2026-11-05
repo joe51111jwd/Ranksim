@@ -50,8 +50,15 @@ from aeo.ranksim.lambdamart import RankExample, _ndcg, fit_lambdamart, predict_s
 from aeo.ranksim.metrics import spearman
 
 PROTOCOLS = ("loqo", "cluster", "cluster-url")
+# Frozen-snapshot protocols: train on every dev query, score the held-out final queries once.
+# ``final-url`` also drops dev rows whose URL appears in the final split.
+FINAL_PROTOCOLS = ("final", "final-url")
+URL_DROP_PROTOCOLS = frozenset({"cluster-url", "final-url"})
 GRAPH_FEATURES = frozenset({"orphan", "link_depth", "crawl_inlinks"})
 BENCHMARK_VERSION = "1"
+# A cluster bootstrap over a handful of clusters has few distinct resamples, so its interval
+# is too narrow to trust. Below this many scored clusters the report gives no verdict.
+MIN_VERDICT_CLUSTERS = 10
 
 Scorer = Callable[[list[RankExample], list[RankExample]], list[float]]
 
@@ -225,7 +232,7 @@ def split_fold(usable: dict[str, list[RankExample]], fold: Fold, protocol: str) 
     test = [row for query in sorted(fold.test_queries) for row in usable[query]]
     train = [row for query, rows in sorted(usable.items()) if query not in fold.test_queries for row in rows]
     dropped = 0
-    if protocol == "cluster-url":
+    if protocol in URL_DROP_PROTOCOLS:
         held = {_url_key(row.url) for row in test}
         kept = [row for row in train if _url_key(row.url) not in held]
         dropped = len(train) - len(kept)
@@ -345,9 +352,12 @@ def run_protocol(
     *,
     bootstrap: int = 2000,
     seed: int = 0,
+    folds: list[Fold] | None = None,
 ) -> ProtocolResult:
+    """Score every fold. ``folds`` overrides the protocol's own folds (used by ``run_final``)."""
     usable = _queries_with_pairs_map(examples)
-    folds = make_folds(sorted(usable), clusters, protocol)
+    if folds is None:
+        folds = make_folds(sorted(usable), clusters, protocol)
     per_scorer: dict[str, list[QueryResult]] = {name: [] for name in scorers}
     fold_of: dict[str, int] = {}
     dropped_total = 0
@@ -363,7 +373,8 @@ def run_protocol(
                 group = [test[i] for i in indexes]
                 group_scores = [scores[i] for i in indexes]
                 per_scorer[name].append(_query_result(group, group_scores, clusters[group[0].query]))
-    cluster_ids = sorted({clusters[query] for query in usable})
+    # Resample only clusters that were scored: with fixed folds, training-only clusters have no pairs.
+    cluster_ids = sorted({clusters[query] for query in fold_of})
     results: list[ScorerResult] = []
     for name, queries in per_scorer.items():
         results.append(_summarize(name, queries, cluster_ids, bootstrap, seed))
@@ -451,6 +462,80 @@ def run_benchmark(
         result.random_band = band
         results.append(result)
     return clusters, results
+
+
+def run_final(
+    examples: list[RankExample],
+    final_queries: set[str],
+    clusters: dict[str, int],
+    scorers: dict[str, Scorer],
+    *,
+    protocols: tuple[str, ...] = FINAL_PROTOCOLS,
+    bootstrap: int = 2000,
+    seed: int = 0,
+) -> list[ProtocolResult]:
+    """Train on every dev query, score the final queries once.
+
+    ``clusters`` must come from the full label file (the snapshot split). The confidence
+    threshold is chosen on dev only (held-out dev clusters, with URLs dropped for
+    ``final-url``) and then applied, unchanged, to the final pairs.
+    """
+    for protocol in protocols:
+        if protocol not in FINAL_PROTOCOLS:
+            raise ValueError(f"Unknown final protocol {protocol!r}. Use one of {', '.join(FINAL_PROTOCOLS)}.")
+    usable = _queries_with_pairs(examples)
+    usable_queries = {row.query for row in usable}
+    final = usable_queries & set(final_queries)
+    dev = usable_queries - final
+    if not final:
+        raise ValueError("No final-split query has 2 stored pages with different positions; nothing to score.")
+    if not dev:
+        raise ValueError("No dev query has labeled pairs; nothing to train on.")
+    dev_rows = [row for row in usable if row.query in dev]
+    final_rows = [row for row in usable if row.query in final]
+    band = random_band(final_rows, seed=seed)
+    results = []
+    for protocol in protocols:
+        result = run_protocol(
+            usable, protocol, clusters, scorers, bootstrap=bootstrap, seed=seed, folds=[Fold(frozenset(final))]
+        )
+        result.random_band = band
+        result.confidence = None
+        model = next((row for row in result.scorers if row.name == "lambdamart"), None)
+        if model is not None:
+            dev_protocol = "cluster-url" if protocol == "final-url" else "cluster"
+            result.confidence = dev_threshold_confidence(dev_rows, model.queries, clusters, scorers["lambdamart"], dev_protocol)
+        results.append(result)
+    return results
+
+
+def dev_threshold_confidence(
+    dev_rows: list[RankExample],
+    final_queries: list[QueryResult],
+    clusters: dict[str, int],
+    scorer: Scorer,
+    dev_protocol: str,
+) -> ConfidenceCheck:
+    """Pick the score-gap threshold from held-out dev pairs, report its accuracy on final pairs."""
+    total = sum(len(row.margins) for row in final_queries)
+    if len({clusters[row.query] for row in dev_rows}) < 2:
+        return ConfidenceCheck(0, 0, total, 0, 1, "Dev split has one query cluster; no threshold could be chosen. Every final pair stays UNSURE.")
+    dev = run_protocol(dev_rows, dev_protocol, clusters, {"lambdamart": scorer}, bootstrap=0)
+    dev_margins = [pair for row in dev.scorers[0].queries for pair in row.margins]
+    chosen = calibrate(dev_margins)
+    if chosen.threshold is None:
+        return ConfidenceCheck(0, 0, total, 0, 1, "No threshold met the bar on held-out dev pairs. Every final pair stays UNSURE.")
+    confident = [pair for row in final_queries for pair in row.margins if pair.gap >= chosen.threshold]
+    correct = sum(1 for pair in confident if pair.correct)
+    if confident:
+        note = (
+            f"Threshold {chosen.threshold:.4f} chosen on held-out dev pairs ({dev_protocol}). "
+            f"On final: {len(confident)} of {total} pairs got a confident call; {correct} were right "
+            f"({correct / len(confident):.3f})."
+        )
+    else:
+        note = f"Threshold {chosen.threshold:.4f} chosen on held-out dev pairs; no final pair reached it."
+    return ConfidenceCheck(len(confident), correct, total, 1, 1, note)
 
 
 # Provenance --------------------------------------------------------------------------
@@ -626,7 +711,7 @@ def render_report(report: BenchmarkReport) -> str:
             )
         model = next((row for row in protocol.scorers if row.name == "lambdamart"), None)
         if model and model.diff_vs_bm25f is not None:
-            lines.append("  " + _verdict("lambdamart", "bm25f_only", model.diff_vs_bm25f))
+            lines.append("  " + _verdict("lambdamart", "bm25f_only", model.diff_vs_bm25f, protocol.n_clusters))
         if protocol.confidence is not None:
             lines.append("  Confidence: " + protocol.confidence.note)
     lines.append("")
@@ -634,9 +719,14 @@ def render_report(report: BenchmarkReport) -> str:
     return "\n".join(lines) + "\n"
 
 
-def _verdict(left: str, right: str, diff: Interval) -> str:
+def _verdict(left: str, right: str, diff: Interval, n_clusters: int | None = None) -> str:
     if diff.point is None or diff.low is None or diff.high is None:
         return f"{left} vs {right}: not measurable."
+    if n_clusters is not None and n_clusters < MIN_VERDICT_CLUSTERS:
+        return (
+            f"{left} vs {right}: {diff.point:+.3f}. Only {n_clusters} query clusters were scored "
+            f"(fewer than {MIN_VERDICT_CLUSTERS}), too few for a trustworthy interval. No verdict."
+        )
     if diff.low > 0:
         return f"{left} beats {right} on this sample: {diff.point:+.3f} (95% CI {diff.low:+.3f} to {diff.high:+.3f}). Small sample; one comparison of several."
     if diff.high < 0:

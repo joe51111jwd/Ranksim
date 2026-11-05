@@ -29,8 +29,10 @@ Legend: `[x]` done (commit noted), `[ ]` open, `[-]` blocked (reason given).
 
 ## B. Backend work (no UI files)
 
-- [ ] B1. Freeze the benchmark: `benchmark freeze` writes a dataset manifest and page snapshot;
-  `--final` runs once per model id and appends to a results log (BACKLOG P0-2).
+- [x] B1. Freeze the benchmark: `benchmark-freeze` writes a dataset manifest and page snapshot;
+  `--final` runs once per model id and appends to a results log (BACKLOG P0-2). Done: snapshot
+  module, dev/final split by query cluster, verdicts withheld below 10 scored clusters; first final
+  run recorded in E12.
 - [ ] B2. Calibrate on the statistic the check uses: adjacent-page gaps, pre-gate scores, gated
   pairs excluded (P1-13).
 - [ ] B3. Crawler: connect to the vetted IP (DNS rebinding), deadline covers response headers,

@@ -158,6 +158,13 @@ def open_session(url: str) -> Session:
     return session_factory(url)()
 
 
+def close_database(url: str) -> None:
+    """Dispose of a cached engine, e.g. for a temporary database that is about to be deleted."""
+    factory = _factories.pop(database_url(url), None)
+    if factory is not None:
+        factory.kw["bind"].dispose()
+
+
 def save_keywords(session: Session, rows: list[Keyword]) -> None:
     for row in rows:
         current = session.get(RsKeyword, row.query)

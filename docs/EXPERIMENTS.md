@@ -198,3 +198,30 @@ Conventions for every entry:
   the product labels a check from the gap to the adjacent page (median adjacent gap 0.345; 17% at or
   above 1.0), that 9 of the 16 labeled queries have no intent and default to "commercial", and that
   the thin-page gate's synthetic score offsets count as confident gaps. These are in the backlog.
+
+## 2026-11-05 E12. Frozen snapshot and the first final-split run
+
+- `benchmark-freeze` on the fresh crawl (`reextract.db`, 168 stored rows, link graph of 2026-11-05)
+  with `--as-of 2026-11-05`, seed 0, final share 0.3: 11 query clusters; final split = 5 queries in
+  3 clusters (`best heavy civil construction software`, `hcss alternative`, `hcss heavybid
+  alternative`, `hcss heavyjob alternative`, `heavy civil field management software`); dev = 11
+  queries in 8 clusters. Labels sha256 4bcc6715f997, corpus sha256 f7603b465308. The snapshot holds
+  third-party HTML, so it is not in git and lives only in this session's scratch space.
+- Two dev runs from the snapshot gave byte-identical JSON (apart from `created_at`). Dev, 344 pairs:
+  LambdaMART cluster-url 0.532 (0.402-0.624); BM25F 0.480; domain prior 0.562; random 0.413-0.584.
+- One `--final` run for the current configuration, model id `lgbm-98ceb518acedd909` (MODEL_FEATURES,
+  default monotone set, 40 rounds, 15 leaves), recorded in the snapshot's `results.jsonl`. 114 pairs:
+
+  | protocol  | LambdaMART | BM25F | linear prior | domain prior | random (95% of seeds) |
+  |-----------|-----------:|------:|-------------:|-------------:|----------------------:|
+  | final     | 0.561      | 0.474 | 0.439        | 0.583        | 0.351-0.632           |
+  | final-url | 0.579      | 0.474 | 0.439        | 0.575        | 0.351-0.632           |
+
+  No confidence threshold met the bar on held-out dev pairs, so every final pair stays UNSURE.
+- Reading: every number sits inside the random band, and only 3 clusters were scored. The first
+  render of this run printed "lambdamart beats bm25f_only" from a bootstrap over 3 clusters; that
+  interval is not trustworthy, so the report now gives no verdict below 10 scored clusters
+  (`MIN_VERDICT_CLUSTERS`). The final split is there so that later model changes (B16) are judged
+  on queries nobody tuned on; with 16 labeled queries it cannot show an effect of this size either way.
+  It becomes useful when the label set grows (C1).
+

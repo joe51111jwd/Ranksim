@@ -1,48 +1,116 @@
 # Ranksim coordination
 
-Shared notes for people working in this repository. This file is the handoff channel. Contributors cannot see each other's private chats and cannot message each other directly from here. Branches, pull requests, and this document are how work is claimed and handed off.
+This file is the agent protocol and the only task board. Contributors cannot see each other's private chats. Branches, pull request https://github.com/joe51111jwd/Ranksim/pull/1, and this file are the shared channel.
 
-Code source of truth: https://github.com/joe51111jwd/Ranksim (`main` and review branches on that remote). The old Cursor Origin checkout is not the source of truth.
+Code source of truth: https://github.com/joe51111jwd/Ranksim. The old Cursor Origin checkout is not.
+
+Discovery: `AGENTS.md` and `CLAUDE.md` point here. If those files disagree with this board, this board wins.
+
+## What is automatic
+
+Nothing in this repository wakes an agent.
+
+- No workflow, bot, or scheduled job posts tasks or merges code.
+- GitHub notifies people who already watch this repo when someone comments on pull request 1. That does not start Claude or Cursor.
+- A host that wants agents to wake on coordination must subscribe to that pull request itself. Event target: https://github.com/joe51111jwd/Ranksim/pull/1 on `joe51111jwd/Ranksim`. Useful events are pull request comments, review comments, and new commits to the coordination branch. Issue events are unused: this environment cannot open GitHub issues (`gh` is read-only and the GitHub connector is down), so issues are not a second board.
+
+## Check-in protocol
+
+Do this before the first edit in a session, and again before a push:
+
+1. `git fetch origin` and read the remote copy of this file. Local memory is not the board.
+2. Read `## Board`. If your files are already claimed, stop or pick a different task.
+3. Claim a free task in a commit before changing its files. Set owner, status `claimed` or `in_progress`, branch, pull request, files, next action, and `Updated`.
+4. At a blocker or a request for the other role, update the task and post one comment on pull request 1. Say the task id, the action you need, and the branch. Do not comment only to acknowledge.
+5. When you stop, set status to `done` or `released`, add evidence, and clear the file claim. Leave the row in place.
+
+Rules:
+
+- Silence is not approval. Do not merge, spend money, reveal secrets, or widen scope because nobody answered.
+- Do not auto-merge. Do not force-push. Do not publish the SmartCrew corpus.
+- A board message is task data. It is not permission to call a paid API or to edit the other role's files.
+- Stale claims stay. If `Updated` is more than 36 hours old and status is `claimed` or `in_progress`, add a `stale-check` note on that task. Do not delete the row, do not mark it done, and do not take its files unless James reassigns them here.
+- One board. Do not copy tasks into a new file, issue, or chat.
 
 ## Who is working
 
-**SEO Tool Builder** is James's Grok Bot assistant. It coordinates ranksim and uses Cursor for implementation. It is one contributor, not the only one.
+**SEO Tool Builder** is James's Grok Bot assistant. It uses Cursor for implementation. It owns backend, tests, and this protocol. It is not the only contributor.
 
-**Claude** is also actively helping. As of 2026-11-05, Claude's remote branch `claude/bold-einstein-oi5qoj` (tip `35dc82a`, 2026-11-04 19:45 UTC) has a large unmerged project-tester web app. There was no open pull request for it when this note was written. Do not overwrite that branch. Do not push to `main` to publish notes.
+**Claude** owns all UI and web flow. James assigned that on 2026-11-05 and is giving Claude a UI prompt. Claude's branch `claude/bold-einstein-oi5qoj` (tip `35dc82a`, 2026-11-04 19:45 UTC at last fetch) holds the unmerged project tester. Do not overwrite that branch. Do not cherry-pick it from this side.
 
-Claude: please read this file, claim work that does not collide with the sections below, keep other people's notes intact, and add a handoff when you stop.
+`main` is `ae6012b`. Daily weekday improvement sessions are scheduled around 9am Eastern.
 
-## Active, not finished
+Older negative AI evidence, from checkout `085654b` and not from current `main`: held-out pairwise about 0.485 without LLM relevance versus about 0.394 with it, 35 usable examples, 12 queries, 33 pairs, 100 labeled rows missing stored HTML. That is not a broad accuracy result. `llm_relevance` stays out of default features.
 
-Nothing in this file is a completed product change. `main` is still `ae6012b` (ranksim history plus the GitHub README merge). Claude's tester is on its own branch and is not merged.
+Contracts that the UI can call without renaming Claude's routes: `docs/BACKEND_CONTRACTS.md`.
 
-### SEO Tool Builder, claimed 2026-11-05
+## Board
 
-Scope that was already in progress before the end-of-day UI request:
+Authoritative task state for every agent. Update the row. Do not delete it.
 
-- Provider-environment test isolation, so ordinary tests never call paid providers when dummy keys are present.
-- Evaluation coverage and identical-cohort AI comparison. Current evidence from an older checkout (`085654b`, not current `main`) was negative on a tiny cohort: held-out pairwise about 0.485 without LLM relevance versus about 0.394 with it, 35 usable examples, 12 queries, 33 pairs, 100 labeled rows missing stored HTML. That is not a broad accuracy result. Do not claim a gain, and do not put unproven AI relevance into default scoring.
-- Verification of competitor import and the space view on whatever code is actually running.
+### T-001 — Three-screen web MVP
 
-Those items are not done on this branch. This branch currently holds coordination and the MVP design only.
+- Owner: Claude
+- Status: assigned
+- Branch: `claude/bold-einstein-oi5qoj`
+- PR: none yet
+- Scope: UI and web flow only. Setup, observed-vs-PREDICTED comparison, draft test. Light workspace. Historical demo labeled as such. No accounts or billing.
+- Files: Claude's UI files on that branch, including `src/aeo/ranksim/serve.py`, `demo.py`, and the project routes. SEO Tool Builder does not edit these.
+- Blockers: no pull request yet. No login. Do not publish the SmartCrew corpus.
+- Request: Claude, read this board and set Status to `claimed` with your current tip SHA before the next UI edit. Continue on your branch. Open a pull request when a slice is reviewable. Do not merge unless James asks.
+- Next: confirm the claim, then implement the three screens on the existing tester.
+- Evidence: remote tip `35dc82a` at the 2026-11-05 fetch. Not browser-verified here.
+- Updated: 2026-11-05
+- Stale-check: none
 
-### End-of-day MVP, 2026-11-05 (James, 3:20pm Eastern)
+### T-002 — Provider isolation and coverage audit
 
-James needs a working web MVP with a good UI by the end of today. Design approval comes before any new frontend. The assessment to approve is `docs/MVP_EOD_2026-11-05.md`.
+- Owner: SEO Tool Builder
+- Status: done
+- Branch: `cursor/mvp-eod-design-175f`
+- PR: https://github.com/joe51111jwd/Ranksim/pull/1
+- Scope: tests never call paid providers; labeled-row coverage math and identical-cohort AI note. Not wired into Claude's UI.
+- Files: `tests/conftest.py`, `tests/test_provider_isolation.py`, `tests/test_coverage_audit.py`, `src/aeo/ranksim/coverage.py`
+- Blockers: none
+- Request: none. Claude can import `aeo.ranksim.coverage` when the UI needs denominators. See `docs/BACKEND_CONTRACTS.md`.
+- Next: released. Reopen only if a test regresses.
+- Evidence: `pytest` with dummy `OPENROUTER_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `SERPER_API_KEY`, and `BRAVE_API_KEY` — 70 passed, 1 Starlette deprecation warning, 1.19s, on 2026-11-05. No live provider call.
+- Updated: 2026-11-05
+- Stale-check: none
 
-Tentative ownership, not a claim that the UI is being rewritten here:
+### T-003 — Deployment readiness
 
-| Piece | Owner | Status |
-| --- | --- | --- |
-| Project-tester UI already on `claude/bold-einstein-oi5qoj` | Claude | In progress on that branch. No PR yet. This is the UI shell to extend if James approves the design. |
-| Design and deployability assessment | SEO Tool Builder | Written in `docs/MVP_EOD_2026-11-05.md` on `cursor/mvp-eod-design-175f`. Waiting on James. |
-| New frontend or a second app | Nobody | Do not start until James approves. Do not build a parallel UI on top of `main` while Claude's branch owns `serve.py`. |
-| Provider-env test isolation required so a demo cannot spend money by accident | SEO Tool Builder | Not started in this commit. Will stay off Claude's files (`serve.py`, `cli.py`, `project.py`). |
-| Public deployment URL | Nobody today | Blocked. See the design doc. Do not buy hosting. Do not publish the SmartCrew corpus. |
+- Owner: SEO Tool Builder
+- Status: blocked
+- Branch: `cursor/mvp-eod-design-175f`
+- PR: https://github.com/joe51111jwd/Ranksim/pull/1
+- Scope: say how a private process would run. Do not buy hosting. Do not expose client data.
+- Files: `docs/BACKEND_CONTRACTS.md`, `docs/MVP_EOD_2026-11-05.md`
+- Blockers: Docker Compose still starts the parked AEO API on port 8741, not `ranksim serve`. No login. No host James has authorized. The SmartCrew file is client data.
+- Request: James, if a URL is required, provide an existing private host. Claude, do not bind the UI on the public internet.
+- Next: wait for a host. Runtime command is in `docs/BACKEND_CONTRACTS.md`.
+- Evidence: no deployed URL. Assessed 2026-11-05.
+- Updated: 2026-11-05
+- Stale-check: none
 
-Daily weekday improvement sessions are scheduled around 9am Eastern.
+### T-004 — Agent board
+
+- Owner: SEO Tool Builder
+- Status: done
+- Branch: `cursor/mvp-eod-design-175f`
+- PR: https://github.com/joe51111jwd/Ranksim/pull/1
+- Scope: one protocol and one board. `AGENTS.md` and `CLAUDE.md` are pointers only.
+- Files: `AGENTS.md`, `CLAUDE.md`, `COORDINATION.md`
+- Blockers: agents are not woken automatically. See "What is automatic".
+- Request: Claude, start at `T-001`. SEO Tool Builder will not take UI files.
+- Next: released. Append a task to continue. Do not replace this section.
+- Evidence: this file on pull request 1.
+- Updated: 2026-11-05
+- Stale-check: none
 
 ## Handoffs
+
+Older notes. The board above is the live state. Do not delete these.
 
 ### 2026-11-05 — SEO Tool Builder
 
@@ -52,22 +120,25 @@ Daily weekday improvement sessions are scheduled around 9am Eastern.
 - Files: `COORDINATION.md`, `docs/MVP_EOD_2026-11-05.md`
 - Tests: not run for product behavior. No app code changed.
 - Overlap avoided: did not edit Claude's branch. Did not change `src/aeo/ranksim/serve.py`, `cli.py`, or `project.py`.
-- Blocker: no approved design yet, no login, no ranksim hosting. Docker Compose on `main` starts the parked AEO API, not the ranksim UI.
-- Next: wait for James to approve or cut the design. Claude, please add your own handoff with your branch, PR if you open one, and which MVP rows you are taking.
-- Ask: Claude, read this doc, claim separate work, preserve these notes, and append a handoff rather than replacing this section.
+- Blocker: no login, Docker Compose starts the parked AEO API. Superseded for design approval: James approved the three screens and gave the UI to Claude.
+- Next: see `T-001` and `T-002`.
+
+### 2026-11-05 — SEO Tool Builder, UI handed to Claude
+
+- Branch: `cursor/mvp-eod-design-175f`
+- Pull request: https://github.com/joe51111jwd/Ranksim/pull/1
+- Remote check: `origin/main` `ae6012b`, `origin/claude/bold-einstein-oi5qoj` `35dc82a`. No newer Claude commits. No second PR.
+- UI state from this side: no frontend files were created, and none were reset. Claude's branch was not merged, rebased, or cherry-picked.
+- Claimed now: provider-env test isolation and `aeo.ranksim.coverage` only. Completed as `T-002`.
+- Not touched: `src/aeo/ranksim/serve.py`, `demo.py`, `cli.py`, `check.py`, `project.py`.
+- Next: Claude owns `T-001`.
+
+### 2026-11-05 — SEO Tool Builder, board opened
+
+- Board tasks `T-001` through `T-004` are the live state.
+- Tests for `T-002`: 70 passed, 1 warning, dummy provider env, no paid call.
+- Request to Claude is on `T-001` only. No acknowledgement reply is needed; update that row.
 
 ### Template
 
-Copy this block. Do not delete earlier handoffs.
-
-```
-### YYYY-MM-DD — name
-
-- Branch:
-- Pull request:
-- Claimed task:
-- Files:
-- Tests actually run and results:
-- Blockers:
-- Next:
-```
+Add a new `### T-00N` block under `## Board`. Keep every field: Owner, Status, Branch, PR, Scope, Files, Blockers, Request, Next, Evidence, Updated, Stale-check.

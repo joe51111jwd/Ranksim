@@ -446,8 +446,12 @@ def _benchmark(database: str, args) -> None:
     from aeo.ranksim.linkgraph import attach_graph, load_graph
     from aeo.ranksim.store import RsPage
 
+    from aeo.ranksim.groundtruth import ImportReport
+
     as_of = date.fromisoformat(args.as_of) if args.as_of else date.today()
-    labels = load_serp_file(args.serp_file)
+    import_report = ImportReport()
+    labels = load_serp_file(args.serp_file, report=import_report)
+    print("\n".join(import_report.lines()))
     intents = {row.query: row.intent for row in build_keywords()}
     session = open_session(database)
     try:
@@ -499,7 +503,7 @@ def _benchmark(database: str, args) -> None:
         bootstrap=args.bootstrap,
         seed=args.seed,
         feature_names=names,
-        notes=notes,
+        notes=notes + [line.strip() for line in import_report.lines()[1:]],
     )
     if len({row.query for row in examples}) < 2:
         print("Benchmark not computed. Need at least 2 queries with 2 stored pages each.")
@@ -952,10 +956,12 @@ def _evaluate(database: str, args) -> None:
 
 
 def _score_file(database: str, path: str, *, fit: bool, model_out: str | None, folds: str = "loo"):
-    from aeo.ranksim.groundtruth import load_serp_file
+    from aeo.ranksim.groundtruth import ImportReport, load_serp_file
     from aeo.ranksim.lambdamart import build_examples, cross_validate, fit_lambdamart, save_model
 
-    labels = load_serp_file(path)
+    import_report = ImportReport()
+    labels = load_serp_file(path, report=import_report)
+    print("\n".join(import_report.lines()))
     session = open_session(database)
     try:
         from aeo.ranksim.corpus import load_corpus_docs

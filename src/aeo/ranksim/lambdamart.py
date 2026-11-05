@@ -200,10 +200,15 @@ def cross_validate(examples: list[RankExample], *, real_google: bool, folds_mode
     )
 
 
-def fit_lambdamart(examples: list[RankExample], feature_names: tuple[str, ...] | list[str] | None = None):
+def fit_lambdamart(
+    examples: list[RankExample],
+    feature_names: tuple[str, ...] | list[str] | None = None,
+    monotone_up: frozenset[str] | set[str] | None = None,
+):
     import lightgbm as lgb
 
     names = list(feature_names or FEATURE_NAMES)
+    increasing = MONOTONE_UP if monotone_up is None else frozenset(monotone_up)
     ordered = sorted(examples, key=lambda row: row.query)
     features = [[_feature_value(row.features, name) for name in names] for row in ordered]
     labels = [int(max(0, min(10, round(relevance(row.position))))) for row in ordered]
@@ -236,7 +241,7 @@ def fit_lambdamart(examples: list[RankExample], feature_names: tuple[str, ...] |
         "min_data_in_leaf": 1,
         "verbose": -1,
         "num_threads": 1,
-        "monotone_constraints": [1 if name in MONOTONE_UP else 0 for name in names],
+        "monotone_constraints": [1 if name in increasing else 0 for name in names],
         "monotone_constraints_method": "advanced",
     }
     return lgb.train(params, dataset, num_boost_round=40)

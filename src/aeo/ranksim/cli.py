@@ -175,9 +175,15 @@ def main(argv: list[str] | None = None) -> None:
         "--url",
         default="https://www.smartcrewhq.com/blog/best-software-small-dirt-work-contractors/",
     )
+    ai_eval.add_argument(
+        "--allow-small",
+        action="store_true",
+        help="Run the paid judge even when there are too few labeled pairs to measure anything",
+    )
+    ai_eval.add_argument("--rounds-dir", default=None, help="Write each AI rewrite round as an HTML file here")
 
     serve = sub.add_parser("serve", help="Serve the pre-publish rank check demo")
-    serve.add_argument("--host", default="0.0.0.0")
+    serve.add_argument("--host", default="127.0.0.1", help="Default is local only. The demo has no authentication.")
     serve.add_argument("--port", type=int, default=8765)
     serve.add_argument("--serp", default="smartcrew/serp.csv")
 
@@ -573,19 +579,29 @@ def _ai_eval(settings, database: str, args) -> None:
     finally:
         session.close()
     examples, uncovered, _withheld = build_examples(labels, pages, intents)
+    from aeo.ranksim.benchmark import count_pairs
+    from aeo.ranksim.judge import MIN_JUDGE_PAIRS
+
+    n_pairs = count_pairs(examples)
+    print(
+        f"Coverage: {len(examples)} of {len(labels)} labeled rows have usable stored HTML "
+        f"({uncovered} uncovered), {len({row.query for row in examples})} queries, {n_pairs} labeled pairs."
+    )
     llm = resolve_llm(settings, run_id="ai-eval")
     print(llm.cost_summary() if not llm.available else f"LLM {llm.name} model {llm.model}.")
-    scores = collect_judge_scores(llm, examples, pages)
-    experiment = relevance_experiment(examples, scores)
-    print("LLM relevance, leave-one-query-out. PREDICTED, not a live rank.")
-    print(experiment.note)
-    if experiment.measured:
-        print(f"Baseline pairwise: {experiment.baseline_pairwise:.3f}")
-        print(f"With llm_relevance: {experiment.with_judge_pairwise:.3f}")
-        if experiment.baseline_pairwise is not None and experiment.with_judge_pairwise is not None:
-            print(f"Delta: {experiment.with_judge_pairwise - experiment.baseline_pairwise:+.3f}")
+    if llm.available and n_pairs < MIN_JUDGE_PAIRS and not args.allow_small:
+        print(
+            f"Judge not run: {n_pairs} pairs is below {MIN_JUDGE_PAIRS}. On a sample this size random scores "
+            "move pairwise accuracy by several points either way, so the result could not support a decision. "
+            f"It would have cost about {len(examples)} judge calls. Build a crawled corpus with index-serp and more "
+            "labeled queries, or pass --allow-small to spend anyway."
+        )
+        scores = None
     else:
-        print("No pairwise delta. The judge did not score every labeled page.")
+        scores = collect_judge_scores(llm, examples, pages)
+    experiment = relevance_experiment(examples, scores)
+    print("LLM relevance experiment. PREDICTED, not a live rank.")
+    print(experiment.note)
     html_path = Path(args.html)
     if not html_path.is_file():
         print(f"Fix loop skipped. HTML file not found: {html_path}")
@@ -610,10 +626,19 @@ def _ai_eval(settings, database: str, args) -> None:
         if result.error:
             print(result.error)
         else:
-            print(f"PREDICTED rank {result.predicted_rank} of {result.predicted_of}. Confidence: {result.confidence}.")
+            print(
+                f"PREDICTED slot {result.predicted_rank} of {result.predicted_of} supplied pages "
+                f"(not a Google position). Confidence: {result.confidence}."
+            )
             print(result.fix_note)
+            rounds_dir = Path(args.rounds_dir) if args.rounds_dir else None
             for round_ in result.fix_rounds:
                 print(f"Round {round_.round_index}: PREDICTED {round_.predicted_rank} of {round_.predicted_of}. {round_.note}")
+                if rounds_dir and round_.html:
+                    rounds_dir.mkdir(parents=True, exist_ok=True)
+                    target = rounds_dir / f"{html_path.stem}.round{round_.round_index}.html"
+                    target.write_text(round_.html, encoding="utf-8")
+                    print(f"  saved {target}")
         print(f"Uncovered labeled rows: {uncovered}.")
     print(llm.cost_summary())
 

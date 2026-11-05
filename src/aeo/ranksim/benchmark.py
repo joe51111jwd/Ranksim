@@ -226,14 +226,14 @@ def split_fold(usable: dict[str, list[RankExample]], fold: Fold, protocol: str) 
 # Scorers -----------------------------------------------------------------------------
 
 
-def lambdamart_scorer(feature_names: list[str] | None = None) -> Scorer:
+def lambdamart_scorer(feature_names: list[str] | None = None, monotone_up: frozenset[str] | None = None) -> Scorer:
     names = list(feature_names or FEATURE_NAMES)
 
     def score(train: list[RankExample], test: list[RankExample]) -> list[float]:
         trainable = _queries_with_pairs(train)
         if len(trainable) < 1:
             return [0.0 for _ in test]
-        model = fit_lambdamart(trainable, names)
+        model = fit_lambdamart(trainable, names, monotone_up)
         scores = predict_scores(model, test, names)
         return [scores[id(row)] for row in test]
 
@@ -360,9 +360,9 @@ def run_protocol(
     by_name = {row.name: row for row in results}
     for row in results:
         if "bm25f_only" in per_scorer and row.name != "bm25f_only":
-            row.diff_vs_bm25f = _paired_diff(per_scorer[row.name], per_scorer["bm25f_only"], cluster_ids, bootstrap, seed)
+            row.diff_vs_bm25f = paired_diff(per_scorer[row.name], per_scorer["bm25f_only"], cluster_ids, bootstrap, seed)
         if "lambdamart" in per_scorer and row.name != "lambdamart":
-            row.diff_vs_model = _paired_diff(per_scorer[row.name], per_scorer["lambdamart"], cluster_ids, bootstrap, seed)
+            row.diff_vs_model = paired_diff(per_scorer[row.name], per_scorer["lambdamart"], cluster_ids, bootstrap, seed)
     confidence = None
     if "lambdamart" in by_name:
         confidence = cross_fitted_confidence(per_scorer["lambdamart"], fold_of, len(folds))
@@ -708,7 +708,7 @@ def _bootstrap_ratio(queries: list[QueryResult], cluster_ids: list[int], bootstr
     return _percentiles(values)
 
 
-def _paired_diff(left: list[QueryResult], right: list[QueryResult], cluster_ids: list[int], bootstrap: int, seed: int) -> Interval:
+def paired_diff(left: list[QueryResult], right: list[QueryResult], cluster_ids: list[int], bootstrap: int, seed: int) -> Interval:
     a = _cluster_totals(left)
     b = _cluster_totals(right)
     point_a = sum(v[0] for v in a.values()) / max(1, sum(v[1] for v in a.values()))
@@ -799,3 +799,12 @@ def _json_default(value):
     if isinstance(value, float) and value != value:
         return None
     raise TypeError(f"Not serializable: {type(value)!r}")
+
+
+def count_pairs(examples: list[RankExample]) -> int:
+    """Labeled pairs (different positions) inside queries with at least two usable rows."""
+    total = 0
+    for rows in _queries_with_pairs_map(examples).values():
+        positions = [row.position for row in rows]
+        total += sum(1 for i in range(len(positions)) for j in range(len(positions)) if positions[i] < positions[j])
+    return total

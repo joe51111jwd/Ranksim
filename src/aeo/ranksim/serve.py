@@ -147,7 +147,8 @@ def create_app(state: DemoState) -> FastAPI:
             today=state.today,
             intent=state.intent_for.get(SAMPLE_QUERY, "comparison"),
             llm=state.llm,
-            run_ai=True,
+            # Loading a page must never spend money. AI runs only when a person ticks the box on /check.
+            run_ai=False,
         )
         return state.page(selected=SAMPLE_QUERY, url_value=SAMPLE_URL, html_value="", result=result, error=result.error)
 

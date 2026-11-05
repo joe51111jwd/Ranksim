@@ -38,6 +38,9 @@ class Settings(BaseSettings):
     ranksim_max_pages: int = 1000
     ranksim_authority: str = "off"
     ranksim_llm_model: str | None = None
+    # Per-process ceilings on fresh LLM calls and estimated dollars. Cache hits are free.
+    ranksim_llm_max_calls: int = 200
+    ranksim_llm_max_usd: float = 1.0
 
     @field_validator(
         "brave_api_key",

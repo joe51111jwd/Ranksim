@@ -233,13 +233,7 @@ class Crawler:
         current = url
         for _ in range(MAX_REDIRECTS + 1):
             current = assert_safe_url(current, allow_private=self.allow_private, keep_trailing_slash=True)
-            response = self.client.get(
-                current,
-                headers={
-                    "User-Agent": self.user_agent,
-                    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-                },
-            )
+            response = self._get_capped(current)
             if response.status_code not in {301, 302, 303, 307, 308}:
                 return response, current
             location = response.headers.get("location")
@@ -247,6 +241,43 @@ class Crawler:
                 return response, current
             current = urljoin(current, location)
         return response, current
+
+    def _get_capped(self, url: str) -> httpx.Response:
+        """GET that stops reading at MAX_BYTES, so a huge body never sits in memory.
+
+        The body of an error, a redirect or a type we do not read (images, PDFs, video) is not read at all.
+        """
+        request = self.client.build_request(
+            "GET",
+            url,
+            headers={
+                "User-Agent": self.user_agent,
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            },
+        )
+        response = self.client.send(request, stream=True)
+        chunks: list[bytes] = []
+        try:
+            content_type = response.headers.get("content-type", "")
+            readable = response.status_code < 300 and (
+                not content_type or any(kind in content_type for kind in ("html", "xml", "text/plain"))
+            )
+            if readable:
+                size = 0
+                for chunk in response.iter_bytes():
+                    chunks.append(chunk)
+                    size += len(chunk)
+                    if size >= MAX_BYTES:
+                        break
+        finally:
+            response.close()
+        headers = [(name, value) for name, value in response.headers.items() if name.lower() not in {"content-encoding", "content-length", "transfer-encoding"}]
+        return httpx.Response(
+            status_code=response.status_code,
+            headers=headers,
+            content=b"".join(chunks)[:MAX_BYTES],
+            request=request,
+        )
 
     def _read_capped(self, response: httpx.Response) -> str:
         raw = response.content[:MAX_BYTES]

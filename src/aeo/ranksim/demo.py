@@ -24,6 +24,7 @@ def render_page(
     graph: LinkGraph | None,
     fixes: list[LinkFix],
     error: str = "",
+    csrf: str = "",
 ) -> str:
     options = "\n".join(
         f'<option value="{escape(query)}"{" selected" if query == selected else ""}>{escape(query)}</option>'
@@ -46,10 +47,12 @@ def render_page(
     if result is not None:
         body.append(_result_html(result))
     body.append("<form method=\"post\" action=\"/check\">")
+    if csrf:
+        body.append(f"<input type=\"hidden\" name=\"csrf\" value=\"{escape(csrf)}\">")
     body.append("<label>Query<select name=\"query\">" + options + "</select></label>")
     body.append(f"<label>Draft URL<input name=\"url\" value=\"{escape(url_value)}\" placeholder=\"https://www.smartcrewhq.com/compare/hcss-heavyjob-alternative/\"></label>")
     body.append(f"<label>Pasted HTML<textarea name=\"html\" rows=\"8\">{escape(html_value)}</textarea></label>")
-    body.append("<label class=\"check\"><input type=\"checkbox\" name=\"ai\" value=\"1\" checked> Run the AI layer (stub when no key is set)</label>")
+    body.append("<label class=\"check\"><input type=\"checkbox\" name=\"ai\" value=\"1\"> Run the AI layer (needs an LLM key; each run costs money)</label>")
     body.append("<div class=\"actions\"><button type=\"submit\">Score this draft</button> <a class=\"button\" href=\"/?demo=1\">Load SmartCrew sample</a></div>")
     body.append("</form>")
     body.append("<h2>Whole site</h2>")
@@ -158,7 +161,7 @@ def _result_html(result: CheckResult) -> str:
         f"<li>Round {item.round_index}: PREDICTED {item.predicted_rank} of {item.predicted_of}. {escape(item.note)}</li>"
         for item in result.fix_rounds
     )
-    explain_label = "Template explanation" if result.explanation_stub else "LLM explanation"
+    explain_label = "Explanation (not run)" if result.explanation_stub else "LLM explanation"
     return f"""
 <section class="card hero">
   <p class="pill">{escape(result.confidence)}</p>

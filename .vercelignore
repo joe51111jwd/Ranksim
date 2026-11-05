@@ -1,0 +1,12 @@
+# Never upload the private SmartCrew corpus or local data to a public host.
+smartcrew/
+data/
+*.db
+.env
+.env.*
+tests/
+docs/
+scripts/
+examples/
+.venv/
+__pycache__/

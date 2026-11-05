@@ -47,7 +47,11 @@ def resolve_provider_names(
 def _resolve_search(settings: Settings, choice: str, warnings: list[str]) -> str:
     choice = choice.lower()
     if choice == "auto":
-        choice = "brave" if settings.brave_api_key else "mock"
+        if not settings.brave_api_key:
+            # Never synthetic competitors at runtime: without a key the comparison simply does not run.
+            warnings.append("Competitor search not run: needs BRAVE_API_KEY. No competitor pages were invented.")
+            return "none"
+        choice = "brave"
     if choice == "brave":
         if not settings.brave_api_key:
             raise ProviderConfigError(
@@ -68,7 +72,10 @@ def _resolve_search(settings: Settings, choice: str, warnings: list[str]) -> str
 def _resolve_llm(settings: Settings, choice: str, warnings: list[str]) -> str:
     choice = choice.lower()
     if choice == "auto":
-        choice = "openai" if settings.openai_api_key else "mock"
+        if not settings.openai_api_key:
+            # Never mock answers at runtime: the simulation does not run without a model.
+            raise ProviderConfigError("AI answer simulation not run: needs OPENAI_API_KEY. No answer was invented.")
+        choice = "openai"
     if choice == "openai":
         if not settings.openai_api_key:
             raise ProviderConfigError(

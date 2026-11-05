@@ -8,11 +8,20 @@ Examples:
   python -m aeo.ranksim test page.html --url https://www.smartcrewhq.com/dirtwork-software/
   python -m aeo.ranksim track
   python -m aeo.ranksim report
+  python -m aeo.ranksim tester page.html --url https://www.smartcrewhq.com/compare/hcss-heavyjob-alternative/ --watch
+  python -m aeo.ranksim optimize page.html --url https://www.smartcrewhq.com/all-in-one-heavy-civil-software/ --rewriter rules --goal 1
+  python -m aeo.ranksim project create SmartCrew --site www.smartcrewhq.com --searches "dirt work software; hcss alternative"
+  python -m aeo.ranksim project import-serp smartcrew smartcrew/serp.csv
+  python -m aeo.ranksim project pull smartcrew --skip-google
+  python -m aeo.ranksim project test smartcrew page.html --url https://www.smartcrewhq.com/all-in-one-dirt-work-software/
+  python -m aeo.ranksim project engines smartcrew
+  python -m aeo.ranksim serve            (the web UI on http://127.0.0.1:8765/)
 """
 
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from pathlib import Path
 
@@ -136,10 +145,64 @@ def main(argv: list[str] | None = None) -> None:
         default="https://www.smartcrewhq.com/blog/best-software-small-dirt-work-contractors/",
     )
 
-    serve = sub.add_parser("serve", help="Serve the pre-publish rank check demo")
-    serve.add_argument("--host", default="0.0.0.0")
+    tester_cmd = sub.add_parser(
+        "tester",
+        help="Sandbox tester. Score a page version in seconds on the stored competitor set. PREDICTED, not live Google.",
+    )
+    tester_cmd.add_argument("source", help="A local HTML file (needs --url) or an http(s) URL: preview, staging, or live")
+    tester_cmd.add_argument("--url", default=None, help="Canonical URL of the page. Required for a local file.")
+    tester_cmd.add_argument(
+        "--queries",
+        default=None,
+        help='Comma-separated target queries, e.g. "q1,q2". Default picks up to --top labeled queries for this page.',
+    )
+    tester_cmd.add_argument("--top", type=int, default=5, help="How many target queries to pick when --queries is not given")
+    tester_cmd.add_argument("--serp", default="smartcrew/serp.csv", help="Labeled Google file")
+    tester_cmd.add_argument("--watch", action="store_true", help="Poll the source and print a new board when the HTML changes")
+    tester_cmd.add_argument("--interval", type=float, default=15.0, help="Seconds between polls with --watch")
+    tester_cmd.add_argument("--max-checks", type=int, default=0, help="Stop --watch after this many polls. 0 polls until Ctrl+C.")
+    tester_cmd.add_argument("--history", default=None, help="Version history JSONL. Default data/tester/<url hash>.jsonl")
+    tester_cmd.add_argument("--json", action="store_true", help="Print the board as JSON")
+    tester_cmd.add_argument(
+        "--fail-on-regression",
+        action="store_true",
+        help="Exit 1 when a target query is PREDICTED worse than live, or than v1 when no live copy is stored",
+    )
+
+    optimize_cmd = sub.add_parser(
+        "optimize",
+        help="Rapid iteration. Rewrite and rescore until PREDICTED top N on every target query. Sandbox only.",
+    )
+    optimize_cmd.add_argument("source", help="A local HTML file (needs --url) or an http(s) URL")
+    optimize_cmd.add_argument("--url", default=None, help="Canonical URL of the page. Required for a local file.")
+    optimize_cmd.add_argument("--queries", default=None, help='Comma-separated target queries, e.g. "q1,q2"')
+    optimize_cmd.add_argument("--top", type=int, default=5, help="How many target queries to pick when --queries is not given")
+    optimize_cmd.add_argument("--goal", type=int, default=3, help="Stop when every target query is PREDICTED at this rank or better")
+    optimize_cmd.add_argument("--max-rounds", type=int, default=8)
+    optimize_cmd.add_argument("--patience", type=int, default=3, help="Stop after this many rejected rounds in a row")
+    optimize_cmd.add_argument("--budget-usd", type=float, default=None, help="Stop the LLM rewriter once its estimated cost reaches this")
+    optimize_cmd.add_argument(
+        "--rewriter",
+        choices=["auto", "llm", "rules"],
+        default="auto",
+        help="auto and llm need an LLM key. rules runs offline and is not an LLM.",
+    )
+    optimize_cmd.add_argument("--out-dir", default=None, help="Default data/optimize/<url slug>")
+    optimize_cmd.add_argument("--serp", default="smartcrew/serp.csv", help="Labeled Google file")
+
+    _add_project_parser(sub)
+
+    serve = sub.add_parser("serve", help="Serve the web UI: projects, Pull now, Test a page. The old demo is at /demo.")
+    serve.add_argument("--host", default="127.0.0.1", help="Default 127.0.0.1 (this computer only). 0.0.0.0 exposes it with no login.")
+    serve.add_argument(
+        "--allow-host",
+        action="append",
+        default=[],
+        help="With a wider --host: a host name browsers may use besides IP addresses and localhost (repeatable)",
+    )
     serve.add_argument("--port", type=int, default=8765)
-    serve.add_argument("--serp", default="smartcrew/serp.csv")
+    serve.add_argument("--serp", default="smartcrew/serp.csv", help="Labeled Google file for the old demo at /demo")
+    serve.add_argument("--projects-dir", default=None, help="Default data/projects, or RANKSIM_PROJECTS_DIR")
 
     args = parser.parse_args(argv)
     settings = get_settings()
@@ -190,6 +253,24 @@ def main(argv: list[str] | None = None) -> None:
             _competitors(settings, database, args)
         elif args.command == "space":
             _space(database, args)
+        elif args.command == "tester":
+            code = _tester(settings, database, args)
+            if code:
+                raise SystemExit(code)
+        elif args.command == "optimize":
+            code = _optimize(settings, database, args)
+            if code:
+                raise SystemExit(code)
+        elif args.command == "project":
+            from aeo.ranksim.project import ProjectError
+
+            try:
+                code = _project(settings, database, args)
+            except ProjectError as exc:
+                print(str(exc), file=sys.stderr)
+                raise SystemExit(2) from exc
+            if code:
+                raise SystemExit(code)
         else:
             parser.error(f"Unknown command {args.command}")
     except ProviderConfigError as exc:
@@ -198,6 +279,226 @@ def main(argv: list[str] | None = None) -> None:
     except ValueError as exc:
         print(str(exc), file=sys.stderr)
         raise SystemExit(2) from exc
+
+
+def _add_project_parser(sub) -> None:
+    common = argparse.ArgumentParser(add_help=False)
+    common.add_argument("--projects-dir", default=None, help="Default data/projects, or RANKSIM_PROJECTS_DIR")
+    project = sub.add_parser(
+        "project",
+        help="Projects: your key searches, the REAL Google top 10 for each, and a mini search engine to test pages on",
+    )
+    psub = project.add_subparsers(dest="project_command", required=True)
+
+    create = psub.add_parser("create", parents=[common], help="Create a project: a site and its key searches")
+    create.add_argument("name")
+    create.add_argument("--site", required=True, help="Your site, e.g. www.example.com")
+    create.add_argument("--searches", default=None, help="Key searches separated by ; e.g. 'dirt work software; hcss alternative'")
+    create.add_argument("--searches-file", default=None, help="Text file, one search per line")
+    create.add_argument("--slug", default=None)
+    create.add_argument("--sitemap-file", default=None, help="Local list of your site's URLs, one per line. Default reads /sitemap.xml at pull time.")
+    create.add_argument("--link-graph", default=None, help="Optional link graph JSON (python -m aeo.ranksim graph)")
+    create.add_argument("--max-site-pages", type=int, default=60)
+
+    searches = psub.add_parser("searches", parents=[common], help="Add or remove key searches")
+    searches.add_argument("name")
+    searches.add_argument("--add", default=None, help="Searches separated by ;")
+    searches.add_argument("--remove", default=None, help="Searches separated by ;")
+
+    imp = psub.add_parser("import-serp", parents=[common], help="Seed REAL Google results from a query,url,position CSV")
+    imp.add_argument("name")
+    imp.add_argument("file")
+    imp.add_argument("--snapshot-date", default=None, help="YYYY-MM-DD the positions were seen. Default: pull date not recorded.")
+    imp.add_argument("--source", default=None, help="Source label. Default names the file and says when it was pulled.")
+    imp.add_argument("--add-searches", action="store_true", help="Add searches in the file that the project does not have")
+
+    pull_cmd = psub.add_parser("pull", parents=[common], help="Pull REAL Google results, crawl the pages, train the mini engine")
+    pull_cmd.add_argument("name")
+    pull_cmd.add_argument("--skip-google", action="store_true", help="Reuse the REAL results already saved")
+    pull_cmd.add_argument("--depth", type=int, default=10)
+    pull_cmd.add_argument("--fresh-days", type=float, default=7.0, help="Refetch stored pages older than this")
+    pull_cmd.add_argument("--workers", type=int, default=8)
+    pull_cmd.add_argument("--delay", type=float, default=0.4, help="Seconds between requests to one host")
+    pull_cmd.add_argument(
+        "--engines",
+        default="chatgpt,claude,perplexity,gemini",
+        help="AI engines to ask for REAL citations, comma separated, or none. An engine without its key is recorded as not run.",
+    )
+    pull_cmd.add_argument("--runs", type=int, default=1, help="Times to ask each engine each search (1 to 20). Answers vary run to run.")
+    pull_cmd.add_argument("--brand", default=None, help="Brand name to look for in AI answers. Default: the project name.")
+    pull_cmd.add_argument("--fresh-engines", action="store_true", help="Do not reuse AI answers cached earlier the same UTC day")
+    pull_cmd.add_argument("--json", action="store_true")
+
+    show = psub.add_parser("show", parents=[common], help="Show a project, its REAL results, and its pulls")
+    show.add_argument("name")
+    show.add_argument("--json", action="store_true")
+
+    test = psub.add_parser("test", parents=[common], help="Test a page on every key search. PREDICTED slot among the REAL top 10.")
+    test.add_argument("name")
+    test.add_argument("source", help="A local HTML file (needs --url) or an http(s) URL")
+    test.add_argument("--url", default=None, help="The URL the page lives or will live at")
+    test.add_argument("--json", action="store_true")
+    test.add_argument(
+        "--fail-on-regression",
+        action="store_true",
+        help="Exit 1 when the page is no longer on topic for a search where the stored copy (or the previous version) was",
+    )
+    test.add_argument(
+        "--fail-on-content-regression",
+        action="store_true",
+        help="Also exit 1 when the content model (unvalidated) PREDICTS a search worse than the stored copy or previous version",
+    )
+    test.add_argument("--no-save", action="store_true", help="Do not record this version")
+    test.add_argument("--details", type=int, default=3, help="Pages above you to explain per search in the text output (-1 for all)")
+    test.add_argument("--sim-runs", type=int, default=3, help="PREDICTED AI answer simulation runs per search (needs an LLM key)")
+    test.add_argument("--no-sim", action="store_true", help="Skip the PREDICTED AI answer simulation (no LLM calls)")
+
+    engines = psub.add_parser("engines", parents=[common], help="Show the latest REAL AI engine citations per search")
+    engines.add_argument("name")
+    engines.add_argument("--json", action="store_true")
+
+    lst = psub.add_parser("list", parents=[common], help="List projects")
+    lst.add_argument("--json", action="store_true")
+
+
+def _project(settings, database: str, args) -> int:
+    """Project commands. REAL is Google data with its source and date. PREDICTED is the model."""
+    import json
+    import time
+    from dataclasses import asdict
+
+    from aeo.ranksim import project as proj
+
+    root = args.projects_dir
+    command = args.project_command
+    if command == "create":
+        searches = proj.split_searches(args.searches)
+        if args.searches_file:
+            searches += proj.split_searches(Path(args.searches_file).read_text(encoding="utf-8"))
+        made = proj.create_project(
+            args.name,
+            args.site,
+            searches,
+            root=root,
+            slug=args.slug,
+            sitemap_file=args.sitemap_file,
+            link_graph=args.link_graph,
+            max_site_pages=args.max_site_pages,
+        )
+        print(f"Created project {made.name} (slug {made.slug}) for {made.site} with {len(made.searches)} key searches in {made.dir}.")
+        print(f"Next: python -m aeo.ranksim project pull {made.slug} (needs {proj.GOOGLE_KEYS}),")
+        print(f"or import REAL results you already have: python -m aeo.ranksim project import-serp {made.slug} FILE.csv")
+        return 0
+    if command == "list":
+        rows = proj.list_projects(root=root)
+        if args.json:
+            print(json.dumps(proj.clean([asdict(row) for row in rows]), indent=2))
+        else:
+            print(proj.render_list_text(rows), end="")
+        return 0
+    project = proj.load_project(args.name, root=root)
+    if command == "searches":
+        updated = proj.update_searches(project, add=proj.split_searches(args.add), remove=proj.split_searches(args.remove))
+        print(f"{updated.name} has {len(updated.searches)} key searches:")
+        for search in updated.searches:
+            print(f"  {search} ({updated.intents.get(search, '')})")
+        print("New searches get REAL results on the next project pull.")
+        return 0
+    if command == "import-serp":
+        report = proj.import_serp_csv(project, args.file, args.snapshot_date, args.source, add_searches=args.add_searches)
+        print(f"Imported {report.rows} REAL Google results for {len(report.searches_imported)} searches into pull {report.pull_id}.")
+        print(f"Source: {report.source}.")
+        if report.searches_added:
+            print("Added searches from the file: " + ", ".join(report.searches_added) + ".")
+        for search in report.searches_missing:
+            print(f"Not in the file: {search}. {proj.NOT_RUN_GOOGLE}.")
+        if report.searches_ignored:
+            print("In the file but not in the project, ignored: " + ", ".join(report.searches_ignored) + ". Pass --add-searches to add them.")
+        print(f"Next: python -m aeo.ranksim project pull {project.slug} --skip-google to crawl the pages and train the mini engine.")
+        return 0
+    if command == "pull":
+        last = {"step": ""}
+
+        def progress(event) -> None:
+            if args.json:
+                return
+            if event.step != last["step"] or event.done == event.total or (event.step == "crawl" and event.done % 25 == 0):
+                count = f" [{event.done}/{event.total}]" if event.total else ""
+                print(f"{event.seconds:6.1f} s  {event.step}{count}: {event.message}", flush=True)
+                last["step"] = event.step
+
+        report = proj.pull(
+            project,
+            settings,
+            depth=args.depth,
+            progress=progress,
+            skip_google=args.skip_google,
+            database=database,
+            fresh_days=args.fresh_days,
+            workers=args.workers,
+            delay_seconds=args.delay,
+            engines=args.engines,
+            engine_runs=args.runs,
+            brand=args.brand,
+            engine_use_cache=not args.fresh_engines,
+        )
+        if args.json:
+            print(json.dumps(report.to_dict(), indent=2))
+        else:
+            print(proj.render_pull_text(report), end="")
+        return 0
+    if command == "engines":
+        from aeo.ranksim.project_engines import latest_engines, latest_engines_dict, render_engines_text
+
+        latest = latest_engines(project, settings=settings)
+        if args.json:
+            print(json.dumps(latest_engines_dict(latest), indent=2))
+        else:
+            print(render_engines_text(project, latest), end="")
+        return 0
+    if command == "show":
+        status = proj.project_status(project)
+        if args.json:
+            print(json.dumps(status.to_dict(), indent=2))
+        else:
+            print(proj.render_status_text(status), end="")
+        return 0
+    if command == "test":
+        html, url, label = _load_source(settings, args.source, args.url)
+        started = time.perf_counter()
+        ctx = proj.load_project_context(project, database=database)
+        llm = None
+        if not args.no_sim:
+            from aeo.ranksim.llm import resolve_llm
+
+            llm = resolve_llm(settings)
+        board = proj.test_page(
+            ctx,
+            html,
+            url,
+            source=label,
+            save=not args.no_save,
+            llm=llm,
+            sim_runs=args.sim_runs,
+            settings=settings,
+            sim_off="not run: switched off with --no-sim" if args.no_sim else "",
+        )
+        board.timing["wall_seconds"] = round(time.perf_counter() - started, 2)
+        if args.json:
+            print(json.dumps(board.to_dict(), indent=2))
+        else:
+            print(proj.render_board_text(board, detail_limit=args.details), end="")
+        if args.fail_on_regression and board.topic_regressions:
+            print(f"Failing: {len(board.topic_regressions)} searches are no longer on topic against {board.baseline}.", file=sys.stderr)
+            return 1
+        if args.fail_on_content_regression and board.regressions:
+            print(
+                f"Failing: {len(board.regressions)} searches are PREDICTED worse than {board.baseline} by the content model (unvalidated).",
+                file=sys.stderr,
+            )
+            return 1
+        return 0
+    raise SystemExit(f"Unknown project command {command}")
 
 
 def _graph(settings, database: str, args) -> None:
@@ -444,18 +745,229 @@ def _ai_eval(settings, database: str, args) -> None:
     print(llm.cost_summary())
 
 
+def _tester(settings, database: str, args) -> int:
+    """Score a page version in the sandbox, record it, and print the board."""
+    import json
+    import time
+
+    from aeo.ranksim import tester as sandbox
+
+    html, url, label = _load_source(settings, args.source, args.url)
+    kind = "live fetch" if _same_page(args.source, url) else "draft"
+    started = time.perf_counter()
+    ctx = sandbox.load_sim_context(database, args.serp)
+    load_s = time.perf_counter() - started
+    for note in ctx.notes:
+        print(note, file=sys.stderr if args.json else sys.stdout)
+    history = sandbox.TesterHistory(args.history or sandbox.TesterHistory.default_path(url))
+    queries = _split_queries(args.queries)
+    pinned: list[str] = []
+    if not queries:
+        # Keep the queries v1 and the stored copy were scored on, so an edit
+        # that drops query words from the title cannot drop them from the check.
+        first_saved = history.first()
+        if first_saved is not None:
+            pinned.extend(row.query for row in first_saved.scores)
+        stored = sandbox.stored_html(ctx.database, url)
+        if stored is not None:
+            pinned.extend(sandbox.pick_targets(ctx, url, stored[0], top=args.top)[0])
+    targets, skipped, kept = sandbox.stable_targets(ctx, url, html, queries=queries, top=args.top, pinned=pinned)
+    targets_note = _targets_note(sandbox, ctx, url, html, args.top, kept)
+    skipped = sandbox.skip_notes(ctx, skipped)
+    live = sandbox.live_score(ctx, url, targets, created=_now())
+    state: dict = {"regressions": [], "baseline": ""}
+
+    def run(page_html: str) -> str:
+        began = time.perf_counter()
+        current = sandbox.score_page(ctx, url, page_html, targets, label=kind, source=label, created=_now())
+        score_ms = (time.perf_counter() - began) * 1000
+        saved = history.append(current)
+        previous = history.previous()
+        first = history.first()
+        baseline, name = sandbox.baseline_for(current, live, first)
+        state["regressions"] = sandbox.regressions(current, baseline, name)
+        state["baseline"] = name
+        extra = {"skipped": skipped, "first": first, "serp_file": ctx.serp_file, "targets_note": targets_note}
+        if args.json:
+            data = sandbox.board_dict(current, previous, live, ctx.accuracy_line(), **extra)
+            data["history"] = str(history.path)
+            data["new_version_saved"] = saved
+            data["timing"] = {"model_load_seconds": round(load_s, 2), "scoring_ms": round(score_ms, 1)}
+            if args.watch:
+                return json.dumps(data) + "\n"  # one JSON document per line, so the stream is JSONL
+            return json.dumps(data, indent=2) + "\n"
+        text = sandbox.render_board(current, previous, live, ctx.accuracy_line(), **extra)
+        if saved:
+            text += f"Saved as {current.version} in {history.path}."
+        else:
+            text += f"Same HTML as {current.version}, so no new version was saved in {history.path}."
+        return text + f" Model load {load_s:.1f} s. Scoring {score_ms:.0f} ms.\n"
+
+    if not args.watch:
+        print(run(html), end="")
+    else:
+        pending = [html]
+
+        def load() -> str:
+            if pending:
+                return pending.pop()
+            try:
+                fresh, _url, _label = _load_source(settings, args.source, args.url)
+            except SystemExit as exc:
+                raise RuntimeError(str(exc)) from None
+            return fresh
+
+        print(
+            f"Watching {args.source} every {args.interval:g} s. A new board prints only when the HTML changes. Ctrl+C stops.",
+            file=sys.stderr if args.json else sys.stdout,
+        )
+        try:
+            sandbox.watch(load, run, args.interval, args.max_checks, on_change=lambda text: print(str(text).rstrip("\n"), flush=True))
+        except KeyboardInterrupt:
+            print("Stopped.", file=sys.stderr if args.json else sys.stdout)
+    if args.fail_on_regression and state["regressions"]:
+        count = sandbox.count_of(len(state["regressions"]), "target query is", "target queries are")
+        print(f"Failing: {count} PREDICTED worse than {state['baseline']}.", file=sys.stderr)
+        return 1
+    return 0
+
+
+def _same_page(source: str, url: str) -> bool:
+    """True when the source is the page's own URL, so the HTML is a live fetch, not a draft."""
+    from aeo.crawl.urls import normalize_url
+
+    if not source.startswith(("http://", "https://")):
+        return False
+    try:
+        return normalize_url(source) == normalize_url(url)
+    except ValueError:
+        return source == url
+
+
+def _targets_note(sandbox, ctx, url: str, html: str, top: int, kept: list[str]) -> str:
+    if not kept:
+        return ""
+    picked, _skipped = sandbox.pick_targets(ctx, url, html, top=top)
+    held = [query for query in kept if query not in picked]
+    if not held:
+        return ""
+    return (
+        f"Kept as targets from v1 or the stored copy, though this HTML alone would not pick them: {', '.join(held)}. "
+        "An edit cannot drop a query from the check."
+    )
+
+
+def _optimize(settings, database: str, args) -> int:
+    """Rewrite and rescore in the sandbox until PREDICTED top N on every target query."""
+    import time
+
+    from aeo.ranksim import tester as sandbox
+    from aeo.ranksim.llm import resolve_llm
+    from aeo.ranksim.optimize import Guards, LlmRewriter, RulesRewriter, optimize, render_optimize, slug_for
+
+    llm = None
+    if args.rewriter in ("auto", "llm"):
+        llm = resolve_llm(settings, run_id="optimize")
+        if not llm.available:
+            print(
+                "No LLM key is set, so the LLM rewriter cannot run. Set OPENROUTER_API_KEY, OPENAI_API_KEY, "
+                "or ANTHROPIC_API_KEY. Or pass --rewriter rules to run offline with the rules rewriter, which is not an LLM.",
+                file=sys.stderr,
+            )
+            return 2
+    html, url, label = _load_source(settings, args.source, args.url)
+    started = time.perf_counter()
+    ctx = sandbox.load_sim_context(database, args.serp)
+    load_s = time.perf_counter() - started
+    for note in ctx.notes:
+        print(note)
+    targets, skipped = sandbox.pick_targets(ctx, url, html, _split_queries(args.queries), top=args.top)
+    notes = sandbox.skip_notes(ctx, skipped)
+    for query, note in notes.items():
+        print(f"Skipped {query}: {note}.")
+    if not targets:
+        if notes and all(note == sandbox.SKIP_NOTE_UNSTORED for note in notes.values()):
+            print(
+                f"Every query asked for is labeled but has too few stored pages, so nothing was optimized. {sandbox.UNSTORED_HINT}",
+                file=sys.stderr,
+            )
+        else:
+            print(
+                "No query from the labeled Google file matches this page, so nothing was optimized. "
+                "Pass --queries with queries from that file.",
+                file=sys.stderr,
+            )
+        return 2
+    guards = Guards()
+    rewriter = (
+        LlmRewriter(llm)
+        if llm is not None
+        else RulesRewriter(ctx.today, max_title_chars=guards.max_title_chars, max_h1_chars=guards.max_h1_chars)
+    )
+    out_dir = Path(args.out_dir) if args.out_dir else Path("data/optimize") / slug_for(url)
+    print(f"Source: {label}.")
+    began = time.perf_counter()
+    result = optimize(
+        ctx,
+        url,
+        html,
+        targets,
+        goal_rank=args.goal,
+        rewriter=rewriter,
+        max_rounds=args.max_rounds,
+        patience=args.patience,
+        budget_usd=args.budget_usd,
+        out_dir=out_dir,
+        now_label=_now(),
+        guards=guards,
+    )
+    run_s = time.perf_counter() - began
+    print(render_optimize(result, ctx.accuracy_line()), end="")
+    rounds = sandbox.count_of(len(result.rounds), "round file", "round files")
+    print(f"Wrote best.html, {rounds}, log.json, and report.txt to {out_dir}.")
+    if llm is not None:
+        print(llm.cost_summary())
+    print(f"Model load {load_s:.1f} s. Optimize {run_s:.1f} s for {len(result.rounds)} rounds.")
+    return 0
+
+
+def _split_queries(text: str | None) -> list[str] | None:
+    if not text:
+        return None
+    found = [" ".join(part.split()) for part in text.split(",") if part.strip()]
+    return found or None
+
+
+def _now() -> str:
+    from datetime import datetime
+
+    return datetime.now().isoformat(timespec="seconds")
+
+
 def _serve(settings, database: str, args) -> None:
     import uvicorn
 
-    from aeo.ranksim.serve import DemoState, create_app
+    from aeo.ranksim.serve import DemoState, bound_hosts, create_app, loopback_hosts
 
-    print("Fitting the leave-one-query-out model. This does not call an LLM or a SERP API.")
-    state = DemoState(settings, args.serp, database)
-    print(state.accuracy_line())
-    print(state.llm_note())
-    print(state.relevance_note)
-    app = create_app(state)
-    print(f"Demo: http://127.0.0.1:{args.port}/")
+    def legacy():
+        print("Fitting the leave-one-query-out model for the old demo. This does not call an LLM or a SERP API.", flush=True)
+        return DemoState(settings, args.serp, database)
+
+    loopback = args.host in {"127.0.0.1", "localhost", "::1"}
+    app = create_app(
+        settings=settings,
+        database=database,
+        projects_root=args.projects_dir,
+        legacy_factory=legacy,
+        allowed_hosts=loopback_hosts(args.port) if loopback else bound_hosts(args.host, getattr(args, "allow_host", [])),
+    )
+    if not loopback:
+        print(
+            f"Warning: listening on {args.host}. Anyone who can reach this address can use the tool; there is no login. "
+            "Browsers must use an IP address, localhost, or a name given with --allow-host (other names are refused, which blocks DNS rebinding)."
+        )
+    shown = "127.0.0.1" if loopback else args.host
+    print(f"Ranksim: http://{shown}:{args.port}/  (old demo at /demo)", flush=True)
     uvicorn.run(app, host=args.host, port=args.port, log_level="warning")
 
 
@@ -481,8 +993,22 @@ def _gaps() -> None:
         print(f"GAP\t{row.query}\t{row.suggested_target_page}")
 
 
-def _collect(settings, database: str, args) -> None:
+SYNTHETIC_ENV = "RANKSIM_ALLOW_SYNTHETIC"
+
+
+def _serp_choice(args) -> str:
+    """--mock (or --provider mock) writes synthetic SERPs. That is for tests only, so it needs an explicit opt-in."""
     choice = "mock" if args.mock else args.provider
+    if str(choice).strip().lower() == "mock" and os.environ.get(SYNTHETIC_ENV) != "1":
+        raise _usage_error(
+            f"--mock writes synthetic SERPs, not Google results, and is for tests only. Set {SYNTHETIC_ENV}=1 to use it anyway. "
+            "For REAL results set SERPAPI_KEY, SERPER_API_KEY, or DATAFORSEO_LOGIN and DATAFORSEO_PASSWORD."
+        )
+    return choice
+
+
+def _collect(settings, database: str, args) -> None:
+    choice = _serp_choice(args)
     provider = resolve_serp(settings, choice)
     keywords = build_keywords()
     depth = args.depth or settings.ranksim_serp_depth
@@ -722,7 +1248,7 @@ def _page_statuses(session) -> dict[str, tuple[str, str | None]]:
 
 
 def _track(settings, database: str, args) -> None:
-    choice = "mock" if args.mock else args.provider
+    choice = _serp_choice(args)
     provider = resolve_serp(settings, choice)
     depth = args.depth or settings.ranksim_serp_depth
     session = open_session(database)
@@ -837,19 +1363,27 @@ def _report(database: str, out: str | None) -> None:
     print(f"Wrote {target}")
 
 
+def _usage_error(message: str) -> SystemExit:
+    """A usage or input error exits 2, so a script can tell it from a regression (exit 1)."""
+    print(message, file=sys.stderr)
+    return SystemExit(2)
+
+
 def _load_source(settings, source: str, url: str | None) -> tuple[str, str, str]:
     path = Path(source)
+    if url and "://" not in url:
+        url = "https://" + url.lstrip("/")
     if path.exists() and path.is_file():
         if not url:
-            raise SystemExit("A local HTML file needs --url, the canonical page you are testing.")
+            raise _usage_error("A local HTML file needs --url, the canonical page you are testing, for example --url https://www.example.com/page/.")
         return path.read_text(), url, f"file:{path}"
     if source.startswith("http://") or source.startswith("https://"):
         fetched = _fetch_one(settings, source)
         if fetched.status != "fetched":
-            raise SystemExit(f"Fetch failed for {source}: {fetched.error or fetched.status}")
+            raise _usage_error(f"Fetch failed for {source}: {fetched.error or fetched.status}")
         canonical = url or source
         return fetched.html, canonical, source
-    raise SystemExit(f"Source not found: {source}")
+    raise _usage_error(f"Source not found: {source}")
 
 
 def _fetch_one(settings, url: str) -> FetchResult:

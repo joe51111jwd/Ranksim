@@ -23,7 +23,8 @@ def load_serp_file(path: str | Path) -> list[SerpLabel]:
     Search Console columns: Query, Page, Position (or Average Position).
     """
     file_path = Path(path)
-    with file_path.open(newline="") as handle:
+    # utf-8-sig: Excel's "CSV UTF-8" starts with a byte order mark that would otherwise hide the first column name.
+    with file_path.open(newline="", encoding="utf-8-sig") as handle:
         reader = csv.DictReader(handle)
         if not reader.fieldnames:
             raise ValueError(f"{file_path} has no header row")

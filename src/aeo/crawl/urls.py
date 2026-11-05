@@ -27,12 +27,13 @@ def normalize_url(url: str, *, keep_trailing_slash: bool = False) -> str:
     if not host:
         raise ValueError("URL is missing a host")
     port = parts.port
+    shown = f"[{host}]" if ":" in host else host  # an IPv6 literal keeps its brackets
     if port and not (
         (parts.scheme == "http" and port == 80) or (parts.scheme == "https" and port == 443)
     ):
-        netloc = f"{host}:{port}"
+        netloc = f"{shown}:{port}"
     else:
-        netloc = host
+        netloc = shown
     path = parts.path or "/"
     if path != "/" and path.endswith("/") and not keep_trailing_slash:
         path = path[:-1]
@@ -44,7 +45,12 @@ def same_site(left: str, right: str) -> bool:
 
 
 def _is_public_ip(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
-    return not (
+    """Only globally routable addresses. is_global also refuses 100.64.0.0/10 (carrier-grade NAT, where
+    Alibaba Cloud's metadata service and Tailscale peers live), which is_private does not cover."""
+    mapped = getattr(ip, "ipv4_mapped", None)
+    if mapped is not None:
+        return _is_public_ip(mapped)
+    return ip.is_global and not (
         ip.is_private
         or ip.is_loopback
         or ip.is_link_local

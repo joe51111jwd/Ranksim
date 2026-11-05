@@ -105,7 +105,7 @@ def _test_block(database_url: str | None) -> str:
     lines = [
         f"<p>Source: {escape(row.source_label)}. Weights: {escape(row.weight_label)}. "
         f"Compared with {google}.{synthetic} "
-        f"Improved: {summary.get('improved', 0)}. Regressed: {summary.get('regressed', 0)}. "
+        f"Improved: {escape(str(summary.get('improved', 'n/a')))}. Regressed: {escape(str(summary.get('regressed', 'n/a')))}. "
         "Positions are predicted.</p>"
     ]
     body_rows = []

@@ -208,6 +208,8 @@ def test_demo_page_labels_predicted_ranks():
         graph=None,
         fixes=[],
     )
-    assert "PREDICTED 2 of 6" in html
-    assert "PREDICTED loses" in html
+    assert "PREDICTED slot 2 of 6 supplied pages" in html
+    assert "not a Google position" in html
+    assert "UNSURE: no supported call" in html
+    assert "PREDICTED behind" in html
     assert "\u2014" not in html and "\u2013" not in html

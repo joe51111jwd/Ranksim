@@ -56,6 +56,7 @@ class CompetitorRow:
     predicted_rank: int
     outcome: str
     score_gap: float | None = None  # checked page's score minus this competitor's score
+    confidence: str = "UNSURE"
 
 
 @dataclass
@@ -151,6 +152,7 @@ class SiteRow:
     predicted_of: int
     orphan: bool | None
     depth: int | None
+    source: str = "crawl"
 
 
 @dataclass
@@ -177,7 +179,14 @@ def check_draft(
     intent: str = "commercial",
     llm: LlmClient | None = None,
     run_ai: bool = True,
+    draft_doc: PageDoc | None = None,
 ) -> CheckResult:
+    """Score one page against the stored competitors for a query.
+
+    ``draft_doc`` scores an already-built page (for example a stored page) as is. Without it the
+    HTML is parsed; rebuilding HTML from a stored doc loses tables, FAQs, links and dates, which
+    made the same page get different ranks in different views.
+    """
     today = today or date.today()
     result = CheckResult(query=query, url=url, predicted_rank=None, predicted_of=0, confidence="UNSURE", confidence_note=calibration.note)
     if model is None:
@@ -199,12 +208,12 @@ def check_draft(
             continue
         positions[normalize_url(page.url)] = label.position
         if normalize_url(page.url) == draft_key:
-            docs.append(_draft_doc(url, html, page))
+            docs.append(draft_doc if draft_doc is not None else _draft_doc(url, html, page))
             replaced = True
         else:
             docs.append(page)
     if not replaced:
-        docs.append(_draft_doc(url, html, None))
+        docs.append(draft_doc if draft_doc is not None else _draft_doc(url, html, None))
         result.added_draft = True
     if len(docs) < 2:
         result.error = "Fewer than two stored pages are available for this query. No position was invented."
@@ -219,8 +228,11 @@ def check_draft(
     result.predicted_of = len(docs)
     ordered_scores = [scores[id(example)] for example in examples]
     result.competitors = _competitors(docs, ranks, positions, ours, ordered_scores)
+    for row in result.competitors:
+        if row.score_gap is not None:
+            row.confidence = calibration.label(abs(row.score_gap))
     result.candidate_hashes = {doc.url: doc.html_sha256 for doc in docs}
-    result.gaps = _top_gaps(raw, ours, ranks, model)
+    result.gaps = _top_gaps(raw, ours, ranks, model, docs)
     neighbor = _neighbor_gap(scores, examples, order, ours)
     result.confidence = calibration.label(neighbor)
     result.confidence_note = calibration.note
@@ -255,7 +267,7 @@ def score_site(pages: dict, labels: list[SerpLabel], models: dict, queries: list
             continue
         checked = check_draft(
             query=query,
-            html=_html_from_doc(doc),
+            html="",
             url=doc.url,
             labels=labels,
             pages=pages,
@@ -263,6 +275,7 @@ def score_site(pages: dict, labels: list[SerpLabel], models: dict, queries: list
             calibration=Calibration(None, None, None, ""),
             today=today,
             run_ai=False,
+            draft_doc=doc,
         )
         rows.append(
             SiteRow(
@@ -272,6 +285,7 @@ def score_site(pages: dict, labels: list[SerpLabel], models: dict, queries: list
                 predicted_of=checked.predicted_of,
                 orphan=doc.orphan,
                 depth=doc.link_depth,
+                source=getattr(doc, "source", "crawl"),
             )
         )
     rows.sort(key=lambda row: (row.predicted_rank or 999, row.url))
@@ -313,7 +327,7 @@ def suggest_links(
                 continue
             before = check_draft(
                 query=query,
-                html=_html_from_doc(target),
+                html="",
                 url=target.url,
                 labels=labels,
                 pages=pages,
@@ -321,6 +335,7 @@ def suggest_links(
                 calibration=Calibration(None, None, None, ""),
                 today=today,
                 run_ai=False,
+                draft_doc=target,
             )
             if before.predicted_rank is None:
                 continue
@@ -334,7 +349,7 @@ def suggest_links(
                 pass
             after = check_draft(
                 query=query,
-                html=_html_from_doc(clone),
+                html="",
                 url=target.url,
                 labels=labels,
                 pages=trial_pages,
@@ -342,6 +357,7 @@ def suggest_links(
                 calibration=Calibration(None, None, None, ""),
                 today=today,
                 run_ai=False,
+                draft_doc=clone,
             )
             if after.predicted_rank is None or after.predicted_rank >= before.predicted_rank:
                 continue
@@ -374,28 +390,9 @@ def _draft_doc(url: str, html: str, existing: PageDoc | None) -> PageDoc:
 
 
 def _clone_doc(page: PageDoc) -> PageDoc:
-    return PageDoc(
-        url=page.url,
-        title=page.title,
-        h1=page.h1,
-        headings=page.headings,
-        body=page.body,
-        word_count=page.word_count,
-        table_count=page.table_count,
-        has_faq=page.has_faq,
-        link_count=page.link_count,
-        fetch_ms=page.fetch_ms,
-        updated=page.updated,
-        authority=page.authority,
-        anchors=page.anchors,
-        pagerank=page.pagerank,
-        domain_rank=page.domain_rank,
-        homepage_authority=page.homepage_authority,
-        is_ours=page.is_ours,
-        orphan=page.orphan,
-        link_depth=page.link_depth,
-        crawl_inlinks=page.crawl_inlinks,
-    )
+    import dataclasses
+
+    return dataclasses.replace(page)
 
 
 def _html_from_doc(doc: PageDoc) -> str:
@@ -429,7 +426,12 @@ def _competitors(docs, ranks, positions, ours: int, scores: list[float] | None =
     return rows
 
 
-def _top_gaps(raw, ours: int, ranks, model, limit: int = 3) -> list[GapFix]:
+# Features whose score falls again past a point (word_count peaks at 800-2,500 words), so "the
+# page ahead scores higher" does not mean "write more".
+NON_MONOTONE_LENGTH = frozenset({"word_count", "content_effort"})
+
+
+def _top_gaps(raw, ours: int, ranks, model, docs=None, limit: int = 3) -> list[GapFix]:
     gains = {}
     if model is not None:
         gains = {name: float(gain) for name, gain in zip(model.feature_name(), model.feature_importance(importance_type="gain"))}
@@ -440,6 +442,8 @@ def _top_gaps(raw, ours: int, ranks, model, limit: int = 3) -> list[GapFix]:
         if index == ours or ranks[index] > ranks[ours]:
             continue
         for name in (list(gains) or list(MODEL_FEATURES)):
+            if name in NON_MONOTONE_LENGTH and docs is not None and docs[ours].word_count >= docs[index].word_count:
+                continue
             left = our.get(name, 0.0)
             right = row.get(name, 0.0)
             if left != left or right != right:

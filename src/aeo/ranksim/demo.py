@@ -24,6 +24,7 @@ def render_page(
     graph: LinkGraph | None,
     fixes: list[LinkFix],
     error: str = "",
+    freshness_note: str = "",
 ) -> str:
     options = "\n".join(
         f'<option value="{escape(query)}"{" selected" if query == selected else ""}>{escape(query)}</option>'
@@ -38,27 +39,30 @@ def render_page(
         "<main>",
         "<p class=\"eyebrow\">SmartCrew demo <span class=\"pill\">PREDICTED</span> <a href=\"/space\">Space view</a></p>",
         "<h1>Pre-publish rank check</h1>",
-        "<p class=\"lead\">Score a draft against the stored Google results for one query. Same-set: the crawled competitors, plus this draft only.</p>",
-        f"<section class=\"banner\"><p>{escape(accuracy_line)}</p><p>{escape(calibration_note)}</p><p>{escape(llm_note)}</p><p>{escape(relevance_note)}</p></section>",
+        "<p class=\"lead\">Score a draft against the stored Google results for one query. Same-set: the crawled competitors, plus this draft only. Results are a slot among those supplied pages, not a Google position.</p>",
     ]
     if error:
-        body.append(f"<p class=\"warn\">{escape(error)}</p>")
+        body.append(f"<p class=\"warn\" role=\"alert\">{escape(error)}</p>")
     if result is not None:
-        body.append(_result_html(result))
+        body.append(_result_html(result, freshness_note))
+    body.append(
+        f"<section class=\"banner\"><p>{escape(freshness_note)}</p><p>{escape(accuracy_line)}</p><p>{escape(calibration_note)}</p>"
+        f"<p>{escape(llm_note)}</p><p>{escape(relevance_note)}</p></section>"
+    )
     body.append("<form method=\"post\" action=\"/check\">")
     body.append("<label>Query<select name=\"query\">" + options + "</select></label>")
     body.append(f"<label>Draft URL<input name=\"url\" value=\"{escape(url_value)}\" placeholder=\"https://www.smartcrewhq.com/compare/hcss-heavyjob-alternative/\"></label>")
     body.append(f"<label>Pasted HTML<textarea name=\"html\" rows=\"8\">{escape(html_value)}</textarea></label>")
-    body.append("<label class=\"check\"><input type=\"checkbox\" name=\"ai\" value=\"1\" checked> Run the AI layer (stub when no key is set)</label>")
+    body.append("<label class=\"check\"><input type=\"checkbox\" name=\"ai\" value=\"1\"> Run the AI layer (paid when a key is set; stub otherwise)</label>")
     body.append("<div class=\"actions\"><button type=\"submit\">Score this draft</button> <a class=\"button\" href=\"/?demo=1\">Load SmartCrew sample</a></div>")
     body.append("</form>")
     body.append("<h2>Whole site</h2>")
-    body.append("<p>Each stored SmartCrew page, scored on the stored query its title matches best. PREDICTED.</p>")
+    body.append("<p>Each stored SmartCrew page, scored on the stored query its title matches best. PREDICTED slot among the stored pages for that query, not a Google position.</p>")
     body.append(_site_table(site_rows))
     body.append("<h2>Link map</h2>")
     body.append(_map_svg(graph))
     body.append("<h2>Internal link fixes</h2>")
-    body.append("<p>Shown only when rescoring predicts a better rank. PREDICTED.</p>")
+    body.append("<p>Shown only when rescoring predicts a better slot. That is a simulator move from adding anchor text, not evidence the link would change Google rankings.</p>")
     body.append(_fixes(fixes))
     body.append("</main></body></html>")
     return "\n".join(body)
@@ -132,48 +136,61 @@ def render_space_page(report: SpaceReport, llm_note: str) -> str:
 """
 
 
-def _result_html(result: CheckResult) -> str:
+def _result_html(result: CheckResult, freshness_note: str = "") -> str:
     if result.error:
         return f"<section class=\"card\"><p class=\"warn\">{escape(result.error)}</p></section>"
     rank = "n/a" if result.predicted_rank is None else f"{result.predicted_rank} of {result.predicted_of}"
     added = ""
     if result.added_draft:
         added = "<p>This URL was not in the stored results. It was added as one draft beside the crawled competitors.</p>"
+    scored = len(result.competitors)
+    missing_count = len(result.missing_urls)
+    coverage = (
+        f"Compared with {scored} of {scored + missing_count} competitors in the stored Google results for this query"
+        + (f"; {missing_count} had no stored HTML and were not scored." if missing_count else ".")
+    )
+    unsure = result.confidence != "CLEARER"
+    verdict = "UNSURE: no supported call" if unsure else "CLEARER call (still PREDICTED)"
     rows = []
     for row in result.competitors:
         stored = "not in file" if row.stored_position is None else f"stored Google #{row.stored_position:g}"
+        side = "ahead of" if row.outcome == "beats" else "behind"
         rows.append(
-            "<li><strong>PREDICTED "
-            + escape(row.outcome)
-            + f"</strong> {escape(row.title)} "
-            + f"<span class=\"muted\">predicted #{row.predicted_rank}, {escape(stored)}</span></li>"
+            f"<li><strong>PREDICTED {escape(side)}</strong> {escape(row.title)} "
+            f"<span class=\"pill\">{escape(row.confidence)}</span> "
+            f"<span class=\"muted\">slot {row.predicted_rank}, {escape(stored)}</span></li>"
         )
     gaps = "".join(
         f"<li><strong>{escape(gap.feature)}</strong> {escape(gap.detail)} {escape(gap.fix)}</li>" for gap in result.gaps
     ) or "<li>No scored feature on a page ahead is higher than this draft.</li>"
     missing = ""
     if result.missing_urls:
-        missing = "<p class=\"muted\">Not scored, no stored HTML: " + escape(", ".join(result.missing_urls[:6])) + "</p>"
+        shown = ", ".join(result.missing_urls[:6])
+        more = f" and {missing_count - 6} more" if missing_count > 6 else ""
+        missing = f"<p class=\"muted\">Not scored, no stored HTML ({missing_count}): " + escape(shown + more) + "</p>"
     rounds = "".join(
-        f"<li>Round {item.round_index}: PREDICTED {item.predicted_rank} of {item.predicted_of}. {escape(item.note)}</li>"
+        f"<li>Round {item.round_index}: PREDICTED slot {item.predicted_rank} of {item.predicted_of}. {escape(item.note)}</li>"
         for item in result.fix_rounds
     )
     explain_label = "Template explanation" if result.explanation_stub else "LLM explanation"
     return f"""
-<section class="card hero">
-  <p class="pill">{escape(result.confidence)}</p>
-  <p class="rank">PREDICTED {escape(rank)}</p>
+<section class="card hero" id="result">
+  <p class="verdict{' unsure' if unsure else ''}">{escape(verdict)}</p>
+  <p class="rank">PREDICTED slot {escape(rank)} supplied pages</p>
   <p>{escape(result.query)}</p>
+  <p class="coverage">{escape(coverage)} The slot is among those pages only; it is not a Google position.</p>
+  <p class="muted">{escape(freshness_note)}</p>
   {added}
   <p class="muted">{escape(result.confidence_note)}</p>
 </section>
 <section class="card">
-  <h2>Beats and losses</h2>
+  <h2>Ahead of and behind</h2>
   <ul>{''.join(rows)}</ul>
   {missing}
 </section>
 <section class="card">
   <h2>Top feature gaps</h2>
+  <p class="muted">What the simulator scores higher on pages it puts ahead. Changing these moves the simulator; that is not evidence it would move Google.</p>
   <ol>{gaps}</ol>
 </section>
 <section class="card">
@@ -189,13 +206,14 @@ def _result_html(result: CheckResult) -> str:
 def _site_table(rows: list[SiteRow]) -> str:
     if not rows:
         return "<p>No SmartCrew pages are stored yet.</p>"
-    body = ["<table><thead><tr><th>Page</th><th>Query</th><th>PREDICTED rank</th><th>Depth</th><th>Orphan</th></tr></thead><tbody>"]
+    body = ["<table><thead><tr><th>Page</th><th>Query</th><th>PREDICTED slot</th><th>Depth</th><th>Orphan</th></tr></thead><tbody>"]
     for row in rows[:40]:
         rank = "n/a" if row.predicted_rank is None else f"{row.predicted_rank} of {row.predicted_of}"
         orphan = "unknown" if row.orphan is None else ("yes" if row.orphan else "no")
         depth = "unknown" if row.depth is None else str(row.depth)
+        draft = " <span class=\"pill\">DRAFT HTML, not the live page</span>" if row.source == "draft_bundle" else ""
         body.append(
-            f"<tr><td>{escape(row.url)}</td><td>{escape(row.query)}</td><td>{escape(rank)}</td><td>{depth}</td><td>{orphan}</td></tr>"
+            f"<tr><td>{escape(row.url)}{draft}</td><td>{escape(row.query)}</td><td>{escape(rank)}</td><td>{depth}</td><td>{orphan}</td></tr>"
         )
     body.append("</tbody></table>")
     return "\n".join(body)
@@ -256,12 +274,15 @@ h2 { font-family: Georgia, serif; font-size: 26px; margin: 28px 0 8px; }
 .eyebrow { letter-spacing: 0.04em; text-transform: uppercase; font-size: 12px; }
 .pill { display: inline-block; border: 1px solid #1f1a14; border-radius: 999px; padding: 2px 8px; font-size: 12px; }
 .banner, .card, form { background: #fffdf8; border: 1px solid #e2d8c8; border-radius: 12px; padding: 16px 18px; margin: 16px 0; }
-.rank { font-family: Georgia, serif; font-size: 42px; margin: 8px 0; }
+.rank { font-family: Georgia, serif; font-size: 26px; margin: 4px 0; }
+.verdict { font-family: Georgia, serif; font-size: 34px; margin: 4px 0; }
+.verdict.unsure { color: #8f2d2d; }
+.coverage { font-weight: 600; }
 label { display: block; margin: 10px 0; font-weight: 600; }
 input, select, textarea { width: 100%; box-sizing: border-box; margin-top: 4px; padding: 8px; border: 1px solid #d9d0c2; border-radius: 8px; font: inherit; background: white; }
 .check { font-weight: 500; }
 button, .button { background: #8f3d1b; color: white; border: 0; border-radius: 8px; padding: 10px 14px; text-decoration: none; display: inline-block; }
-table { width: 100%; border-collapse: collapse; background: #fffdf8; }
+table { width: 100%; border-collapse: collapse; background: #fffdf8; display: block; overflow-x: auto; }
 th, td { text-align: left; border-bottom: 1px solid #eadfce; padding: 8px; vertical-align: top; font-size: 14px; }
 .map { width: 100%; background: #fffdf8; border: 1px solid #e2d8c8; border-radius: 12px; }
 .map line { stroke: #d7c4ae; stroke-width: 1; }

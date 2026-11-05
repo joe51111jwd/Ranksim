@@ -274,7 +274,8 @@ def record_check(session: Session, result, *, html: str, calibration, provenance
             competitor_url=row.url,
             predicted="above" if row.outcome == "beats" else "below",
             score_gap=None if row.score_gap is None else round(float(row.score_gap), 6),
-            confidence=calibration.label(abs(row.score_gap)) if row.score_gap is not None else "UNSURE",
+            confidence=getattr(row, "confidence", None)
+            or (calibration.label(abs(row.score_gap)) if row.score_gap is not None else "UNSURE"),
         )
         for row in result.competitors
     ]

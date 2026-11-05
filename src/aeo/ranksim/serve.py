@@ -6,6 +6,8 @@ from datetime import date
 from pathlib import Path
 
 from fastapi import FastAPI, Form
+from html import escape
+
 from fastapi.responses import HTMLResponse
 
 from aeo.config import Settings
@@ -106,6 +108,19 @@ class DemoState:
             return f"AI layer: {self.llm.name}. Explanations and rewrites are model text about PREDICTED ranks."
         return "AI layer: stub. No OPENROUTER_API_KEY, OPENAI_API_KEY, or ANTHROPIC_API_KEY is set. Explanations are templates. Rewrites do not run."
 
+    def freshness_note(self) -> str:
+        dates = sorted({row.observed_on[:10] for row in self.labels if row.observed_on})
+        if not dates:
+            return "Google results: the label file has no collection date, country or device, so their age is unknown."
+        newest = dates[-1]
+        try:
+            age = (self.today - date.fromisoformat(newest)).days
+            age_text = f", {age} days before this check"
+        except ValueError:
+            age_text = ""
+        span = newest if len(dates) == 1 else f"{dates[0]} to {newest}"
+        return f"Google results collected {span}{age_text}."
+
     def page(self, *, selected: str, url_value: str, html_value: str, result=None, error: str = "") -> HTMLResponse:
         html = render_page(
             queries=self.queries,
@@ -121,6 +136,7 @@ class DemoState:
             graph=self.graph,
             fixes=self.fixes,
             error=error,
+            freshness_note=self.freshness_note(),
         )
         return HTMLResponse(html)
 
@@ -132,6 +148,22 @@ class DemoState:
 
 def create_app(state: DemoState) -> FastAPI:
     app = FastAPI(title="Pre-publish rank check")
+
+    from starlette.exceptions import HTTPException as StarletteHTTPException
+    from starlette.requests import Request
+
+    @app.exception_handler(StarletteHTTPException)
+    async def friendly_errors(request: Request, exc: StarletteHTTPException):
+        if request.url.path == "/check" and exc.status_code == 400 and "maximum size" in str(exc.detail):
+            response = state.page(
+                selected="",
+                url_value="",
+                html_value="",
+                error="That draft is larger than the 1 MB form limit. Remove inline scripts and styles, or paste the visible content only.",
+            )
+            response.status_code = 413
+            return response
+        return HTMLResponse(escape(str(exc.detail)), status_code=exc.status_code)
 
     @app.get("/", response_class=HTMLResponse)
     def home(demo: int = 0) -> HTMLResponse:
@@ -186,7 +218,8 @@ def create_app(state: DemoState) -> FastAPI:
             run_ai=ai == "1",
         )
         _record(state, result, draft)
-        return state.page(selected=query, url_value=url, html_value="" if url != "https://draft.local/page" else draft, result=result, error=result.error)
+        # Echo what the person pasted so they can keep editing; a fetched page is not echoed.
+        return state.page(selected=query, url_value=url, html_value=html, result=result, error=result.error)
 
     return app
 

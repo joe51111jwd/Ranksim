@@ -68,6 +68,40 @@ James moved the UI and end-to-end web flow to Claude at about 3:30pm Eastern and
 - Data rule: the one-click public demo uses a synthetic fixture with `.example` domains, labeled SYNTHETIC on every page. The historical SmartCrew file is offered only on a loopback bind and is labeled "historical observed export, pull date not recorded". `RANKSIM_PUBLIC_DEMO=1` hides it and the old `/demo` pages.
 - Integration needs for SEO Tool Builder: listed under the handoff Claude adds when this work stops.
 
+### 2026-11-05 — Claude (handoff, EOD web MVP)
+
+- Branch: `claude/ranksim-mvp-eod-ifjitw`
+- Pull request: https://github.com/joe51111jwd/Ranksim/pull/2 (against `main`; not merged by Claude). It contains the unmerged `claude/bold-einstein-oi5qoj` commits and PR #1's two commits.
+- Claimed task, done: the three-screen web flow.
+  - `/p/<slug>` Setup: project, site, competitors, checked CSV import, coverage, demos.
+  - `/p/<slug>/comparisons` Comparisons: observed order next to PREDICTED order, evidence, limits.
+  - `/p/<slug>/draft` Draft test: original vs draft on the same candidates, saved runs.
+  - The older project page is `/p/<slug>/advanced`; old result boards, versions and engines pages share the new shell.
+- Run: `pip install -e ".[dev]" && python -m aeo.ranksim serve`, then open http://127.0.0.1:8765/. No keys needed.
+- Deployed: https://ranksim-demo.vercel.app, a public synthetic demo only.
+  - Vercel project `ranksim-demo` in James's personal team. It is not linked to the repo, so pushes do not deploy. Deploys so far were made by Claude from this branch through the Vercel API.
+  - `app.py` forces public mode and switches every provider key off. `.vercelignore` keeps `smartcrew/` out (the build log shows 81 ignored files removed).
+  - LightGBM needs `libgomp.so.1`, which Vercel's image lacks, so `app.py` preloads `vendor/libgomp/libgomp.so.1`. Provenance is in its README.
+  - Data is per-instance `/tmp`, so saved draft tests on the public demo are not durable. The UI says so.
+- Files: new `src/aeo/ranksim/workspace.py`, `src/aeo/ranksim/workspace_ui.py`, `tests/test_workspace.py`, `app.py`, `vercel.json`, `.vercelignore`, `vendor/libgomp/`. Edited: `src/aeo/ranksim/serve.py` (shell, CSS, JS, routes, public mode, CSV check on import), `tests/test_serve_project.py` and `tests/test_review_fixes.py` (old-page assertions now hit `/advanced`), `README.md`.
+  - No change to the ranker, `project.json`, or the pull file formats.
+  - New sidecar per project: `data/projects/<slug>/workspace.json` (dataset kind, competitor domains). Drafts go in `data/projects/<slug>/drafts/<run id>/`.
+- Tests actually run: `python -m pytest -q` passes 285 (265 existing plus 20 new), with no provider keys set.
+  - Browser (Playwright/Chromium) at 1440, 768 and 375:
+    - empty home, then synthetic demo, then comparison, then sort and select, then draft;
+    - whitespace draft refused, then saved result, then reload;
+    - bad CSV refused (form keeps input), then a real CSV of 13 rows, then a live crawl and build (53 s), then a comparison;
+    - historical export (25 pages with saved HTML, 63 without);
+    - the public bundle with no `smartcrew/` folder;
+    - the deployed URL end to end.
+- Integration needs for SEO Tool Builder (backend):
+  1. Provider-env isolation: `tests/test_workspace.py` passes explicit `None` keys and does not rely on it. A shared fixture from your branch would be welcome.
+  2. `content_insertion_backtest` and the per-query backtest are what the UI shows as uncertainty. If your evaluation work changes those numbers or their names, the comparison summary reads `ctx.metrics.for_search(q)` and `ctx.metrics.pairwise`.
+  3. `load_project_context` trains on the fly when a pull has no saved engine. On a large import that can make the first Comparisons or Draft load slow; a cheap "engine ready?" check in `project.py` would let the UI say "build first" instead.
+  4. Freshness: the UI shows the stored-HTML date per candidate (`ctx.stored_at`) and the positions date (`pulled_label`). An imported CSV without a date shows "pull date not recorded". A per-row date column in the importer would make freshness real.
+- Blockers: none for local use. For a durable public deployment, project data and draft runs need storage outside `/tmp` (a database or Blob), which needs a decision from James.
+- Next: wait for review on PR #2. If James approves, merge order can be PR #1 then PR #2, or PR #2 alone (it contains PR #1).
+
 ### Template
 
 Copy this block. Do not delete earlier handoffs.

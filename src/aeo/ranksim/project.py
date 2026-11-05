@@ -1473,6 +1473,8 @@ def borrow_real_results(project: Project) -> dict[str, SearchResults]:
             other = load_project(summary.slug, root=project.root or None)
         except ProjectError:
             continue
+        if _is_synthetic(other):
+            continue  # invented demo positions are never copied into another project as REAL results
         snapshot = latest_google(other)
         if snapshot is None:
             continue
@@ -1486,6 +1488,12 @@ def borrow_real_results(project: Project) -> dict[str, SearchResults]:
             copied.error = ""
             found[search] = copied
     return found
+
+
+def _is_synthetic(project: Project) -> bool:
+    """True when the web workspace marked this project as synthetic demo data (workspace.json)."""
+    data = _read_json(project.dir / "workspace.json") or {}
+    return str(data.get("dataset") or "") == "synthetic"
 
 
 def _google_provider(settings: Settings, serp_provider):

@@ -301,7 +301,7 @@ def setup_body(ui, project, meta, *, running=None, message: str = "", error: str
     google = latest_google(project)
     cov = ws.coverage(project, ui.database, meta)
     pulls = [item for item in list_pulls(project) if item.finished]
-    engine_ready = any(item.has_engine for item in pulls)
+    engine_ready, engine_reason = ws.engine_state(project)
     parts = [
         '<div class="page-head"><div><h1>Setup</h1>'
         "<p class=\"sub\">Which observed results the comparisons use, which domains are your competitors, and how much page HTML is stored.</p></div>"
@@ -353,7 +353,9 @@ def _source_panel(ui, project, meta, google, pulls, engine_ready: bool, csrf: st
         if report is not None and report.urls:
             break
     counts = report.counts if report else {}
-    last_build = pulls[-1].written_at[:16].replace("T", " ") + " UTC" if pulls else "never"
+    built = [item for item in pulls if item.has_engine]
+    last_build = built[-1].written_at[:16].replace("T", " ") + " UTC" if built else "never"
+    _ready, reason = ws.engine_state(project)
     kind_label = {
         ws.DATASET_SYNTHETIC: "SYNTHETIC example positions",
         ws.DATASET_HISTORICAL: "Historical observed positions",
@@ -363,7 +365,7 @@ def _source_panel(ui, project, meta, google, pulls, engine_ready: bool, csrf: st
         ("Source", "<br>".join(e(item) for item in sources) or "n/a"),
         ("Positions seen", "n/a: invented for this demo" if meta.synthetic else (e(", ".join(dates)) if dates else "n/a")),
         ("Queries with positions", f"{sum(1 for item in google.searches if item.results)} of {len(project.searches)}"),
-        ("Last build", e(last_build) + (" (engine ready)" if engine_ready else " (no engine yet)")),
+        ("Last build", e(last_build) + (" (model ready)" if engine_ready else f" ({e(reason)})")),
     ]
     if counts:
         stored = counts.get("stored", 0) + counts.get("fetched_now", 0) + counts.get("kept_stored", 0)
@@ -759,8 +761,8 @@ def draft_body(ui, project, meta, ctx, query: str, *, values=None, error: str = 
     if ui.public_demo:
         parts.append(
             _alert(
-                "Public demo: draft tests run on this server's copy of the synthetic data. Saved tests are kept on one server "
-                "instance only and can disappear when it restarts. Run Ranksim locally for durable storage.",
+                "Public demo: drafts are scored against the synthetic candidates and are not saved. Nothing you paste is stored or "
+                "shown to anyone else. Run Ranksim locally to keep a history of draft tests.",
                 "info",
             )
         )
@@ -814,8 +816,7 @@ def draft_body(ui, project, meta, ctx, query: str, *, values=None, error: str = 
         '<div class="form-actions"><button type="submit" class="btn btn-primary">Run PREDICTED test</button>'
         f'<span class="hint">Ranks only the {len(stored_all)} candidates above, not Google\'s index.</span></div></form>'
     )
-    runs = ws.list_draft_runs(project)
-    recent = _recent_runs(project, runs)
+    recent = "" if ui.public_demo else _recent_runs(project, ws.list_draft_runs(project))
     cov = {item.search: item for item in ws.coverage(project, ui.database, meta)}
     picker = _query_picker(project, list(project.searches), cov, query, "draft", with_select=False)
     parts.append(
@@ -862,13 +863,30 @@ def draft_result_body(ui, project, meta, run: dict) -> str:
     slug = e(project.slug)
     head = (
         '<div class="page-head"><div><p class="eyebrow">Draft test result</p>'
-        f'<h1>{e(run["search"])}</h1><p class="sub">{e(run["candidates"])} candidates ({e(run["set_label"])}), saved '
+        f'<h1>{e(run["search"])}</h1><p class="sub">{e(run["candidates"])} candidates ({e(run["set_label"])}), run '
         f'{e((run.get("created") or "")[:16].replace("T", " "))} UTC. Page URL: <span class="url">{e(run["url"])}</span></p></div>'
-        f'<div class="head-actions"><a class="btn" href="/p/{slug}/draft{e(_q({"q": run["search"], "from": run["id"]}))}">Edit draft and run again</a>'
-        f'<a class="btn btn-ghost" href="/p/{slug}/comparisons{e(_q({"q": run["search"]}))}">Back to comparison</a></div></div>'
+        + (
+            f'<div class="head-actions"><a class="btn" href="/p/{slug}/draft{e(_q({"q": run["search"]}))}">New draft test</a>'
+            if ui.public_demo or not run.get("id")
+            else f'<div class="head-actions"><a class="btn" href="/p/{slug}/draft{e(_q({"q": run["search"], "from": run["id"]}))}">Edit draft and run again</a>'
+        )
+        + f'<a class="btn btn-ghost" href="/p/{slug}/comparisons{e(_q({"q": run["search"]}))}">Back to comparison</a></div></div>'
     )
     of = after["of"]
-    if before is not None:
+    if after.get("position") is None or (before is not None and before.get("position") is None):
+        def col(label, result, cls=""):
+            if result.get("position") is None:
+                return f'<div class="ba-col {cls}"><span class="ba-k">{e(label)}</span><span class="ba-v ba-none">not placed</span><span class="chip chip-bad">off topic</span></div>'
+            return f'<div class="ba-col {cls}"><span class="ba-k">{e(label)}</span><span class="ba-v">#{result["position"]}</span><span class="ba-of">of {of}</span>{_confidence_chip(result["confidence"])}</div>'
+
+        reasons = " ".join(e(item.get("unplaced", "")) for item in (before, after) if item and item.get("position") is None)
+        tiles = (
+            '<div class="ba">'
+            + (col("Original", before) + '<div class="ba-arrow" aria-hidden="true"></div>' if before is not None else "")
+            + col("Draft", after, "ba-after")
+            + f'<p class="ba-verdict">The on-topic check did not pass, so the engine gives no {_pred()} position, the same rule it uses on result boards. {reasons}</p></div>'
+        )
+    elif before is not None:
         change = before["position"] - after["position"]
         if change > 0:
             verdict = f"The draft is {_pred()} {change} place{'s' if change != 1 else ''} higher than the original among these {of - 1} candidates."
@@ -941,7 +959,14 @@ def _order_compare(project, meta, run: dict) -> str:
                 )
         return f'<div class="ord-col"><h3>With the {e(label.lower())}</h3><ol class="ord">{"".join(rows)}</ol></div>'
 
-    cols = (column(before, "Original") if before else "") + column(after, "Draft")
+    def safe(result, label):
+        if not result:
+            return ""
+        if result.get("position") is None:
+            return f'<div class="ord-col"><h3>With the {e(label.lower())}</h3><p class="small muted">Not placed: the on-topic check did not pass.</p></div>'
+        return column(result, label)
+
+    cols = safe(before, "Original") + safe(after, "Draft")
     return (
         '<section class="panel"><div class="panel-head"><h2>PREDICTED order</h2>'
         '<p class="panel-note">Same candidates, same model. Only your page changes.</p></div>'
@@ -996,7 +1021,7 @@ def _topic_panel(run: dict) -> str:
         cls = "chip-ok" if topic.get("on_topic") is True else ("chip-na" if topic.get("on_topic") is None else "chip-bad")
         missing = topic.get("missing") or []
         words = f'<p class="small">Query words not found: {e(", ".join(missing))}</p>' if missing else ""
-        return f'<div class="topic"><h3>{e(label)} <span class="chip {cls}">{e(status)}</span></h3><p class="small">{e(_observed_words(topic.get("text") or ""))}</p>{words}</div>'
+        return f'<div class="topic"><h3>{e(label)} <span class="chip {cls}">{e(status)}</span></h3><p class="small">{e(ws._observed_text(topic.get("text") or ""))}</p>{words}</div>'
 
     parts = []
     if run.get("has_original"):
@@ -1080,6 +1105,8 @@ def register(app: FastAPI, ui) -> None:
         form = await request.form()
         serve._check_csrf(ui, form)
         slug = ws.DEMO_SLUG
+        if ui.public_demo and ws.demo_ready(ui.root):
+            return RedirectResponse(f"/p/{slug}", status_code=303)  # anonymous visitors cannot make the host rebuild
         lock = ui.jobs.project_lock(slug)
         if not lock.acquire(blocking=False):
             return shell(ui, "Projects", home_body(ui, error="The demo is being built right now. Try again in a few seconds."), status=409)
@@ -1221,6 +1248,8 @@ def register(app: FastAPI, ui) -> None:
             project, meta = load(slug)
         except LookupError:
             return serve._not_found(ui)
+        if ui.public_demo:
+            return RedirectResponse(f"/p/{slug}/draft", status_code=303)
         run = ws.load_draft_run(project, run_id)
         if run is None:
             return shell(
@@ -1237,6 +1266,8 @@ def register(app: FastAPI, ui) -> None:
 
     @app.get("/p/{slug}/draft/{run_id}/{name}.txt")
     def draft_source(slug: str, run_id: str, name: str) -> Response:
+        if ui.public_demo:
+            return Response("Not found.", status_code=404, media_type="text/plain")
         try:
             project = ui.project(slug)
         except LookupError:
@@ -1285,10 +1316,14 @@ def register(app: FastAPI, ui) -> None:
             from aeo.ranksim.tester import stored_html
 
             found = None
-            try:
-                found = stored_html(ui.database, url)
-            except Exception:  # noqa: BLE001
-                found = None
+            if ui.public_demo:
+                fixture = ws.synthetic_page(url)  # the public host only knows the synthetic fixture pages
+                found = (fixture, url, "synthetic fixture") if fixture else None
+            else:
+                try:
+                    found = stored_html(ui.database, url)
+                except Exception:  # noqa: BLE001
+                    found = None
             if found is None:
                 return _draft_form_response(slug, query, values, error="No stored copy of that URL was found. Paste the original instead.", status=400)
             original_html = found[0]
@@ -1306,14 +1341,11 @@ def register(app: FastAPI, ui) -> None:
             return _draft_form_response(slug, query, values, error=str(exc), status=400)
         if not ui.llm_ready():
             run["ai"] = {"status": "unavailable", "text": f"No AI provider is configured on this server. Set {ws.AI_KEYS} to enable them."}
-        run_id = await run_in_threadpool(ws.save_draft_run, project, run, original_html, values["draft_html"])
         if ui.public_demo:
-            # A public host can route the next request to another instance with its own /tmp, so show the result now.
-            note = _alert(
-                "Public demo: this result is shown now and kept on one server instance only. A reload or the saved link may not find it.",
-                "info",
-            )
+            # Never store or list what an anonymous visitor pasted: the result is rendered once and not saved.
+            note = _alert("Public demo: this result is not saved. Nothing you paste here is stored or shown to anyone else.", "info")
             return shell(ui, f"Draft test: {run['search']}", note + draft_result_body(ui, project, meta, run), project=project, meta=meta, tab="draft", query=run["search"])
+        run_id = await run_in_threadpool(ws.save_draft_run, project, run, original_html, values["draft_html"])
         return RedirectResponse(f"/p/{slug}/draft/{run_id}", status_code=303)
 
     def _draft_form_response(slug: str, q: str, values, *, error: str = "", status: int = 200, from_run: bool = False) -> Response:

@@ -450,6 +450,12 @@ def compare_search(ctx, search: str, meta: WorkspaceMeta | None = None) -> Compa
     view.model_kind = kind
     scored = [cand for cand in view.candidates if cand.stored]
     view.scored = len(scored)
+    if (ctx.metrics.n_searches or 0) < 2:
+        view.error = (
+            "The model is always tested on a query it did not learn from, so it needs at least two queries with stored pages. "
+            "This project has fewer, so no PREDICTED order is shown. Add queries and build again."
+        )
+        return view
     if model is None:
         view.error = "The engine has no model yet: it needs at least two queries with two or more stored pages. No order was invented."
         return view
@@ -698,6 +704,8 @@ def run_draft(
     model, kind = ctx.model_for(search)
     if model is None:
         raise WorkspaceError("The engine has no model yet. Build it on the Setup screen first. Nothing was run.")
+    if (ctx.metrics.n_searches or 0) < 2:
+        raise WorkspaceError("The model needs at least two queries with stored pages so it is tested on a query it did not learn from. Nothing was run.")
     candidates, missing, set_label = candidate_set(ctx, search, meta, which, url)
     if not candidates:
         if which == "competitors":
@@ -708,13 +716,21 @@ def run_draft(
         raise WorkspaceError("No candidate for this query has stored HTML, so there is nothing to test against. Build the engine on the Setup screen.")
     draft_html = _as_html(draft_html)
     draft_doc = _our_doc(ctx, page_from_html(url, draft_html, is_ours=True), url)
-    after = _place(ctx, search, intent, model, candidates, draft_doc)
-    before = None
     original_doc = None
     if original_html is not None and original_html.strip():
         original_html = _as_html(original_html)
         original_doc = _our_doc(ctx, page_from_html(url, original_html, is_ours=True), url)
-        before = _place(ctx, search, intent, model, candidates, original_doc)
+
+    def placed(doc):
+        # Same rule as the engine's board: a page the on-topic check does not pass gets no slot at all.
+        if ctx.topic is not None:
+            check = ctx.topic.check(search, doc)
+            if check.on_topic is not True:
+                return {"position": None, "of": len(candidates) + 1, "score": None, "order": [], "confidence": "n/a", "features": {}, "unplaced": _observed_text(check.text)}
+        return _place(ctx, search, intent, model, candidates, doc)
+
+    after = placed(draft_doc)
+    before = placed(original_doc) if original_doc is not None else None
     topic_after = topic_before = None
     if ctx.topic is not None:
         check = ctx.topic.check(search, draft_doc)
@@ -764,11 +780,39 @@ def run_draft(
         "ai": {"status": "off", "text": ""},
         "notes": notes,
     }
-    if before is not None:
+    if before is not None and before.get("position") is not None and after.get("position") is not None:
         run["change"] = before["position"] - after["position"]  # positive: the draft is PREDICTED higher
     if ai_notes is not None:
         run["ai"] = ai_notes(run)
     return run
+
+
+def _observed_text(text: str) -> str:
+    """The engine's on-topic text speaks of 'pages Google ranks'. Here the pages are the observed candidates."""
+    return (
+        (text or "")
+        .replace("the most repetitive readable page Google ranks in this project", "the most repetitive readable observed page in this project")
+        .replace("Every readable page Google ranks here", "Every readable observed page here")
+        .replace("the pages Google ranks here", "the observed pages here")
+        .replace("pages Google ranks here", "observed pages here")
+        .replace("some page Google ranks here", "some observed page here")
+        .replace("the pages Google ranks for", "the observed pages for")
+        .replace("PREDICTED: not in the top 10.", "PREDICTED: not placed among these candidates.")
+    )
+
+
+def engine_state(project) -> tuple[bool, str]:
+    """(ready, reason). Ready means the newest build trained a model on at least two queries with stored pages."""
+    from aeo.ranksim.project import list_pulls, load_pull_report
+
+    pulls = [item for item in list_pulls(project) if item.finished and item.has_engine]
+    if not pulls:
+        return False, "not built yet"
+    report = load_pull_report(project, pulls[-1].pull_id)
+    metrics = report.metrics if report else None
+    if metrics is None or (metrics.n_searches or 0) < 2 or not (metrics.n_pairs or 0):
+        return False, "the last build stored too few pages to train a model (it needs two or more queries with two or more stored pages)"
+    return True, "ready"
 
 
 def _as_html(text: str) -> str:
@@ -780,9 +824,11 @@ def _as_html(text: str) -> str:
     blocks = [block.strip() for block in re.split(r"\n\s*\n", text) if block.strip()]
     if not blocks:
         return text
-    first = blocks[0].splitlines()[0][:160]
+    lines = blocks[0].splitlines()
+    first = lines[0].strip()[:160]
+    rest = [" ".join(lines[1:]).strip()] if len(lines) > 1 and " ".join(lines[1:]).strip() else []
     parts = [f"<html><head><title>{_html.escape(first)}</title></head><body><h1>{_html.escape(first)}</h1>"]
-    for block in blocks[1:] if len(blocks) > 1 else blocks:
+    for block in rest + blocks[1:]:
         parts.append(f"<p>{_html.escape(' '.join(block.split()))}</p>")
     parts.append("</body></html>")
     return "".join(parts)

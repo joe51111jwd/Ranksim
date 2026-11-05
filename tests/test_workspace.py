@@ -161,6 +161,23 @@ def test_draft_run_competitors_only_and_errors(demo):
 def test_plain_text_draft_becomes_a_page():
     html = ws._as_html("My title line\n\nFirst paragraph here.\n\nSecond one.")
     assert "<title>My title line</title>" in html and "<p>Second one.</p>" in html
+    kept = ws._as_html("Title\nsecond line of the intro\n\nBody")
+    assert "second line of the intro" in kept and "<p>Body</p>" in kept
+
+
+def test_an_off_topic_or_stuffed_draft_gets_no_position(demo):
+    ctx = demo["ctx"]
+    stuffed = "<h1>Vinyl fence installation cost</h1>" + "<p>vinyl fence installation cost vinyl fence installation cost.</p>" * 120
+    run = ws.run_draft(ctx, QUERY, stuffed, "https://www.northwind-fencing.example/new/")
+    assert run["after"]["position"] is None and run["after"]["unplaced"] and "change" not in run
+    assert "Google ranks" not in run["after"]["unplaced"]
+
+
+def test_synthetic_positions_are_never_borrowed_as_real(demo):
+    from aeo.ranksim.project import borrow_real_results, create_project
+
+    other = create_project("Copycat", "copycat.example", [QUERY], root=demo["tmp"] / "projects")
+    assert borrow_real_results(other) == {}
 
 
 # -- the web flow ---------------------------------------------------------------
@@ -294,10 +311,37 @@ def test_public_demo_mode_only_serves_the_synthetic_demo(tmp_path):
     assert client.post("/projects", data={"csrf": csrf, "name": "X", "site": "x.example", "searches": "a"}).status_code == 403
     assert client.get("/demo").status_code == 404
     assert client.post("/demo/synthetic", data={"csrf": csrf}, follow_redirects=False).status_code == 303
-    assert client.post("/p/synthetic-demo/pull", data={"csrf": csrf}).status_code == 403
-    assert client.post("/p/synthetic-demo/import", data={"csrf": csrf}, files={"csv_file": ("a.csv", b"query,url,position\n", "text/csv")}).status_code == 403
+    assert client.post("/p/synthetic-demo/pull", data={"csrf": csrf}).status_code == 404
+    assert client.post("/p/synthetic-demo/import", data={"csrf": csrf}, files={"csv_file": ("a.csv", b"query,url,position\n", "text/csv")}).status_code == 404
     assert client.post("/p/synthetic-demo/competitors", data={"csrf": csrf, "competitors": "a.example"}).status_code == 403
     assert client.get("/healthz").json()["public_demo"] is True
+    for path in ("/p/synthetic-demo/advanced", "/p/synthetic-demo/versions", "/p/synthetic-demo/engines", "/api/jobs/x"):
+        assert client.get(path).status_code == 404, path
+    assert client.post("/p/synthetic-demo/test", data={"csrf": csrf, "html_text": "<p>x</p>"}).status_code == 404
+    # anonymous drafts are rendered once, never saved, listed or served back
+    ran = client.post(
+        "/p/synthetic-demo/draft",
+        data={"csrf": csrf, "q": QUERY, "original_mode": "stored", "draft_html": "<h1>PRIVATE-MARKER vinyl fence installation cost</h1><p>panels posts labor</p>"},
+    )
+    assert ran.status_code == 200 and "is not saved" in ran.text
+    form = client.get("/p/synthetic-demo/draft", params={"q": QUERY}).text
+    assert "PRIVATE-MARKER" not in form and "Saved tests" not in form
+    assert not (tmp_path / "projects" / "synthetic-demo" / "drafts").exists()
+    # a public host serves the demo project only, even when other projects sit in its folder
+    from aeo.ranksim.project import create_project
+
+    create_project("Private", "private.example", ["secret query"], root=tmp_path / "projects")
+    assert client.get("/p/private").status_code == 404 and client.get("/p/private/comparisons").status_code == 404
+
+
+def test_public_mode_from_the_environment_never_uses_a_provider_key(tmp_path, monkeypatch):
+    monkeypatch.setenv("RANKSIM_PUBLIC_DEMO", "1")
+    settings = make_settings(tmp_path, openai_api_key="sk-test-not-real")
+    app = create_app(settings=settings, projects_root=tmp_path / "projects", llm_factory=lambda: (_ for _ in ()).throw(AssertionError("called")))
+    assert app.state.ui.public_demo and not app.state.ui.llm_ready()
+    client = TestClient(app)
+    form = client.get("/p/synthetic-demo/draft", params={"q": QUERY}).text
+    assert 'name="ai_notes"' not in form and "AI notes unavailable" in form
 
 
 def test_posts_need_the_csrf_token(web):

@@ -465,6 +465,11 @@ class UiState:
             raise LookupError("No such project.")
         if not (self.root / slug / "project.json").is_file():
             raise LookupError("No such project.")
+        if self.public_demo:
+            from aeo.ranksim.workspace import DEMO_SLUG
+
+            if slug != DEMO_SLUG:
+                raise LookupError("No such project.")  # a public host serves the synthetic demo and nothing else
         return load_project(slug, root=self.root)
 
     def context(self, slug: str):
@@ -491,6 +496,8 @@ class UiState:
     def llm_ready(self) -> bool:
         from aeo.ranksim.llm import openrouter_key
 
+        if self.public_demo:
+            return False  # a public host never spends a provider key, whatever the environment holds
         settings = self.settings
         return bool(openrouter_key(settings) or settings.openai_api_key or settings.anthropic_api_key)
 
@@ -668,6 +675,7 @@ def create_app(
         state = None
         ui._legacy = None
         ui._legacy_factory = None
+        ui.llm_factory = lambda: None
     app = FastAPI(title="Ranksim", docs_url=None, redoc_url=None, openapi_url=None)
     app.state.ui = ui
     app.add_middleware(GuardMiddleware, max_body=max_upload_bytes + FORM_OVERHEAD_BYTES, allowed_hosts=allowed_hosts)
@@ -693,6 +701,16 @@ def create_app(
     # -- the three-screen workspace: /, /projects, /p/{slug}, comparisons, draft ----------
 
     from aeo.ranksim import workspace_ui
+
+    if ui.public_demo:
+        public_blocked = re.compile(r"^/(api/jobs|p/[^/]+/(advanced|test|results|versions|compare|engines|jobs|searches|import|pull)(/|$|\.))")
+
+        @app.middleware("http")
+        async def _public_only_workspace(request: Request, call_next):
+            # The older pages store and list anonymous pasted pages and start background jobs. Not on a public host.
+            if public_blocked.match(request.url.path):
+                return _html_page("Not available", _message_body("Not available on the public demo. Run Ranksim locally for the full tool."), ui, status=404)
+            return await call_next(request)
 
     workspace_ui.register(app, ui)
     if ui.public_demo:
@@ -2432,7 +2450,8 @@ details.mini.pad{padding:0 16px 14px}
 fieldset.field{border:0;padding:0;gap:6px}
 .form input:not([type=checkbox]):not([type=radio]):not([type=file]),.form select,.form textarea,.switcher select,.qp-select select{font:inherit;font-size:14.5px;color:var(--ink);background:var(--surface);border:1px solid var(--line-2);border-radius:8px;padding:8px 10px;width:100%;max-width:100%}
 .form textarea{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:13px;line-height:1.45;resize:vertical}
-.form input:focus,.form select:focus,.form textarea:focus,.switcher select:focus,.qp-select select:focus{border-color:var(--accent);outline:2px solid var(--accent-weak);outline-offset:0}
+.form input:focus-visible,.form select:focus-visible,.form textarea:focus-visible,.switcher select:focus-visible,.qp-select select:focus-visible{border-color:var(--accent);outline:2px solid var(--accent);outline-offset:1px}
+.form input[type=radio]:focus-visible,.form input[type=checkbox]:focus-visible,.form input[type=file]:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 .form input[type=file]{font-size:13.5px}
 .hint{margin:0;font-size:13px;color:var(--muted)}
 label.radio,label.check{display:flex;gap:8px;align-items:flex-start;font-weight:400;font-size:14px}

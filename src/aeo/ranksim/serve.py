@@ -691,6 +691,15 @@ def create_app(
     from aeo.ranksim import workspace_ui
 
     workspace_ui.register(app, ui)
+    if ui.public_demo:
+        # Every public instance builds its own copy of the synthetic demo, so any instance can serve it.
+        from aeo.ranksim import workspace as ws
+
+        if not (ui.root / ws.DEMO_SLUG / "project.json").is_file():
+            try:
+                ws.load_synthetic_demo(ui.root, ui.settings, ui.database)
+            except Exception as exc:  # noqa: BLE001 - the home page still offers the button
+                print(f"ranksim: synthetic demo not built at start: {type(exc).__name__}: {exc}", file=sys.stderr, flush=True)
 
     # -- the full project page (pull log, keys, page tester), kept as Advanced ---------
 

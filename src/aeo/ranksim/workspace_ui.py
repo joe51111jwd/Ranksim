@@ -752,6 +752,14 @@ def draft_body(ui, project, meta, ctx, query: str, *, values=None, error: str = 
         parts.append(_alert(e(error), "bad", role="alert"))
     if note:
         parts.append(_alert(e(note), "good"))
+    if ui.public_demo:
+        parts.append(
+            _alert(
+                "Public demo: draft tests run on this server's copy of the synthetic data. Saved tests are kept on one server "
+                "instance only and can disappear when it restarts. Run Ranksim locally for durable storage.",
+                "info",
+            )
+        )
     values = values or {}
     view = ws.compare_search(ctx, query, meta)
     mine_url = view.your_url

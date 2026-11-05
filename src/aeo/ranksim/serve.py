@@ -1257,9 +1257,31 @@ def tag(kind: str, text: str | None = None) -> str:
 
 
 def _html_page(title: str, body: str, ui: UiState, *, crumbs: list[tuple[str, str | None]] | None = None, status: int = 200) -> HTMLResponse:
+    """The older pages (advanced, results, versions, engines, jobs) in the workspace shell, with the project's tabs and data label."""
+    from aeo.ranksim import workspace as ws
     from aeo.ranksim import workspace_ui
 
-    return workspace_ui.shell(ui, title, body, crumbs=crumbs or [], status=status, wide=False)
+    project = meta = None
+    for _label, href in crumbs or []:
+        found = re.match(r"^/p/([a-z0-9][a-z0-9-]{0,59})$", href or "")
+        if found:
+            try:
+                project = ui.project(found.group(1))
+                meta = ws.load_meta(project)
+            except LookupError:
+                project = meta = None
+            break
+    if meta is not None and meta.synthetic:
+        body = synthetic_wording(body)
+    return workspace_ui.shell(ui, title, body, project=project, meta=meta, crumbs=crumbs or [], status=status, wide=False)
+
+
+def synthetic_wording(body: str) -> str:
+    """Older pages say REAL for imported positions. In a synthetic project nothing is real, so say SYNTHETIC."""
+    body = body.replace('<span class="tag real">', '<span class="tag tag-synth">')
+    body = re.sub(r"\bREAL Google\b", "SYNTHETIC (not Google)", body)
+    body = re.sub(r"\bREAL\b", "SYNTHETIC", body)
+    return body.replace("SYNTHETIC</span> Google results", "SYNTHETIC</span> results").replace("<h2>Google data</h2>", "<h2>Positions (synthetic)</h2>")
 
 
 def _message_body(text: str) -> str:

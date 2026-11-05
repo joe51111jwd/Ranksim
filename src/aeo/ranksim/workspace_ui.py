@@ -126,6 +126,10 @@ def shell(
         parts = [f'<span class="hide-sm"><span class="ctx-k">Project</span> {e(project.name)}</span>', f'<span><span class="ctx-k">Site</span> {e(project.site)}</span>']
         if query:
             parts.append(f'<span class="ctx-q"><span class="ctx-k">Query</span> {e(query)}</span>')
+        if crumbs:
+            trail = [f'<a href="/p/{e(project.slug)}">{e(project.name)}</a>']
+            trail.extend(f'<a href="{e(href)}">{e(label)}</a>' if href else f"<span>{e(label)}</span>" for label, href in crumbs[1:])
+            parts.append(f'<nav class="crumbs" aria-label="Breadcrumb">{" / ".join(trail)}</nav>')
         context = f'<div class="context"><div class="page ctx-row">{"".join(parts)}{dataset_badge(meta)}</div></div>'
     elif crumbs:
         trail = ['<a href="/">Projects</a>']

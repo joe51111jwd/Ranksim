@@ -10,6 +10,9 @@ from aeo.config import Settings
 
 LIVE_ENV = "RANKSIM_LIVE_TESTS"
 _LOOPBACK_HOSTS = {"127.0.0.1", "::1", "localhost"}
+# A proxy on loopback would carry a test's request to the internet past the socket guard,
+# so normal tests run without proxy settings and must connect directly (and are refused).
+_PROXY_VARS = {"http_proxy", "https_proxy", "all_proxy", "ws_proxy", "wss_proxy"}
 
 
 def make_settings(tmp_path: Path, **overrides) -> Settings:
@@ -58,6 +61,9 @@ def _block_external_network(request, monkeypatch):
     """Fail loudly if a normal test opens a non-loopback socket. Live tests are exempt."""
     if request.node.get_closest_marker("live"):
         return
+    for name in list(os.environ):
+        if name.lower() in _PROXY_VARS:
+            monkeypatch.delenv(name, raising=False)
     real_connect = socket.socket.connect
     real_connect_ex = socket.socket.connect_ex
 

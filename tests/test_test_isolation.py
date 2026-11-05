@@ -43,3 +43,14 @@ def test_external_network_is_blocked():
             sock.connect(("192.0.2.1", 443))
     finally:
         sock.close()
+
+
+def test_http_clients_cannot_reach_the_internet_even_through_a_proxy():
+    import os
+
+    import httpx
+
+    assert not any(name.lower() in {"http_proxy", "https_proxy", "all_proxy"} for name in os.environ)
+    with pytest.raises(Exception) as caught:
+        httpx.get("https://example.com/", timeout=5)
+    assert "network connection" in str(caught.value) or isinstance(caught.value, httpx.ConnectError)

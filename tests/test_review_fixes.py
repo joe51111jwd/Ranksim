@@ -562,19 +562,20 @@ def test_pull_progress_marks_google_and_engines_not_run(web):
     job = wait(web["app"], started.headers["location"])
     steps = {item["step"]: item for item in job["steps"]}
     assert steps["google"]["skipped"] and steps["engines"]["skipped"]
-    page = web["client"].get(f"/p/{web['slug']}").text
+    page = web["client"].get(f"/p/{web['slug']}/advanced").text
     assert "recrawl only: Google not asked" in page and "Google was last asked in pull" in page
 
 
 def test_simulation_is_off_by_default_and_shows_its_call_count(tmp_path, pulled):
     settings = make_settings(tmp_path, openai_api_key="sk-test-not-real")
     app = serve.create_app(settings=settings, database=pulled["settings"].ranksim_database_url, projects_root=pulled["project"].root)
-    page = TestClient(app).get(f"/p/{pulled['project'].slug}").text
+    page = TestClient(app).get(f"/p/{pulled['project'].slug}/advanced").text
     assert 'name="simulate" value="1">' in page and "About 24 LLM calls" in page and "sk-test-not-real" not in page
 
 
 def test_home_warns_when_no_google_key_is_set(web):
-    assert "No Google key is set on this computer" in web["client"].get("/").text
+    setup = web["client"].get(f"/p/{web['slug']}").text
+    assert "Live Google results" in setup and "not configured: import a CSV instead" in setup
 
 
 def test_wide_bind_keeps_a_host_allowlist(tmp_path, monkeypatch):

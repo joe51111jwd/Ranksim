@@ -364,7 +364,10 @@ def _source_panel(ui, project, meta, google, pulls, engine_ready: bool, csrf: st
     if counts:
         stored = counts.get("stored", 0) + counts.get("fetched_now", 0) + counts.get("kept_stored", 0)
         failed = sum(value for key, value in counts.items() if key not in {"stored", "fetched_now", "kept_stored"})
-        rows.append(("Page HTML", f"{stored} stored, {failed} could not be fetched" + _fail_detail(counts)))
+        if meta.dataset == ws.DATASET_HISTORICAL:
+            rows.append(("Page HTML", f"{stored} saved in this repository, {failed} have no saved copy (nothing is fetched in this demo)"))
+        else:
+            rows.append(("Page HTML", f"{stored} stored, {failed} could not be fetched" + _fail_detail(counts)))
     dl = "".join(f"<div><dt>{label}</dt><dd>{value}</dd></div>" for label, value in rows)
     return (
         '<section class="panel"><div class="panel-head"><h2>Data source</h2></div><div class="panel-body">'
@@ -609,7 +612,9 @@ def _summary_row(project, meta, view: ws.ComparisonView) -> str:
             f' <span class="muted small">of {view.scored} scored</span></span>{_confidence_chip(view.confidence)}</div>'
         )
     agree = "n/a" if view.agreement is None else f"{view.agreement:+.2f}"
-    backtest = "n/a" if view.query_pairwise is None else f"{view.query_pairwise:.2f} on {view.query_pairs} pairs"
+    backtest = "n/a" if view.query_pairwise is None else f"{view.query_pairwise:.2f} on {view.query_pairs} pair{'s' if view.query_pairs != 1 else ''}"
+    if view.query_pairwise is not None and (view.query_pairs or 0) < 10:
+        backtest += " (too few to judge)"
     model = (
         '<div class="sum-item"><span class="sum-k">Agreement with observed order</span>'
         f'<span class="sum-v">{e(agree)} <span class="muted small">Spearman, 1 = same order</span></span></div>'
@@ -1248,13 +1253,14 @@ def register(app: FastAPI, ui) -> None:
             return _draft_form_response(slug, query, values, error="The draft or original is over 2 MB. Nothing was run.", status=413)
         if not values["draft_html"].strip():
             return _draft_form_response(slug, query, values, error="Paste the draft HTML or text. Nothing was run.", status=400)
-        try:
-            url = serve._clean_url(serve._with_scheme(values["url"] or f"https://{project.site}/new-page/"), what="page URL")
-        except serve._InputError as exc:
-            return _draft_form_response(slug, query, values, error=str(exc), status=400)
         ctx, error = context_or_error(slug)
         if ctx is None:
             return _draft_form_response(slug, query, values, error=error, status=409)
+        typed = values["url"].strip() or ws.your_url(ctx, query, meta) or f"https://{project.site}/new-page/"
+        try:
+            url = serve._clean_url(serve._with_scheme(typed), what="page URL")
+        except serve._InputError as exc:
+            return _draft_form_response(slug, query, values, error=str(exc), status=400)
         original_html = None
         original_label = ""
         mode = values["original_mode"]

@@ -114,7 +114,10 @@ def test_home_lists_projects_keys_and_never_shows_a_key(site):
     page = site["client"].get("/")
     assert page.status_code == 200
     assert "Dirt Crew" in page.text and "/p/dirt-crew" in page.text
-    assert "not run: needs OPENAI_API_KEY" in page.text and "ready (SerpAPI)" in page.text
+    keys = site["client"].get("/p/dirt-crew/advanced").text
+    assert "not run: needs OPENAI_API_KEY" in keys and "ready (SerpAPI)" in keys and SECRET not in keys
+    setup = site["client"].get("/p/dirt-crew").text
+    assert "Live Google results" in setup and SECRET not in setup
     assert SECRET not in page.text
     assert "default-src 'self'" in page.headers["content-security-policy"]
     assert page.headers["x-frame-options"] == "DENY" and page.headers["x-content-type-options"] == "nosniff"
@@ -136,7 +139,7 @@ def test_pull_job_progress_and_project_page(site):
         assert name in steps
     assert steps["crawl"]["done"] == steps["crawl"]["total"] > 0
     assert [item["step"] for item in job["timings"]] == ["google", "engines", "crawl", "train", "save"]
-    page = site["client"].get("/p/dirt-crew")
+    page = site["client"].get("/p/dirt-crew/advanced")
     assert page.status_code == 200
     assert "Pull now" in page.text and "Test this page" in page.text
     assert "Step timings of pull" in page.text
@@ -149,7 +152,7 @@ def test_pull_job_progress_and_project_page(site):
     running = site["tmp"] / "projects" / "dirt-crew" / "pulls" / "29991231T000000Z"
     running.mkdir()
     try:
-        page = site["client"].get("/p/dirt-crew").text
+        page = site["client"].get("/p/dirt-crew/advanced").text
         assert "Last pull: <b>unknown time" not in page and "Last pull: <b>20" in page
     finally:
         running.rmdir()
@@ -222,7 +225,7 @@ def test_paste_and_preview_and_versions_and_compare(site):
     assert "content model" in compare.text and "Site history slot" in compare.text
     assert all(search in compare.text for search in SEARCHES)
     assert client.get("/p/dirt-crew/compare", params={"url": OUR_URL, "a": "v1", "b": "../../etc"}).status_code == 200
-    home = client.get("/p/dirt-crew")
+    home = client.get("/p/dirt-crew/advanced")
     assert "Tested pages" in home.text and "latest result" in home.text
 
 
@@ -269,7 +272,7 @@ def test_engines_page_and_searches_edit_and_import(site):
     assert engines.status_code == 200 and "not run: needs GEMINI_API_KEY" in engines.text and "Bing Copilot" in engines.text
     saved = client.post("/p/dirt-crew/searches", data={"csrf": token, "searches": "\n".join([*SEARCHES, "trench box rental"])}, follow_redirects=False)
     assert saved.status_code == 303
-    page = client.get("/p/dirt-crew")
+    page = client.get("/p/dirt-crew/advanced")
     assert "trench box rental" in page.text and "not run: needs SERPAPI_KEY" in page.text
     client.post("/p/dirt-crew/searches", data={"csrf": token, "searches": "\n".join(SEARCHES)})
     rows = ["query,url,position"] + [f"{search},{url},{index}" for search, urls in _results().items() for index, url in enumerate(urls, start=1)]
@@ -281,7 +284,7 @@ def test_engines_page_and_searches_edit_and_import(site):
     )
     assert imported.status_code == 303 and "imported-24" in imported.headers["location"]
     page = client.get(imported.headers["location"])
-    assert "Imported 24 REAL Google results" in page.text and "pull date not recorded" in page.text
+    assert "Imported 24 observed positions" in page.text and "pull date not recorded" in page.text
     bad = client.post("/p/dirt-crew/import", data={"csrf": token}, files={"csv_file": ("x.txt", b"a,b", "text/plain")})
     assert bad.status_code == 400
 
@@ -293,7 +296,9 @@ def test_new_project_without_google_shows_not_run_and_a_failed_pull_names_the_ke
     token = csrf(client)
     hostile = client.post("/projects", data={"csrf": token, "name": "<script>alert(1)</script>Crew", "site": "www.example.com", "searches": "a search"}, follow_redirects=False)
     slug = hostile.headers["location"].rsplit("/", 1)[1]
-    page = client.get(f"/p/{slug}")
+    setup = client.get(f"/p/{slug}")
+    assert "<script>alert(1)</script>" not in setup.text and "No positions yet" in setup.text
+    page = client.get(f"/p/{slug}/advanced")
     assert "<script>alert(1)</script>" not in page.text and "&lt;script&gt;" in page.text
     assert "not run: needs SERPAPI_KEY, SERPER_API_KEY, or DATAFORSEO_LOGIN and DATAFORSEO_PASSWORD" in page.text
     assert "This project has no REAL Google results yet" in page.text and "import a CSV" in page.text
@@ -314,7 +319,7 @@ def test_simulation_runs_with_an_llm_and_the_key_stays_hidden(site, tmp_path):
     )
     client = TestClient(app)
     token = csrf(client, "/p/dirt-crew")
-    form = client.get("/p/dirt-crew").text
+    form = client.get("/p/dirt-crew/advanced").text
     assert 'name="simulate"' in form
     started = client.post(
         "/p/dirt-crew/test",

@@ -701,7 +701,8 @@ def create_app(
         except LookupError:
             return _not_found(ui)
         running = ui.jobs.get(job) if job else ui.jobs.active(slug, "pull")
-        return _html_page(project.name, _project_body(ui, project, running, message=msg), ui, crumbs=[(project.name, f"/p/{slug}"), ("Advanced", None)])
+        body = _project_body(ui, project, running, message=msg) + _keys_box(ui)
+        return _html_page(project.name, body, ui, crumbs=[(project.name, f"/p/{slug}"), ("Advanced", None)])
 
     @app.post("/p/{slug}/pull")
     async def start_pull(slug: str, request: Request) -> Response:

@@ -576,6 +576,17 @@ def _value_text(name: str, value: float, doc) -> str:
     return f"{value:.2f}"
 
 
+def your_url(ctx, search: str, meta: WorkspaceMeta | None = None) -> str | None:
+    """The best observed position of your own site for this query, or None."""
+    entry = ctx.google.by_search().get(search)
+    if entry is None:
+        return None
+    for item in sorted(entry.results, key=lambda result: result.position):
+        if ctx.project.is_our_url(item.url):
+            return item.url
+    return None
+
+
 # ---------------------------------------------------------------------------
 # Draft test: original vs draft against the same candidates
 # ---------------------------------------------------------------------------

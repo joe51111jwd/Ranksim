@@ -677,9 +677,9 @@ def _place(ctx, search: str, intent: str, model, candidates: list, page) -> dict
         else:
             item, _doc = candidates[index]
             listing.append({"predicted": rank, "page": False, "url": item.url, "domain": item.domain or domain_of(item.url), "observed": item.position, "score": round(values[index], 4)})
-    confidence, _note = _gap_confidence(ctx, values, len(values) - 1, thin=False)
+    confidence, note = _gap_confidence(ctx, values, len(values) - 1, thin=False)
     features = {name: (None if raw[-1].get(name) is None or raw[-1].get(name) != raw[-1].get(name) else round(float(raw[-1][name]), 4)) for name in EVIDENCE_FEATURES}
-    return {"position": position, "of": len(docs), "score": round(mine, 4), "order": listing, "confidence": confidence, "features": features}
+    return {"position": position, "of": len(docs), "score": round(mine, 4), "order": listing, "confidence": confidence, "confidence_note": note, "features": features}
 
 
 def run_draft(
@@ -730,7 +730,7 @@ def run_draft(
         if ctx.topic is not None:
             check = ctx.topic.check(search, doc)
             if check.on_topic is False or check.status == "not checked":
-                return {"position": None, "of": len(candidates) + 1, "score": None, "order": [], "confidence": "n/a", "features": {}, "unplaced": _observed_text(check.text)}
+                return {"position": None, "of": len(candidates) + 1, "score": None, "order": [], "confidence": "n/a", "confidence_note": "", "features": {}, "unplaced": _observed_text(check.text)}
             placed_row = _place(ctx, search, intent, model, candidates, doc)
             if check.status == "uncertain":
                 placed_row["confidence"] = "UNSURE"
@@ -780,6 +780,8 @@ def run_draft(
         "topic_before": topic_before,
         "topic_after": topic_after,
         "model_kind": kind,
+        "calibration_note": ctx.fit.calibration.note,
+        "calibration_held_out": bool(ctx.fit.calibration.held_out),
         "query_pairwise": backtest.pairwise if backtest else None,
         "query_pairs": backtest.pairs if backtest else None,
         "overall_pairwise": ctx.metrics.pairwise,
@@ -859,6 +861,17 @@ def save_draft_run(project, run: dict, original_html: str | None, draft_html: st
     return run_id
 
 
+def _candidate_html_sha256(database: str, url: str) -> str | None:
+    """SHA-256 of the stored fetched HTML for this URL, or None when that HTML is absent."""
+    from aeo.ranksim.ledger import _sha
+    from aeo.ranksim.tester import stored_html
+
+    found = stored_html(database, url)
+    if found is None or not (found[0] or "").strip():
+        return None
+    return _sha(found[0])
+
+
 def _record_draft_ledger(database: str, run: dict, draft_html: str) -> None:
     """Append one PREDICTED draft to the audit database ledger. Synthetic runs are not recorded."""
     if run.get("dataset") == DATASET_SYNTHETIC:
@@ -872,6 +885,10 @@ def _record_draft_ledger(database: str, run: dict, draft_html: str) -> None:
     from aeo.ranksim.ledger import Call, record_prediction
     from aeo.ranksim.store import open_session
 
+    shown = str(after.get("confidence") or "UNSURE")
+    note = str(after.get("confidence_note") or run.get("calibration_note") or "")
+    if not note:
+        note = "PREDICTED slot among supplied candidates. Not a Google position."
     calls = []
     candidates = []
     yours = int(after["position"])
@@ -883,10 +900,16 @@ def _record_draft_ledger(database: str, run: dict, draft_html: str) -> None:
                 competitor_url=item["url"],
                 predicted="above" if yours < int(item["predicted"]) else "below",
                 score_gap=None,
-                confidence="UNSURE",
+                confidence=shown,
             )
         )
-        candidates.append({"url": item["url"], "html_sha256": None, "labeled_position": item.get("observed")})
+        candidates.append(
+            {
+                "url": item["url"],
+                "html_sha256": _candidate_html_sha256(database, item["url"]),
+                "labeled_position": item.get("observed"),
+            }
+        )
     session = open_session(database)
     try:
         record_prediction(
@@ -899,12 +922,89 @@ def _record_draft_ledger(database: str, run: dict, draft_html: str) -> None:
             predicted_of=int(after.get("of") or yours),
             candidates=candidates,
             calls=calls,
-            confidence="UNSURE",
-            calibration_note=str(run.get("notes") or "PREDICTED slot among supplied candidates. Not a Google position."),
-            provenance={"dataset": run.get("dataset") or "", "source": "workspace"},
+            confidence=shown,
+            calibration_note=note,
+            provenance={
+                "dataset": run.get("dataset") or "",
+                "source": "workspace",
+                "model_kind": run.get("model_kind") or "",
+                "instrument": "lambdamart",
+                "features": "FEATURE_NAMES",
+                "held_out": bool(run.get("calibration_held_out")),
+            },
         )
     finally:
         session.close()
+
+
+def record_observed_import(
+    database: str,
+    project,
+    meta: WorkspaceMeta,
+    data: bytes,
+    filename: str,
+    observed_on: str | None,
+    *,
+    public_demo: bool = False,
+) -> int:
+    """Append dated CSV rows as imported observations. Returns how many queries were written.
+
+    A row is recorded only when all of these hold:
+    - the server is not the public demo
+    - the project dataset is already ``observed`` (a later file, not the first file on a ``none`` project)
+    - the dataset is not ``synthetic`` and not ``historical``
+    - the upload includes a YYYY-MM-DD date the positions were seen
+
+    The first file on a ``none`` project can still be imported as training data by the caller.
+    It is not an observation. Synthetic and historical projects are demonstrations, not new
+    Google observations and not a confidence update. The stored row keeps the project slug,
+    the file name, the sha256 of the file bytes, and the upload time. The note says the file
+    is not a live Google pull.
+    """
+    if public_demo or not observed_on or not re.match(r"^\d{4}-\d{2}-\d{2}$", observed_on):
+        return 0
+    if meta.dataset != DATASET_OBSERVED:
+        return 0
+    import hashlib
+    import tempfile
+    from collections import defaultdict
+    from datetime import datetime, timezone
+
+    from aeo.ranksim.groundtruth import load_serp_file
+    from aeo.ranksim.ledger import record_outcome
+    from aeo.ranksim.store import open_session
+
+    folder_file = Path(filename)
+    digest = hashlib.sha256(data).hexdigest()
+    uploaded_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    grouped: dict[str, dict[str, int]] = defaultdict(dict)
+    with tempfile.NamedTemporaryFile(suffix=".csv") as handle:
+        handle.write(data)
+        handle.flush()
+        labels = load_serp_file(handle.name)
+    for label in labels:
+        grouped[label.query][label.url] = int(label.position)
+    session = open_session(database)
+    written = 0
+    try:
+        for query, positions in grouped.items():
+            record_outcome(
+                session,
+                query=query,
+                observed_on=observed_on,
+                provider="imported_csv",
+                positions=positions,
+                depth=max(positions.values()) if positions else None,
+                notes="Imported file. Not a live Google pull.",
+                project_slug=project.slug,
+                source_file=folder_file.name,
+                source_sha256=digest,
+                uploaded_at=uploaded_at,
+            )
+            written += 1
+    finally:
+        session.close()
+    return written
 
 
 def load_draft_run(project, run_id: str) -> dict | None:

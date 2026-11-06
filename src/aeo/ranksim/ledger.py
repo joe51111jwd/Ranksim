@@ -43,7 +43,6 @@ from aeo.crawl.urls import normalize_url
 from aeo.ranksim.store import Base
 
 GENESIS = "0" * 64
-PLACEHOLDER_SUBJECTS = frozenset({"https://draft.local/page"})
 _APPEND_LOCK = threading.Lock()
 
 
@@ -75,6 +74,12 @@ class RsOutcome(Base):
     depth: Mapped[int | None] = mapped_column(Integer, nullable=True)
     positions: Mapped[dict] = mapped_column(JSON)
     notes: Mapped[str] = mapped_column(Text, default="")
+    # Provenance of an imported observation file. Empty on rows written before these columns existed.
+    # Not a claim that the file is a live Google pull.
+    project_slug: Mapped[str] = mapped_column(String(200), default="")
+    source_file: Mapped[str] = mapped_column(String(500), default="")
+    source_sha256: Mapped[str] = mapped_column(String(64), default="")
+    uploaded_at: Mapped[str] = mapped_column(String(40), default="")
 
 
 @dataclass
@@ -165,8 +170,19 @@ def record_outcome(
     positions: dict[str, int],
     depth: int | None,
     notes: str = "",
+    project_slug: str = "",
+    source_file: str = "",
+    source_sha256: str = "",
+    uploaded_at: str = "",
 ) -> RsOutcome:
-    """Append an observed result list. ``positions`` maps URL to organic position."""
+    """Append an observed result list. ``positions`` maps URL to organic position.
+
+    What qualifies: a later dated file on a project whose dataset is already
+    ``observed``. The caller decides that. This function stores the project slug,
+    the source file name, the sha256 of the file bytes, and the upload time when
+    the caller has them. Those fields describe the file that was returned, not a
+    live Google pull. Rows from before these columns existed leave them empty.
+    """
     row = RsOutcome(
         observed_on=observed_on,
         query=" ".join(query.split()),
@@ -174,6 +190,10 @@ def record_outcome(
         depth=depth,
         positions={_key(url): int(position) for url, position in positions.items()},
         notes=notes,
+        project_slug=project_slug,
+        source_file=source_file,
+        source_sha256=source_sha256,
+        uploaded_at=uploaded_at,
     )
     session.add(row)
     session.commit()
@@ -272,43 +292,3 @@ def _key(url: str) -> str:
         return normalize_url(url)
     except ValueError:
         return url.strip()
-
-
-def record_check(session: Session, result, *, html: str, calibration, provenance: dict) -> RsPrediction | None:
-    """Append a draft check (check.CheckResult). Errors and empty checks are not predictions."""
-    if result.error or result.predicted_rank is None or not result.competitors:
-        return None
-    if result.url in PLACEHOLDER_SUBJECTS:
-        return None  # pasted HTML with no URL can never be observed in Google
-    candidates = [
-        {
-            "url": row.url,
-            "html_sha256": result.candidate_hashes.get(row.url),
-            "labeled_position": row.stored_position,
-        }
-        for row in result.competitors
-    ]
-    calls = [
-        Call(
-            competitor_url=row.url,
-            predicted="above" if row.outcome == "beats" else "below",
-            score_gap=None if row.score_gap is None else round(float(row.score_gap), 6),
-            confidence=getattr(row, "confidence", None)
-            or (calibration.label(abs(row.score_gap)) if row.score_gap is not None else "UNSURE"),
-        )
-        for row in result.competitors
-    ]
-    return record_prediction(
-        session,
-        kind="draft_check",
-        query=result.query,
-        subject_url=result.url,
-        subject_html=html,
-        predicted_rank=result.predicted_rank,
-        predicted_of=result.predicted_of,
-        candidates=candidates,
-        calls=calls,
-        confidence=result.confidence,
-        calibration_note=result.confidence_note,
-        provenance=provenance,
-    )

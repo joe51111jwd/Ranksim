@@ -86,3 +86,12 @@ def isolate_provider_env(monkeypatch: pytest.MonkeyPatch):
         return original(self, request, *args, **kwargs)
 
     monkeypatch.setattr(httpx.Client, "send", guarded)
+    original_async = httpx.AsyncClient.send
+
+    async def guarded_async(self, request, *args, **kwargs):
+        transport = getattr(self, "_transport", None)
+        if not isinstance(transport, httpx.MockTransport) and _paid_host(request.url.host):
+            raise AssertionError(f"blocked paid provider call during tests: {request.url.host}")
+        return await original_async(self, request, *args, **kwargs)
+
+    monkeypatch.setattr(httpx.AsyncClient, "send", guarded_async)

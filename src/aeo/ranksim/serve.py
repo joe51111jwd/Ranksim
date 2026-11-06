@@ -1105,9 +1105,15 @@ async def _import_csv(ui: UiState, project, form):
     label = f"uploaded file {name} ({when})"
     # The caller holds the project lock. The import reads and writes files, so it runs off the event loop.
     try:
-        return await run_in_threadpool(import_serp_csv, project, path, snapshot, label, add_searches=bool(form.get("add_searches")))
+        report = await run_in_threadpool(import_serp_csv, project, path, snapshot, label, add_searches=bool(form.get("add_searches")))
     except (ProjectError, ValueError, KeyError) as exc:
         raise _InputError(f"Import failed: {exc}") from exc
+    from aeo.ranksim import workspace as ws
+
+    # Record only a later dated file on an already-observed project. The dataset
+    # flip to observed happens after this returns, so a first file on a none project is not an outcome.
+    ws.record_observed_import(ui.database, project, ws.load_meta(project), data, name, snapshot, public_demo=ui.public_demo)
+    return report
 
 
 # ---------------------------------------------------------------------------

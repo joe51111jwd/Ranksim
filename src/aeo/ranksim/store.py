@@ -125,6 +125,30 @@ def database_url(url: str) -> str:
     return url
 
 
+def _ensure_outcome_provenance_columns(engine) -> None:
+    """Add import-provenance columns to an rs_outcomes table created before they existed."""
+    from sqlalchemy import inspect, text
+
+    inspector = inspect(engine)
+    if "rs_outcomes" not in set(inspector.get_table_names()):
+        return
+    have = {column["name"] for column in inspector.get_columns("rs_outcomes")}
+    statements = []
+    for name, ddl in (
+        ("project_slug", "VARCHAR(200) DEFAULT ''"),
+        ("source_file", "VARCHAR(500) DEFAULT ''"),
+        ("source_sha256", "VARCHAR(64) DEFAULT ''"),
+        ("uploaded_at", "VARCHAR(40) DEFAULT ''"),
+    ):
+        if name not in have:
+            statements.append(f"ALTER TABLE rs_outcomes ADD COLUMN {name} {ddl}")
+    if not statements:
+        return
+    with engine.begin() as connection:
+        for statement in statements:
+            connection.execute(text(statement))
+
+
 def session_factory(url: str) -> sessionmaker:
     url = database_url(url)
     if url not in _factories:
@@ -132,6 +156,7 @@ def session_factory(url: str) -> sessionmaker:
 
         engine = create_engine(url, future=True)
         Base.metadata.create_all(engine)
+        _ensure_outcome_provenance_columns(engine)
         _factories[url] = sessionmaker(bind=engine, expire_on_commit=False, future=True)
     return _factories[url]
 

@@ -18,6 +18,35 @@ def test_dummy_openrouter_env_leaves_the_stub_llm(monkeypatch: pytest.MonkeyPatc
     assert client.available is False
 
 
+def test_async_paid_host_is_blocked_and_mock_transport_is_allowed():
+    """No provider module constructs AsyncClient. The guard still blocks it without a live call."""
+    import asyncio
+    from pathlib import Path
+
+    import httpx
+
+    source = "\n".join(path.read_text(encoding="utf-8") for path in Path("src").rglob("*.py"))
+    assert "AsyncClient" not in source
+
+    async def blocked():
+        async with httpx.AsyncClient() as client:
+            request = httpx.Request("GET", "https://openrouter.ai/api/v1/models")
+            with pytest.raises(AssertionError, match="blocked paid provider call"):
+                await client.send(request)
+
+    async def allowed():
+        def handler(request):
+            return httpx.Response(200, json={"ok": True})
+
+        transport = httpx.MockTransport(handler)
+        async with httpx.AsyncClient(transport=transport) as client:
+            response = await client.get("https://openrouter.ai/api/v1/models")
+            assert response.status_code == 200
+
+    asyncio.run(blocked())
+    asyncio.run(allowed())
+
+
 def test_dummy_serp_env_still_refuses_to_invent_google(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv("SERPER_API_KEY", "serper-dummy")
     monkeypatch.setenv("BRAVE_API_KEY", "brave-dummy")

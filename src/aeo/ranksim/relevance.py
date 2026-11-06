@@ -39,8 +39,11 @@ READABLE_WORDS = 30
 REPETITION_FLOOR = 0.2
 TOPIC_MARGIN = 0.5
 TOPIC_FLOOR_DEFAULT = 0.02
-# Under the clone-similarity floor, a page is uncertain only when it still matches
-# this search more than every other stored search. A near-zero score stays off topic.
+# Under the clone-similarity floor, a page is uncertain when it still matches this
+# search more than every other stored search. With only one stored search there is
+# no comparison, so a low cosine is unvalidated, not an off-topic decision.
+# A near-zero score stays off topic when another search exists and this page is
+# not closer to the query. The word-count floor and TOPIC_MARGIN are unchanged.
 TOPIC_SEPARATION = 0.02
 MIN_READABLE = 3
 TITLE_NORM_SHARE = 0.6
@@ -121,7 +124,7 @@ class TopicCheck:
 
     search: str
     on_topic: bool | None  # None: not checked (no readable text, or nothing stored to compare with)
-    status: str  # 'on topic' | 'off topic' | 'repetitive' | 'not checked'
+    status: str  # 'on topic' | 'off topic' | 'repetitive' | 'not checked' | 'uncertain'
     words: list[str] = field(default_factory=list)
     found: list[str] = field(default_factory=list)
     missing: list[str] = field(default_factory=list)
@@ -365,9 +368,18 @@ class TopicModel:
             return result
         if score is not None and score < self.topic_floor:
             other_name, other_score = self._best_other_search(vector, search)
+            if other_score is None:
+                result.on_topic = None
+                result.status = "uncertain"
+                result.text = (
+                    f"Low cosine to stored pages, unvalidated: topic match {score:.3f} is under the floor "
+                    f"{self.topic_floor:.3f} (half the lowest match among stored pages). "
+                    "This project has no other stored search to compare with, so this is not an off-topic decision. "
+                    "A PREDICTED slot is still shown. Confidence stays UNSURE."
+                )
+                return result
             closer = (
-                other_score is not None
-                and score >= other_score + TOPIC_SEPARATION
+                score >= other_score + TOPIC_SEPARATION
                 and score >= TOPIC_FLOOR_DEFAULT
             )
             if closer:

@@ -48,19 +48,38 @@ def test_dated_import_can_score_a_later_prediction_and_synthetic_is_skipped(tmp_
             "after": {
                 "position": 1,
                 "of": 2,
+                "confidence": "UNSURE",
+                "confidence_note": "Held-out check failed. Every call stays UNSURE.",
                 "order": [
                     {"page": True, "predicted": 1},
                     {"page": False, "url": "https://example.com/b", "predicted": 2, "observed": 1},
                 ],
             },
+            "notes": ["The draft has 10 words."],
+            "calibration_note": "Held-out check failed. Every call stays UNSURE.",
+            "calibration_held_out": False,
+            "model_kind": "held-out model: trained on the other searches, never saw this one",
         },
         "<p>vinyl fence</p>",
     )
     session = open_session(database)
     try:
+        from aeo.ranksim.ledger import RsPrediction
+
+        row = session.query(RsPrediction).one()
         score = score_ledger(session)
     finally:
         session.close()
     assert score.predictions == 1
     assert score.resolved == 0
     assert score.accuracy is None
+    assert row.payload["confidence"] == "UNSURE"
+    assert row.payload["calls"][0]["confidence"] == "UNSURE"
+    assert row.payload["calibration_note"] == "Held-out check failed. Every call stays UNSURE."
+    assert "10 words" not in row.payload["calibration_note"]
+    assert row.payload["candidates"][0]["html_sha256"] is None
+    assert row.payload["provenance"]["instrument"] == "lambdamart"
+    assert row.payload["provenance"]["held_out"] is False
+    import aeo.ranksim.ledger as ledger
+
+    assert not hasattr(ledger, "record_check")

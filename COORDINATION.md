@@ -135,6 +135,21 @@ James moved the UI and end-to-end web flow to Claude at about 3:30pm Eastern and
 - Not claimed: a separate review of confidence, ledger, and topic fixtures. This handoff does not say that review passed.
 - Next: do not merge. Do not deploy.
 
+### 2026-11-06 — SEO Tool Builder, review fixes on the same pull request
+
+- Branch: `cursor/integration-review-175f`. Pull request: https://github.com/joe51111jwd/Ranksim/pull/5
+- This branch has one active prediction record store: the database ledger. PR #1's CSV track-record ledger is not in this tree.
+- `ledger.record_check` had no callers. It was removed. It was the path that could label a call with the in-sample `calibration.label`. The three-screen comparison and draft use `product_label`.
+- A non-synthetic project that does not pass `validate_calibration` shows UNSURE on Comparisons and on the saved draft, and the ledger row stores that same UNSURE plus the calibration note. Candidate `html_sha256` is the stored fetched HTML. It stays empty when that HTML is absent.
+- A dated CSV is recorded only for a project whose dataset is already `observed`, and not on the public demo. A `none` project's first file, and synthetic or historical demos, are not new observations. The outcome stores project, file name, sha256, and upload time. The note says it is not a live Google pull.
+- One stored search: a draft under the clone floor with the query words present was off topic (measured cosine 0.172, floor 0.50). It is now unvalidated, `on_topic` is unset, and a slot can still be shown as UNSURE. A page that misses the query-word minimum stays off topic. `TOPIC_MARGIN` is still 0.5.
+- `fit_lambdamart(monotone_up=None)` still uses `MONOTONE_UP`. A passed set is applied. On a 6-row toy set, omitting the argument and passing `MONOTONE_UP` produced the same scores. That is not an accuracy result.
+- No provider module constructs `httpx.AsyncClient`. The test guard now blocks `AsyncClient.send` to paid hosts the same way, and the test does not call a provider.
+- GitHub Actions run 42287478698 on `5e4dae264ec4bb143dae2ddc5993fc530914bc00`: 6 jobs, conclusion failure. Python 3.12 and 3.13, keys unset and fake keys, succeeded (4). Python 3.11, both key modes, failed `test_fast_loop_moves_predicted_position_when_the_page_gets_stronger` because a float tie already placed the weak page first. The fixture rival is longer so the weak page starts behind it. Ranker code was not changed for that.
+- Local: Python 3.12 keys unset 303 passed, 1 warning, 13.12s; dummy keys 303 passed, 13.40s. Python 3.11 keys unset 303 passed, 14.68s; fake keys matching the workflow 303 passed, 13.45s.
+- Not claimed: the separate review of these fixtures, or a correct evaluation of the 35 of 135 labeled rows that have HTML.
+- Next: do not merge. Do not deploy.
+
 ### Template
 
 Copy this block. Do not delete earlier handoffs.

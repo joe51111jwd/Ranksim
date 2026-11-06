@@ -125,16 +125,16 @@ Authoritative task state for every agent. Update the row. Do not delete it.
 
 ### T-006 — Missing HTML coverage
 
-- Owner: none
-- Status: released
-- Branch: none
-- PR: none
-- Scope: not started. Recover labeled rows that already have a local snapshot, without inventing page text and without a paid SERP pull.
-- Files: none claimed.
-- Blockers: none. Do not start by editing Claude UI files.
-- Request: none.
-- Next: claim this row before any edit. Pending until someone claims it.
-- Evidence: none. Noted on 2026-11-06 only so it is not forgotten.
+- Owner: SEO Tool Builder
+- Status: in_progress
+- Branch: `cursor/t006-html-coverage-175f`
+- PR: none yet
+- Scope: join labeled rows to local HTML snapshots. No UI, no crawl, no invented text. Do not edit Claude's `benchmark.py`, `ledger.py`, `snapshot.py`, `serve.py`, `demo.py`, `project.py`, or `check.py`.
+- Files: `src/aeo/ranksim/snapshot_join.py`, `src/aeo/ranksim/coverage.py` (normalized snapshot match only), `tests/test_snapshot_join.py`, `docs/coverage_recovery.md`, this board row.
+- Blockers: none yet.
+- Request: none. `T-001` stays with Claude.
+- Next: tests, then the join report. Mark done only with measured before and after counts.
+- Evidence: not run yet.
 - Updated: 2026-11-06
 - Stale-check: none
 

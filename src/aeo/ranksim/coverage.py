@@ -11,6 +11,7 @@ import hashlib
 import json
 from dataclasses import dataclass, field
 
+from aeo.crawl.urls import normalize_url
 from aeo.ranksim.features import FEATURE_NAMES
 from aeo.ranksim.groundtruth import SerpLabel
 from aeo.ranksim.lambdamart import _lookup_page
@@ -58,7 +59,7 @@ def audit_labels(
     snapshot_urls: set[str] | None = None,
 ) -> CoverageAudit:
     """Join labels to stored pages. Snapshots name local HTML that is not indexed yet."""
-    snapshots = snapshot_urls or set()
+    snapshots = _snapshot_keys(snapshot_urls or set())
     stored_by_query: dict[str, list[SerpLabel]] = {}
     preliminary: list[tuple[SerpLabel, str, str]] = []
     for label in labels:
@@ -131,6 +132,16 @@ def audit_labels(
         note=note,
         rows=rows,
     )
+
+
+def _snapshot_keys(urls: set[str]) -> set[str]:
+    keys = set(urls)
+    for url in urls:
+        try:
+            keys.add(normalize_url(url))
+        except ValueError:
+            continue
+    return keys
 
 
 def same_pair_cohort(left: CoverageAudit, right: CoverageAudit) -> bool:

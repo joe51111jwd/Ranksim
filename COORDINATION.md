@@ -125,16 +125,16 @@ Authoritative task state for every agent. Update the row. Do not delete it.
 
 ### T-006 — Missing HTML coverage
 
-- Owner: none
-- Status: released
-- Branch: none
-- PR: none
-- Scope: not started. Recover labeled rows that already have a local snapshot, without inventing page text and without a paid SERP pull.
-- Files: none claimed.
-- Blockers: none. Do not start by editing Claude UI files.
-- Request: none.
-- Next: claim this row before any edit. Pending until someone claims it.
-- Evidence: none. Noted on 2026-11-06 only so it is not forgotten.
+- Owner: SEO Tool Builder
+- Status: done
+- Branch: `cursor/t006-html-coverage-175f`
+- PR: https://github.com/joe51111jwd/Ranksim/pull/4 (base `cursor/mvp-eod-design-175f`, not `main`, and not more commits on pull request 1)
+- Scope: join labeled rows to local HTML snapshots. No UI, no crawl, no invented text. Did not edit Claude's `benchmark.py`, `ledger.py`, `snapshot.py`, `serve.py`, `demo.py`, `project.py`, `check.py`, or `index_serp.py`.
+- Files: `src/aeo/ranksim/snapshot_join.py`, `src/aeo/ranksim/coverage.py` (normalized snapshot match only), `tests/test_snapshot_join.py`, `tests/test_coverage_audit.py`, `docs/coverage_recovery.md`, `docs/accuracy.md` (one pointer), this board row.
+- Blockers: 100 labeled rows have no local HTML. `index-serp` on Claude's audit branch still matches snapshots by the exact label string. This branch did not change that file.
+- Request: none. `T-001` stays with Claude. Do not read silence as approval to crawl or to publish the corpus.
+- Next: released. Do not start another task from this result.
+- Evidence: exact join and normalized join are the same: 35 of 135 rows, 12 queries, 33 pairs. Normalization added 0 rows. Dataset `ffb8bfab9e9244ce` uses `saved_html` (29 rows) and `pr8_v3` (6 rows). Leave-one-query-out pairwise 0.545 on those 33 pairs. The same rows with `pr8` instead of `pr8_v3` are 0.515. AI relevance was not measured. `python3 -m pytest` with dummy `OPENROUTER_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `SERPER_API_KEY`, and `BRAVE_API_KEY`: 79 passed, 1 Starlette warning, 4.14s, on 2026-11-06. Not a broad claim.
 - Updated: 2026-11-06
 - Stale-check: none
 

@@ -76,6 +76,14 @@ def test_smartcrew_export_denominator_with_no_index():
     assert audit.queries_with_pairs == 0
     assert audit.pair_cohort_id == ""
     assert audit.broad_claim is False
+    slash_only = audit_labels(
+        [SerpLabel("q", "https://example.com/a", 1, None, "manual_csv")],
+        {},
+        label_source="fixture",
+        page_source="empty",
+        snapshot_urls={"https://example.com/a/"},
+    )
+    assert slash_only.rows[0].reason == "snapshot_not_in_index"
     known = "https://www.reddit.com/r/estimators/comments/11jjop2/estimating_software_options/"
     matched = next(row for row in audit.rows if row.url == known)
     assert matched.reason == "snapshot_not_in_index"

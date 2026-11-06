@@ -104,7 +104,7 @@ James moved the UI and end-to-end web flow to Claude at about 3:30pm Eastern and
 
 ### 2026-11-06 — SEO Tool Builder, public demo copy
 
-- Branch: `cursor/integration-review-175f` (based on PR #2 at `7fc7d0f`, not a merge of PR #3)
+- Branch: `cursor/integration-review-175f` (based on PR #2 at `7fc7d0f`, not a merge of PR #3). Pull request: https://github.com/joe51111jwd/Ranksim/pull/5
 - Claimed: public draft copy, synthetic fixture wording, and a regression that the public host does not store pasted drafts
 - Files: `src/aeo/ranksim/workspace_ui.py`, `tests/test_workspace.py`
 - Not claimed: Claude UI redesign, PR #3 ledger, crawler, or benchmark files

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from datetime import date
 
+import pytest
+
 from aeo.ranksim.cli import main
 from aeo.ranksim.confidence import Calibration, LooFit
 from aeo.ranksim.features import PageDoc
@@ -71,3 +73,84 @@ def test_cli_tester_prints_unsure_for_synthetic_held_out_calibration(tmp_path, c
     printed = capsys.readouterr().out
     assert '"confidence": "UNSURE"' in printed
     assert "CLEARER" not in printed
+
+
+def test_loaded_synthetic_demo_stays_unsure_when_holdout_would_be_clearer(tmp_path, monkeypatch):
+    from aeo.ranksim import workspace as ws
+    from aeo.ranksim.confidence import loo_fit as real_loo
+    from aeo.ranksim.groundtruth import load_labels
+    from aeo.ranksim.tester import _score_query, load_sim_context
+    from test_workspace import make_settings
+
+    settings = make_settings(tmp_path)
+    project, _report = ws.load_synthetic_demo(tmp_path / "projects", settings, settings.ranksim_database_url)
+    loaded = load_labels(project.dir / "label.json")
+    assert loaded.source == "synthetic"
+    assert loaded.rows
+
+    def held_out(examples, feature_names=None, keep_models=False):
+        fit = real_loo(examples, feature_names, keep_models=keep_models)
+        fit.calibration = Calibration(0.01, 0.99, 0.5, "Held-out check passed.", held_out=True)
+        return fit
+
+    monkeypatch.setattr("aeo.ranksim.tester.loo_fit", held_out)
+    ctx = load_sim_context(settings.ranksim_database_url, str(project.dir / "label.json"), graph_path=None)
+    assert ctx.synthetic is True
+    assert ctx.fit.calibration.product_label(2, synthetic=False)[0] == "CLEARER"
+    row = loaded.rows[0]
+    html = ws.synthetic_page(row.url) or "<html><title>Vinyl</title><body><p>Vinyl fence.</p></body></html>"
+    scored, _words = _score_query(ctx, row.url, html, row.query)
+    assert scored.confidence == "UNSURE"
+    assert scored.error == ""
+
+
+def test_google_auto_and_imported_sources_are_not_synthetic(tmp_path, monkeypatch):
+    from aeo.ranksim.confidence import loo_fit as real_loo
+    from aeo.ranksim.groundtruth import live_google_source, load_labels, synthetic_source, write_label_set
+    from aeo.ranksim.loop import FetchResult, store_fetched_page
+    from aeo.ranksim.store import open_session
+    from aeo.ranksim.tester import load_sim_context
+
+    database = f"sqlite:///{tmp_path / 'rank.db'}"
+    query = "fence cost"
+    rows = [
+        SerpLabel(query, "https://heldout.invalid/a", 1, None, "google_auto"),
+        SerpLabel(query, "https://heldout.invalid/b", 2, None, "google_auto"),
+        SerpLabel("other query", "https://heldout.invalid/c", 1, None, "google_auto"),
+        SerpLabel("other query", "https://heldout.invalid/d", 2, None, "google_auto"),
+    ]
+    session = open_session(database)
+    try:
+        for row in rows:
+            store_fetched_page(session, FetchResult(url=row.url, html=f"<html><title>{row.query}</title><body><p>{row.query} page.</p></body></html>", status="fetched"))
+    finally:
+        session.close()
+    google = tmp_path / "google"
+    write_label_set(google / "label.json", "google_auto", "2020-01-02", rows)
+    imported = tmp_path / "imported"
+    write_label_set(imported / "label.json", "imported_serp", "2020-01-03", rows)
+
+    def held_out(examples, feature_names=None, keep_models=False):
+        fit = real_loo(examples, feature_names, keep_models=keep_models)
+        fit.calibration = Calibration(0.01, 0.99, 0.5, "Held-out check passed.", held_out=True)
+        return fit
+
+    monkeypatch.setattr("aeo.ranksim.tester.loo_fit", held_out)
+    google_ctx = load_sim_context(database, str(google / "label.json"), graph_path=None)
+    imported_ctx = load_sim_context(database, str(imported / "label.json"), graph_path=None)
+    assert load_labels(google / "label.json").source == "google_auto"
+    assert live_google_source("google_auto") and not synthetic_source("google_auto")
+    assert google_ctx.synthetic is False
+    assert imported_ctx.synthetic is False
+    assert any("Not a live Google pull" in note for note in imported_ctx.notes)
+    assert not any("Not a live Google pull" in note for note in google_ctx.notes)
+    broken = tmp_path / "broken"
+    broken.mkdir()
+    (broken / "label.json").write_text("{", encoding="utf-8")
+    with pytest.raises(ValueError, match="No confidence call was made"):
+        load_sim_context(database, str(broken / "label.json"), graph_path=None)
+    missing = tmp_path / "missing"
+    missing.mkdir()
+    (missing / "label.json").write_text('{"rows": [{"query": "q", "url": "https://heldout.invalid/a", "position": 1}]}', encoding="utf-8")
+    with pytest.raises(ValueError, match="no source"):
+        load_sim_context(database, str(missing / "label.json"), graph_path=None)

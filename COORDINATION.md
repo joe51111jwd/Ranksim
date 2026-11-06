@@ -171,6 +171,14 @@ James moved the UI and end-to-end web flow to Claude at about 3:30pm Eastern and
 - Local: Python 3.12 keys unset 310 passed, 1 warning, 13.47s; dummy keys 310 passed, 13.58s. Python 3.11.18 keys unset 310 passed, 13.67s; fake keys 310 passed, 13.70s.
 - Not merged. Not deployed. 35 of 135 labeled rows have HTML.
 
+### 2026-11-06 — SEO Tool Builder, label source for CLI confidence
+
+- Branch: `cursor/integration-review-175f`. Pull request: https://github.com/joe51111jwd/Ranksim/pull/5
+- `label.json` records `source`. The synthetic demo writes `synthetic`. A dated import writes `imported_serp`. A Google API pull writes `google_auto`.
+- The tester and `ai-eval` set synthetic only when that loaded source is `synthetic`. `google_auto` and `imported_serp` are not synthetic. An import is not a live Google pull. A missing source or a broken file raises and makes no confidence call.
+- Local: Python 3.12 keys unset 312 passed, 1 warning, 14.11s; dummy keys 312 passed, 14.90s. Python 3.11.18 keys unset 312 passed, 14.62s; fake keys 312 passed, 14.54s.
+- Not merged. Not deployed. The isolated preview stays on the previous head.
+
 ### Template
 
 Copy this block. Do not delete earlier handoffs.

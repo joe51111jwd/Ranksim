@@ -24,7 +24,7 @@ from aeo.crawl.urls import normalize_url
 from aeo.ranksim.check import assemble_query_docs, check_draft
 from aeo.ranksim.confidence import LooFit, loo_fit
 from aeo.ranksim.features import THIN_WORD_GATE, url_text
-from aeo.ranksim.groundtruth import SerpLabel, load_serp_file
+from aeo.ranksim.groundtruth import SerpLabel
 from aeo.ranksim.loop import page_from_html
 from aeo.ranksim.score import HAND_WEIGHTS, score_pages
 from aeo.ranksim.whatif import worse_than_live
@@ -133,10 +133,12 @@ def load_sim_context(
     from aeo.ranksim.store import open_session
 
     today = today or date.today()
-    labels = load_serp_file(serp_file)
+    labels, synthetic, source_note = _labels_for_scoring(serp_file)
     queries = list(dict.fromkeys(row.query for row in labels))
     intents = {row.query: row.intent for row in build_keywords()}
     notes = [seed_corpus_if_empty(database)]
+    if source_note:
+        notes.append(source_note)
     session = open_session(database)
     try:
         pages = load_corpus_docs(session)
@@ -160,6 +162,7 @@ def load_sim_context(
         database=database,
         notes=notes,
         serp_file=str(serp_file),
+        synthetic=synthetic,
     )
 
 
@@ -387,6 +390,27 @@ def score_page(
         scores=rows,
         created=created,
     )
+
+
+def _labels_for_scoring(path: str | Path) -> tuple[list[SerpLabel], bool, str]:
+    """Rows, whether the loaded source is the synthetic demo, and a visible note.
+
+    A label.json with no source, or one that cannot be parsed, raises. That is not
+    treated as observed Google and no confidence call should follow. A CSV with no
+    label.json is not marked synthetic and is not a live Google pull.
+    """
+    from aeo.ranksim.groundtruth import label_json_beside, live_google_source, load_labels, load_serp_file, synthetic_source
+
+    found = label_json_beside(path)
+    if found is not None:
+        loaded = load_labels(found)
+        if synthetic_source(loaded.source):
+            return loaded.rows, True, ""
+        if live_google_source(loaded.source):
+            return loaded.rows, False, ""
+        return loaded.rows, False, f"Positions source {loaded.source}. Not a live Google pull."
+    rows = load_serp_file(path)
+    return rows, False, "No label.json source was loaded. This is not marked synthetic and is not a live Google pull."
 
 
 def _score_query(ctx: SimContext, url: str, html: str, query: str) -> tuple[QueryScore, int | None]:

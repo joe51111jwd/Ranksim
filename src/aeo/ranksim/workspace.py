@@ -1273,7 +1273,7 @@ def load_synthetic_demo(root, settings, database: str):
     folder.mkdir(parents=True, exist_ok=True)
     path = folder / "synthetic-serp.csv"
     path.write_text(synthetic_csv(), encoding="utf-8")
-    import_serp_csv(project, path, None, SYNTHETIC_SOURCE)
+    import_serp_csv(project, path, None, SYNTHETIC_SOURCE, label_source="synthetic")
     report = pull(
         project,
         settings,

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import csv
+import json
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -14,6 +15,82 @@ class SerpLabel:
     position: float
     prior_position: float | None
     source: str
+
+
+@dataclass(frozen=True)
+class LabelSet:
+    """One labeled result file. ``source`` is the file's own provenance, not a guess from the URL host."""
+
+    source: str
+    pulled_at: str | None
+    rows: list[SerpLabel]
+
+
+def write_label_set(path: str | Path, source: str, pulled_at: str | None, rows: list[SerpLabel]) -> None:
+    """Write label.json. ``source`` is stored as given: synthetic, google_auto, or imported_serp."""
+    payload = {
+        "source": source,
+        "pulled_at": pulled_at,
+        "rows": [{"query": row.query, "url": row.url, "position": row.position} for row in rows],
+    }
+    Path(path).parent.mkdir(parents=True, exist_ok=True)
+    Path(path).write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+
+
+def load_labels(path: str | Path) -> LabelSet:
+    """Read label.json. A missing source or a broken file is an error, not an observed Google set."""
+    file_path = Path(path)
+    if file_path.is_dir():
+        file_path = file_path / "label.json"
+    try:
+        data = json.loads(file_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ValueError(f"{file_path} could not be read ({exc}). No confidence call was made.") from exc
+    if not isinstance(data, dict) or not str(data.get("source") or "").strip():
+        raise ValueError(
+            f"{file_path} has no source. It is not treated as synthetic or as observed Google. No confidence call was made."
+        )
+    source = str(data["source"]).strip()
+    pulled = data.get("pulled_at")
+    pulled_at = str(pulled).strip() if isinstance(pulled, str) and pulled.strip() else None
+    rows: list[SerpLabel] = []
+    for item in data.get("rows") or []:
+        if not isinstance(item, dict):
+            continue
+        query = " ".join(str(item.get("query") or "").split())
+        url = str(item.get("url") or "").strip()
+        position = _float(str(item.get("position") if item.get("position") is not None else ""))
+        if not query or not url or position is None or position <= 0:
+            continue
+        rows.append(SerpLabel(query=query, url=url, position=position, prior_position=None, source=source))
+    if not rows:
+        raise ValueError(f"{file_path} has no usable rows. No confidence call was made.")
+    return LabelSet(source=source, pulled_at=pulled_at, rows=rows)
+
+
+def label_json_beside(path: str | Path) -> Path | None:
+    """The label.json for a tester path: the file itself, or label.json beside a CSV."""
+    candidate = Path(path)
+    if candidate.is_dir():
+        found = candidate / "label.json"
+        return found if found.is_file() else None
+    if candidate.name == "label.json":
+        return candidate if candidate.is_file() else None
+    for folder in (candidate.parent, candidate.parent.parent):
+        found = folder / "label.json"
+        if found.is_file():
+            return found
+    return None
+
+
+def synthetic_source(source: str) -> bool:
+    """True only for the synthetic demo's own source value."""
+    return source == "synthetic"
+
+
+def live_google_source(source: str) -> bool:
+    """True only for a recorded Google pull. An import is not a live pull."""
+    return source == "google_auto"
 
 
 def load_serp_file(path: str | Path) -> list[SerpLabel]:

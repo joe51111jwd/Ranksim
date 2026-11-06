@@ -1058,6 +1058,7 @@ def import_serp_csv(
     *,
     add_searches: bool = False,
     now: datetime | None = None,
+    label_source: str = "imported_serp",
 ) -> ImportReport:
     """Seed a REAL Google pull from a query,url,position file. Nothing is fetched or invented.
 
@@ -1131,6 +1132,10 @@ def import_serp_csv(
     )
     folder = project.dir / "pulls" / pull_id
     _write_json(folder / "google.json", clean(snapshot.to_dict()))
+    from aeo.ranksim.groundtruth import write_label_set
+
+    kept = [row for row in labels if spelling.get(_fold(row.query)) is not None]
+    write_label_set(project.dir / "label.json", label_source, pulled_at, kept)
     imported = [item.search for item in searches]
     missing = [search for search in project.searches if search not in imported]
     report = PullReport(
@@ -1333,6 +1338,17 @@ def pull(
         save_engines(folder, engines_snapshot)
     _save_engine_atomic(folder / "engine", engine)
     _write_json(folder / "google.json", clean(snapshot.to_dict()))
+    if snapshot.kind == "api":
+        from aeo.ranksim.groundtruth import SerpLabel, write_label_set
+
+        api_rows = [
+            SerpLabel(entry.search, item.url, float(item.position), None, "google_auto")
+            for entry in snapshot.searches
+            for item in entry.results
+        ]
+        if api_rows:
+            pulled = next((entry.pulled_at for entry in snapshot.searches if entry.pulled_at), None)
+            write_label_set(project.dir / "label.json", "google_auto", pulled, api_rows)
     steps.append(StepTiming("save", _round(time.perf_counter() - step_start), f"Saved to {folder}."))
     finished_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
     sources = sorted({item.source for item in snapshot.searches if item.results})

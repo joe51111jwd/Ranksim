@@ -685,14 +685,17 @@ def _ai_eval(settings, database: str, args) -> None:
     from aeo.ranksim.check import check_draft
     from aeo.ranksim.confidence import loo_fit
     from aeo.ranksim.corpus import load_corpus_docs
-    from aeo.ranksim.groundtruth import load_serp_file
     from aeo.ranksim.judge import collect_judge_scores, relevance_experiment
     from aeo.ranksim.keywords import build_keywords
     from aeo.ranksim.lambdamart import build_examples
     from aeo.ranksim.llm import resolve_llm
 
     print(seed_corpus_if_empty(database))
-    labels = load_serp_file(args.serp)
+    from aeo.ranksim.tester import _labels_for_scoring
+
+    labels, label_synthetic, label_note = _labels_for_scoring(args.serp)
+    if label_note:
+        print(label_note)
     intents = {row.query: row.intent for row in build_keywords()}
     session = open_session(database)
     try:
@@ -730,6 +733,7 @@ def _ai_eval(settings, database: str, args) -> None:
             intent=intents.get(args.query, "commercial"),
             llm=llm,
             run_ai=True,
+            synthetic=label_synthetic,
         )
         print(f"Fix loop. Query: {args.query}")
         print(f"URL: {args.url}")

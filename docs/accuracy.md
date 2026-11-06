@@ -71,7 +71,7 @@ A unit-test fixture can show the trainer recover an obvious order. That fixture 
 
 ## Track record
 
-Published accuracy over time is a later REAL snapshot compared with ranks that were recorded as PREDICTED before that snapshot. The command is `python -m aeo.ranksim track-record score`. It scores only URLs that appear in both files. It does not train on the later positions. See `docs/track_record.md`. A browser JSONL capture can be converted with `import-serp` for an authorized local file. That command keeps http(s) URLs only and does not invent the rest. No accuracy percentage is claimed here.
+Published accuracy over time is a later REAL snapshot compared with ranks that were recorded as PREDICTED before that snapshot. The command is `python -m aeo.ranksim track-record score`. It scores only URLs that appear in both files. It does not train on the later positions. See `docs/track_record.md`. A browser JSONL capture can be converted with `import-serp` for an authorized local file. That command keeps http(s) URLs only and does not invent the rest. No accuracy percentage is claimed here. Local HTML coverage for the committed label file is in `docs/coverage_recovery.md`. Normalization did not add rows.
 
 ## Sources
 

@@ -39,12 +39,10 @@ READABLE_WORDS = 30
 REPETITION_FLOOR = 0.2
 TOPIC_MARGIN = 0.5
 TOPIC_FLOOR_DEFAULT = 0.02
-# Under the clone-similarity floor, a page is uncertain when it still matches this
-# search more than every other stored search. With only one stored search there is
-# no comparison, so a low cosine is unvalidated, not an off-topic decision.
-# A near-zero score stays off topic when another search exists and this page is
-# not closer to the query. The word-count floor and TOPIC_MARGIN are unchanged.
-TOPIC_SEPARATION = 0.02
+# Query-supported pages under the clone floor are unvalidated, not off topic.
+# A page at or above that floor is on topic only when no other stored search
+# matches it as well or better, unless the page is a stored page of this search.
+# The word-count floor and TOPIC_MARGIN are unchanged. No extra gap is applied.
 MIN_READABLE = 3
 TITLE_NORM_SHARE = 0.6
 # Modifiers a to-do item should not ask a page to "cover" on their own: 'all in one' or 'best' are phrasing, not topics.
@@ -366,43 +364,45 @@ class TopicModel:
                 "PREDICTED: not in the top 10."
             )
             return result
-        if score is not None and score < self.topic_floor:
+        owned = any(stored.url == doc.url for stored in (self.readable.get(search) or []))
+        other_name, other_score = (None, None)
+        if score is not None:
             other_name, other_score = self._best_other_search(vector, search)
-            if other_score is None:
+        # A stored page of this search keeps an on-topic result when it clears the floor.
+        # Every other page needs more than the absolute clone floor: query words already
+        # passed above, and another stored search that matches as well or better is not
+        # a confident on-topic verdict. No extra similarity threshold is applied.
+        if score is not None and not (owned and score >= self.topic_floor):
+            other_matches = other_score is not None and other_score >= score
+            if score < self.topic_floor or other_matches:
                 result.on_topic = None
                 result.status = "uncertain"
-                result.text = (
-                    f"Low cosine to stored pages, unvalidated: topic match {score:.3f} is under the floor "
-                    f"{self.topic_floor:.3f} (half the lowest match among stored pages). "
-                    "This project has no other stored search to compare with, so this is not an off-topic decision. "
-                    "A PREDICTED slot is still shown. Confidence stays UNSURE."
-                )
+                if score < self.topic_floor and other_score is None:
+                    why = (
+                        f"Low cosine to stored pages, unvalidated: topic match {score:.3f} is under the floor "
+                        f"{self.topic_floor:.3f} (half the lowest match among stored pages). "
+                        "This project has no other stored search to compare with, so this is not an off-topic decision."
+                    )
+                elif score < self.topic_floor and other_matches:
+                    why = (
+                        f"Low cosine to stored pages, unvalidated: topic match {score:.3f} is under the floor "
+                        f"{self.topic_floor:.3f}, and {other_name} matches as well or better ({other_score:.3f}). "
+                        "This is not an off-topic decision."
+                    )
+                elif score < self.topic_floor:
+                    why = (
+                        f"Low cosine to stored pages, unvalidated: topic match {score:.3f} is under the floor "
+                        f"{self.topic_floor:.3f} and higher than {other_name} ({other_score:.3f}). "
+                        "This is not an off-topic decision."
+                    )
+                else:
+                    why = (
+                        f"Topic match {score:.3f} is at or above the floor {self.topic_floor:.3f}, "
+                        f"but {other_name} matches as well or better ({other_score:.3f}). "
+                        "Clearing the absolute floor is not an on-topic verdict when another stored search matches as well."
+                    )
+                result.text = why + " A PREDICTED slot is still shown. Confidence stays UNSURE."
                 return result
-            closer = (
-                score >= other_score + TOPIC_SEPARATION
-                and score >= TOPIC_FLOOR_DEFAULT
-            )
-            if closer:
-                # Stored pages can match each other near 0.8 because they share a template,
-                # so half of that is a high floor. Ordinary wording that still prefers this
-                # search is not a validated off-topic result.
-                result.on_topic = None
-                result.status = "uncertain"
-                result.text = (
-                    f"Low cosine to stored pages, unvalidated: topic match {score:.3f} is under the floor "
-                    f"{self.topic_floor:.3f} (half the lowest match among stored pages) and higher than "
-                    f"{other_name} ({other_score:.3f}). This is not an off-topic decision. "
-                    "A PREDICTED slot is still shown. Confidence stays UNSURE."
-                )
-                return result
-            result.on_topic = False
-            result.status = "off topic"
-            result.text = (
-                f"Off topic (PREDICTED): your page's vocabulary barely overlaps the pages Google ranks here "
-                f"(topic match {score:.3f}; the floor is {self.topic_floor:.3f}, half the lowest match of any REAL top 10 page). "
-                "PREDICTED: not in the top 10."
-            )
-            return result
         result.on_topic = True
         result.status = "on topic"
         match = f" Topic match {score:.3f} (floor {self.topic_floor:.3f})." if score is not None else ""

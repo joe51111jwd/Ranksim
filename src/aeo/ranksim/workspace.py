@@ -734,8 +734,9 @@ def run_draft(
             placed_row = _place(ctx, search, intent, model, candidates, doc)
             if check.status == "uncertain":
                 placed_row["confidence"] = "UNSURE"
+                placed_row["confidence_note"] = _observed_text(check.text)
                 placed_row["unplaced"] = ""
-                placed_row["topic_note"] = _observed_text(check.text)
+                placed_row["topic_note"] = placed_row["confidence_note"]
             return placed_row
         return _place(ctx, search, intent, model, candidates, doc)
 
@@ -874,7 +875,7 @@ def _candidate_html_sha256(database: str, url: str) -> str | None:
 
 def _record_draft_ledger(database: str, run: dict, draft_html: str) -> None:
     """Append one PREDICTED draft to the audit database ledger. Synthetic runs are not recorded."""
-    if run.get("dataset") == DATASET_SYNTHETIC:
+    if run.get("dataset") in {DATASET_SYNTHETIC, DATASET_HISTORICAL, DATASET_NONE}:
         return
     after = run.get("after") or {}
     if after.get("position") is None:
@@ -901,6 +902,7 @@ def _record_draft_ledger(database: str, run: dict, draft_html: str) -> None:
                 predicted="above" if yours < int(item["predicted"]) else "below",
                 score_gap=None,
                 confidence=shown,
+                note=note,
             )
         )
         candidates.append(
@@ -924,6 +926,7 @@ def _record_draft_ledger(database: str, run: dict, draft_html: str) -> None:
             calls=calls,
             confidence=shown,
             calibration_note=note,
+            project_slug=str(run.get("project") or ""),
             provenance={
                 "dataset": run.get("dataset") or "",
                 "source": "workspace",
@@ -949,21 +952,22 @@ def record_observed_import(
 ) -> int:
     """Append dated CSV rows as imported observations. Returns how many queries were written.
 
-    A row is recorded only when all of these hold:
+    A row is recorded when all of these hold:
     - the server is not the public demo
-    - the project dataset is already ``observed`` (a later file, not the first file on a ``none`` project)
+    - the project dataset is ``none`` or already ``observed`` (a dated file is observed evidence)
     - the dataset is not ``synthetic`` and not ``historical``
     - the upload includes a YYYY-MM-DD date the positions were seen
 
-    The first file on a ``none`` project can still be imported as training data by the caller.
-    It is not an observation. Synthetic and historical projects are demonstrations, not new
-    Google observations and not a confidence update. The stored row keeps the project slug,
-    the file name, the sha256 of the file bytes, and the upload time. The note says the file
-    is not a live Google pull.
+    The caller still marks a ``none`` project ``observed`` after a successful import.
+    That label means an imported file, not a live Google capture. Synthetic and historical
+    projects are demonstrations and are not recorded. The same project, file hash, date,
+    and query are not written twice. The row keeps the project slug, file name, sha256,
+    and upload time. ``observed_on`` is the date from the upload, not an invented clock time.
+    The note says the file is not a live Google pull.
     """
     if public_demo or not observed_on or not re.match(r"^\d{4}-\d{2}-\d{2}$", observed_on):
         return 0
-    if meta.dataset != DATASET_OBSERVED:
+    if meta.dataset not in {DATASET_NONE, DATASET_OBSERVED}:
         return 0
     import hashlib
     import tempfile
@@ -987,7 +991,22 @@ def record_observed_import(
     session = open_session(database)
     written = 0
     try:
+        from aeo.ranksim.ledger import RsOutcome
+
         for query, positions in grouped.items():
+            folded = " ".join(query.split())
+            already = (
+                session.query(RsOutcome)
+                .filter(
+                    RsOutcome.project_slug == project.slug,
+                    RsOutcome.source_sha256 == digest,
+                    RsOutcome.observed_on == observed_on,
+                    RsOutcome.query == folded,
+                )
+                .first()
+            )
+            if already is not None:
+                continue
             record_outcome(
                 session,
                 query=query,

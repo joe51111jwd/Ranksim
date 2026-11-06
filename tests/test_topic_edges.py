@@ -132,6 +132,9 @@ def test_structured_html_under_the_floor_keeps_an_unsure_slot(demo):
     run = ws.run_draft(ctx, QUERY, html, "https://www.northwind-fencing.example/new-structured/")
     assert run["after"]["position"] is not None
     assert run["after"]["confidence"] == "UNSURE"
+    assert run["after"]["confidence_note"] == run["topic_after"]["text"]
+    assert "unvalidated" in run["after"]["confidence_note"].lower()
+    assert "same pairs" not in run["after"]["confidence_note"].lower()
     assert run["topic_after"]["status"] == "uncertain"
     original = ws.synthetic_page(ws.compare_search(ctx, QUERY).your_url)
     stored = page_from_html(ws.compare_search(ctx, QUERY).your_url, original, is_ours=True)
@@ -140,7 +143,7 @@ def test_structured_html_under_the_floor_keeps_an_unsure_slot(demo):
     assert kept.topic_score is not None and kept.topic_score >= ctx.topic.topic_floor
 
 
-def test_cross_search_boilerplate_can_clear_the_absolute_floor(demo):
+def test_cross_search_boilerplate_above_the_floor_stays_uncertain(demo):
     ctx = demo["ctx"]
     other = ctx.topic.readable["how long does a cedar fence last"][0]
     check = ctx.topic.check(QUERY, other)
@@ -148,10 +151,42 @@ def test_cross_search_boilerplate_can_clear_the_absolute_floor(demo):
     assert TOPIC_FLOOR_DEFAULT == 0.02
     assert ctx.topic.topic_floor > 0.35
     assert check.topic_score is not None and check.topic_score >= ctx.topic.topic_floor
-    assert check.on_topic is True
+    assert check.on_topic is None
+    assert check.status == "uncertain"
+    assert "as well or better" in check.text
     assert check.need == 2
-    view = ws.compare_search(ctx, QUERY)
-    assert view.confidence == "UNSURE"
+    html = ws.synthetic_page(other.url)
+    run = ws.run_draft(ctx, QUERY, html, "https://www.northwind-fencing.example/from-cedar/")
+    note = run["after"]["confidence_note"]
+    assert run["after"]["position"] is not None
+    assert run["after"]["confidence"] == "UNSURE"
+    assert run["topic_after"]["status"] == "uncertain"
+    assert "as well or better" in note
+    assert "Held-out" not in note and "same pairs" not in note
+    from aeo.ranksim.workspace_ui import _topic_panel
+
+    rendered = _topic_panel(run)
+    assert "as well or better" in rendered
+    assert note.split(".")[0] in rendered
+    saved = dict(run)
+    saved["dataset"] = "observed"
+    saved["project"] = "acme"
+    import tempfile
+    from pathlib import Path
+
+    from aeo.ranksim.ledger import RsPrediction
+    from aeo.ranksim.store import open_session
+
+    database = f"sqlite:///{Path(tempfile.mkdtemp()) / 'topic.db'}"
+    ws._record_draft_ledger(database, saved, html)
+    session = open_session(database)
+    try:
+        row = session.query(RsPrediction).one()
+    finally:
+        session.close()
+    assert row.project_slug == "acme"
+    assert row.payload["calibration_note"] == note
+    assert all(call["note"] == note for call in row.payload["calls"])
 
 
 def test_one_search_model_still_places_the_draft_as_unsure(demo):

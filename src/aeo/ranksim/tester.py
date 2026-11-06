@@ -388,6 +388,19 @@ def score_page(
     )
 
 
+def _labeled_set_is_synthetic(labels) -> bool:
+    """True when every labeled URL is on a .example host. That set is fixture data."""
+    from aeo.crawl.urls import domain_of
+
+    hosts = []
+    for label in labels:
+        try:
+            hosts.append(domain_of(label.url))
+        except ValueError:
+            return False
+    return bool(hosts) and all(host == "example" or host.endswith(".example") for host in hosts)
+
+
 def _score_query(ctx: SimContext, url: str, html: str, query: str) -> tuple[QueryScore, int | None]:
     intent = ctx.intents.get(query, "commercial")
     checked = check_draft(
@@ -401,6 +414,7 @@ def _score_query(ctx: SimContext, url: str, html: str, query: str) -> tuple[Quer
         today=ctx.today,
         intent=intent,
         run_ai=False,
+        synthetic=_labeled_set_is_synthetic(ctx.labels),
     )
     row = QueryScore(
         query=query,

@@ -712,6 +712,7 @@ class BoardSummary:
     on_topic: int = 0
     off_topic: int = 0
     not_checked: int = 0
+    uncertain: int = 0
 
 
 @dataclass
@@ -3021,7 +3022,8 @@ def _summary(ctx: ProjectContext, rows: list[SearchBoard], url: str) -> BoardSum
     site10 = sum(1 for row in rows if row.real_site_position is not None and row.real_site_position <= 10)
     on = sum(1 for row in rows if row.topic is not None and row.topic.on_topic is True)
     off = sum(1 for row in rows if row.topic is not None and row.topic.on_topic is False)
-    unchecked = sum(1 for row in rows if row.topic is not None and row.topic.on_topic is None)
+    unchecked = sum(1 for row in rows if row.topic is not None and row.topic.status == "not checked")
+    uncertain = sum(1 for row in rows if row.topic is not None and row.topic.status == "uncertain")
     pulled = _pulled_text([item for item in ctx.google.searches if item.results and item.search in set(ctx.project.searches)])
     text = (
         f"PREDICTED top 3 on {top3} of {total} searches, top 10 on {top10} of {total}. "
@@ -3032,6 +3034,8 @@ def _summary(ctx: ProjectContext, rows: list[SearchBoard], url: str) -> BoardSum
         text += f" PREDICTED off topic on {off} of {total}, so not in the top 10 there."
     if unchecked:
         text += f" {unchecked} could not be checked (no readable text)."
+    if uncertain:
+        text += f" {uncertain} stay UNSURE: the topic check is unvalidated, not an on-topic or off-topic verdict."
     rest = total - len(scored) - off - unchecked
     if rest > 0:
         text += f" {rest} searches got no PREDICTED position (see each search)."
@@ -3050,6 +3054,7 @@ def _summary(ctx: ProjectContext, rows: list[SearchBoard], url: str) -> BoardSum
         on_topic=on,
         off_topic=off,
         not_checked=unchecked,
+        uncertain=uncertain,
     )
 
 
@@ -3077,13 +3082,16 @@ def plain_lead_from_dict(data: dict) -> str:
     on = int(summary.get("on_topic") or 0)
     off = int(summary.get("off_topic") or 0)
     unchecked = int(summary.get("not_checked") or 0)
-    if not summary.get("scored") and not off and not unchecked:
+    uncertain = int(summary.get("uncertain") or 0)
+    if not summary.get("scored") and not off and not unchecked and not uncertain:
         return f"No PREDICTED positions yet: none of the {total} searches has REAL Google results to compare with." + (real if summary.get("real_top10") or summary.get("real_site_top10") else "")
     lead = f"PREDICTED: your page is on topic for {on} of your {total} key searches"
     if off:
         lead += f" and off topic for {off}, where it is PREDICTED not to make the top 10"
     if unchecked:
         lead += f"; {unchecked} could not be checked because the page has almost no readable text"
+    if uncertain:
+        lead += f"; {uncertain} stay UNSURE because the topic check is unvalidated"
     lead += "."
     if on and summary.get("scored"):
         lead += (

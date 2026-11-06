@@ -30,11 +30,19 @@ def test_dataset_gates_for_imported_observations(tmp_path):
     database = f"sqlite:///{tmp_path / 'rank.db'}"
     project = type("P", (), {"slug": "acme"})()
     data = b"query,url,position\nfence cost,https://a.example/x,1\nfence cost,https://b.example/y,2\n"
-    for dataset in (DATASET_NONE, DATASET_SYNTHETIC, DATASET_HISTORICAL):
+    for dataset in (DATASET_SYNTHETIC, DATASET_HISTORICAL):
         written = record_observed_import(
             database, project, WorkspaceMeta(dataset=dataset), data, "positions.csv", "2099-01-15"
         )
         assert written == 0
+    written = record_observed_import(
+        database, project, WorkspaceMeta(dataset=DATASET_NONE), data, "positions.csv", "2099-01-15"
+    )
+    assert written == 1
+    again = record_observed_import(
+        database, project, WorkspaceMeta(dataset=DATASET_OBSERVED), data, "positions.csv", "2099-01-15"
+    )
+    assert again == 0
     written = record_observed_import(
         database, project, WorkspaceMeta(dataset=DATASET_OBSERVED), data, "positions.csv", "2099-01-15", public_demo=True
     )
@@ -42,7 +50,7 @@ def test_dataset_gates_for_imported_observations(tmp_path):
     written = record_observed_import(
         database, project, WorkspaceMeta(dataset=DATASET_OBSERVED), data, "positions.csv", "2099-01-15"
     )
-    assert written == 1
+    assert written == 0
     session = open_session(database)
     try:
         row = session.query(RsOutcome).one()
@@ -100,6 +108,146 @@ def test_older_outcome_table_gains_provenance_columns(tmp_path):
     assert rows[0].notes == "old row"
     assert rows[1].project_slug == "acme"
     assert rows[1].source_file == "later.csv"
+
+
+def test_older_prediction_table_gains_a_blank_project(tmp_path):
+    path = tmp_path / "old-pred.db"
+    connection = sqlite3.connect(path)
+    connection.execute(
+        """CREATE TABLE rs_predictions (
+            id INTEGER PRIMARY KEY,
+            created_at VARCHAR(40),
+            kind VARCHAR(32),
+            query VARCHAR(500),
+            subject_url VARCHAR(2000),
+            payload JSON,
+            prev_hash VARCHAR(64) UNIQUE,
+            row_hash VARCHAR(64) UNIQUE
+        )"""
+    )
+    connection.execute(
+        "INSERT INTO rs_predictions (created_at, kind, query, subject_url, payload, prev_hash, row_hash) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        ("2020-01-01T00:00:00+00:00", "workspace_draft", "fence cost", "https://a.example/x", "{}", "0" * 64, "1" * 64),
+    )
+    connection.commit()
+    connection.close()
+    session = open_session(f"sqlite:///{path}")
+    try:
+        old = session.query(RsPrediction).one()
+        assert not old.project_slug
+    finally:
+        session.close()
+
+
+def test_first_dated_import_on_a_none_project_is_recorded_once(tmp_path):
+    settings = make_settings(tmp_path)
+    client = TestClient(create_app(settings=settings, database=settings.ranksim_database_url, projects_root=tmp_path / "projects", public_demo=False))
+    csrf = token(client)
+    made = client.post(
+        "/projects",
+        data={"csrf": csrf, "name": "Fresh", "site": "fresh.example", "searches": "fence cost"},
+        follow_redirects=False,
+    )
+    assert made.status_code == 303
+    data = b"query,url,position\nfence cost,https://fresh.example/a,1\nfence cost,https://rival.example/a,2\n"
+    imported = client.post(
+        "/p/fresh/import",
+        data={"csrf": csrf, "snapshot_date": "2020-01-03"},
+        files={"csv_file": ("first.csv", data, "text/csv")},
+        follow_redirects=False,
+    )
+    assert imported.status_code == 303, imported.text[:300]
+    page = client.get("/p/fresh")
+    assert "OBSERVED" in page.text
+    assert "Not a live Google pull" not in page.text
+    session = open_session(settings.ranksim_database_url)
+    try:
+        row = session.query(RsOutcome).one()
+    finally:
+        session.close()
+    assert row.project_slug == "fresh"
+    assert row.provider == "imported_csv"
+    assert row.source_file == "first.csv"
+    assert row.source_sha256 == hashlib.sha256(data).hexdigest()
+    assert row.observed_on == "2020-01-03"
+    assert row.uploaded_at
+    assert "Not a live Google pull" in row.notes
+    again = client.post(
+        "/p/fresh/import",
+        data={"csrf": csrf, "snapshot_date": "2020-01-03"},
+        files={"csv_file": ("first.csv", data, "text/csv")},
+        follow_redirects=False,
+    )
+    assert again.status_code == 303
+    session = open_session(settings.ranksim_database_url)
+    try:
+        assert session.query(RsOutcome).count() == 1
+    finally:
+        session.close()
+
+
+def test_historical_import_is_not_scored_as_another_projects_csv(tmp_path):
+    settings = make_settings(tmp_path)
+    client = TestClient(create_app(settings=settings, database=settings.ranksim_database_url, projects_root=tmp_path / "projects", public_demo=False))
+    csrf = token(client)
+    client.post(
+        "/projects",
+        data={"csrf": csrf, "name": "Real", "site": "real.example", "searches": "fence cost"},
+        follow_redirects=False,
+    )
+    client.post(
+        "/projects",
+        data={"csrf": csrf, "name": "History", "site": "history.example", "searches": "fence cost"},
+        follow_redirects=False,
+    )
+    from aeo.ranksim.workspace import DATASET_HISTORICAL, load_meta, save_meta
+
+    history = load_project("history", root=tmp_path / "projects")
+    meta = load_meta(history)
+    meta.dataset = DATASET_HISTORICAL
+    save_meta(history, meta)
+    data = b"query,url,position\nfence cost,https://real.example/a,1\nfence cost,https://rival.example/a,2\n"
+    real = client.post(
+        "/p/real/import",
+        data={"csrf": csrf, "snapshot_date": "2020-02-02"},
+        files={"csv_file": ("real.csv", data, "text/csv")},
+        follow_redirects=False,
+    )
+    assert real.status_code == 303
+    demo_import = client.post(
+        "/p/history/import",
+        data={"csrf": csrf, "snapshot_date": "2020-02-02"},
+        files={"csv_file": ("history.csv", data, "text/csv")},
+        follow_redirects=False,
+    )
+    assert demo_import.status_code == 303
+    session = open_session(settings.ranksim_database_url)
+    try:
+        from aeo.ranksim.ledger import record_prediction
+
+        assert session.query(RsOutcome).count() == 1
+        assert session.query(RsOutcome).one().project_slug == "real"
+        record_prediction(
+            session,
+            kind="workspace_draft",
+            query="fence cost",
+            subject_url="https://history.example/a",
+            subject_html="<p>x</p>",
+            predicted_rank=1,
+            predicted_of=2,
+            candidates=[{"url": "https://rival.example/a", "html_sha256": None, "labeled_position": 2}],
+            calls=[ledger.Call("https://rival.example/a", "above", None, "UNSURE", "historical")],
+            confidence="UNSURE",
+            calibration_note="historical demo",
+            provenance={"dataset": "historical", "source": "workspace"},
+            project_slug="history",
+            created_at=datetime(2020, 1, 1, tzinfo=timezone.utc),
+        )
+        score = score_ledger(session)
+    finally:
+        session.close()
+    assert score.resolved == 0
+    assert score.calls == 0
 
 
 def test_private_draft_stays_unsure_and_a_later_csv_resolves_it(tmp_path):
@@ -181,6 +329,7 @@ def test_private_draft_stays_unsure_and_a_later_csv_resolves_it(tmp_path):
     finally:
         session.close()
     payload = prediction.payload
+    assert prediction.project_slug == "acme"
     assert payload["confidence"] == "UNSURE"
     assert all(call["confidence"] == "UNSURE" for call in payload["calls"])
     assert "words" not in payload["calibration_note"].lower()
@@ -222,3 +371,33 @@ def test_private_draft_stays_unsure_and_a_later_csv_resolves_it(tmp_path):
     assert score.predictions == 1
     assert score.resolved > 0
     assert score.accuracy is not None
+    above = sum(1 for call in payload["calls"] if call["predicted"] == "above")
+    assert score.correct == above
+    other = client.post(
+        "/projects",
+        data={"csrf": csrf, "name": "Beta", "site": "beta.example", "searches": QUERY},
+        follow_redirects=False,
+    )
+    assert other.status_code == 303
+    beta_csv = (
+        "query,url,position\n"
+        f"{QUERY},https://acme.example/vinyl,5\n"
+        f"{QUERY},https://rival.example/vinyl,1\n"
+        f"{QUERY},https://other.example/vinyl,2\n"
+    ).encode()
+    beta = client.post(
+        "/p/beta/import",
+        data={"csrf": csrf, "snapshot_date": "2020-01-02"},
+        files={"csv_file": ("beta.csv", beta_csv, "text/csv")},
+        follow_redirects=False,
+    )
+    assert beta.status_code == 303, beta.text[:300]
+    session = open_session(settings.ranksim_database_url)
+    try:
+        mixed = score_ledger(session)
+        beta_rows = session.query(RsOutcome).filter(RsOutcome.project_slug == "beta").count()
+    finally:
+        session.close()
+    assert beta_rows == 1
+    assert mixed.correct == above
+    assert mixed.resolved == score.resolved

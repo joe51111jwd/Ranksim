@@ -58,6 +58,8 @@ class RsPrediction(Base):
     kind: Mapped[str] = mapped_column(String(32))
     query: Mapped[str] = mapped_column(String(500), index=True)
     subject_url: Mapped[str] = mapped_column(String(2000))
+    # Empty on rows written before this column. Never filled in after the fact.
+    project_slug: Mapped[str] = mapped_column(String(200), default="")
     payload: Mapped[dict] = mapped_column(JSON)
     prev_hash: Mapped[str] = mapped_column(String(64), unique=True)  # one successor per row: no forks
     row_hash: Mapped[str] = mapped_column(String(64), unique=True)
@@ -88,6 +90,7 @@ class Call:
     predicted: str  # "above" or "below": where the subject page is predicted relative to the competitor
     score_gap: float | None
     confidence: str
+    note: str = ""
 
 
 @dataclass
@@ -120,6 +123,7 @@ def record_prediction(
     calibration_note: str,
     provenance: dict,
     created_at: datetime | None = None,
+    project_slug: str = "",
 ) -> RsPrediction:
     """Append one prediction. ``candidates`` rows: {url, html_sha256, labeled_position}."""
     stamp = (created_at or _now()).isoformat(timespec="seconds")
@@ -148,6 +152,7 @@ def record_prediction(
                 kind=kind,
                 query=query,
                 subject_url=subject_url,
+                project_slug=project_slug or "",
                 payload=payload,
                 prev_hash=prev_hash,
                 row_hash=_row_hash(prev_hash, stamp, kind, query, subject_url, payload),
@@ -177,11 +182,11 @@ def record_outcome(
 ) -> RsOutcome:
     """Append an observed result list. ``positions`` maps URL to organic position.
 
-    What qualifies: a later dated file on a project whose dataset is already
-    ``observed``. The caller decides that. This function stores the project slug,
+    The caller decides which projects qualify. This function stores the project slug,
     the source file name, the sha256 of the file bytes, and the upload time when
-    the caller has them. Those fields describe the file that was returned, not a
-    live Google pull. Rows from before these columns existed leave them empty.
+    the caller has them. ``observed_on`` is the date the caller supplied. It is not
+    invented here. The fields describe the file, not a live Google pull. Rows from
+    before these columns existed leave them empty.
     """
     row = RsOutcome(
         observed_on=observed_on,
@@ -214,8 +219,19 @@ def verify_ledger(session: Session) -> tuple[bool, str]:
     return True, f"{len(rows)} predictions, chain intact. Latest hash {head}."
 
 
+def _same_project(prediction: RsPrediction, outcome: RsOutcome) -> bool:
+    """Match only when both rows name the same project.
+
+    A blank project is legacy and ambiguous. It is not assigned to a later row that
+    does name a project, and two blank rows are not treated as the same project.
+    """
+    left = (prediction.project_slug or "").strip()
+    right = (outcome.project_slug or "").strip()
+    return bool(left) and left == right
+
+
 def score_ledger(session: Session) -> LedgerScore:
-    """Score every call against the first outcome observed after the prediction was made."""
+    """Score every call against the first later outcome for the same project and query."""
     predictions = session.query(RsPrediction).order_by(RsPrediction.id).all()
     outcomes = session.query(RsOutcome).order_by(RsOutcome.observed_on, RsOutcome.id).all()
     by_query: dict[str, list[RsOutcome]] = {}
@@ -223,9 +239,16 @@ def score_ledger(session: Session) -> LedgerScore:
         by_query.setdefault(outcome.query, []).append(outcome)
     score = LedgerScore(predictions=len(predictions), calls=0, resolved=0, correct=0, unresolved=0)
     for prediction in predictions:
+        dataset = str((prediction.payload.get("provenance") or {}).get("dataset") or "")
+        if dataset in {"synthetic", "historical", "none"}:
+            continue
         made = datetime.fromisoformat(prediction.created_at)
         latest_local_day = (made + timedelta(hours=14)).date().isoformat()
-        later = [row for row in by_query.get(" ".join(prediction.query.split()), []) if row.observed_on > latest_local_day]
+        later = [
+            row
+            for row in by_query.get(" ".join(prediction.query.split()), [])
+            if row.observed_on > latest_local_day and _same_project(prediction, row)
+        ]
         calls = prediction.payload.get("calls", [])
         score.calls += len(calls)
         if not later:

@@ -150,6 +150,17 @@ James moved the UI and end-to-end web flow to Claude at about 3:30pm Eastern and
 - Not claimed: the separate review of these fixtures, or a correct evaluation of the 35 of 135 labeled rows that have HTML.
 - Next: do not merge. Do not deploy.
 
+### 2026-11-06 — SEO Tool Builder, topic identity and one label
+
+- Branch: `cursor/integration-review-175f`. Pull request: https://github.com/joe51111jwd/Ranksim/pull/5
+- A page that clears the clone floor is not on topic when another stored search matches it as well or better. Query words with a cosine under the floor stay unvalidated. A stored page of the query that clears the floor stays on topic. Missing query words, repetition, and an empty page still get no slot. `TOPIC_MARGIN` is still 0.5. No extra gap was added.
+- An uncertain draft stores that topic sentence as the ledger note and shows the same sentence. It does not keep the holdout calibration note.
+- Predictions carry a project slug. Scoring matches a query only when the prediction and the outcome name the same project. Blank legacy rows are not assigned to a named project. A dated CSV on a `none` project is recorded once as `imported_csv` and the project becomes observed. That is an import, not a live Google capture. Synthetic, historical, and the public demo are not recorded into that track record.
+- `check_draft` uses `product_label`. The tester CLI prints that stored label. An in-sample threshold prints UNSURE.
+- Local: Python 3.12 keys unset 307 passed, 1 warning, 14.24s; dummy keys 307 passed, 13.82s. Python 3.11.18 keys unset 307 passed, 13.73s; fake keys 307 passed, 14.41s.
+- One active record store: the database ledger. PR #1's CSV file ledger is not on this branch.
+- Not a correct evaluation of the 35 of 135 labeled rows that have HTML. Not merged. Not deployed.
+
 ### Template
 
 Copy this block. Do not delete earlier handoffs.

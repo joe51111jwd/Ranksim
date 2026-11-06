@@ -125,6 +125,16 @@ James moved the UI and end-to-end web flow to Claude at about 3:30pm Eastern and
 - Tests: `python3 -m pytest` 293 passed, 1 warning, about 12.4s with keys unset, and the same 293 passed with dummy provider keys.
 - Still not merged and not deployed. PR #3 was not merged as a whole. `serve.py` on that branch is still the older demo.
 
+### 2026-11-06 — SEO Tool Builder, CI workflow and one record store
+
+- Branch: `cursor/integration-review-175f`. Pull request: https://github.com/joe51111jwd/Ranksim/pull/5
+- Claimed: carry `.github/workflows/tests.yml` from PR #3 at `eff6162e75c10022889904462f67862657fe5841`. The job matrix, install, fake keys, and `test ! -e data` step are unchanged.
+- Trigger: `pull_request` has no base-branch filter, so it runs for this pull request into `claude/ranksim-mvp-eod-ifjitw`. `push` is limited to `main`, so a push to this branch starts CI only because the pull request is open.
+- Record store on this branch: one active store, the database ledger in `src/aeo/ranksim/ledger.py`. PR #1's CSV track-record ledger is not in this tree. It stays on the unmerged PR #1 branch.
+- Local check before the workflow file was committed: `python3 -m pytest -p no:cacheprovider` on Python 3.12 with keys unset, 293 passed, 1 warning, 12.21s, and no `data/` directory was created. That is not the GitHub matrix.
+- Not claimed: a separate review of confidence, ledger, and topic fixtures. This handoff does not say that review passed.
+- Next: do not merge. Do not deploy.
+
 ### Template
 
 Copy this block. Do not delete earlier handoffs.

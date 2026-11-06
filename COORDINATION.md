@@ -179,6 +179,14 @@ James moved the UI and end-to-end web flow to Claude at about 3:30pm Eastern and
 - Local: Python 3.12 keys unset 312 passed, 1 warning, 14.11s; dummy keys 312 passed, 14.90s. Python 3.11.18 keys unset 312 passed, 14.62s; fake keys 312 passed, 14.54s.
 - Not merged. Not deployed. The isolated preview stays on the previous head.
 
+### 2026-11-06 — SEO Tool Builder, explicit CSV rows
+
+- Branch: `cursor/integration-review-175f`. Pull request: https://github.com/joe51111jwd/Ranksim/pull/5
+- An explicit CSV is scored from its own rows. `project/label.json` from a later import does not replace an older file under `imports/`.
+- A named `label.json` still supplies source. `synthetic` stays UNSURE under a held-out calibration. `imported_serp` is not a live Google pull. A CSV with no label file is not synthetic and not live Google. A broken or sourceless `label.json` still makes no confidence call.
+- Local: Python 3.12 keys unset 313 passed, 1 warning, 14.04s; fake keys 313 passed, 14.50s. Python 3.11.18 keys unset 313 passed, 14.48s; fake keys 313 passed, 14.56s.
+- Not merged. Not deployed. The isolated preview stays on `ad8020f`.
+
 ### Template
 
 Copy this block. Do not delete earlier handoffs.

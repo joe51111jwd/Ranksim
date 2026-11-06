@@ -396,8 +396,8 @@ def _labels_for_scoring(path: str | Path) -> tuple[list[SerpLabel], bool, str]:
     """Rows, whether the loaded source is the synthetic demo, and a visible note.
 
     A label.json with no source, or one that cannot be parsed, raises. That is not
-    treated as observed Google and no confidence call should follow. A CSV with no
-    label.json is not marked synthetic and is not a live Google pull.
+    treated as observed Google and no confidence call should follow. An explicit CSV
+    always supplies its own rows. It is not marked synthetic and is not a live Google pull.
     """
     from aeo.ranksim.groundtruth import label_json_beside, live_google_source, load_labels, load_serp_file, synthetic_source
 

@@ -154,3 +154,63 @@ def test_google_auto_and_imported_sources_are_not_synthetic(tmp_path, monkeypatc
     (missing / "label.json").write_text('{"rows": [{"query": "q", "url": "https://heldout.invalid/a", "position": 1}]}', encoding="utf-8")
     with pytest.raises(ValueError, match="no source"):
         load_sim_context(database, str(missing / "label.json"), graph_path=None)
+
+
+def test_older_import_csv_is_scored_instead_of_the_newer_project_label_json(tmp_path, monkeypatch):
+    """An explicit CSV under imports/ keeps its own rows when project/label.json is newer."""
+    from aeo.ranksim.confidence import loo_fit as real_loo
+    from aeo.ranksim.groundtruth import load_labels
+    from aeo.ranksim.loop import FetchResult, store_fetched_page
+    from aeo.ranksim.project import create_project, import_serp_csv
+    from aeo.ranksim.store import open_session
+    from aeo.ranksim.tester import load_sim_context
+
+    database = f"sqlite:///{tmp_path / 'rank.db'}"
+    project = create_project("Acme", "acme.example", ["old fence cost", "new fence cost"], root=tmp_path / "projects", discover_sitemap=False)
+    imports = project.dir / "imports"
+    imports.mkdir()
+    old_csv = imports / "20200101T000000Z-old.csv"
+    new_csv = imports / "20200102T000000Z-new.csv"
+    old_csv.write_text(
+        "query,url,position\n"
+        "old fence cost,https://old.invalid/a,1\n"
+        "old fence cost,https://old.invalid/b,2\n",
+        encoding="utf-8",
+    )
+    new_csv.write_text(
+        "query,url,position\n"
+        "new fence cost,https://new.invalid/a,1\n"
+        "new fence cost,https://new.invalid/b,2\n",
+        encoding="utf-8",
+    )
+    import_serp_csv(project, old_csv, "2020-01-02", "uploaded CSV (positions seen 2020-01-02)")
+    import_serp_csv(project, new_csv, "2020-01-03", "uploaded CSV (positions seen 2020-01-03)")
+    latest = load_labels(project.dir / "label.json")
+    assert latest.source == "imported_serp"
+    assert {row.url for row in latest.rows} == {"https://new.invalid/a", "https://new.invalid/b"}
+    session = open_session(database)
+    try:
+        for url in ("https://old.invalid/a", "https://old.invalid/b", "https://new.invalid/a", "https://new.invalid/b"):
+            store_fetched_page(session, FetchResult(url=url, html=f"<html><title>{url}</title><body><p>{url} body.</p></body></html>", status="fetched"))
+    finally:
+        session.close()
+    seen: list = []
+
+    def held_out(examples, feature_names=None, keep_models=False):
+        seen.extend(examples)
+        fit = real_loo(examples, feature_names, keep_models=keep_models)
+        fit.calibration = Calibration(0.01, 0.99, 0.5, "Held-out check passed.", held_out=True)
+        return fit
+
+    monkeypatch.setattr("aeo.ranksim.tester.loo_fit", held_out)
+    ctx = load_sim_context(database, str(old_csv), graph_path=None)
+    assert {(row.query, row.url, row.position) for row in ctx.labels} == {
+        ("old fence cost", "https://old.invalid/a", 1.0),
+        ("old fence cost", "https://old.invalid/b", 2.0),
+    }
+    assert {row.url for row in seen} <= {"https://old.invalid/a", "https://old.invalid/b"}
+    assert seen
+    assert ctx.synthetic is False
+    assert any("not a live Google pull" in note for note in ctx.notes)
+    assert ctx.fit.calibration.held_out is True
+    assert ctx.fit.calibration.product_label(2, synthetic=False)[0] == "CLEARER"

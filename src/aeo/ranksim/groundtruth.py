@@ -69,17 +69,17 @@ def load_labels(path: str | Path) -> LabelSet:
 
 
 def label_json_beside(path: str | Path) -> Path | None:
-    """The label.json for a tester path: the file itself, or label.json beside a CSV."""
+    """The label.json the caller named.
+
+    An explicit CSV is a different artifact. A parent or sibling label.json, including
+    project/label.json written by a later import, does not replace that CSV's rows.
+    """
     candidate = Path(path)
     if candidate.is_dir():
         found = candidate / "label.json"
         return found if found.is_file() else None
     if candidate.name == "label.json":
         return candidate if candidate.is_file() else None
-    for folder in (candidate.parent, candidate.parent.parent):
-        found = folder / "label.json"
-        if found.is_file():
-            return found
     return None
 
 

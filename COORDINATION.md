@@ -102,6 +102,19 @@ James moved the UI and end-to-end web flow to Claude at about 3:30pm Eastern and
 - Blockers: none for local use. For a durable public deployment, project data and draft runs need storage outside `/tmp` (a database or Blob), which needs a decision from James.
 - Next: wait for review on PR #2. If James approves, merge order can be PR #1 then PR #2, or PR #2 alone (it contains PR #1).
 
+### 2026-11-06 — SEO Tool Builder, public demo copy
+
+- Branch: `cursor/integration-review-175f` (based on PR #2 at `7fc7d0f`, not a merge of PR #3)
+- Claimed: public draft copy, synthetic fixture wording, and a regression that the public host does not store pasted drafts
+- Files: `src/aeo/ranksim/workspace_ui.py`, `tests/test_workspace.py`
+- Not claimed: Claude UI redesign, PR #3 ledger, crawler, or benchmark files
+- Tests: `python3 -m pytest` with provider keys unset: 288 passed, 1 warning, 11.90s. The same suite with dummy provider keys fails 2 existing PR #2 tests (`test_stub_llm_and_unmeasured_relevance`, `test_auto_serp_refuses_to_invent_results_without_keys`) because this branch does not yet have PR #1's env isolation.
+- PR #3 CI: workflow run 42120308109 at `eff6162e75c10022889904462f67862657fe5841` completed success for all 6 pytest jobs (Python 3.11, 3.12, 3.13, each with keys unset and with fake keys).
+- Not done: merging PR #3 into PR #2. A trial merge stops on 9 files (`README.md`, `fetch.py`, `urls.py`, `check.py`, `cli.py`, `demo.py`, `groundtruth.py`, `serve.py`, `test_product_layer.py`). `serve.py` must keep PR #2's project app. PR #3's side of that conflict is the older single-page demo.
+- Topic gate: a 117-word plain draft about vinyl fence installation cost scores about 0.13 against a floor of 0.403 and is not placed. Parsing is not the cause (`_as_html` sets title, H1, and paragraphs, and all four query words are found). The floor is half the lowest match among the generated pages, which match each other near 0.81. No scoring change in this commit.
+- CLEARER on the synthetic comparison is still the in-sample label. Held-out calibration from PR #3 is not in this branch.
+- Next: do not merge. Do not deploy this branch.
+
 ### Template
 
 Copy this block. Do not delete earlier handoffs.

@@ -233,6 +233,7 @@ def test_full_flow_demo_compare_draft_reload(web):
     result = client.get(ran.headers["location"])
     assert result.status_code == 200
     assert "Original" in result.text and "PREDICTED" in result.text and "does not show that Google will rank" in result.text
+    assert "Saved inputs" in result.text and "View draft source" in result.text
     assert "AI notes unavailable" in result.text
     _clean_page(result.text)
     # persistence: a new app on the same folders still has the project, the competitors and the saved run
@@ -301,7 +302,11 @@ def test_create_project_from_csv_and_reject_a_bad_import(web):
     assert saved.status_code == 200 and "not a domain" in saved.text
 
 
-def test_public_demo_mode_only_serves_the_synthetic_demo(tmp_path):
+def test_public_demo_mode_only_serves_the_synthetic_demo(tmp_path, monkeypatch):
+    def boom(*_args, **_kwargs):
+        raise AssertionError("public demo called save_draft_run")
+
+    monkeypatch.setattr("aeo.ranksim.workspace.save_draft_run", boom)
     settings = make_settings(tmp_path)
     client = TestClient(create_app(settings=settings, projects_root=tmp_path / "projects", public_demo=True))
     home = client.get("/")
@@ -324,9 +329,34 @@ def test_public_demo_mode_only_serves_the_synthetic_demo(tmp_path):
         data={"csrf": csrf, "q": QUERY, "original_mode": "stored", "draft_html": "<h1>PRIVATE-MARKER vinyl fence installation cost</h1><p>panels posts labor</p>"},
     )
     assert ran.status_code == 200 and "is not saved" in ran.text
+    assert "Saved inputs" not in ran.text and "View draft source" not in ran.text and "are saved with this run" not in ran.text
+    assert "draft.txt" not in ran.text and "original.txt" not in ran.text
+    plain = (
+        "Vinyl Fence Installation Cost Guide\n\n"
+        "The vinyl fence installation cost is what a homeowner pays a crew to put a vinyl fence around a yard. "
+        "The bill covers the vinyl, the posts, the digging, and the hours the crew spends on the installation. "
+        "This note is only about that vinyl fence installation cost."
+    )
+    explained = client.post(
+        "/p/synthetic-demo/draft",
+        data={"csrf": csrf, "q": QUERY, "original_mode": "none", "draft_html": plain},
+    )
+    assert explained.status_code == 200
+    assert "REAL top 10" not in explained.text and "pages Google ranks" not in explained.text
+    assert "generated example" in explained.text
+    assert "Saved inputs" not in explained.text
     form = client.get("/p/synthetic-demo/draft", params={"q": QUERY}).text
     assert "PRIVATE-MARKER" not in form and "Saved tests" not in form
+    assert "Nothing you paste is stored" in form
     assert not (tmp_path / "projects" / "synthetic-demo" / "drafts").exists()
+    reloaded = TestClient(create_app(settings=make_settings(tmp_path), projects_root=tmp_path / "projects", public_demo=True))
+    assert "PRIVATE-MARKER" not in reloaded.get("/p/synthetic-demo/draft", params={"q": QUERY}).text
+    ghost = reloaded.get("/p/synthetic-demo/draft/20260101T000000Z-abcdef", follow_redirects=False)
+    assert ghost.status_code == 303 and ghost.headers["location"].endswith("/draft")
+    assert reloaded.get("/p/synthetic-demo/draft/20260101T000000Z-abcdef/draft.txt").status_code == 404
+    setup = client.get("/p/synthetic-demo")
+    assert "could not be fetched" not in setup.text and "blocked by robots.txt" not in setup.text
+    assert "fictional" in setup.text and "No network request was sent" in setup.text
     # a public host serves the demo project only, even when other projects sit in its folder
     from aeo.ranksim.project import create_project
 

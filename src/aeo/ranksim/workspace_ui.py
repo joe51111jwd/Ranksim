@@ -370,7 +370,9 @@ def _source_panel(ui, project, meta, google, pulls, engine_ready: bool, csrf: st
     if counts:
         stored = counts.get("stored", 0) + counts.get("fetched_now", 0) + counts.get("kept_stored", 0)
         failed = sum(value for key, value in counts.items() if key not in {"stored", "fetched_now", "kept_stored"})
-        if meta.dataset == ws.DATASET_HISTORICAL:
+        if meta.dataset == ws.DATASET_SYNTHETIC:
+            rows.append(("Page HTML", f"{stored} generated fixture pages, {failed} left blank on purpose. Those blanks are fictional (a made-up robots block and a made-up HTTP error). No network request was sent."))
+        elif meta.dataset == ws.DATASET_HISTORICAL:
             rows.append(("Page HTML", f"{stored} saved in this repository, {failed} have no saved copy (nothing is fetched in this demo)"))
         else:
             rows.append(("Page HTML", f"{stored} stored, {failed} could not be fetched" + _fail_detail(counts)))
@@ -396,7 +398,9 @@ def _build_form(ui, project, meta, csrf: str, *, engine_ready: bool, has_google:
         return (
             '<form method="post" action="/demo/synthetic" class="inline-form" data-busy="Rebuilding...">' + csrf
             + '<button type="submit" class="btn">Rebuild demo</button>'
-            '<span class="hint">Re-imports the synthetic positions and pages. Your draft tests are kept.</span></form>'
+            '<span class="hint">Re-imports the fictional positions and generated pages. '
+            + ("Pasted drafts are not stored." if ui.public_demo else "Saved draft tests are kept.")
+            + "</span></form>"
         )
     if meta.dataset == ws.DATASET_HISTORICAL:
         if not historical_allowed(ui):
@@ -793,6 +797,11 @@ def draft_body(ui, project, meta, ctx, query: str, *, values=None, error: str = 
     )
     original_text = values.get("original_html", "")
     draft_text = values.get("draft_html", "")
+    draft_hint = (
+        "Paste full HTML, or plain text: the first line becomes the title and H1. Max 2 MB. Nothing you paste is stored."
+        if ui.public_demo
+        else "Paste full HTML, or plain text: the first line becomes the title and H1. Max 2 MB. The original is saved unchanged next to the draft."
+    )
     form = (
         f'<form method="post" action="/p/{e(project.slug)}/draft" class="form draft-form" data-busy="Scoring...">' + serve._csrf_input(ui)
         + '<div class="form-grid">'
@@ -811,7 +820,7 @@ def draft_body(ui, project, meta, ctx, query: str, *, values=None, error: str = 
         f'<div class="field" data-show-when="paste"><label for="d-orig">Original HTML or text</label><textarea id="d-orig" name="original_html" rows="7" spellcheck="false">{e(original_text)}</textarea></div>'
         "</fieldset>"
         f'<div class="field"><label for="d-draft">Draft HTML or text</label><textarea id="d-draft" name="draft_html" rows="12" required spellcheck="false" aria-describedby="d-draft-h">{e(draft_text)}</textarea>'
-        '<p class="hint" id="d-draft-h">Paste full HTML, or plain text: the first line becomes the title and H1. Max 2 MB. The original is saved unchanged next to the draft.</p></div>'
+        f'<p class="hint" id="d-draft-h">{e(draft_hint)}</p></div>'
         f"{ai_field}"
         '<div class="form-actions"><button type="submit" class="btn btn-primary">Run PREDICTED test</button>'
         f'<span class="hint">Ranks only the {len(stored_all)} candidates above, not Google\'s index.</span></div></form>'
@@ -879,7 +888,11 @@ def draft_result_body(ui, project, meta, run: dict) -> str:
                 return f'<div class="ba-col {cls}"><span class="ba-k">{e(label)}</span><span class="ba-v ba-none">not placed</span><span class="chip chip-bad">off topic</span></div>'
             return f'<div class="ba-col {cls}"><span class="ba-k">{e(label)}</span><span class="ba-v">#{result["position"]}</span><span class="ba-of">of {of}</span>{_confidence_chip(result["confidence"])}</div>'
 
-        reasons = " ".join(e(item.get("unplaced", "")) for item in (before, after) if item and item.get("position") is None)
+        reasons = " ".join(
+            e(_topic_words(item.get("unplaced", ""), run.get("dataset") or ""))
+            for item in (before, after)
+            if item and item.get("position") is None
+        )
         tiles = (
             '<div class="ba">'
             + (col("Original", before) + '<div class="ba-arrow" aria-hidden="true"></div>' if before is not None else "")
@@ -932,13 +945,21 @@ def draft_result_body(ui, project, meta, run: dict) -> str:
             f'<p class="small">{len(run["missing_candidates"])} observed result{"s" if len(run["missing_candidates"]) != 1 else ""} in this set {"have" if len(run["missing_candidates"]) != 1 else "has"} no stored HTML, so {"they were" if len(run["missing_candidates"]) != 1 else "it was"} not scored. The effect on the order is unknown, not zero.</p>'
             f'<ul class="urls">{links}</ul></div></section>'
         )
-    sources = (
-        '<section class="panel panel-quiet"><div class="panel-head"><h2>Saved inputs</h2></div><div class="panel-body small">'
-        f'<p>Original: {e(run.get("original_label") or "none")}. Draft and original HTML are saved with this run and are not changed by later runs.</p>'
-        f'<p><a href="/p/{slug}/draft/{e(run["id"])}/draft.txt">View draft source</a>'
-        + (f' <span class="sep" aria-hidden="true">|</span> <a href="/p/{slug}/draft/{e(run["id"])}/original.txt">View original source</a>' if run.get("has_original") and run.get("original_label", "").startswith(("pasted", "stored")) else "")
-        + f'</p><p class="muted">Positions source: {e(run.get("source") or "n/a")} Seen: {e(_seen(meta, run.get("pulled") or ""))}.</p></div></section>'
-    )
+    saved = (not ui.public_demo) and bool(run.get("id"))
+    if saved:
+        sources = (
+            '<section class="panel panel-quiet"><div class="panel-head"><h2>Saved inputs</h2></div><div class="panel-body small">'
+            f'<p>Original: {e(run.get("original_label") or "none")}. Draft and original HTML are saved with this run and are not changed by later runs.</p>'
+            f'<p><a href="/p/{slug}/draft/{e(run["id"])}/draft.txt">View draft source</a>'
+            + (f' <span class="sep" aria-hidden="true">|</span> <a href="/p/{slug}/draft/{e(run["id"])}/original.txt">View original source</a>' if run.get("has_original") and run.get("original_label", "").startswith(("pasted", "stored")) else "")
+            + f'</p><p class="muted">Positions source: {e(run.get("source") or "n/a")} Seen: {e(_seen(meta, run.get("pulled") or ""))}.</p></div></section>'
+        )
+    else:
+        sources = (
+            '<section class="panel panel-quiet"><div class="panel-head"><h2>Inputs</h2></div><div class="panel-body small">'
+            "<p>This result was not saved. There is no stored draft, no stored original, and no source link.</p>"
+            f'<p class="muted">Positions source: {e(run.get("source") or "n/a")} Seen: {e(_seen(meta, run.get("pulled") or ""))}.</p></div></section>'
+        )
     return head + summary + f'<div class="grid-2 grid-top">{orders}{diff}</div>' + f'<div class="grid-2 grid-top">{topic}{ai}</div>' + missing + sources
 
 
@@ -1021,7 +1042,7 @@ def _topic_panel(run: dict) -> str:
         cls = "chip-ok" if topic.get("on_topic") is True else ("chip-na" if topic.get("on_topic") is None else "chip-bad")
         missing = topic.get("missing") or []
         words = f'<p class="small">Query words not found: {e(", ".join(missing))}</p>' if missing else ""
-        return f'<div class="topic"><h3>{e(label)} <span class="chip {cls}">{e(status)}</span></h3><p class="small">{e(ws._observed_text(topic.get("text") or ""))}</p>{words}</div>'
+        return f'<div class="topic"><h3>{e(label)} <span class="chip {cls}">{e(status)}</span></h3><p class="small">{e(_topic_words(topic.get("text") or "", run.get("dataset") or ""))}</p>{words}</div>'
 
     parts = []
     if run.get("has_original"):
@@ -1031,6 +1052,22 @@ def _topic_panel(run: dict) -> str:
         '<section class="panel"><div class="panel-head"><h2>On-topic check</h2>'
         f'<p class="panel-note">{_pred()} A separate check that the page covers the query and does not repeat itself.</p></div>'
         f'<div class="panel-body">{"".join(parts)}</div></section>'
+    )
+
+
+def _topic_words(text: str, dataset: str) -> str:
+    """Synthetic results must not call the fixture Google or a REAL top 10."""
+    text = ws._observed_text(text)
+    if dataset != ws.DATASET_SYNTHETIC:
+        return text
+    return (
+        text.replace("any REAL top 10 page", "any generated example page")
+        .replace("REAL top 10", "generated example pages")
+        .replace("the observed pages here", "the generated example pages")
+        .replace("observed page in this project", "generated example page in this demo")
+        .replace("Every readable observed page here", "Every readable generated example page")
+        .replace("some observed page here", "some generated example page")
+        .replace("observed pages", "generated example pages")
     )
 
 

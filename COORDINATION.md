@@ -128,7 +128,7 @@ Authoritative task state for every agent. Update the row. Do not delete it.
 - Owner: SEO Tool Builder
 - Status: done
 - Branch: `cursor/t006-html-coverage-175f`
-- PR: opened from this branch onto `cursor/mvp-eod-design-175f` (not onto `main`, and not more commits on pull request 1)
+- PR: https://github.com/joe51111jwd/Ranksim/pull/4 (base `cursor/mvp-eod-design-175f`, not `main`, and not more commits on pull request 1)
 - Scope: join labeled rows to local HTML snapshots. No UI, no crawl, no invented text. Did not edit Claude's `benchmark.py`, `ledger.py`, `snapshot.py`, `serve.py`, `demo.py`, `project.py`, `check.py`, or `index_serp.py`.
 - Files: `src/aeo/ranksim/snapshot_join.py`, `src/aeo/ranksim/coverage.py` (normalized snapshot match only), `tests/test_snapshot_join.py`, `tests/test_coverage_audit.py`, `docs/coverage_recovery.md`, `docs/accuracy.md` (one pointer), this board row.
 - Blockers: 100 labeled rows have no local HTML. `index-serp` on Claude's audit branch still matches snapshots by the exact label string. This branch did not change that file.

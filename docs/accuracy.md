@@ -69,6 +69,10 @@ Accuracy stays unreported until the file has at least two queries with two store
 
 A unit-test fixture can show the trainer recover an obvious order. That fixture is synthetic and is not a Google accuracy number.
 
+## Track record
+
+Published accuracy over time is a later REAL snapshot compared with ranks that were recorded as PREDICTED before that snapshot. The command is `python -m aeo.ranksim track-record score`. It scores only URLs that appear in both files. It does not train on the later positions. See `docs/track_record.md`. A browser JSONL capture can be converted with `import-serp` for an authorized local file. That command keeps http(s) URLs only and does not invent the rest. No accuracy percentage is claimed here.
+
 ## Sources
 
 - [Robertson, Zaragoza, and Taylor, Simple BM25 extension to multiple weighted fields](https://dl.acm.org/doi/10.1145/1031171.1031181) (CIKM, 13 Nov 2004)

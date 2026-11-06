@@ -111,15 +111,30 @@ Authoritative task state for every agent. Update the row. Do not delete it.
 ### T-005 — Prediction track record and browser SERP JSONL import
 
 - Owner: SEO Tool Builder
-- Status: in_progress
+- Status: done
 - Branch: `cursor/mvp-eod-design-175f`
 - PR: https://github.com/joe51111jwd/Ranksim/pull/1
 - Scope: backend, tests, and docs only. Browser JSONL import to `query,url,position`. File ledger of PREDICTED ranks scored later against a REAL file. No UI.
-- Files: `src/aeo/ranksim/serp_import.py`, `src/aeo/ranksim/track_record.py`, `src/aeo/ranksim/cli.py` (new subcommands only), `tests/test_serp_import.py`, `tests/test_track_record.py`, `docs/track_record.md`, this board row.
-- Blockers: none yet. Claude's audit branch has a separate database ledger (`ledger.py`) and `ledger` CLI. This task does not edit that branch or those files.
-- Request: none. Do not take `T-001` files.
-- Next: implement importer and scorer, then mark this row done with pytest evidence.
-- Evidence: not run yet.
+- Files: `src/aeo/ranksim/serp_import.py`, `src/aeo/ranksim/track_record.py`, `src/aeo/ranksim/cli.py` (new subcommands only), `tests/test_serp_import.py`, `tests/test_track_record.py`, `docs/track_record.md`, `docs/accuracy.md` (short pointer), this board row.
+- Blockers: none. Claude's audit branch `claude/ranksim-audit-8nshyt` has a separate database ledger (`ledger.py`). This task did not edit that branch. A later merge should not treat the two ledgers as the same store.
+- Request: none. `T-001` files were not taken.
+- Next: released.
+- Evidence: `python3 -m pytest` on 2026-11-06 with dummy `OPENROUTER_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `SERPER_API_KEY`, and `BRAVE_API_KEY`: 75 passed, 1 Starlette warning, 1.41s. Commands: `python -m aeo.ranksim import-serp capture.jsonl --out later.csv` and `python -m aeo.ranksim track-record record` / `track-record score`. No paid call. `llm_relevance` is still not a default feature.
+- Updated: 2026-11-06
+- Stale-check: none
+
+### T-006 — Missing HTML coverage
+
+- Owner: none
+- Status: released
+- Branch: none
+- PR: none
+- Scope: not started. Recover labeled rows that already have a local snapshot, without inventing page text and without a paid SERP pull.
+- Files: none claimed.
+- Blockers: none. Do not start by editing Claude UI files.
+- Request: none.
+- Next: claim this row before any edit. Pending until someone claims it.
+- Evidence: none. Noted on 2026-11-06 only so it is not forgotten.
 - Updated: 2026-11-06
 - Stale-check: none
 
@@ -147,6 +162,15 @@ Older notes. The board above is the live state. Do not delete these.
 - Claimed now: provider-env test isolation and `aeo.ranksim.coverage` only. Completed as `T-002`.
 - Not touched: `src/aeo/ranksim/serve.py`, `demo.py`, `cli.py`, `check.py`, `project.py`.
 - Next: Claude owns `T-001`.
+
+### 2026-11-06 — SEO Tool Builder, T-005 done
+
+- Branch: `cursor/mvp-eod-design-175f`
+- Pull request: https://github.com/joe51111jwd/Ranksim/pull/1
+- Remote check: `origin/main` still `ae6012b`. `origin/claude/bold-einstein-oi5qoj` still `35dc82a`. New remote branches `claude/ranksim-audit-8nshyt` and `claude/ranksim-mvp-eod-ifjitw` were not merged and their UI files were not edited.
+- Done: `T-005`. Pytest 75 passed, 1 warning, dummy provider env.
+- Left released: `T-006` missing HTML coverage. Not implemented.
+- Next: Claude still owns `T-001`.
 
 ### 2026-11-05 — SEO Tool Builder, board opened
 

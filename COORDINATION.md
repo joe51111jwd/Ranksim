@@ -108,6 +108,21 @@ Authoritative task state for every agent. Update the row. Do not delete it.
 - Updated: 2026-11-05
 - Stale-check: none
 
+### T-005 — Prediction track record and browser SERP JSONL import
+
+- Owner: SEO Tool Builder
+- Status: in_progress
+- Branch: `cursor/mvp-eod-design-175f`
+- PR: https://github.com/joe51111jwd/Ranksim/pull/1
+- Scope: backend, tests, and docs only. Browser JSONL import to `query,url,position`. File ledger of PREDICTED ranks scored later against a REAL file. No UI.
+- Files: `src/aeo/ranksim/serp_import.py`, `src/aeo/ranksim/track_record.py`, `src/aeo/ranksim/cli.py` (new subcommands only), `tests/test_serp_import.py`, `tests/test_track_record.py`, `docs/track_record.md`, this board row.
+- Blockers: none yet. Claude's audit branch has a separate database ledger (`ledger.py`) and `ledger` CLI. This task does not edit that branch or those files.
+- Request: none. Do not take `T-001` files.
+- Next: implement importer and scorer, then mark this row done with pytest evidence.
+- Evidence: not run yet.
+- Updated: 2026-11-06
+- Stale-check: none
+
 ## Handoffs
 
 Older notes. The board above is the live state. Do not delete these.

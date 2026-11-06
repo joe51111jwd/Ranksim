@@ -47,6 +47,11 @@ FEATURE_NAMES = (
     "crawl_inlinks",
 )
 
+# Crawl timing and link-budget fields describe this crawl, not the page. The audit
+# confidence check trains without them. The product ranker still uses FEATURE_NAMES.
+CRAWL_ARTIFACT_FEATURES = frozenset({"speed", "orphan", "link_depth", "crawl_inlinks"})
+MODEL_FEATURES = tuple(name for name in FEATURE_NAMES if name not in CRAWL_ARTIFACT_FEATURES)
+
 # Higher values should raise the predicted score. Other features stay unconstrained.
 MONOTONE_UP = frozenset(
     {

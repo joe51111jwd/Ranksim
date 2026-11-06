@@ -2590,7 +2590,7 @@ def _score_search(ctx: ProjectContext, search: str, base: PageDoc, url: str, ins
         return board
     if ctx.topic is not None:
         board.topic = ctx.topic.check(search, base)
-        if board.topic.on_topic is not True:
+        if board.topic.on_topic is False or board.topic.status == "not checked":
             board.error = board.topic.text
             return board
     _site_slot(ctx, board, search, url, incumbents, base, compare)
@@ -2633,6 +2633,9 @@ def _score_search(ctx: ProjectContext, search: str, base: PageDoc, url: str, ins
     if position - 1 < len(incumbents):
         board.below = _neighbor(incumbents[position - 1])
     board.confidence, board.confidence_note = _confidence(ctx, values, board.thin)
+    if board.topic is not None and board.topic.status == "uncertain":
+        board.confidence = "UNSURE"
+        board.confidence_note = board.topic.text
     scaled = normalize_rows(raw)
     linear = [dot(HAND_WEIGHTS, row) for row in scaled]
     board.linear_position = 1 + sum(1 for value in linear[:-1] if value > linear[-1])
@@ -2842,8 +2845,7 @@ def _confidence(ctx: ProjectContext, values: list[float], thin: bool) -> tuple[s
         gaps.append(abs(values[ours] - values[order[place - 1]]))
     if place + 1 < len(order):
         gaps.append(abs(values[ours] - values[order[place + 1]]))
-    label = ctx.fit.calibration.label(min(gaps) if gaps else 0.0)
-    note = ctx.fit.calibration.note
+    label, note = ctx.fit.calibration.product_label(min(gaps) if gaps else 0.0, synthetic=_is_synthetic(ctx.project))
     if thin and label != "UNSURE":
         return "UNSURE", "Fewer than half of the REAL results are stored, so this stays UNSURE. " + note
     return label, note

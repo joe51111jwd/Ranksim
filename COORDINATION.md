@@ -115,6 +115,16 @@ James moved the UI and end-to-end web flow to Claude at about 3:30pm Eastern and
 - CLEARER on the synthetic comparison is still the in-sample label. Held-out calibration from PR #3 is not in this branch.
 - Next: do not merge. Do not deploy this branch.
 
+### 2026-11-06 — SEO Tool Builder, calibration, ledger, topic uncertainty
+
+- Branch: `cursor/integration-review-175f`. Pull request: https://github.com/joe51111jwd/Ranksim/pull/5
+- Provider isolation from PR #1 is in `tests/conftest.py`. The PR #1 CSV track-record ledger was not added.
+- Confidence uses `validate_calibration` from the audit (cluster and URL holdout in `benchmark.py`). Product labels use `product_label`: synthetic data and any threshold that did not pass that holdout stay UNSURE. `Calibration.label` can still say CLEARER for the in-sample description. It is not the user-facing call.
+- Draft saves on a non-synthetic project append to the database ledger. Dated CSV imports append outcomes. Synthetic drafts are not recorded. The public demo still does not save pasted text.
+- Topic: a page under the clone-similarity floor keeps a PREDICTED slot only when it matches this search more than every other stored search and the score is at least 0.02. The text says low cosine, unvalidated, not off topic. A near-zero score, a missing query word, a repetitive page, and an empty page still get no slot. The stored original page is unchanged when its cosine stays above the floor.
+- Tests: `python3 -m pytest` 293 passed, 1 warning, about 12.4s with keys unset, and the same 293 passed with dummy provider keys.
+- Still not merged and not deployed. PR #3 was not merged as a whole. `serve.py` on that branch is still the older demo.
+
 ### Template
 
 Copy this block. Do not delete earlier handoffs.

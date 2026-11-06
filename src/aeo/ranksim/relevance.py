@@ -39,6 +39,9 @@ READABLE_WORDS = 30
 REPETITION_FLOOR = 0.2
 TOPIC_MARGIN = 0.5
 TOPIC_FLOOR_DEFAULT = 0.02
+# Under the clone-similarity floor, a page is uncertain only when it still matches
+# this search more than every other stored search. A near-zero score stays off topic.
+TOPIC_SEPARATION = 0.02
 MIN_READABLE = 3
 TITLE_NORM_SHARE = 0.6
 # Modifiers a to-do item should not ask a page to "cover" on their own: 'all in one' or 'best' are phrasing, not topics.
@@ -216,6 +219,20 @@ class TopicModel:
         norm = math.sqrt(sum(value * value for value in weights.values())) or 1.0
         return {term: value / norm for term, value in weights.items()}
 
+    def _best_other_search(self, vector: dict[str, float], search: str) -> tuple[str | None, float | None]:
+        best_name = None
+        best_score = None
+        for name in self.readable:
+            if name == search:
+                continue
+            value = self._match(vector, name)
+            if value is None:
+                continue
+            if best_score is None or value > best_score:
+                best_name = name
+                best_score = value
+        return best_name, best_score
+
     def _match(self, vector: dict[str, float], search: str, leave_out: str | None = None) -> float | None:
         docs = self.readable.get(search) or []
         total = self.sums.get(search) or Counter()
@@ -347,6 +364,25 @@ class TopicModel:
             )
             return result
         if score is not None and score < self.topic_floor:
+            other_name, other_score = self._best_other_search(vector, search)
+            closer = (
+                other_score is not None
+                and score >= other_score + TOPIC_SEPARATION
+                and score >= TOPIC_FLOOR_DEFAULT
+            )
+            if closer:
+                # Stored pages can match each other near 0.8 because they share a template,
+                # so half of that is a high floor. Ordinary wording that still prefers this
+                # search is not a validated off-topic result.
+                result.on_topic = None
+                result.status = "uncertain"
+                result.text = (
+                    f"Low cosine to stored pages, unvalidated: topic match {score:.3f} is under the floor "
+                    f"{self.topic_floor:.3f} (half the lowest match among stored pages) and higher than "
+                    f"{other_name} ({other_score:.3f}). This is not an off-topic decision. "
+                    "A PREDICTED slot is still shown. Confidence stays UNSURE."
+                )
+                return result
             result.on_topic = False
             result.status = "off topic"
             result.text = (

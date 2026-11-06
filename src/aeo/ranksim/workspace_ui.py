@@ -1382,7 +1382,7 @@ def register(app: FastAPI, ui) -> None:
             # Never store or list what an anonymous visitor pasted: the result is rendered once and not saved.
             note = _alert("Public demo: this result is not saved. Nothing you paste here is stored or shown to anyone else.", "info")
             return shell(ui, f"Draft test: {run['search']}", note + draft_result_body(ui, project, meta, run), project=project, meta=meta, tab="draft", query=run["search"])
-        run_id = await run_in_threadpool(ws.save_draft_run, project, run, original_html, values["draft_html"])
+        run_id = await run_in_threadpool(ws.save_draft_run, project, run, original_html, values["draft_html"], ui.database)
         return RedirectResponse(f"/p/{slug}/draft/{run_id}", status_code=303)
 
     def _draft_form_response(slug: str, q: str, values, *, error: str = "", status: int = 200, from_run: bool = False) -> Response:
@@ -1411,6 +1411,33 @@ def draft_prefill(ui, project, run_id: str) -> dict | None:
     return values
 
 
+def _record_imported_outcomes(database: str, path, observed_on: str) -> None:
+    """Append a dated imported file to the ledger. Undated and synthetic imports are not outcomes."""
+    from collections import defaultdict
+
+    from aeo.ranksim.groundtruth import load_serp_file
+    from aeo.ranksim.ledger import record_outcome
+    from aeo.ranksim.store import open_session
+
+    grouped: dict[str, dict[str, int]] = defaultdict(dict)
+    for label in load_serp_file(path):
+        grouped[label.query][label.url] = int(label.position)
+    session = open_session(database)
+    try:
+        for query, positions in grouped.items():
+            record_outcome(
+                session,
+                query=query,
+                observed_on=observed_on,
+                provider="imported_csv",
+                positions=positions,
+                depth=max(positions.values()) if positions else None,
+                notes="Imported file. Not a live Google pull.",
+            )
+    finally:
+        session.close()
+
+
 def _import_bytes(ui, project, data: bytes, snapshot: str, add: bool):
     """Write a checked CSV under the project and import it. Returns the ImportReport or an error string."""
     from datetime import datetime, timezone
@@ -1427,6 +1454,8 @@ def _import_bytes(ui, project, data: bytes, snapshot: str, add: bool):
         report = import_serp_csv(project, path, snapshot or None, f"uploaded CSV ({when})", add_searches=add)
     except (ProjectError, ValueError, KeyError) as exc:
         return f"Import failed: {exc}"
+    if snapshot and ws.load_meta(project).dataset != ws.DATASET_SYNTHETIC:
+        _record_imported_outcomes(ui.database, path, snapshot)
     meta = ws.load_meta(project)
     if meta.dataset == ws.DATASET_NONE:
         meta.dataset = ws.DATASET_OBSERVED

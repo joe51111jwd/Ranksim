@@ -165,6 +165,57 @@ def test_plain_text_draft_becomes_a_page():
     assert "second line of the intro" in kept and "<p>Body</p>" in kept
 
 
+def test_plain_query_word_draft_keeps_a_slot_and_stays_unsure(demo):
+    ctx = demo["ctx"]
+    view = ws.compare_search(ctx, QUERY)
+    assert view.confidence == "UNSURE"
+    original = ws.synthetic_page(view.your_url)
+    plain = (
+        "Vinyl Fence Installation Cost Guide\n\n"
+        "The vinyl fence installation cost is what a homeowner pays a crew to put a vinyl fence around a yard. "
+        "The bill covers the vinyl, the posts, the digging, and the hours the crew spends on the installation. "
+        "A short fence costs less than a long one because the installation takes less time. "
+        "Gates cost extra because the opening needs stronger posts and more careful installation. "
+        "Sloped ground raises the vinyl fence installation cost since each section has to step down the hill. "
+        "Ask the crew to separate the vinyl material from the installation labor so the cost is easy to read. "
+        "This note is only about that vinyl fence installation cost."
+    )
+    run = ws.run_draft(ctx, QUERY, plain, view.your_url, original_html=original, original_label="stored page")
+    assert run["before"]["position"] is not None
+    assert run["topic_before"]["on_topic"] is True
+    assert run["before"]["confidence"] == "UNSURE"
+    assert run["after"]["position"] is not None, run["after"].get("unplaced")
+    assert run["topic_after"]["status"] == "uncertain"
+    assert run["topic_after"]["on_topic"] is None
+    assert run["topic_after"]["status"] != "off topic"
+    assert "unvalidated" in run["topic_after"]["text"].lower()
+    assert run["after"]["confidence"] == "UNSURE"
+    cake = (
+        "Chocolate Cake\n\n"
+        "Melt butter with sugar, then beat in eggs and fold flour with cocoa. "
+        "Pour the batter into a round pan and bake until a skewer comes out clean. "
+        "Cool the layers on a rack before spreading ganache over the top. "
+        "A second batch can use orange zest, a third can use espresso, and a fourth can stay plain. "
+        "Serve slices with cold milk. The crumb should be tender, not dry, and the frosting should set at room temperature."
+    )
+    cake_run = ws.run_draft(ctx, QUERY, cake, "https://bakery.example/chocolate-cake")
+    assert cake_run["after"]["position"] is None
+    assert cake_run["topic_after"]["status"] == "off topic"
+
+
+def test_in_sample_clearer_is_not_a_product_label():
+    from aeo.ranksim.confidence import Calibration, PairMargin, calibrate
+
+    sure = [PairMargin(gap=2.0, correct=True) for _ in range(40)] + [PairMargin(gap=0.01, correct=False) for _ in range(40)]
+    fitted = calibrate(sure)
+    assert fitted.label(2) == "CLEARER"
+    label, _note = fitted.product_label(2)
+    assert label == "UNSURE"
+    synthetic = Calibration(2.0, 0.9, 0.5, "held out", held_out=True)
+    assert synthetic.product_label(2, synthetic=True)[0] == "UNSURE"
+    assert synthetic.product_label(2)[0] == "CLEARER"
+
+
 def test_an_off_topic_or_stuffed_draft_gets_no_position(demo):
     ctx = demo["ctx"]
     stuffed = "<h1>Vinyl fence installation cost</h1>" + "<p>vinyl fence installation cost vinyl fence installation cost.</p>" * 120
@@ -343,7 +394,7 @@ def test_public_demo_mode_only_serves_the_synthetic_demo(tmp_path, monkeypatch):
     )
     assert explained.status_code == 200
     assert "REAL top 10" not in explained.text and "pages Google ranks" not in explained.text
-    assert "generated example" in explained.text
+    assert "unvalidated" in explained.text.lower()
     assert "Saved inputs" not in explained.text
     form = client.get("/p/synthetic-demo/draft", params={"q": QUERY}).text
     assert "PRIVATE-MARKER" not in form and "Saved tests" not in form

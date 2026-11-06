@@ -525,8 +525,12 @@ def _gap_confidence(ctx, values: list[float], index: int, thin: bool) -> tuple[s
         gaps.append(abs(values[index] - values[order[place - 1]]))
     if place + 1 < len(order):
         gaps.append(abs(values[index] - values[order[place + 1]]))
-    label = ctx.fit.calibration.label(min(gaps) if gaps else 0.0)
-    note = ctx.fit.calibration.note
+    from aeo.ranksim.project import _is_synthetic
+
+    label, note = ctx.fit.calibration.product_label(
+        min(gaps) if gaps else 0.0,
+        synthetic=_is_synthetic(ctx.project),
+    )
     if thin and label != "UNSURE":
         return "UNSURE", "Under half of the candidates are stored, so this stays UNSURE. " + note
     return label, note
@@ -725,8 +729,14 @@ def run_draft(
         # Same rule as the engine's board: a page the on-topic check does not pass gets no slot at all.
         if ctx.topic is not None:
             check = ctx.topic.check(search, doc)
-            if check.on_topic is not True:
+            if check.on_topic is False or check.status == "not checked":
                 return {"position": None, "of": len(candidates) + 1, "score": None, "order": [], "confidence": "n/a", "features": {}, "unplaced": _observed_text(check.text)}
+            placed_row = _place(ctx, search, intent, model, candidates, doc)
+            if check.status == "uncertain":
+                placed_row["confidence"] = "UNSURE"
+                placed_row["unplaced"] = ""
+                placed_row["topic_note"] = _observed_text(check.text)
+            return placed_row
         return _place(ctx, search, intent, model, candidates, doc)
 
     after = placed(draft_doc)
@@ -834,7 +844,7 @@ def _as_html(text: str) -> str:
     return "".join(parts)
 
 
-def save_draft_run(project, run: dict, original_html: str | None, draft_html: str) -> str:
+def save_draft_run(project, run: dict, original_html: str | None, draft_html: str, database: str | None = None) -> str:
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     run_id = f"{stamp}-{secrets.token_hex(3)}"
     folder = Path(project.dir) / DRAFTS_DIR / run_id
@@ -844,7 +854,57 @@ def save_draft_run(project, run: dict, original_html: str | None, draft_html: st
     if original_html is not None and original_html.strip():
         (folder / "original.html").write_text(original_html, encoding="utf-8")
     (folder / "run.json").write_text(json.dumps(run, indent=2), encoding="utf-8")
+    if database and run.get("dataset") != DATASET_SYNTHETIC:
+        _record_draft_ledger(database, run, draft_html)
     return run_id
+
+
+def _record_draft_ledger(database: str, run: dict, draft_html: str) -> None:
+    """Append one PREDICTED draft to the audit database ledger. Synthetic runs are not recorded."""
+    if run.get("dataset") == DATASET_SYNTHETIC:
+        return
+    after = run.get("after") or {}
+    if after.get("position") is None:
+        return
+    url = str(run.get("url") or "")
+    if not url.startswith(("http://", "https://")):
+        return
+    from aeo.ranksim.ledger import Call, record_prediction
+    from aeo.ranksim.store import open_session
+
+    calls = []
+    candidates = []
+    yours = int(after["position"])
+    for item in after.get("order") or []:
+        if item.get("page") or not item.get("url"):
+            continue
+        calls.append(
+            Call(
+                competitor_url=item["url"],
+                predicted="above" if yours < int(item["predicted"]) else "below",
+                score_gap=None,
+                confidence="UNSURE",
+            )
+        )
+        candidates.append({"url": item["url"], "html_sha256": None, "labeled_position": item.get("observed")})
+    session = open_session(database)
+    try:
+        record_prediction(
+            session,
+            kind="workspace_draft",
+            query=run["search"],
+            subject_url=url,
+            subject_html=draft_html,
+            predicted_rank=yours,
+            predicted_of=int(after.get("of") or yours),
+            candidates=candidates,
+            calls=calls,
+            confidence="UNSURE",
+            calibration_note=str(run.get("notes") or "PREDICTED slot among supplied candidates. Not a Google position."),
+            provenance={"dataset": run.get("dataset") or "", "source": "workspace"},
+        )
+    finally:
+        session.close()
 
 
 def load_draft_run(project, run_id: str) -> dict | None:

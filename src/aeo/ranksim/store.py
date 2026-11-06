@@ -128,6 +128,8 @@ def database_url(url: str) -> str:
 def session_factory(url: str) -> sessionmaker:
     url = database_url(url)
     if url not in _factories:
+        from aeo.ranksim import ledger  # noqa: F401  (registers ledger tables)
+
         engine = create_engine(url, future=True)
         Base.metadata.create_all(engine)
         _factories[url] = sessionmaker(bind=engine, expire_on_commit=False, future=True)

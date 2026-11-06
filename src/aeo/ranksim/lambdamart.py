@@ -217,7 +217,13 @@ def cross_validate(examples: list[RankExample], *, real_google: bool, folds_mode
     )
 
 
-def fit_lambdamart(examples: list[RankExample], feature_names: tuple[str, ...] | list[str] | None = None):
+def fit_lambdamart(
+    examples: list[RankExample],
+    feature_names: tuple[str, ...] | list[str] | None = None,
+    monotone_up: frozenset[str] | None = None,
+):
+    """``monotone_up`` is accepted so the audit scorer can call this. The product fit still uses MONOTONE_UP."""
+    del monotone_up
     import lightgbm as lgb
 
     names = list(feature_names or FEATURE_NAMES)

@@ -719,8 +719,6 @@ def _ai_eval(settings, database: str, args) -> None:
     else:
         fit = loo_fit(examples, keep_models=True)
         model = fit.models.get(args.query)
-        from aeo.ranksim.tester import _labeled_set_is_synthetic
-
         result = check_draft(
             query=args.query,
             html=html_path.read_text(encoding="utf-8", errors="replace"),
@@ -732,7 +730,6 @@ def _ai_eval(settings, database: str, args) -> None:
             intent=intents.get(args.query, "commercial"),
             llm=llm,
             run_ai=True,
-            synthetic=_labeled_set_is_synthetic(labels),
         )
         print(f"Fix loop. Query: {args.query}")
         print(f"URL: {args.url}")

@@ -223,11 +223,9 @@ def test_historical_import_is_not_scored_as_another_projects_csv(tmp_path):
     assert demo_import.status_code == 303
     session = open_session(settings.ranksim_database_url)
     try:
-        from aeo.ranksim.ledger import record_prediction
-
         assert session.query(RsOutcome).count() == 1
         assert session.query(RsOutcome).one().project_slug == "real"
-        record_prediction(
+        ledger.record_prediction(
             session,
             kind="workspace_draft",
             query="fence cost",
@@ -337,10 +335,19 @@ def test_private_draft_stays_unsure_and_a_later_csv_resolves_it(tmp_path):
     assert payload["provenance"]["instrument"] == "lambdamart"
     assert payload["provenance"]["held_out"] is False
     assert payload["provenance"]["dataset"] == "observed"
+    from aeo.ranksim.ledger import _sha
+    from aeo.ranksim.tester import stored_html
+
     hashes = {row["url"]: row["html_sha256"] for row in payload["candidates"]}
     assert hashes
     for url, digest in hashes.items():
-        assert digest == hashlib.sha256(pages[url].encode("utf-8")).hexdigest()
+        found = stored_html(settings.ranksim_database_url, url)
+        assert found is not None
+        assert found[0] == pages[url]
+        assert digest == _sha(found[0])
+    from aeo.ranksim.workspace import _candidate_html_sha256
+
+    assert _candidate_html_sha256(settings.ranksim_database_url, "https://missing.example/none") is None
     assert prediction.payload["subject_html_sha256"] == hashlib.sha256(draft_html.encode("utf-8")).hexdigest()
 
     later = (
@@ -351,7 +358,7 @@ def test_private_draft_stays_unsure_and_a_later_csv_resolves_it(tmp_path):
     ).encode()
     imported = client.post(
         "/p/acme/import",
-        data={"csrf": csrf, "snapshot_date": "2020-01-03", "add_searches": ""},
+        data={"csrf": csrf, "snapshot_date": "2020-01-04", "add_searches": ""},
         files={"csv_file": ("later.csv", later, "text/csv")},
         follow_redirects=False,
     )
@@ -365,14 +372,25 @@ def test_private_draft_stays_unsure_and_a_later_csv_resolves_it(tmp_path):
     assert outcome.project_slug == "acme"
     assert outcome.source_file == "later.csv"
     assert outcome.source_sha256 == hashlib.sha256(later).hexdigest()
-    assert outcome.observed_on == "2020-01-03"
+    assert outcome.observed_on == "2020-01-04"
     assert outcome.uploaded_at
     assert "Not a live Google pull" in outcome.notes
     assert score.predictions == 1
     assert score.resolved > 0
     assert score.accuracy is not None
-    above = sum(1 for call in payload["calls"] if call["predicted"] == "above")
-    assert score.correct == above
+    def correct_if(positions: dict[str, int]) -> int:
+        subject = positions["https://acme.example/vinyl"]
+        matched = 0
+        for call in payload["calls"]:
+            rival = positions[call["competitor_url"]]
+            actual = "above" if subject < rival else "below"
+            if actual == call["predicted"]:
+                matched += 1
+        return matched
+
+    acme_positions = {"https://acme.example/vinyl": 1, "https://rival.example/vinyl": 2, "https://other.example/vinyl": 3}
+    beta_positions = {"https://acme.example/vinyl": 5, "https://rival.example/vinyl": 1, "https://other.example/vinyl": 2}
+    assert score.correct == correct_if(acme_positions)
     other = client.post(
         "/projects",
         data={"csrf": csrf, "name": "Beta", "site": "beta.example", "searches": QUERY},
@@ -387,17 +405,51 @@ def test_private_draft_stays_unsure_and_a_later_csv_resolves_it(tmp_path):
     ).encode()
     beta = client.post(
         "/p/beta/import",
-        data={"csrf": csrf, "snapshot_date": "2020-01-02"},
+        data={"csrf": csrf, "snapshot_date": "2020-01-03"},
         files={"csv_file": ("beta.csv", beta_csv, "text/csv")},
         follow_redirects=False,
     )
     assert beta.status_code == 303, beta.text[:300]
     session = open_session(settings.ranksim_database_url)
     try:
+        ledger.record_prediction(
+            session,
+            kind="workspace_draft",
+            query=QUERY,
+            subject_url="https://acme.example/vinyl",
+            subject_html="<p>control</p>",
+            predicted_rank=1,
+            predicted_of=2,
+            candidates=[{"url": "https://rival.example/vinyl", "html_sha256": None, "labeled_position": 2}],
+            calls=[ledger.Call("https://rival.example/vinyl", "above", None, "UNSURE")],
+            confidence="UNSURE",
+            calibration_note="same-project control",
+            provenance={"dataset": "observed", "source": "workspace"},
+            project_slug="acme",
+            created_at=datetime(2020, 1, 1, tzinfo=timezone.utc),
+        )
+        ledger.record_prediction(
+            session,
+            kind="workspace_draft",
+            query=QUERY,
+            subject_url="https://acme.example/vinyl",
+            subject_html="<p>blank</p>",
+            predicted_rank=1,
+            predicted_of=2,
+            candidates=[{"url": "https://rival.example/vinyl", "html_sha256": None, "labeled_position": 2}],
+            calls=[ledger.Call("https://rival.example/vinyl", "above", None, "UNSURE")],
+            confidence="UNSURE",
+            calibration_note="legacy blank project",
+            provenance={"dataset": "observed", "source": "workspace"},
+            project_slug="",
+            created_at=datetime(2020, 1, 1, tzinfo=timezone.utc),
+        )
         mixed = score_ledger(session)
         beta_rows = session.query(RsOutcome).filter(RsOutcome.project_slug == "beta").count()
     finally:
         session.close()
     assert beta_rows == 1
-    assert mixed.correct == above
-    assert mixed.resolved == score.resolved
+    # Beta is dated 2020-01-03, inside the scoring window and before Acme's 2020-01-04 file.
+    # The extra Acme call is right only against Acme's positions. A blank project stays unresolved.
+    assert mixed.correct == correct_if(acme_positions) + 1
+    assert mixed.resolved == score.resolved + 1

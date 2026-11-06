@@ -12,10 +12,10 @@ from aeo.ranksim.lambdamart import RankExample, fit_lambdamart
 from aeo.ranksim.tester import SimContext
 
 
-def test_cli_tester_prints_unsure_for_an_in_sample_threshold(tmp_path, capsys, monkeypatch):
+def test_cli_tester_prints_unsure_for_synthetic_held_out_calibration(tmp_path, capsys, monkeypatch):
     query = "fence cost"
-    ours = "https://acme.example/fence"
-    rival = "https://rival.example/fence"
+    ours = "https://heldout.invalid/fence"
+    rival = "https://rival.invalid/fence"
     labels = [
         SerpLabel(query, ours, 2, None, "manual_csv"),
         SerpLabel(query, rival, 1, None, "manual_csv"),
@@ -27,12 +27,14 @@ def test_cli_tester_prints_unsure_for_an_in_sample_threshold(tmp_path, capsys, m
     examples = [
         RankExample(query, ours, 2.0, {"bm25f": 0.1, "word_count": 6}),
         RankExample(query, rival, 1.0, {"bm25f": 0.9, "word_count": 80}),
-        RankExample("other query", "https://acme.example/other", 1.0, {"bm25f": 0.4, "word_count": 40}),
-        RankExample("other query", "https://rival.example/other", 2.0, {"bm25f": 0.2, "word_count": 20}),
+        RankExample("other query", "https://heldout.invalid/other", 1.0, {"bm25f": 0.4, "word_count": 40}),
+        RankExample("other query", "https://rival.invalid/other", 2.0, {"bm25f": 0.2, "word_count": 20}),
     ]
     model = fit_lambdamart(examples, ["bm25f", "word_count"])
-    calibration = Calibration(0.01, 0.99, 0.9, "In-sample threshold chosen on the same pairs.", held_out=False)
+    calibration = Calibration(0.01, 0.99, 0.9, "Held-out check passed.", held_out=True)
     assert calibration.label(2) == "CLEARER"
+    assert calibration.product_label(2, synthetic=False)[0] == "CLEARER"
+    assert calibration.product_label(2, synthetic=True)[0] == "UNSURE"
     ctx = SimContext(
         labels=labels,
         pages=pages,
@@ -42,6 +44,7 @@ def test_cli_tester_prints_unsure_for_an_in_sample_threshold(tmp_path, capsys, m
         today=date(2026, 11, 6),
         database=f"sqlite:///{tmp_path / 'rank.db'}",
         serp_file="fixture.csv",
+        synthetic=True,
     )
     monkeypatch.setattr("aeo.ranksim.tester.load_sim_context", lambda *args, **kwargs: ctx)
     html = tmp_path / "page.html"

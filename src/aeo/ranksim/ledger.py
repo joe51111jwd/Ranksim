@@ -127,6 +127,7 @@ def record_prediction(
 ) -> RsPrediction:
     """Append one prediction. ``candidates`` rows: {url, html_sha256, labeled_position}."""
     stamp = (created_at or _now()).isoformat(timespec="seconds")
+    slug = _project_slug(project_slug)
     payload = {
         "subject_html_sha256": _sha(subject_html) if subject_html is not None else None,
         "predicted_rank": predicted_rank,
@@ -137,6 +138,7 @@ def record_prediction(
         "confidence": confidence,
         "calibration_note": calibration_note,
         "provenance": provenance,
+        "ledger_hash_version": 2,
     }
     from sqlalchemy.exc import IntegrityError
 
@@ -152,10 +154,10 @@ def record_prediction(
                 kind=kind,
                 query=query,
                 subject_url=subject_url,
-                project_slug=project_slug or "",
+                project_slug=slug,
                 payload=payload,
                 prev_hash=prev_hash,
-                row_hash=_row_hash(prev_hash, stamp, kind, query, subject_url, payload),
+                row_hash=_row_hash(prev_hash, stamp, kind, query, subject_url, payload, slug),
             )
             session.add(row)
             try:
@@ -208,15 +210,24 @@ def record_outcome(
 def verify_ledger(session: Session) -> tuple[bool, str]:
     rows = session.query(RsPrediction).order_by(RsPrediction.id).all()
     prev = GENESIS
+    legacy = 0
     for row in rows:
         if row.prev_hash != prev:
             return False, f"Prediction {row.id}: prev_hash does not match prediction before it. A row was removed or reordered."
-        expected = _row_hash(row.prev_hash, row.created_at, row.kind, row.query, row.subject_url, row.payload)
+        version = int((row.payload or {}).get("ledger_hash_version") or 1)
+        if version >= 2:
+            expected = _row_hash(row.prev_hash, row.created_at, row.kind, row.query, row.subject_url, row.payload, row.project_slug)
+        else:
+            legacy += 1
+            expected = _row_hash(row.prev_hash, row.created_at, row.kind, row.query, row.subject_url, row.payload)
         if expected != row.row_hash:
             return False, f"Prediction {row.id}: contents changed after it was recorded."
         prev = row.row_hash
     head = prev if rows else "none"
-    return True, f"{len(rows)} predictions, chain intact. Latest hash {head}."
+    note = f"{len(rows)} predictions, chain intact. Latest hash {head}."
+    if legacy:
+        note += f" {legacy} legacy rows use the original hash and do not bind project_slug."
+    return True, note
 
 
 def _same_project(prediction: RsPrediction, outcome: RsOutcome) -> bool:
@@ -296,14 +307,40 @@ def _relative(subject: int | None, rival: int | None, depth: int | None) -> str 
     return None  # subject not observed: published-and-not-ranking and never-published look the same
 
 
-def _row_hash(prev_hash: str, created_at: str, kind: str, query: str, subject_url: str, payload: dict) -> str:
-    body = json.dumps(
-        {"prev": prev_hash, "created_at": created_at, "kind": kind, "query": query, "subject_url": subject_url, "payload": payload},
-        sort_keys=True,
-        separators=(",", ":"),
-        ensure_ascii=True,
-    )
-    return hashlib.sha256(body.encode()).hexdigest()
+def _project_slug(value: str | None) -> str:
+    """The slug as stored: stripped, or empty. Not a guessed project."""
+    return (value or "").strip()
+
+
+def _row_hash(
+    prev_hash: str,
+    created_at: str,
+    kind: str,
+    query: str,
+    subject_url: str,
+    payload: dict,
+    project_slug: str | None = None,
+) -> str:
+    """Hash one prediction.
+
+    Version 1 rows (no ``ledger_hash_version`` in the payload) omit the project slug.
+    That is the original formula. Those rows stay legacy: a later slug edit is not
+    covered, and this function does not rewrite them. Version 2 includes the stored
+    slug, including an empty one.
+    """
+    version = int((payload or {}).get("ledger_hash_version") or 1)
+    body = {
+        "prev": prev_hash,
+        "created_at": created_at,
+        "kind": kind,
+        "query": query,
+        "subject_url": subject_url,
+        "payload": payload,
+    }
+    if version >= 2:
+        body["project_slug"] = _project_slug(project_slug)
+    encoded = json.dumps(body, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+    return hashlib.sha256(encoded.encode()).hexdigest()
 
 
 def _sha(text: str) -> str:

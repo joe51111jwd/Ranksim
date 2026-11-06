@@ -161,6 +161,16 @@ James moved the UI and end-to-end web flow to Claude at about 3:30pm Eastern and
 - One active record store: the database ledger. PR #1's CSV file ledger is not on this branch.
 - Not a correct evaluation of the 35 of 135 labeled rows that have HTML. Not merged. Not deployed.
 
+### 2026-11-06 — SEO Tool Builder, ledger hash and project scoring
+
+- Branch: `cursor/integration-review-175f`. Pull request: https://github.com/joe51111jwd/Ranksim/pull/5
+- New predictions are hash version 2 and include the stored project slug, including an empty one. Older rows stay on the original hash and are reported as legacy. Their slug is not rewritten into the chain.
+- Scoring still requires the same named project and a later observation date. A blank project is not matched to a named outcome.
+- Candidate hashes are `sha256` of the HTML `stored_html` returns. A missing page stays empty. Pages are stored on the page row, not in a separate shard.
+- The tester CLI uses an explicit synthetic flag on the loaded label set. A held-out calibration on synthetic data still prints UNSURE. Host names are not treated as synthetic.
+- Local: Python 3.12 keys unset 310 passed, 1 warning, 13.47s; dummy keys 310 passed, 13.58s. Python 3.11.18 keys unset 310 passed, 13.67s; fake keys 310 passed, 13.70s.
+- Not merged. Not deployed. 35 of 135 labeled rows have HTML.
+
 ### Template
 
 Copy this block. Do not delete earlier handoffs.

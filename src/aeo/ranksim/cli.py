@@ -141,6 +141,28 @@ def main(argv: list[str] | None = None) -> None:
     serve.add_argument("--port", type=int, default=8765)
     serve.add_argument("--serp", default="smartcrew/serp.csv")
 
+    import_serp = sub.add_parser(
+        "import-serp",
+        help="Write query,url,position from a local JSONL, JSON, or CSV capture. Does not invent URLs.",
+    )
+    import_serp.add_argument("path", help="Browser JSONL, JSON, or a CSV that already has query,url,position")
+    import_serp.add_argument("--out", required=True, help="CSV to write")
+
+    track_record = sub.add_parser("track-record", help="Record PREDICTED ranks and score them against a later REAL file")
+    track_sub = track_record.add_subparsers(dest="track_record_command", required=True)
+    track_add = track_sub.add_parser("record", help="Append one PREDICTED rank. Does not read a live SERP.")
+    track_add.add_argument("--query", required=True)
+    track_add.add_argument("--url", required=True)
+    track_add.add_argument("--predicted-rank", required=True, type=int)
+    track_add.add_argument("--predicted-of", required=True, type=int)
+    track_add.add_argument("--confidence", default="UNSURE")
+    track_add.add_argument("--source", default="", help="Optional run id")
+    track_add.add_argument("--ledger", default=None, help="CSV path. Default is data/track-record.csv")
+    track_score = track_sub.add_parser("score", help="Compare a predictions CSV with a later REAL query,url,position file")
+    track_score.add_argument("predictions", help="PREDICTED ledger CSV")
+    track_score.add_argument("later_serp", help="Later REAL file with query,url,position")
+    track_score.add_argument("--out", default=None, help="Optional path for the text report")
+
     args = parser.parse_args(argv)
     settings = get_settings()
     database = args.database or settings.ranksim_database_url
@@ -190,6 +212,10 @@ def main(argv: list[str] | None = None) -> None:
             _competitors(settings, database, args)
         elif args.command == "space":
             _space(database, args)
+        elif args.command == "import-serp":
+            _import_serp(args)
+        elif args.command == "track-record":
+            _track_record(args)
         else:
             parser.error(f"Unknown command {args.command}")
     except ProviderConfigError as exc:
@@ -198,6 +224,46 @@ def main(argv: list[str] | None = None) -> None:
     except ValueError as exc:
         print(str(exc), file=sys.stderr)
         raise SystemExit(2) from exc
+
+
+def _import_serp(args) -> None:
+    from aeo.ranksim.serp_import import import_capture, write_serp_csv
+
+    result = import_capture(args.path)
+    write_serp_csv(args.out, result.rows)
+    print(f"Wrote {len(result.rows)} rows to {args.out}.")
+    print(f"Skipped {result.skipped_no_url} items with no http(s) URL. No URLs were invented.")
+    print("Positions are 1-based organic order. Rows without an http(s) URL are left out.")
+
+
+def _track_record(args) -> None:
+    from aeo.ranksim.groundtruth import load_serp_file
+    from aeo.ranksim.track_record import format_score, load_predictions, record_prediction, score_predictions
+
+    if args.track_record_command == "record":
+        path = record_prediction(
+            query=args.query,
+            url=args.url,
+            predicted_rank=args.predicted_rank,
+            predicted_of=args.predicted_of,
+            confidence=args.confidence,
+            source=args.source,
+            ledger=args.ledger,
+        )
+        print(f"Recorded PREDICTED rank {args.predicted_rank} of {args.predicted_of} for {args.url}.")
+        print(f"Confidence: {args.confidence}. Ledger: {path}.")
+        print("This is not a Google position.")
+        return
+    predictions = load_predictions(args.predictions)
+    later = load_serp_file(args.later_serp)
+    observations = [(row.query, row.url, row.position) for row in later]
+    score = score_predictions(predictions, observations)
+    text = format_score(score)
+    if args.out:
+        from pathlib import Path
+
+        Path(args.out).write_text(text, encoding="utf-8")
+    print(text, end="")
 
 
 def _graph(settings, database: str, args) -> None:

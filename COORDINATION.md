@@ -187,6 +187,14 @@ James moved the UI and end-to-end web flow to Claude at about 3:30pm Eastern and
 - Local: Python 3.12 keys unset 313 passed, 1 warning, 14.04s; fake keys 313 passed, 14.50s. Python 3.11.18 keys unset 313 passed, 14.48s; fake keys 313 passed, 14.56s.
 - Not merged. Not deployed. The isolated preview stays on `ad8020f`.
 
+### 2026-11-07 — SEO Tool Builder, Serper link column
+
+- Branch: `cursor/integration-review-175f`. Pull request: https://github.com/joe51111jwd/Ranksim/pull/5
+- A Serper export names the URL column `link`. `load_serp_file` and the CSV check now accept that header. Query, url, page, and landing page still work.
+- One new regression. No other product change. The captured HTML and the snapshot database stay private and are not in git.
+- Local: Python 3.12 keys unset 314 passed, 1 warning, 14.01s; fake keys 314 passed, 1 warning, 17.84s. Python 3.11.18 keys unset 314 passed, 1 warning, 18.31s; fake keys 314 passed, 1 warning, 14.26s.
+- Not merged. Not deployed. The isolated preview stays on `ad8020f`.
+
 ### Template
 
 Copy this block. Do not delete earlier handoffs.

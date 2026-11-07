@@ -107,12 +107,13 @@ def load_serp_file(path: str | Path) -> list[SerpLabel]:
             raise ValueError(f"{file_path} has no header row")
         fields = {name.strip().lower(): name for name in reader.fieldnames}
         query_key = _pick(fields, ("query", "top queries", "queries"))
-        url_key = _pick(fields, ("url", "page", "landing page"))
+        url_key = _pick(fields, ("url", "page", "landing page", "link"))
         position_key = _pick(fields, ("position", "average position"))
         prior_key = fields.get("prior_position")
         if not query_key or not url_key or not position_key:
             raise ValueError(
                 "CSV needs query, url, and position columns. "
+                "A Serper export may name the URL column link. "
                 "Search Console exports need Query, Page, and Position."
             )
         source = "search_console" if "page" in fields and "query" in fields else "manual_csv"

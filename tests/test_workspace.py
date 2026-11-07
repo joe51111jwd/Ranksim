@@ -59,6 +59,8 @@ def demo(tmp_path_factory):
 def test_csv_check_accepts_a_good_file_and_lists_queries():
     check = ws.check_csv(b"query,url,position\nfence cost,https://a.example/x,1\nfence cost,https://b.example/y,2\nfence height,https://a.example/z,3\n")
     assert check.ok and check.rows == 3 and check.queries == ["fence cost", "fence height"]
+    serper = ws.check_csv(b"query,position,link,title\nfence cost,1,https://a.example/x,A\nfence cost,2,https://b.example/y,B\n")
+    assert serper.ok and serper.rows == 2 and serper.queries == ["fence cost"]
 
 
 def test_csv_check_reports_problems_by_line():

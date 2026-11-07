@@ -54,6 +54,18 @@ def test_manual_csv_and_search_console_headers(tmp_path):
     assert parsed[0].prior_position is None
 
 
+def test_serper_link_column_is_accepted_as_the_url(tmp_path):
+    path = tmp_path / "serper.csv"
+    path.write_text(
+        "query,position,link,title\n"
+        "hcss alternative,1,https://example.com/a,HCSS alternatives\n"
+        "hcss alternative,2,https://example.com/b,Another page\n"
+    )
+    rows = load_serp_file(path)
+    assert [row.url for row in rows] == ["https://example.com/a", "https://example.com/b"]
+    assert rows[0].position == 1
+
+
 def test_too_few_labels_do_not_invent_accuracy():
     page = PageDoc(url="https://example.com/a", title="dirtwork software", body="dirtwork software " * 40, word_count=80)
     labels = [SerpLabel("only one", page.url, 1, None, "manual_csv")]

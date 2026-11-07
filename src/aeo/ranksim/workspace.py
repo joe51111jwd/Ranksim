@@ -181,7 +181,7 @@ def check_csv(data: bytes) -> CsvCheck:
         return None
 
     q_col = pick(("query", "top queries", "queries"))
-    u_col = pick(("url", "page", "landing page"))
+    u_col = pick(("url", "page", "landing page", "link"))
     p_col = pick(("position", "average position"))
     missing = [label for label, col in (("query", q_col), ("url", u_col), ("position", p_col)) if col is None]
     if missing:

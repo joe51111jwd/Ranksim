@@ -205,6 +205,17 @@ James moved the UI and end-to-end web flow to Claude at about 3:30pm Eastern and
 - Local: Python 3.12 keys unset 320 passed, 1 warning, 14.11s; fake keys 320 passed, 1 warning, 18.99s. Python 3.11.18 keys unset 320 passed, 1 warning, 18.61s; fake keys 320 passed, 1 warning, 14.42s.
 - Not merged. Not deployed. The isolated preview stays on `ad8020f`.
 
+### 2026-11-07 — SEO Tool Builder, three outside signals, none adopted
+
+- Branch: `cursor/integration-review-175f`. Pull request: https://github.com/joe51111jwd/Ranksim/pull/5
+- Family-out on the 20 training queries only. The published 10-query holdout was not scored.
+- Page type from the URL and schema.org: family-out pairwise 0.505 versus the current model 0.525. Query-mean change -0.035. Not adopted.
+- Tranco top-1M popularity, labeled as popularity and not as backlinks: family-out 0.522. The popularity score alone orders 0.392 of 469 pairs. 79 of 144 stored training rows are in the list. Not adopted. The zip is not in git. The default list includes Cloudflare Radar under CC BY-NC 4.0.
+- Common Crawl domain PageRank and harmonic centrality, release cc-main-2025-oct-nov-dec: 39 of 45 training domains matched, 134 of 144 stored rows. Family-out pairwise 0.501. PageRank alone is 0.420 and harmonic centrality alone is 0.377, so the global link ranks point the wrong way inside these top 10s. Not adopted. The rank file is not in git.
+- The ranker is unchanged.
+- Local: Python 3.12 keys unset 324 passed, 1 warning, 14.38s; fake keys 324 passed, 1 warning, 19.33s. Python 3.11.18 keys unset 324 passed, 1 warning, 19.02s; fake keys 324 passed, 1 warning, 14.23s.
+- Not merged. Not deployed. The isolated preview stays on `ad8020f`.
+
 ### Template
 
 Copy this block. Do not delete earlier handoffs.

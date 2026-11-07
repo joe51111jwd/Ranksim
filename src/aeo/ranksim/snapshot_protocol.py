@@ -188,6 +188,62 @@ def selective_pairs(groups: list[tuple[list[float], list[float]]], *, keep_fract
     }
 
 
+def paired_query_delta(baseline: dict[str, float], candidate: dict[str, float]) -> dict:
+    """Query-level difference, candidate minus baseline, on the queries both scored."""
+    shared = sorted(set(baseline) & set(candidate))
+    diffs = [candidate[query] - baseline[query] for query in shared]
+    if not diffs:
+        return {"queries": 0, "mean": None, "std": None, "se": None, "improved": 0, "worse": 0, "unchanged": 0}
+    mean = sum(diffs) / len(diffs)
+    if len(diffs) == 1:
+        var = 0.0
+    else:
+        var = sum((value - mean) ** 2 for value in diffs) / (len(diffs) - 1)
+    std = math.sqrt(var)
+    improved = sum(1 for value in diffs if value > 1e-12)
+    worse = sum(1 for value in diffs if value < -1e-12)
+    return {
+        "queries": len(diffs),
+        "mean": round(mean, 6),
+        "std": round(std, 6),
+        "se": round(std / math.sqrt(len(diffs)), 6),
+        "improved": improved,
+        "worse": worse,
+        "unchanged": len(diffs) - improved - worse,
+    }
+
+
+def signal_decision(delta: dict) -> dict:
+    """Promote a signal only when the query-level gain is larger than its own noise.
+
+    A gain inside two standard errors is reported and not adopted. This is not a
+    five-point gate: a smaller gain is kept when it is consistent across queries.
+    """
+    mean = delta.get("mean")
+    se = delta.get("se")
+    if mean is None or se is None:
+        return {"adopt": False, "reason": "No paired query comparison was available."}
+    if mean <= 0:
+        return {"adopt": False, "reason": f"Query-mean change is {mean:.4f}. The signal is not higher."}
+    if not (delta.get("improved", 0) >= delta.get("worse", 0)):
+        return {"adopt": False, "reason": "More queries got worse than got better."}
+    if mean <= 2 * se:
+        return {
+            "adopt": False,
+            "reason": (
+                f"Query-mean gain {mean:.4f} is inside two standard errors ({se:.4f}). "
+                "The point estimate is higher and is not distinguishable from noise on 20 queries."
+            ),
+        }
+    return {
+        "adopt": True,
+        "reason": (
+            f"Query-mean gain {mean:.4f} exceeds two standard errors ({se:.4f}), "
+            f"on {delta.get('improved')} improved and {delta.get('worse')} worse queries."
+        ),
+    }
+
+
 def adoption_decision(
     candidate: float | None,
     lexical_baseline: float | None,

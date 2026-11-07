@@ -195,6 +195,16 @@ James moved the UI and end-to-end web flow to Claude at about 3:30pm Eastern and
 - Local: Python 3.12 keys unset 314 passed, 1 warning, 14.01s; fake keys 314 passed, 1 warning, 17.84s. Python 3.11.18 keys unset 314 passed, 1 warning, 18.31s; fake keys 314 passed, 1 warning, 14.26s.
 - Not merged. Not deployed. The isolated preview stays on `ad8020f`.
 
+### 2026-11-07 — SEO Tool Builder, snapshot protocol, no ranker change
+
+- Branch: `cursor/integration-review-175f`. Pull request: https://github.com/joe51111jwd/Ranksim/pull/5
+- The published 10-query holdout stays a reference. Training decisions use the other 20 queries, with near-duplicate queries held out as a family. A candidate is kept only when that family-out pairwise clears both BM25 and the current model by 0.05.
+- On this snapshot the family-out model is about 0.525 pairwise and BM25 is about 0.514, on 469 stored training pairs. Nothing cleared the bar. The ranker is unchanged.
+- The same frozen model, scored once on the published holdout, is 121 of 222 pairs (0.545). BM25 is 124 of 222 (0.559). Keeping the largest half of the score gaps is 0.559 at 0.50 coverage. That is not 90 percent, and it is not a later Google result.
+- Query leave-one-out on the training queries is about 0.588. 70 of 190 training query pairs share a URL, and 36 of 63 holdout URLs also appear in training, so that higher number is not family-held-out.
+- Local: Python 3.12 keys unset 320 passed, 1 warning, 14.11s; fake keys 320 passed, 1 warning, 18.99s. Python 3.11.18 keys unset 320 passed, 1 warning, 18.61s; fake keys 320 passed, 1 warning, 14.42s.
+- Not merged. Not deployed. The isolated preview stays on `ad8020f`.
+
 ### Template
 
 Copy this block. Do not delete earlier handoffs.

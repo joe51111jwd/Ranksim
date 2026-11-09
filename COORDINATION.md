@@ -216,6 +216,15 @@ James moved the UI and end-to-end web flow to Claude at about 3:30pm Eastern and
 - Local: Python 3.12 keys unset 324 passed, 1 warning, 14.38s; fake keys 324 passed, 1 warning, 19.33s. Python 3.11.18 keys unset 324 passed, 1 warning, 19.02s; fake keys 324 passed, 1 warning, 14.23s.
 - Not merged. Not deployed. The isolated preview stays on `ad8020f`.
 
+### 2026-11-09 — SEO Tool Builder, first forward score of the Nov 9 snapshot
+
+- Branch: `cursor/integration-review-175f`. Pull request: https://github.com/joe51111jwd/Ranksim/pull/5
+- The Nov 9 Serper snapshot is scored once. Training, features, and thresholds use the Nov 6 snapshot only. Nov 9 positions are the outcome. HTML stays out of git. `evals/forward-2026-11-09/` holds the position lists, the manifest, the report, and the ledger chain.
+- Overlap, not a model: 594/667 pairs (0.891), mean Spearman 0.816, 202 of 294 Nov 6 rows returned. Full Nov 9 list, ties counted and not treated as correct: LambdaMART 680/1341 (0.507), BM25 596/1341 (0.444), persistence 931/1341 (0.694), blend 942/1341 (0.702), history-aware 1007/1341 (0.751). History-aware is not adopted. On URLs in both snapshots it is 575/667 against persistence 594/667. The ranker is unchanged.
+- Ledger: 1495 PREDICTED rows, protocol time 2026-11-07T04:00:00Z, confidence UNSURE, chain head `0da77b555e86baaa3f5d91f98b7ecd107fe07aaf07ca749d256cbe925af8205c`. Persistence resolved calls, ties omitted: 931/1146. One interval, about 2.5 days, 30 queries. Not a general forecast.
+- Local: Python 3.12 keys unset 330 passed, 1 warning, 15.31s; fake keys 330 passed, 1 warning, 18.71s. Python 3.11.18 keys unset 330 passed, 1 warning, 21.06s; fake keys 330 passed, 1 warning, 18.89s. Python 3.13.18 keys unset 330 passed, 1 warning, 20.40s. No `data/` directory was created.
+- Not merged. Not deployed.
+
 ### Template
 
 Copy this block. Do not delete earlier handoffs.

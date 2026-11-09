@@ -122,16 +122,46 @@ What that means for you:
 - **Read the slot as rough.** It comes from which sites keep showing up across your searches, so it does not move when you edit the page.
 - **Not yet:** whether an edit moves you up, and whether a page makes the top 10 at all. Inside Google's top 10, every on-page signal measured so far orders pages no better than a coin flip. Pairwise agreement with Google's order, where 0.5 is a coin flip: title match 0.465, embedding similarity 0.463, the content model 0.524. How many of your searches a site appears in scores 0.684. The content model's slot is still shown, labeled "content model (unvalidated)": in the same backtest it misses by 2.5 places against 2.0 for the middle guess.
 
+**One forward check, 2026-11-06 to 2026-11-09.** The same 30 US English queries were pulled again about 2.5 days later (Serper, gl=us, hl=en, num=10). Models were fit only on the Nov 6 snapshot, then scored on the Nov 9 order. Nov 9 positions were not used to train, to pick features, or to set a threshold. This is that one interval. It is not a forecast for a different week or a different query list.
+
+On URLs that stayed in the same query, Nov 6 order matches Nov 9 order on 594 of 667 pairs (0.891). Mean per-query Spearman is 0.816 on 28 queries. 202 of 294 Nov 6 rows came back. 97 Nov 9 rows were new to that query, and 92 Nov 6 rows left.
+
+Pairwise accuracy counts every ordered pair, and a score tie is not correct. NDCG@10 and Spearman are means over the 30 queries (Spearman is undefined for one query where persistence ties every URL):
+
+| Scorer | Pairwise | NDCG@10 | Spearman |
+| --- | --- | --- | --- |
+| LambdaMART fit on Nov 6 | 680/1341 (0.507) | 0.715 | 0.096 |
+| BM25 | 596/1341 (0.444) | 0.604 | -0.045 |
+| Persistence (Nov 6 position) | 931/1341 (0.694) | 0.902 | 0.649 |
+| Equal-weight blend of persistence and BM25 | 942/1341 (0.702) | 0.841 | 0.555 |
+| History-aware rule, not adopted | 1007/1341 (0.751) | 0.885 | 0.631 |
+
+Persistence puts a URL that was absent on Nov 6 for that query at a tied score below every URL that was present. It does not order those new URLs: 0 of 195 pairs, all ties. Against a URL that was already there, that rule is right on 337 of 479 pairs (0.704) in this interval, because it always says the old URL stays above the new one.
+
+A draft has no Nov 6 position and no stored Nov 6 page. Persistence still does not order two drafts (0 of 116 pairs, all ties). LambdaMART on those drafts is 134 of 281 pairs against a page that was already ranking (0.477) and 34 of 116 pairs against another draft (0.293). BM25 is 118 of 281 (0.420) and 37 of 116 (0.319). Content does not place a new page.
+
+The history-aware rule (prior position, plus one BM25 standard deviation as one position of movement, new pages starting at position 11) was fixed before this score. There is no split that can test a prior position without using the Nov 9 labels, so the rule is not adopted. On the pages that were in both snapshots it is worse than persistence alone (575/667 against 594/667). Its higher full-list pairwise comes from breaking ties among new URLs, and those calls are 93 of 195 (0.477). The ranker is unchanged.
+
+The ledger records each scorer's PREDICTED calls at 2026-11-07T04:00:00Z, labeled UNSURE, and scores them against the Nov 9 outcomes. Ties are not calls, so the ledger rates are higher than the pairwise rates above. Persistence is 931 of 1146 resolved calls (0.812). Re-run with the private snapshot directories (HTML is not in git):
+
+```bash
+python -m aeo.ranksim forward-eval \
+  --baseline <2026-11-06 snapshot dir> \
+  --forward <2026-11-09 snapshot dir> \
+  --out evals/forward-2026-11-09/report.json \
+  --ledger-json evals/forward-2026-11-09/ledger.json
+```
+
 What makes it more accurate:
 
 1. **More searches, across different topics.** The site signal improved as the lab gave it more training searches (pairwise 0.627 with 4 searches, 0.687 with 15) and then flattened, because SmartCrew's 16 searches are near duplicates of one topic. Hundreds of searches across distinct topics are what can move it.
-2. **Fresh and deeper pulls.** Repeated pulls of the same searches measure how much Google reshuffles on its own. That noise floor is unknown today, because the only file has no pull date. Positions 11 to 100 add the pages that did not make page one, which is what it takes to test "will it make the top 10" at all.
+2. **Fresh and deeper pulls.** One repeat of these 30 queries, about 2.5 days later, is the table above. Positions 11 to 100 are still missing, so the test still does not say whether a page makes the top 10.
 3. **Backlink and authority data** per page and per site. Link and site signals are the only family with measured signal here, and the link graph Ranksim builds from its own crawl is sparse.
-4. **The publish then track scorecard.** Freeze each tested version's PREDICTED slot, publish the page, pull again over the following weeks, and grade the call against the REAL position. It is the only way to learn whether content edits move rank, and the only honest basis for ever saying the tester knows. It is not built yet.
+4. **The publish then track scorecard.** The first forward rows for this fixed query list are in the ledger. A loop that freezes a draft you publish, pulls again over the following weeks, and grades that draft is still not in the product.
 
 ### Not built yet
 
-- The publish then track scorecard above.
+- A per-draft publish-then-track loop. The 30-query forward file above is one interval, not that loop.
 - Automatic rewriting inside projects. An `optimize` loop exists for the older single-page tester (below), but it rewrites toward the content model, which the backtest shows is no better than guessing, so it is not wired into projects.
 - Hosting. The web UI runs on your computer, with no login.
 - Bing Copilot.

@@ -1,0 +1,34 @@
+{
+  "purpose": "Position lists for the first forward test. Stored HTML is not in git.",
+  "runner": "python -m aeo.ranksim forward-eval --baseline <2026-11-06 snapshot dir> --forward <2026-11-09 snapshot dir> --out evals/forward-2026-11-09/report.json --ledger-json evals/forward-2026-11-09/ledger.json",
+  "baseline": {
+    "observed_on": "2026-11-06",
+    "provider": "serper",
+    "params": {
+      "gl": "us",
+      "hl": "en",
+      "num": 10
+    },
+    "serp_window_est": "2026-11-06T22:13:19.579494-05:00 to 2026-11-06T22:14:29.890912-05:00",
+    "html_fetch_note": "HTML was fetched about 1 to 3 minutes after the SERPs. The HTML files are not in git.",
+    "organic_rows": 294,
+    "positions_file": "baseline_serp.csv",
+    "full_serp_sha256": "c70ca9907a5243f092fe407d18ca002dc58a1bad301734fc56b6dad50e900a87"
+  },
+  "forward": {
+    "observed_on": "2026-11-09",
+    "provider": "serper",
+    "params": {
+      "gl": "us",
+      "hl": "en",
+      "num": 10
+    },
+    "serp_window_est": "2026-11-09T09:11:15.348185-05:00 to 2026-11-09T09:12:27.159595-05:00",
+    "organic_rows": 299,
+    "positions_file": "forward_serp.csv",
+    "full_serp_sha256": "49a0c8d4b92bd1fd73a2f4fac507394200e724f6c76c611a9c14b9595b3607d0",
+    "html_in_git": false
+  },
+  "prediction_protocol_time": "2026-11-07T04:00:00+00:00",
+  "limit": "One interval of about 2.5 days, 30 queries. Not a general forecast."
+}

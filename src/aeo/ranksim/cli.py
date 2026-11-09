@@ -118,6 +118,16 @@ def main(argv: list[str] | None = None) -> None:
     noise = sub.add_parser("noise", help="Compare two Google snapshots. One file is not enough.")
     noise.add_argument("snapshots", nargs="+")
 
+    forward_eval = sub.add_parser(
+        "forward-eval",
+        help="Freeze on the 2026-11-06 snapshot and score the 2026-11-09 order once. Does not train on the later day.",
+    )
+    forward_eval.add_argument("--baseline", required=True, help="2026-11-06 snapshot directory. HTML stays out of git.")
+    forward_eval.add_argument("--forward", required=True, help="2026-11-09 snapshot directory.")
+    forward_eval.add_argument("--out", required=True, help="JSON report path.")
+    forward_eval.add_argument("--ledger-json", default=None, help="Export the prediction chain and the later outcomes.")
+    forward_eval.add_argument("--ledger-db", default=None, help="SQLite file for the ledger. Default is in memory.")
+
     competitors = sub.add_parser("competitors", help="Import competitor domains")
     comp_sub = competitors.add_subparsers(dest="competitors_command", required=True)
     comp_import = comp_sub.add_parser("import", help="Save a competitor list, optionally from the labeled top 10")
@@ -245,6 +255,15 @@ def main(argv: list[str] | None = None) -> None:
             _graph_eval(database, args)
         elif args.command == "noise":
             _noise(args)
+        elif args.command == "forward-eval":
+            from aeo.ranksim.forward_eval import main as forward_main
+
+            forward_args = ["--baseline", args.baseline, "--forward", args.forward, "--out", args.out]
+            if args.ledger_json:
+                forward_args.extend(["--ledger-json", args.ledger_json])
+            if args.ledger_db:
+                forward_args.extend(["--ledger-db", args.ledger_db])
+            raise SystemExit(forward_main(forward_args))
         elif args.command == "serve":
             _serve(settings, database, args)
         elif args.command == "ai-eval":

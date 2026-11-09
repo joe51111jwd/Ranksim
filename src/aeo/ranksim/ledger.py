@@ -241,10 +241,18 @@ def _same_project(prediction: RsPrediction, outcome: RsOutcome) -> bool:
     return bool(left) and left == right
 
 
-def score_ledger(session: Session) -> LedgerScore:
-    """Score every call against the first later outcome for the same project and query."""
+def score_ledger(session: Session, *, project_slug: str | None = None) -> LedgerScore:
+    """Score every call against the first later outcome for the same project and query.
+
+    ``project_slug`` limits the score to one project. The default still scores every project,
+    and a prediction still matches an outcome only when both name that same project.
+    """
     predictions = session.query(RsPrediction).order_by(RsPrediction.id).all()
     outcomes = session.query(RsOutcome).order_by(RsOutcome.observed_on, RsOutcome.id).all()
+    if project_slug is not None:
+        wanted = project_slug.strip()
+        predictions = [row for row in predictions if (row.project_slug or "") == wanted]
+        outcomes = [row for row in outcomes if (row.project_slug or "") == wanted]
     by_query: dict[str, list[RsOutcome]] = {}
     for outcome in outcomes:
         by_query.setdefault(outcome.query, []).append(outcome)

@@ -1,5 +1,7 @@
 # Ranksim
 
+The current mission and handoff for agents is in [docs/MISSION.md](docs/MISSION.md).
+
 # AEO Simulator
 
 Google SEO ranking for SmartCrew is the active track. The answer-engine simulation is parked. See `docs/accuracy.md`.

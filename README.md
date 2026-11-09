@@ -1,5 +1,7 @@
 # Ranksim
 
+The current mission and handoff for agents is in [docs/MISSION.md](docs/MISSION.md).
+
 ## Ranksim tester
 
 Ranksim is a test bench for the Google searches you want to win. You give it your site and your key searches (for SmartCrew, a dirt work software company: "all in one dirt work software", "hcss heavyjob alternative" and 14 more). One button pulls Google's REAL top 10 for every search and stores a copy of every page on them, so Ranksim holds a small search engine built from exactly the pages you compete with. Then you upload or paste a page, before you publish it, and see on every search:

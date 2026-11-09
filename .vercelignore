@@ -10,3 +10,5 @@ scripts/
 examples/
 .venv/
 __pycache__/
+evals/
+.github/

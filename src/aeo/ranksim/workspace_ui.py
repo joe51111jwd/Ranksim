@@ -132,7 +132,7 @@ def shell(
             parts.append(f'<nav class="crumbs" aria-label="Breadcrumb">{" / ".join(trail)}</nav>')
         context = f'<div class="context"><div class="page ctx-row">{"".join(parts)}{dataset_badge(meta)}</div></div>'
     elif crumbs:
-        trail = ['<a href="/">Projects</a>']
+        trail = ['<a href="/projects">Projects</a>']
         for label, href in crumbs:
             trail.append(f'<a href="{e(href)}">{e(label)}</a>' if href else f"<span>{e(label)}</span>")
         context = f'<div class="context"><nav class="page ctx-row crumbs" aria-label="Breadcrumb">{" / ".join(trail)}</nav></div>'
@@ -1125,16 +1125,14 @@ def register(app: FastAPI, ui) -> None:
         except Exception as exc:  # noqa: BLE001 - shown, scrubbed
             return None, ui.scrub(f"The engine could not be loaded: {type(exc).__name__}: {str(exc)[:200]}")
 
-    @app.get("/", response_class=HTMLResponse)
-    def home(demo: int = 0) -> Response:
-        if demo:
-            return RedirectResponse("/demo?demo=1", status_code=303)
+    @app.get("/projects", response_class=HTMLResponse)
+    def home() -> Response:
         return shell(ui, "Projects", home_body(ui), wide=True)
 
     @app.get("/go")
     def go(p: str = "") -> Response:
         if not serve.SLUG_RE.match(p or ""):
-            return RedirectResponse("/", status_code=303)
+            return RedirectResponse("/projects", status_code=303)
         return RedirectResponse(f"/p/{p}", status_code=303)
 
     @app.post("/demo/synthetic")

@@ -26,7 +26,14 @@ python -m aeo.ranksim serve
 
 Open http://127.0.0.1:8765/ . It listens on this computer only. `--port` changes the port, `--projects-dir` the folder projects are kept in (default `data/projects`). No API key is needed for anything below.
 
-The workspace has three screens, with the project and query carried across them:
+**Studio** (`/`, `/app/<slug>/studio`, `/app/<slug>/rankings`). The front door, built around the main idea: edit a page, preview it, and see where it is PREDICTED to land before you publish.
+
+- **Studio.** Pick a query. Your current page for that query loads into the editor (or start a new page as HTML or plain text). The preview pane renders the draft live in a desktop or phone frame, sandboxed with scripts off, and an **In search** view shows the search snippet with title, description, H1 and query-word checks. **Test draft** (or Cmd/Ctrl+Enter) scores the current page and the draft against the same stored candidates with the same held-out model, then shows the PREDICTED change, the PREDICTED order (the list animates from the current order to the new one), one plain sentence on what changed, and a Details panel (fact diff, on-topic check, held-out accuracy, data source).
+- **Rankings.** One card per query with your observed and PREDICTED position, then the observed and PREDICTED order of every candidate. Select a page to see a preview of its stored HTML, its facts, and where it stands on each signal the model reads.
+
+The Studio reads a small JSON API (`/api/v1/projects`, `/api/v1/projects/<slug>`, `.../compare?q=`, `.../page?url=`, `POST .../test`, `POST /api/v1/demo`). POSTs need the `x-ranksim-csrf` header and a JSON body. It calls the same functions as the classic screens, so the numbers match them. The classic project list moved to `/projects`; the screens below are linked from the Studio's About panel and footer.
+
+The classic workspace has three screens, with the project and query carried across them:
 
 1. **Setup** (`/p/<slug>`). Create or pick a project: your site, competitor domains, and observed positions from a `query,url,position` CSV (Search Console's `Query,Page,Position` works too). The CSV is checked line by line before anything is saved, and problems are listed by line. **Load synthetic demo** builds a six-query project from invented `.example` sites with no keys and no network; every page of it is marked SYNTHETIC. On a loopback run, **Load historical SmartCrew export** loads `smartcrew/serp.csv` (pull date not recorded) with only the HTML saved in this repository. The coverage table shows, per query, how many candidates have stored HTML and which are missing. **Fetch pages and build** fetches the candidate pages (robots.txt respected) and trains the model.
 2. **Comparisons** (`/p/<slug>/comparisons?q=`). One query: a table of the candidates with the observed position and the PREDICTED position side by side, a shift column, stored-HTML date, and a detail panel with the signals the model reads and the limitations. PREDICTED ranks only order the candidates with stored HTML; missing pages show `n/a`; close calls show `UNSURE`.
@@ -34,7 +41,7 @@ The workspace has three screens, with the project and query carried across them:
 
 The full older project page (pull log, keys, page tester, results boards, versions, AI engines) is at `/p/<slug>/advanced`.
 
-**Public synthetic demo.** `RANKSIM_PUBLIC_DEMO=1` (or `app.py`, the Vercel entry) serves only the synthetic demo: no project creation, imports, fetching, historical data, or old `/demo` pages, and every provider key is switched off. `.vercelignore` keeps `smartcrew/` out of any upload. On Vercel the data lives in `/tmp` per server instance, so saved draft tests there are not durable; the draft screen says so.
+**Public synthetic demo.** `RANKSIM_PUBLIC_DEMO=1` (or `app.py`, the Vercel entry) serves only the synthetic demo: no project creation, imports, fetching, historical data, or old `/demo` pages, and every provider key is switched off. `.vercelignore` keeps `smartcrew/` out of any upload. On Vercel the data lives in `/tmp` per server instance. Draft tests on a public host are scored once and never saved, in the Studio and on the classic draft screen.
 
 The steps below describe the advanced page.
 

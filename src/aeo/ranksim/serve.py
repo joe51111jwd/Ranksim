@@ -98,6 +98,21 @@ LEGACY_CSP = (
     "form-action 'self'; frame-ancestors 'none'; base-uri 'none'; object-src 'none'"
 )
 LEGACY_PATHS = ("/demo", "/space", "/check")
+# The Studio shell may preview a page in a sandboxed srcdoc frame. That frame inherits this policy, so the shell allows
+# inline and remote styles and remote images (never scripts: the frame is sandboxed without allow-scripts).
+STUDIO_CSP = (
+    "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https:; img-src 'self' data: https: http:; "
+    "font-src 'self' data: https:; connect-src 'self'; frame-src 'self'; form-action 'self'; frame-ancestors 'none'; "
+    "base-uri 'none'; object-src 'none'"
+)
+
+
+def csp_for(path: str) -> str:
+    if path.startswith(LEGACY_PATHS):
+        return LEGACY_CSP
+    if path == "/" or path == "/app" or path.startswith("/app/"):
+        return STUDIO_CSP
+    return STRICT_CSP
 STEP_LABELS = {
     "google": "Google top 10 (REAL)",
     "engines": "AI engines (REAL)",
@@ -531,7 +546,7 @@ class GuardMiddleware:
                 await _send_plain(send, 400, "Unknown host. Open this tool at http://127.0.0.1 on the computer running it.")
                 return
         path = scope.get("path") or ""
-        csp = LEGACY_CSP if path.startswith(LEGACY_PATHS) else STRICT_CSP
+        csp = csp_for(path)
         started = {"value": False}
 
         async def send_with_headers(message):
@@ -712,6 +727,9 @@ def create_app(
                 return _html_page("Not available", _message_body("Not available on the public demo. Run Ranksim locally for the full tool."), ui, status=404)
             return await call_next(request)
 
+    from aeo.ranksim import studio
+
+    studio.register(app, ui)  # the Studio owns / and /app; the classic screens keep their paths
     workspace_ui.register(app, ui)
     if ui.public_demo:
         # Every public instance builds its own copy of the synthetic demo, so any instance can serve it.
@@ -1309,7 +1327,7 @@ def synthetic_wording(body: str) -> str:
 
 
 def _message_body(text: str) -> str:
-    return f'<section class="card"><p>{e(text)}</p><p><a href="/">Back to projects</a></p></section>'
+    return f'<section class="card"><p>{e(text)}</p><p><a href="/projects">Back to projects</a></p></section>'
 
 
 def _not_found(ui: UiState) -> HTMLResponse:

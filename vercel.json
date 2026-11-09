@@ -3,7 +3,7 @@
   "functions": {
     "app.py": {
       "maxDuration": 30,
-      "excludeFiles": "{smartcrew/**,tests/**,docs/**,data/**,scripts/**,examples/**,*.db}"
+      "excludeFiles": "{smartcrew/**,tests/**,docs/**,data/**,scripts/**,examples/**,evals/**,*.db}"
     }
   }
 }

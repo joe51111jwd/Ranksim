@@ -249,7 +249,7 @@ def _clean_page(text: str) -> None:
 
 
 def test_empty_home_offers_the_demo_and_a_create_form(web):
-    page = web["client"].get("/")
+    page = web["client"].get("/projects")
     assert page.status_code == 200
     assert "Load synthetic demo" in page.text and "New project" in page.text and "No projects yet" in page.text
     _clean_page(page.text)
@@ -362,7 +362,7 @@ def test_public_demo_mode_only_serves_the_synthetic_demo(tmp_path, monkeypatch):
     monkeypatch.setattr("aeo.ranksim.workspace.save_draft_run", boom)
     settings = make_settings(tmp_path)
     client = TestClient(create_app(settings=settings, projects_root=tmp_path / "projects", public_demo=True))
-    home = client.get("/")
+    home = client.get("/projects")
     csrf = token(client)
     assert "Load historical SmartCrew export" not in home.text and "public demo" in home.text
     assert client.post("/demo/historical", data={"csrf": csrf}).status_code == 404

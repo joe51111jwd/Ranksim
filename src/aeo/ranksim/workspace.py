@@ -760,7 +760,8 @@ def run_draft(
             "so its PREDICTED position mostly reflects length."
         )
     if missing:
-        notes.append(f"{len(missing)} candidate{'s' if len(missing) != 1 else ''} in this set had no stored HTML and were left out.")
+        one = len(missing) == 1
+        notes.append(f"{len(missing)} candidate{'' if one else 's'} in this set had no stored HTML and {'was' if one else 'were'} left out.")
     backtest = ctx.metrics.for_search(search)
     run = {
         "id": "",

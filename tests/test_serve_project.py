@@ -111,7 +111,7 @@ def site(tmp_path_factory):
 
 
 def test_home_lists_projects_keys_and_never_shows_a_key(site):
-    page = site["client"].get("/")
+    page = site["client"].get("/projects")  # the classic project list; / is the Studio
     assert page.status_code == 200
     assert "Dirt Crew" in page.text and "/p/dirt-crew" in page.text
     keys = site["client"].get("/p/dirt-crew/advanced").text

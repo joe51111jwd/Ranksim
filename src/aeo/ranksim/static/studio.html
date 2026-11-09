@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en" data-mode="{{mode}}">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#f5f5f7" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#000000" media="(prefers-color-scheme: dark)">
+<meta name="description" content="Ranksim previews a page and predicts where it lands among the pages that rank for a query, before you publish.">
+<title>Ranksim</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%230071e3'/%3E%3Crect x='7' y='17' width='4.5' height='8' rx='2.25' fill='white' opacity='.55'/%3E%3Crect x='13.75' y='12' width='4.5' height='13' rx='2.25' fill='white' opacity='.8'/%3E%3Crect x='20.5' y='7' width='4.5' height='18' rx='2.25' fill='white'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="/studio/studio.css?v={{version}}">
+<script src="/studio/studio.js?v={{version}}" defer></script>
+</head>
+<body>
+<input type="hidden" id="csrf" name="csrf" value="{{csrf}}">
+<a class="skip" href="#main">Skip to content</a>
+<header class="bar" id="bar">
+  <div class="bar-inner">
+    <a class="brand" href="/" aria-label="Ranksim home"><span class="logo" aria-hidden="true"><i></i><i></i><i></i></span><span class="brand-name">Ranksim</span></a>
+  </div>
+</header>
+<main id="main" tabindex="-1">
+  <div class="boot" aria-live="polite"><span class="spinner" aria-hidden="true"></span><span class="sr-only">Loading</span></div>
+</main>
+<noscript><p class="noscript">Ranksim's Studio needs JavaScript. The classic screens work without it: <a href="/projects">open them</a>.</p></noscript>
+<div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+</body>
+</html>

@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from datetime import date
 
 from aeo.crawl.urls import normalize_url
+from aeo.ranksim.intents import intent_for
 from aeo.ranksim.features import FEATURE_NAMES, MODEL_FEATURES, MONOTONE_UP, PageDoc, raw_features
 from aeo.ranksim.groundtruth import SerpLabel, navboost_leaks
 from aeo.ranksim.store import EVALUATION_EXCLUDED_SOURCES
@@ -117,7 +118,7 @@ def build_examples(
             # replace() carries every PageDoc field, including the link-graph fields
             # (orphan, link_depth, crawl_inlinks) that a hand-written copy dropped.
             docs.append(dataclasses.replace(page, navboost_prior=prior))
-        raw = raw_features(query, intents.get(query, "commercial"), docs, today)
+        raw = raw_features(query, intent_for(query, intents), docs, today)
         for (label, _page), features in zip(pairs, raw):
             examples.append(
                 RankExample(
@@ -125,7 +126,7 @@ def build_examples(
                     url=label.url,
                     position=label.position,
                     features=features,
-                    intent=intents.get(query, "commercial"),
+                    intent=intent_for(query, intents),
                 )
             )
     return examples, uncovered, withhold

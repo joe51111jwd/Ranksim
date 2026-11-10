@@ -22,6 +22,7 @@ from aeo.config import get_settings
 from aeo.crawl.fetch import Crawler
 from aeo.errors import ProviderConfigError, UnsafeURL
 from aeo.ranksim.authority import authority_client
+from aeo.ranksim.intents import intent_for, query_intents
 from aeo.ranksim.keywords import build_keywords, gap_summary, page_gaps, refresh_sitemap, write_keywords_csv
 from aeo.ranksim.loop import FetchResult, attach_authority, collect_corpus, calibrate, page_from_html, run_test, track_ranks
 from aeo.ranksim.report import render_report
@@ -378,7 +379,7 @@ def _graph_eval(database: str, args) -> None:
     from pathlib import Path
 
     labels = load_serp_file(args.serp)
-    intents = {row.query: row.intent for row in build_keywords()}
+    intents = query_intents(labels).intents
     session = open_session(database)
     try:
         pages = load_corpus_docs(session)
@@ -492,7 +493,7 @@ def _space(database: str, args) -> None:
     if not competitors:
         competitors = domains_from_labels(labels, "smartcrewhq.com")
         source = "labeled top 10 (no competitors file)"
-    intents = {row.query: row.intent for row in build_keywords()}
+    intents = query_intents(labels).intents
     session = open_session(database)
     try:
         pages = load_corpus_docs(session)
@@ -503,7 +504,7 @@ def _space(database: str, args) -> None:
         attach_graph(pages, load_graph(str(graph_path)))
     examples, uncovered, _withheld = build_examples(labels, pages, intents)
     fit = loo_fit(examples, keep_models=True)
-    report = build_space(labels, pages, fit.models, competitors)
+    report = build_space(labels, pages, fit.models, competitors, intents=intents)
     print(f"Competitors from {source}. Uncovered labeled rows: {uncovered}.")
     if fit.pairwise is not None:
         print(f"PREDICTED backtest pairwise {fit.pairwise:.3f} on {fit.n_pairs} pairs.")
@@ -575,9 +576,10 @@ def _benchmark(database: str, args) -> None:
     import_report = ImportReport()
     labels = load_serp_file(args.serp_file, report=import_report)
     print("\n".join(import_report.lines()))
-    intents = {row.query: row.intent for row in build_keywords()}
+    intent_map = query_intents(labels)
+    intents = intent_map.intents
     pages, coverage, stored = _bench_corpus(database, labels, args.coverage_csv)
-    notes = []
+    notes = [note for note in [intent_map.note({row.query for row in labels})] if note]
     if args.graph:
         _attach_graph_file(pages, args.graph, notes)
     if not args.as_of:
@@ -731,7 +733,11 @@ def _benchmark_freeze(database: str, args) -> None:
         raise SystemExit("--final-share must be between 0 and 1.")
     if args.graph and not Path(args.graph).is_file():
         raise SystemExit(f"No graph file at {args.graph}.")
-    intents = {row.query: row.intent for row in build_keywords()}
+    from aeo.ranksim.groundtruth import load_serp_file
+    from aeo.ranksim.intents import query_intents
+
+    intent_map = query_intents(load_serp_file(args.serp_file))
+    intents = intent_map.intents
     try:
         manifest = freeze(
             database,
@@ -742,6 +748,7 @@ def _benchmark_freeze(database: str, args) -> None:
             seed=args.seed,
             cluster_threshold=args.cluster_threshold,
             intents=intents,
+            intent_origin=intent_map.origin,
             graph_file=args.graph,
         )
     except SnapshotError as exc:
@@ -981,7 +988,7 @@ def _ai_eval(settings, database: str, args) -> None:
 
     print(seed_corpus_if_empty(database))
     labels = load_serp_file(args.serp)
-    intents = {row.query: row.intent for row in build_keywords()}
+    intents = query_intents(labels).intents
     session = open_session(database)
     try:
         pages = load_corpus_docs(session)
@@ -1033,7 +1040,7 @@ def _ai_eval(settings, database: str, args) -> None:
             pages=pages,
             model=model,
             calibration=fit.calibration,
-            intent=intents.get(args.query, "commercial"),
+            intent=intent_for(args.query, intents),
             llm=llm,
             run_ai=True,
         )
@@ -1204,7 +1211,7 @@ def _test_regression(database: str, args) -> None:
     from aeo.ranksim.whatif import render_regression, score_many
 
     labels = load_serp_file(args.serp)
-    intents = {row.query: row.intent for row in build_keywords()}
+    intents = query_intents(labels).intents
     session = open_session(database)
     try:
         pages = load_corpus_docs(session)
@@ -1237,7 +1244,7 @@ def _test_three_way(database: str, args) -> None:
     from aeo.ranksim.whatif import overrides_from_html, render_three_way, score_many
 
     labels = load_serp_file(args.serp)
-    intents = {row.query: row.intent for row in build_keywords()}
+    intents = query_intents(labels).intents
     bundles = {}
     for name, manifest_path in (("v1", args.three_way[0]), ("v2", args.three_way[1])):
         manifest = Path(manifest_path)
@@ -1290,7 +1297,7 @@ def _test_bundle(database: str, args) -> None:
     if not html_by_url:
         raise SystemExit(f"{manifest} has no url,file rows")
     labels = load_serp_file(args.serp)
-    intents = {row.query: row.intent for row in build_keywords()}
+    intents = query_intents(labels).intents
     session = open_session(database)
     try:
         pages = load_corpus_docs(session)
@@ -1408,7 +1415,10 @@ def _score_file(database: str, path: str, *, fit: bool, model_out: str | None, f
     if coverage_csv:
         write_coverage_csv(rows, coverage_csv)
         print(f"Wrote per-label coverage to {coverage_csv}")
-    intents = {row.query: row.intent for row in build_keywords()}
+    intent_map = query_intents(labels)
+    if intent_map.note({row.query for row in labels}):
+        print(intent_map.note({row.query for row in labels}))
+    intents = intent_map.intents
     examples, uncovered, withheld = build_examples(labels, pages, intents)
     real = True
     report = cross_validate(examples, real_google=real, folds_mode=folds)

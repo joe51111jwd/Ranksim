@@ -134,7 +134,12 @@ def build_space(
     *,
     our_domain: str = "smartcrewhq.com",
     today: date | None = None,
+    intents: dict[str, str] | None = None,
 ) -> SpaceReport:
+    """``intents`` (query to intent) should be ``intents.query_intents(labels).intents``, the same
+    source training used; without it each query gets the shared rule or the default."""
+    from aeo.ranksim.intents import intent_for
+
     today = today or date.today()
     players = [our_domain] + [domain for domain in competitors if domain != our_domain]
     queries = list(dict.fromkeys(row.query for row in labels))
@@ -158,7 +163,7 @@ def build_space(
         scored = 0
         ranks: dict[int, int] = {}
         if len(docs) >= 2 and models.get(query) is not None:
-            raw = raw_features(query, "commercial", docs, today)
+            raw = raw_features(query, intent_for(query, intents), docs, today)
             examples = [RankExample(query, doc.url, 0.0, row) for doc, row in zip(docs, raw)]
             scores = predict_scores(models[query], examples)
             order = sorted(range(len(docs)), key=lambda index: (-scores[id(examples[index])], index))

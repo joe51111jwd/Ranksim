@@ -25,6 +25,7 @@ class SerpLabel:
     language: str | None = None
     device: str | None = None
     provider: str | None = None
+    intent: str | None = None  # from an optional intent column; one of intents.KNOWN_INTENTS
     # "serp_snapshot": an organic position from one results page.
     # "search_console_avg": Search Console's average position over a period; not a snapshot,
     # and it only covers your own pages.
@@ -79,6 +80,7 @@ META_COLUMNS = {
     "device": ("device",),
     "provider": ("provider", "collected_with"),
     "result_type": ("result_type", "type"),
+    "intent": ("intent", "search_intent"),
 }
 
 
@@ -115,7 +117,7 @@ def load_serp_file(path: str | Path, *, report: ImportReport | None = None) -> l
                 "A Serper export may name the URL column link. Search Console exports need Query, Page, and Position."
             )
         meta_keys = {name: _pick(fields, aliases) for name, aliases in META_COLUMNS.items()}
-        report.metadata_columns = sorted(name for name, key in meta_keys.items() if key and name != "result_type")
+        report.metadata_columns = sorted(name for name, key in meta_keys.items() if key and name not in {"result_type", "intent"})
         gsc_markers = {"clicks", "impressions", "ctr"}
         # Search Console exports carry click/impression columns or "Average Position", and use
         # capitalized headers. A hand-collected file with a lowercase "page" column is a snapshot.
@@ -166,6 +168,7 @@ def load_serp_file(path: str | Path, *, report: ImportReport | None = None) -> l
                 language=_meta(raw, meta_keys["language"]),
                 device=_meta(raw, meta_keys["device"]),
                 provider=_meta(raw, meta_keys["provider"]),
+                intent=_intent_value(_meta(raw, meta_keys["intent"])),
                 kind=kind,
             )
             key = (query, key_url)
@@ -244,3 +247,12 @@ def _float(value: str | None) -> float | None:
         return float(text)
     except ValueError:
         return None
+
+
+def _intent_value(value: str | None) -> str | None:
+    """A known intent, lowercased, or None (blank or unrecognized values are ignored)."""
+    from aeo.ranksim.intents import KNOWN_INTENTS
+
+    text = (value or "").strip().lower()
+    return text if text in KNOWN_INTENTS else None
+

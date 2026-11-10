@@ -77,6 +77,7 @@ def freeze(
     seed: int = 0,
     cluster_threshold: float = 0.3,
     intents: dict[str, str] | None = None,
+    intent_origin: dict[str, str] | None = None,
     graph_file: str | Path | None = None,
 ) -> dict:
     from aeo.ranksim.benchmark import corpus_fingerprint, file_sha256, query_clusters
@@ -129,6 +130,7 @@ def freeze(
         "corpus_sha256": corpus_fingerprint(stored),
         "graph_sha256": file_sha256(out / GRAPH) if graph_file else None,
         "intents": {query: (intents or {}).get(query, "unknown") for query in sorted({row.query for row in labels})},
+        "intent_origin": {query: (intent_origin or {}).get(query, "unknown") for query in sorted({row.query for row in labels})},
         "split": {
             "seed": seed,
             "final_share": final_share,

@@ -88,6 +88,8 @@ Requests for other roles, drafted here and not posted (posting on another role's
   stay_on_that_cohort` fails against this branch's one-cluster guard; pr8_v3 drafts stored under
   live URLs are counted as covered.
 - PR #1: `track-record score` compares raw query text, while label import casefolds queries.
+- PR #2 / PR #5 owners: `project.guess_intent` and `forward_eval.py` (hard-coded "commercial") can
+  call `intents.query_intents(labels)` / `intent_for(query, intents)` so every path agrees.
 
 Order for section B after section I: B7, B5, B6, B15 (with a persistence baseline), B8, B16, B3,
 B4, B10, B11, B12, B13, B14, B9, B17. Notes from the review: B5 must not change `normalize_url`
@@ -118,8 +120,9 @@ fixed in advance.
   and seeds found from the repo root, not the cwd (P1-9). Done: reasons covered, thin, empty,
   draft_only, blocked, error, not_attempted (JS shell comes with B6); from another directory the
   old code flagged 0 bundled drafts, so they counted as evaluation rows.
-- [ ] B8. One intents source for training, checks and space; every labeled query has an intent or
-  is reported as unknown (P1-14).
+- [x] B8. One intents source for training, checks and space; every labeled query has an intent or
+  is reported as unknown (P1-14). Done: `intents.query_intents`; the what-if rule is now the shared
+  rule; 9 of 16 SmartCrew queries fall through to the default and are listed; numbers unchanged.
 - [ ] B9. Space metrics: top-k only when the set has more than k pages; observed top 10 means
   position <= 10; head-to-head perspective; business vs SERP competitors (P1-1, backend only).
 - [ ] B10. Competitor import validation: csv.reader, IDNA, reject IPs/localhost/ports, report

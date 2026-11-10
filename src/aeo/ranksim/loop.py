@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 from aeo.crawl.extract import extract_html
 from aeo.crawl.urls import domain_of, normalize_url
 from aeo.ranksim import OUR_DOMAIN
+from aeo.ranksim.intents import intent_for
 from aeo.ranksim.features import PageDoc
 from aeo.ranksim.keywords import Keyword
 from aeo.ranksim.score import HAND_WEIGHTS, best_our_position, fit_weights, score_pages
@@ -271,7 +272,7 @@ def calibrate(session: Session, keywords: list[Keyword], today: date | None = No
             pages.append(doc)
             positions.append(hit.position)
         if len(pages) >= 2:
-            groups.append((query, intents.get(query, "commercial"), pages, positions))
+            groups.append((query, intent_for(query, intents), pages, positions))
     report = fit_weights(groups, today=today, authority_used=authority_used)
     provider_name = ",".join(sorted(providers)) if providers else "none"
     if not groups:

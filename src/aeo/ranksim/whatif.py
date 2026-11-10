@@ -734,11 +734,9 @@ def _domain_donor(pages: dict[str, PageDoc], domain: str) -> PageDoc | None:
 
 
 def _intent(query: str, intents: dict[str, str]) -> str:
-    if query in intents:
-        return intents[query]
-    if "alternative" in query or " vs " in query:
-        return "comparison"
-    return "commercial"
+    from aeo.ranksim.intents import intent_for
+
+    return intent_for(query, intents)
 
 
 def _status_phrase(url: str, statuses: dict[str, tuple[str, str | None]]) -> str:

@@ -337,3 +337,29 @@ benchmark counts a tie as half (what random tie-breaking scores), so the figures
   Against held-out cluster-url (0.528, 0.531), both memorize most of what they fit; regularization
   narrows the gap without improving held-out agreement. The final split was not used.
 
+## 2026-11-10 E18. Placing new top 10 entrants without page text (protocol, fixed before running)
+
+MISSION next work item 1 asks for a predictor for pages that newly enter the top 10, measured on
+real later results. The integration branch (PR #5) committed two dated Serper position lists for the
+same 30 queries (`evals/forward-2026-11-09/baseline_serp.csv`, Nov 6, 294 rows; `forward_serp.csv`,
+Nov 9, 299 rows; gl=us, hl=en, num=10). Page HTML is private, so only signals that need no page text
+can be tested. This protocol is committed before any number is computed; the analysis runs once.
+
+- Data are read from `origin/cursor/integration-review-175f` and not copied into this branch.
+  Queries are normalized with `intents.normalize_query`, URLs compared with `urlkey.match_key`, sites
+  with `benchmark.site_key`.
+- Signals use the Nov 6 list only:
+  - persistence: minus the Nov 6 position of the URL in that query; a URL absent on Nov 6 (an
+    entrant) ties with every other entrant, below every returning URL;
+  - site prior: the number of other queries whose Nov 6 list contains the URL's site (the query
+    itself is excluded);
+  - combined, fixed in advance: persistence first, and entrants ordered among themselves by the site
+    prior.
+- Target: Nov 9 positions. Pairs: every pair of URLs in a query's Nov 9 list. Subsets: returning
+  only (both on the query's Nov 6 list), entrant vs returning, entrant vs entrant.
+- Metric: pairwise agreement with ties counted as half; 95% interval from 2000 bootstrap resamples
+  of queries (seed 0); a random band from 1000 random scorings of the same pairs.
+- Decision rule: the site prior is said to order new entrants better than chance only if, on
+  entrant vs entrant pairs, the lower end of its interval is above the random band's upper edge.
+  Otherwise the result is "no evidence". The numbers are recorded whatever they are.
+

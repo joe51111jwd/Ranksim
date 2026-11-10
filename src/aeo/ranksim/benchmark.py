@@ -743,7 +743,8 @@ def coverage_rows(labels, session) -> list[dict]:
     only stored HTML is an unpublished draft, which is not the page Google ranked. blocked: robots
     or URL safety refused it. error: the fetch failed (HTTP 403/404, timeout). not_attempted:
     never stored. Stored rows are matched by page identity (``urlkey.match_key``: www, scheme,
-    slash and tracking-tag variants are the same page). ``redirected`` is "yes" when the crawl of
+    slash and tracking-tag variants are the same page), and the row described is the fetched row
+    training uses for that label, when there is one. ``redirected`` is "yes" when the crawl of
     the labeled URL ended on another page; ``canonical_elsewhere`` when the page names another
     page as canonical. Either means the stored HTML may not be what Google ranked at that URL.
     """
@@ -751,19 +752,27 @@ def coverage_rows(labels, session) -> list[dict]:
     from aeo.ranksim.jsshell import is_js_shell
     from aeo.ranksim.store import EVALUATION_EXCLUDED_SOURCES, RsPage
 
+    from aeo.crawl.urls import normalize_url
+    from aeo.ranksim.lambdamart import _lookup_page
     from aeo.ranksim.urlkey import same_page
 
     rows = session.query(
         RsPage.url, RsPage.status, RsPage.raw_html, RsPage.source, RsPage.word_count, RsPage.fetched_at, RsPage.error,
         RsPage.final_url, RsPage.canonical_url, RsPage.js_shell,
-    ).order_by(RsPage.url).all()
-    by_key: dict[str, tuple] = {}
-    for row in rows:
-        by_key[row.url] = row
-        by_key.setdefault(_url_key(row.url), row)
+    ).all()
+    # The row training uses: fetched rows keyed as corpus.load_corpus_docs keys them (stored URL,
+    # then normalize_url, in stored order), looked up as build_examples does (_lookup_page: exact,
+    # normalize_url, then page identity). Other rows only explain why nothing usable is stored.
+    fetched: dict[str, tuple] = {row.url: row for row in rows if row.status == "fetched"}
+    for url, row in list(fetched.items()):
+        try:
+            fetched[normalize_url(url)] = row
+        except ValueError:
+            continue
+    every: dict[str, tuple] = {row.url: row for row in rows}
     out = []
     for label in labels:
-        found = by_key.get(label.url) or by_key.get(_url_key(label.url))
+        found = _lookup_page(fetched, label.url) or _lookup_page(every, label.url)
         record = {"query": label.query, "url": label.url, "position": label.position}
         if found is None:
             out.append(

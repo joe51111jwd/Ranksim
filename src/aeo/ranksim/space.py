@@ -38,6 +38,7 @@ class QueryBoard:
     query: str
     players: list[PlayerLine]
     scored_pages: int
+    shells: int = 0  # labeled pages left out: client-rendered shells, as in training
 
 
 @dataclass
@@ -240,6 +241,7 @@ def build_space(
     real_best: dict[tuple[str, str], tuple[float, str]] = {}
     predicted_best: dict[tuple[str, str], tuple[int, int, str]] = {}
     our_losses: list[tuple[str, str, object, object]] = []
+    shells_total = 0
     for query in queries:
         query_labels = [row for row in labels if row.query == query]
         for label in query_labels:
@@ -249,10 +251,17 @@ def build_space(
             if current is None or label.position < current[0]:
                 real_best[key] = (label.position, label.url)
         docs = []
+        shells = 0
         for label in query_labels:
             page = _lookup_page(pages, label.url)
-            if page is not None:
-                docs.append(page)
+            if page is None:
+                continue
+            if getattr(page, "js_shell", False):
+                # Its stored text is not what Google rendered. Training and checks leave it out.
+                shells += 1
+                continue
+            docs.append(page)
+        shells_total += shells
         scored = 0
         ranks: dict[int, int] = {}
         if len(docs) >= 2 and models.get(query) is not None:
@@ -287,7 +296,7 @@ def build_space(
                 )
             )
         lines.sort(key=lambda row: (row.real_position is None, row.real_position or 999, row.predicted_rank or 999))
-        boards.append(QueryBoard(query=query, players=lines, scored_pages=scored))
+        boards.append(QueryBoard(query=query, players=lines, scored_pages=scored, shells=shells))
         ours_p = predicted_best.get((query, our_domain))
         for domain in players:
             if domain == our_domain:
@@ -372,6 +381,11 @@ def build_space(
         "PREDICTED ranks are among stored pages for that query, not a live Google slot.",
         "A blank predicted rank means that domain had no stored HTML on that query.",
     ]
+    if shells_total:
+        notes.append(
+            f"Labeled pages left out of the PREDICTED ranks as client-rendered shells: {shells_total}. Google renders "
+            "a shell, this tool cannot, so training leaves shells out too. Their REAL positions are kept."
+        )
     if not any(getattr(doc, "authority", None) not in (None, 0) for doc in pages.values()):
         notes.append("Authority was not measured. No backlink key is set, so there is no authority gap number.")
     return SpaceReport(
@@ -423,7 +437,8 @@ def render_space_text(report: SpaceReport) -> str:
     lines.append("")
     lines.append("Per query")
     for board in report.boards:
-        lines.append(f"Query: {board.query} ({board.scored_pages} scored pages)")
+        shells = f", {board.shells} client-rendered shell{'s' if board.shells != 1 else ''} left out" if board.shells else ""
+        lines.append(f"Query: {board.query} ({board.scored_pages} scored pages{shells})")
         for player in board.players:
             real = "REAL n/a" if player.real_position is None else f"REAL {player.real_position:g} {player.real_url}"
             if player.predicted_rank is None:

@@ -63,6 +63,15 @@ class HostBackoff(Exception):
     """The host asked crawlers to wait longer than this crawl will wait."""
 
 
+class RobotsBlocked(Exception):
+    """A redirect hop that robots.txt disallows, or whose robots.txt could not be read."""
+
+    def __init__(self, url: str, status: str) -> None:
+        super().__init__(url)
+        self.url = url
+        self.status = status
+
+
 # yourdomain.com is the example in the refusal message below, so pasting it verbatim is refused too.
 PLACEHOLDER_DOMAINS = frozenset({"example.com", "example.org", "example.net", "localhost", "yourdomain.com"})
 PLACEHOLDER_SUFFIXES = (
@@ -185,7 +194,11 @@ class Crawler:
             return Fetched(url=url, final_url=url, error=str(exc), robots_status="skipped")
         self._require_contact()
 
-        allowed, robots_status = self._allowed(current)
+        try:
+            allowed, robots_status = self._allowed(current)
+        except HostBackoff as exc:
+            # robots.txt was not requested: the host (or a host its robots.txt redirects to) is in backoff.
+            return Fetched(url=current, final_url=current, error=str(exc), robots_status="deferred")
         if not allowed:
             error = (
                 "robots.txt did not answer (5xx, 429 or network error), so the site was not crawled"
@@ -210,6 +223,13 @@ class Crawler:
             raise
         except HostBackoff as exc:
             return Fetched(url=current, final_url=current, error=str(exc), robots_status=robots_status)
+        except RobotsBlocked as exc:
+            error = (
+                f"The redirect target {exc.url} is blocked by robots.txt"
+                if exc.status == "disallowed"
+                else f"robots.txt of the redirect target {exc.url} did not answer, so it was not fetched"
+            )
+            return Fetched(url=current, final_url=exc.url, blocked=True, robots_status=exc.status, error=error)
         except httpx.ConnectError as exc:
             if isinstance(exc.__cause__, guard.UnsafeConnect):
                 raise UnsafeURL(str(exc.__cause__)) from None
@@ -326,7 +346,7 @@ class Crawler:
         for target in sitemap_targets:
             try:
                 urls.extend(self._read_sitemap(target, max_pages, depth=0))
-            except Exception as exc:  # noqa: BLE001 — a bad sitemap should not abort the crawl
+            except Exception as exc:  # noqa: BLE001 - a bad sitemap should not abort the crawl
                 if sitemap_url:
                     warnings.append(f"Sitemap was not used: {exc}")
         if start not in urls:
@@ -365,17 +385,22 @@ class Crawler:
     def _robots_for(self, origin: str):
         """RFC 9309: 4xx (unavailable) allows everything; 5xx, 429 or a network failure
         (unreachable) means assume complete disallow. A file not read in full before the deadline
-        counts as unreachable. The result is cached for this crawler."""
+        counts as unreachable. The result is cached for this crawler.
+
+        A host in 429/503 backoff, here or at a redirect hop, gets no robots.txt request either:
+        HostBackoff is raised and nothing is cached, so the URL is deferred, not blocked."""
         if origin in self._robots:
             return self._robots[origin]
         robots_url = origin + "/robots.txt"
         try:
             safe = assert_safe_url(robots_url, allow_private=self.allow_private)
+            self._backoff_wait(safe)
             response, _final = self._get_following_redirects(safe, any_type=True)
         except RedirectProblem:
             self._robots[origin] = None  # redirect loop: treat as unavailable
             return None
-        except (httpx.HTTPError, UnsafeURL, ValueError, DeadlineExceeded):
+        except (httpx.HTTPError, httpx.InvalidURL, UnsafeURL, ValueError, DeadlineExceeded):
+            # InvalidURL: a host httpx cannot encode (an emoji domain in Unicode form) never answers.
             self._robots[origin] = ROBOTS_UNREACHABLE
             return ROBOTS_UNREACHABLE
         if response.status_code == 429 or response.status_code >= 500:
@@ -411,6 +436,15 @@ class Crawler:
             time.sleep(wait)
         self._last_fetch[origin] = time.monotonic()
 
+    def _backoff_wait(self, url: str) -> None:
+        """Only the 429/503 backoff of the URL's origin, for robots.txt requests."""
+        until, _count = self._backoff.get(self._origin(url), (0.0, 0))
+        wait = until - time.monotonic()
+        if wait > MAX_BACKOFF_WAIT:
+            raise HostBackoff(f"The host asked crawlers to wait {wait:.0f} s (HTTP 429/503); not fetched now")
+        if wait > 0:
+            time.sleep(wait)
+
     def _note_rate_limit(self, url: str, retry_after: str | None) -> float:
         """Start or extend this host's backoff. Returns the wait in seconds."""
         origin = self._origin(url)
@@ -425,14 +459,26 @@ class Crawler:
     def _get_following_redirects(
         self, url: str, *, any_type: bool = False, polite: bool = False
     ) -> tuple[httpx.Response, str]:
-        """``polite``: the caller waited for the first URL's origin; a hop to another origin waits
-        for that origin too, so a host in 429/503 backoff gets no request through a redirect."""
+        """The caller waited for the first URL's origin. A hop to another origin waits for that
+        origin too, so a host in 429/503 backoff gets no request through a redirect.
+
+        ``polite`` (a page fetch): the caller checked robots.txt for the first URL, and every later
+        hop is checked against the robots.txt of its own origin before it gets a request; a hop it
+        does not allow raises RobotsBlocked. Without ``polite`` (robots.txt itself), a hop waits
+        only for its origin's 429/503 backoff."""
         current = url
         previous = self._origin(url)
-        for _ in range(MAX_REDIRECTS + 1):
+        for hop in range(MAX_REDIRECTS + 1):
             current = assert_safe_url(current, allow_private=self.allow_private, keep_trailing_slash=True)
-            if polite and self._origin(current) != previous:
-                self._polite_wait(current)
+            if hop and polite:
+                allowed, status = self._allowed(current)
+                if not allowed:
+                    raise RobotsBlocked(current, status)
+            if self._origin(current) != previous:
+                if polite:
+                    self._polite_wait(current)
+                else:
+                    self._backoff_wait(current)
                 previous = self._origin(current)
             response = self._get_capped(current, any_type=any_type)
             if response.status_code not in {301, 302, 303, 307, 308}:
@@ -534,13 +580,20 @@ class Crawler:
         return raw.decode(encoding, errors="replace")
 
     def _read_robots(self, response: httpx.Response) -> str:
-        """robots.txt text. RFC 9309 says the file is UTF-8, so a UTF-8 byte order mark wins over a
-        declared charset such as ISO-8859-1. Decoded with that charset, the mark would become
-        stray characters that hide the first user-agent line."""
+        """robots.txt text. RFC 9309 (2.3) says the file is UTF-8 whatever the server declares, so
+        bytes that are valid UTF-8 are read as UTF-8 even under a declared ISO-8859-1. Only bytes
+        that are not UTF-8 fall back to the declared charset. A UTF-8 byte order mark always wins:
+        decoded with another charset, it would become stray characters that hide the first
+        user-agent line."""
         raw = response.content[:MAX_BYTES]
         if raw.startswith(codecs.BOM_UTF8):
             return raw[len(codecs.BOM_UTF8) :].decode("utf-8", errors="replace")
-        return self._read_capped(response)
+        cut = response.extensions.get("truncated") == "size"
+        try:
+            # A character cut in two by the size cap is dropped, not a reason to fall back.
+            return codecs.getincrementaldecoder("utf-8")().decode(raw, final=not cut)
+        except UnicodeDecodeError:
+            return self._read_capped(response)
 
     @staticmethod
     def _origin(url: str) -> str:

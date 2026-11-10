@@ -16,6 +16,7 @@ from aeo.ranksim.store import (
     RsSerpCollection,
     append_serp,
     collection_dated,
+    collection_hits,
     latest_collection,
     open_session,
     serp_collections,
@@ -114,10 +115,12 @@ def test_f3_search_console_lists_an_older_version_stored_are_marked_not_google(t
     session = open_session(db)
     [kept] = serp_collections(session, QUERY)  # kept, not deleted
     assert kept.is_google is False
-    assert [(hit.url, hit.is_google) for hit in serp_for_query(session, QUERY)] == [(a, False), (b, False)]
+    assert [hit.is_google for hit in collection_hits(session, kept.id)] == [False, False]
+    assert serp_for_query(session, QUERY) == []  # calibrate and test skip it
     assert [c.is_google for c in serp_collections(session, "other query")] == [True]
     session.close()
     assert "1 results lists an older version stored from these averages are now marked as not Google results" in printed
+    assert "calibrate and test skip them, and export-serp writes them with google=no, which readers drop." in printed
     out = tmp_path / "export.csv"
     main(["--database", db, "export-serp", str(out)])
     rows = [line.split(",") for line in out.read_text().splitlines()[1:]]
@@ -133,6 +136,48 @@ def test_f3_search_console_lists_an_older_version_stored_are_marked_not_google(t
     # Indexing the file again finds nothing more to mark.
     summary, _ = _index(gsc, db, tmp_path, monkeypatch)
     assert summary["search_console_marked"] == 0
+
+
+def _page_html(title, words=300):
+    body = " ".join(f"w{i}" for i in range(words))
+    return f"<html><head><title>{title}</title></head><body><main><p>{body} {title}</p></main></body></html>"
+
+
+def test_f3_calibrate_and_test_never_read_a_marked_search_console_list(tmp_path, monkeypatch):
+    from aeo.ranksim.keywords import Keyword
+    from aeo.ranksim.loop import FetchResult, calibrate, page_from_html, run_test, store_fetched_page
+
+    db = f"sqlite:///{tmp_path / 's.db'}"
+    a, b, c = (f"https://www.client.example/{name}" for name in "abc")
+    x, y = "https://x.example/", "https://y.example/"
+    imported = datetime(2026, 11, 1, 15, 4, 5, 123456, tzinfo=timezone.utc)
+    session = open_session(db)
+    for url in (a, b, c, x, y):
+        store_fetched_page(session, FetchResult(url=url, html=_page_html(url.rsplit("/", 2)[-2]), status="fetched"))
+    # 87511c0 stored this Search Console file as results lists. "crew app" also has an earlier
+    # undated browser export, so before the mark the Search Console list was its latest list.
+    _legacy(session, QUERY, [a, b, c], imported, imported + timedelta(milliseconds=8), positions=[5, 7, 9])
+    _legacy(session, "crew app", [x, y], imported - timedelta(days=1), imported - timedelta(days=1))
+    _legacy(session, "crew app", [a, b], imported, imported + timedelta(milliseconds=9), positions=[2, 3])
+    session.close()
+    gsc = tmp_path / "gsc.csv"
+    gsc.write_text(
+        "Query,Page,Clicks,Impressions,CTR,Position\n"
+        f"{QUERY},{a},3,100,3%,4.6\n{QUERY},{b},1,80,1%,7.2\n{QUERY},{c},1,80,1%,9.1\n"
+        f"crew app,{a},5,90,5%,2.4\ncrew app,{b},2,60,3%,3.0\n"
+    )
+    summary, _ = _index(gsc, db, tmp_path, monkeypatch)
+    assert summary["search_console_marked"] == 2
+    session = open_session(db)
+    assert len(serp_collections(session)) == 3  # nothing deleted
+    assert serp_for_query(session, QUERY) == []
+    assert [hit.url for hit in serp_for_query(session, "crew app")] == [x, y]
+    report, label, provider = calibrate(session, [])
+    assert (label, provider, report.n_queries, report.n_pairs) == ("calibrated_on_google_serp", "browser_export", 1, 1)
+    keyword = Keyword(QUERY, "commercial", "", "", True, "")
+    [delta] = run_test(session, [keyword], page_from_html(a, _page_html("a"), is_ours=True), replaces=a, source_label="t")
+    assert delta.note == "No stored SERP for this query. No position was invented."
+    session.close()
 
 
 def test_f6_a_dated_label_file_stored_before_the_dated_column_keeps_its_date(tmp_path, capsys):
@@ -328,4 +373,43 @@ def test_f18_a_draft_the_training_join_reaches_does_not_block_the_recrawl(tmp_pa
     pages = load_corpus_docs(session)
     session.close()
     _, uncovered, _ = build_examples(load_serp_file(serp), pages, {})
+    assert uncovered == 0
+
+
+@pytest.mark.parametrize("order", ["live first", "draft first"])
+def test_f18_a_draft_at_a_twin_spelling_never_takes_the_key_of_the_labeled_page(tmp_path, monkeypatch, order):
+    """The live page is stored at exactly the labeled URL and a draft at its slash twin. Training,
+    coverage and index-serp all reach the live page, whichever row was stored first, so the label
+    is covered and index-serp does not fetch it again on every run."""
+    from aeo.ranksim.benchmark import coverage_rows
+    from aeo.ranksim.corpus import load_corpus_docs
+    from aeo.ranksim.lambdamart import build_examples
+    from aeo.ranksim.loop import FetchResult, store_fetched_page
+
+    label, draft = "https://www.client.example/compare/x", "https://www.client.example/compare/x/"
+    html = _page_html("T")
+    db = f"sqlite:///{tmp_path / 's.db'}"
+    session = open_session(db)
+    rows = [
+        FetchResult(url=label, html=html, status="fetched"),
+        FetchResult(url=draft, html=_page_html("DRAFT"), status="fetched", source="draft_bundle"),
+    ]
+    for result in rows if order == "live first" else rows[::-1]:
+        store_fetched_page(session, result)
+    for i in range(2):
+        store_fetched_page(session, FetchResult(url=f"https://o{i}.example/", html=html, status="fetched"))
+    session.close()
+    serp = tmp_path / "serp.csv"
+    serp.write_text(f"query,url,position\nq,{label},1\nq,https://o0.example/,2\nq,https://o1.example/,3\n")
+    for _run in range(2):
+        summary, attempted = _index(serp, db, tmp_path, monkeypatch, fetched=lambda url: FetchResult(url=url, html=html, status="fetched"))
+        assert attempted == [] and summary["skipped"] == 3
+    labels = load_serp_file(serp)
+    session = open_session(db)
+    pages = load_corpus_docs(session)
+    coverage = coverage_rows(labels, session)
+    session.close()
+    assert pages[label].title == "T" and pages[draft].title == "DRAFT"
+    assert (coverage[0]["reason"], coverage[0]["stored_url"]) == ("covered", label)
+    _, uncovered, _ = build_examples(labels, pages, {})
     assert uncovered == 0

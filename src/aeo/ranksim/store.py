@@ -368,9 +368,17 @@ def _collection_signature(source: str, provider: str, when: str, body: str) -> s
     return hashlib.sha256(f"{source}|{provider}|{when}|{body}".encode()).hexdigest()
 
 
+def search_console_list(collection: RsSerpCollection) -> bool:
+    """A Search Console file that an older version stored as a results list. index-serp stores
+    every label file as Google results, and marks only these lists as not Google. They are kept,
+    but they are averages for your own pages, not a results page."""
+    return collection.source == "label_file" and collection.provider == "browser_export" and not collection.is_google
+
+
 def latest_collection(session: Session, query: str) -> RsSerpCollection | None:
-    """The query's latest collection (see pick_latest)."""
-    return pick_latest(session.query(RsSerpCollection).filter(RsSerpCollection.query == query).all())
+    """The query's latest results list (see pick_latest). Search Console lists are left out."""
+    collections = session.query(RsSerpCollection).filter(RsSerpCollection.query == query).all()
+    return pick_latest([c for c in collections if not search_console_list(c)])
 
 
 def pick_latest(collections: list[RsSerpCollection]) -> RsSerpCollection | None:
@@ -495,10 +503,13 @@ def latest_weights(session: Session) -> RsWeight | None:
 
 
 def serp_for_query(session: Session, query: str) -> list[RsSerp]:
-    """The query's latest collected list (older collections are kept; see serp_collections)."""
+    """The query's latest collected list (older collections are kept; see serp_collections).
+    calibrate and test read this, so a Search Console list is never served as a results page."""
     latest = latest_collection(session, query)
     if latest is not None:
         return collection_hits(session, latest.id)
+    if session.query(RsSerpCollection.id).filter(RsSerpCollection.query == query).first() is not None:
+        return []  # only Search Console lists are stored for this query
     return list(
         session.scalars(
             select(RsSerp).where(RsSerp.query == query, RsSerp.collection_id.is_(None)).order_by(RsSerp.position)

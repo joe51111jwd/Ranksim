@@ -15,7 +15,8 @@ from aeo.ranksim.store import EVALUATION_EXCLUDED_SOURCES, RsPage
 
 
 def load_corpus_docs(session: Session) -> dict[str, object]:
-    """PageDoc map keyed by stored URL and by normalized URL."""
+    """PageDoc map keyed by stored URL and by normalized URL. A normalized key never replaces the
+    page stored at exactly that URL, so a draft stored at its slash twin does not take its place."""
     rows = session.query(RsPage).filter(RsPage.status == "fetched").all()
     docs = {row.url: page_from_row(row) for row in rows}
     # Draft HTML is not on the live web, so its outlinks do not feed PageRank or anchor text.
@@ -68,7 +69,8 @@ def load_corpus_docs(session: Session) -> dict[str, object]:
             key = normalize_url(url)
         except ValueError:
             continue
-        docs[key] = doc
+        if key not in known:  # a page stored at exactly that URL keeps its own key
+            docs[key] = doc
     return docs
 
 

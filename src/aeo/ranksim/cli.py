@@ -1839,7 +1839,8 @@ def _index_serp(settings, database: str, args) -> None:
     if summary.get("search_console_marked"):
         print(
             f"{summary['search_console_marked']} results lists an older version stored from these averages "
-            "are now marked as not Google results. They are kept, and readers drop them."
+            "are now marked as not Google results. They are kept. calibrate and test skip them, and export-serp "
+            "writes them with google=no, which readers drop."
         )
     if summary.get("undated_behind_dated"):
         if summary.get("dated_rows"):

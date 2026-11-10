@@ -775,14 +775,18 @@ def coverage_rows(labels, session) -> list[dict]:
         RsPage.final_url, RsPage.canonical_url, RsPage.js_shell,
     ).all()
     # The row training uses: fetched rows keyed as corpus.load_corpus_docs keys them (stored URL,
-    # then normalize_url, in stored order), looked up as build_examples does (_lookup_page: exact,
-    # normalize_url, then page identity). Other rows only explain why nothing usable is stored.
+    # then normalize_url in stored order, never over another row's stored URL), looked up as
+    # build_examples does (_lookup_page: exact, normalize_url, then page identity). Other rows
+    # only explain why nothing usable is stored.
     fetched: dict[str, tuple] = {row.url: row for row in rows if row.status == "fetched"}
+    stored_urls = set(fetched)
     for url, row in list(fetched.items()):
         try:
-            fetched[normalize_url(url)] = row
+            key = normalize_url(url)
         except ValueError:
             continue
+        if key not in stored_urls:
+            fetched[key] = row
     every: dict[str, tuple] = {row.url: row for row in rows}
     out = []
     for label in labels:

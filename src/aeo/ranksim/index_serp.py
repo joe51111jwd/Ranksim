@@ -171,18 +171,22 @@ def _already_fetched(database: str) -> set[str]:
 
 def _joined_sources(database: str) -> dict[str, str]:
     """The source of each fetched row, keyed as corpus.load_corpus_docs keys pages for training:
-    by stored URL, then by normalize_url in stored order. A draft found this way is not a crawl."""
+    by stored URL, then by normalize_url in stored order, never over another row's stored URL.
+    A draft found this way is not a crawl."""
     session = open_session(database)
     try:
         rows = session.query(RsPage.url, RsPage.source).filter(RsPage.status == "fetched").all()
     finally:
         session.close()
     sources = {url: source or "unknown" for url, source in rows}
+    stored = set(sources)
     for url, source in list(sources.items()):
         try:
-            sources[normalize_url(url)] = source
+            key = normalize_url(url)
         except ValueError:
             continue
+        if key not in stored:
+            sources[key] = source
     return sources
 
 

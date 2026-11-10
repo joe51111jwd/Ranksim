@@ -9,10 +9,11 @@ from pathlib import Path
 
 from aeo.config import Settings
 from aeo.crawl.fetch import Crawler
-from aeo.crawl.urls import domain_of
+from aeo.crawl.urls import domain_of, normalize_url
 from aeo.errors import ProviderConfigError, UnsafeURL
 from aeo.ranksim.groundtruth import load_serp_file
 from aeo.ranksim.keywords import load_sitemap_urls
+from aeo.ranksim.lambdamart import _lookup_page
 from aeo.ranksim.loop import FetchResult, store_fetched_page
 from aeo.ranksim.saved_html import load_saved_html
 from aeo.ranksim.serp import SerpHit
@@ -32,6 +33,17 @@ def index_serp_csv(
     skip_fetched: bool = True,
 ) -> dict:
     labels = load_serp_file(path)
+    # Search Console positions are averages over a period for your own pages, not a results page.
+    # They are not stored as collections, so export-serp, noise and the ledger never read them as one.
+    search_console = bool(labels) and labels[0].kind == "search_console_avg"
+    if not search_console:
+        for label in labels:
+            if label.observed_on and _observed_time(label.observed_on) is None:
+                # 11/5/2026 could be May or November. Refuse it before anything is stored.
+                raise ValueError(
+                    f"observed_on {label.observed_on!r} for query {label.query!r} is not a YYYY-MM-DD date. "
+                    "Nothing was stored. Write the dates as YYYY-MM-DD and run index-serp again."
+                )
     saved, missing_files = load_saved_html(saved_dir)
     urls = []
     seen = set()
@@ -45,12 +57,13 @@ def index_serp_csv(
                 seen.add(url)
                 urls.append(url)
     already = _already_fetched(database) if skip_fetched else set()
-    # A draft stored at this exact URL is not a crawl of it, even when the live page is stored
-    # under another spelling: every join prefers the exact URL, so it would keep finding the draft.
-    drafts = _stored_drafts(database) if skip_fetched else set()
+    # Training finds a label's page with _lookup_page: the exact URL, then normalize_url, then
+    # another spelling of the same page. When that join reaches a draft, the live page is not
+    # stored for this label yet, even when it is stored under a third spelling, so crawl it.
+    joined = _joined_sources(database) if skip_fetched else {}
 
     def is_stored(url: str) -> bool:
-        return match_key(url) in already and url not in drafts
+        return match_key(url) in already and _lookup_page(joined, url) not in EVALUATION_EXCLUDED_SOURCES
 
     saved_used: list[str] = []
     to_crawl: list[str] = []
@@ -74,10 +87,8 @@ def index_serp_csv(
     session = open_session(database)
     skipped = [url for url in urls if is_stored(url) and url not in saved]
     counts = {"fetched": 0, "blocked": 0, "error": 0, "saved_html": 0, "skipped": len(skipped)}
-    # Search Console positions are averages over a period for your own pages, not a results page.
-    # They are not stored as collections, so export-serp, noise and the ledger never read them as one.
-    search_console = bool(labels) and labels[0].kind == "search_console_avg"
     behind_dated = 0  # queries of an undated file whose dated results list stays the latest
+    marked = 0  # lists an older version stored from these averages, now marked not Google
     try:
         for url in saved_used:
             store_fetched_page(
@@ -89,6 +100,8 @@ def index_serp_csv(
             result.url = requested
             store_fetched_page(session, result)
             counts[result.status] = counts.get(result.status, 0) + 1
+        if search_console:
+            marked = _mark_stored_averages(session, labels)
         grouped: dict[str, list] = defaultdict(list)
         for label in ([] if search_console else labels):
             grouped[label.query].append(label)
@@ -132,6 +145,8 @@ def index_serp_csv(
         "attempted": len(to_crawl),
         "saved_missing": missing_files,
         "search_console": search_console,
+        "search_console_marked": marked,
+        "dated_rows": any(label.observed_on for label in labels),
         "undated_behind_dated": behind_dated,
         **counts,
         "blocked_urls": [url for url, result in fetched if result.status == "blocked"],
@@ -154,14 +169,55 @@ def _already_fetched(database: str) -> set[str]:
         session.close()
 
 
-def _stored_drafts(database: str) -> set[str]:
-    """Exact URLs whose stored row is a draft, so a crawl of the live page can replace it."""
+def _joined_sources(database: str) -> dict[str, str]:
+    """The source of each fetched row, keyed as corpus.load_corpus_docs keys pages for training:
+    by stored URL, then by normalize_url in stored order, never over another row's stored URL.
+    A draft found this way is not a crawl."""
     session = open_session(database)
     try:
-        rows = session.query(RsPage.url, RsPage.source).all()
-        return {url for url, source in rows if (source or "unknown") in EVALUATION_EXCLUDED_SOURCES}
+        rows = session.query(RsPage.url, RsPage.source).filter(RsPage.status == "fetched").all()
     finally:
         session.close()
+    sources = {url: source or "unknown" for url, source in rows}
+    stored = set(sources)
+    for url, source in list(sources.items()):
+        try:
+            key = normalize_url(url)
+        except ValueError:
+            continue
+        if key not in stored:
+            sources[key] = source
+    return sources
+
+
+def _mark_stored_averages(session, labels) -> int:
+    """An older version stored a Search Console file as a results list. Mark each such list, same
+    query and the same rounded positions and URLs, as not Google, so export-serp, the latest list
+    and the ledger never read it as a results page. Nothing is deleted. Returns how many."""
+    from aeo.ranksim.store import RsSerpCollection, collection_hits
+
+    wanted: dict[str, list] = defaultdict(list)
+    for label in labels:
+        wanted[label.query].append((int(round(label.position)), label.url))
+    marked = 0
+    for query, hits in wanted.items():
+        stored = session.query(RsSerpCollection).filter(
+            RsSerpCollection.query == query,
+            RsSerpCollection.source == "label_file",
+            RsSerpCollection.provider == "browser_export",
+            RsSerpCollection.is_google.is_(True),
+            RsSerpCollection.dated.is_(None),  # only rows from before the dated column
+        )
+        for collection in stored.all():
+            rows = collection_hits(session, collection.id)
+            if sorted((row.position, row.url) for row in rows) != sorted(hits):
+                continue
+            collection.is_google = False
+            for row in rows:
+                row.is_google = False
+            marked += 1
+    session.commit()
+    return marked
 
 
 def _fetch_host(urls: list[str], settings: Settings, delay_seconds: float) -> list[tuple[str, FetchResult]]:

@@ -1836,11 +1836,23 @@ def _index_serp(settings, database: str, args) -> None:
             "This is a Search Console file. Its positions are averages for your own pages, not a results page, "
             "so they were not stored as results lists. Only its URLs were crawled."
         )
-    if summary.get("undated_behind_dated"):
+    if summary.get("search_console_marked"):
         print(
-            f"This file has no dates. {summary['undated_behind_dated']} of its queries already have a dated results list, "
-            "which stays their latest list. Add an observed_on column if this file was observed later."
+            f"{summary['search_console_marked']} results lists an older version stored from these averages "
+            "are now marked as not Google results. They are kept. calibrate and test skip them, and export-serp "
+            "writes them with google=no, which readers drop."
         )
+    if summary.get("undated_behind_dated"):
+        if summary.get("dated_rows"):
+            print(
+                f"{summary['undated_behind_dated']} queries in this file have no observed_on date and already have a "
+                "dated results list, which stays their latest list. Give them an observed_on date if they were observed later."
+            )
+        else:
+            print(
+                f"This file has no observed_on dates. {summary['undated_behind_dated']} of its queries already have a dated "
+                "results list, which stays their latest list. Add an observed_on column if this file was observed later."
+            )
     if summary["saved_missing"]:
         print("Saved HTML manifest rows with no file were not invented:")
         for url in summary["saved_missing"]:

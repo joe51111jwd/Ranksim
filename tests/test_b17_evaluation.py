@@ -173,7 +173,8 @@ def test_a_run_recorded_only_in_an_old_results_file_protects_a_refrozen_copy(tmp
 
 def test_a_run_stored_under_the_87511c0_key_blocks_a_refrozen_copy(tmp_path, capsys):
     """87511c0 wrote rs_final_runs rows under a key of the label file bytes, the cluster threshold and
-    the final queries. Such a row has to keep blocking the same split under the new key."""
+    the final queries. Such a row keeps blocking a byte-identical re-freeze, even when the folder it
+    names does not resolve (test_b20_evaluation covers other line endings while the folder exists)."""
     import hashlib
 
     from aeo.ranksim.features import MODEL_FEATURES

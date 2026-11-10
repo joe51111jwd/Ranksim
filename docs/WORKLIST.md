@@ -147,8 +147,10 @@ fixed in advance.
 - [x] B12. Attribution scores before and after separately against the same peers (P1-8). Done:
   before, the old version was scored against its own edited copy (originality 0.000 -> 0.105 for a
   one-sentence edit of an original page); now 0.948 -> 0.953.
-- [ ] B13. `test --bundle` inserts only matching pages; report renders bundle runs and computes
-  accuracy from the label file (P1-10).
+- [x] B13. `test --bundle` inserts only matching pages; report renders bundle runs and computes
+  accuracy from the label file (P1-10). Done: targets from the manifest `query` column or
+  keywords.csv; no position for a query without stored competitors; the report and the bundle text
+  call the number same-snapshot agreement, not accuracy (MISSION).
 - [ ] B14. LLM explanation numbers checked against the brief; provider selector and model-format
   check (P1-11).
 - [x] B15. Site prior (content-blind) as one more benchmark baseline row (P1-12). Done: `site_prior`

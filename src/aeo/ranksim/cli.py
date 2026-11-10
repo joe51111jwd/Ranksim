@@ -23,6 +23,7 @@ from aeo.crawl.fetch import Crawler
 from aeo.errors import ProviderConfigError, UnsafeURL
 from aeo.ranksim.authority import authority_client
 from aeo.ranksim.intents import intent_for, query_intents
+from aeo.ranksim.whatif import bundle_targets
 from aeo.ranksim.keywords import build_keywords, gap_summary, load_keyword_file, page_gaps, refresh_sitemap, write_keywords_csv
 from aeo.ranksim.loop import FetchResult, attach_authority, collect_corpus, calibrate, page_from_html, run_test, track_ranks
 from aeo.ranksim.report import render_report
@@ -1421,6 +1422,7 @@ def _test_regression(database: str, args) -> None:
             },
             intents,
             compute_accuracy=False,
+            targets=bundle_targets(args.regression),
         )
     finally:
         session.close()
@@ -1464,6 +1466,7 @@ def _test_three_way(database: str, args) -> None:
                 "v2": overrides_from_html(bundles["v2"], pages),
             },
             intents,
+            targets=bundle_targets(args.three_way),
         )
     finally:
         session.close()
@@ -1498,7 +1501,7 @@ def _test_bundle(database: str, args) -> None:
     try:
         pages = load_corpus_docs(session)
         statuses = _page_statuses(session)
-        report = score_whatif(labels, pages, overrides_from_html(html_by_url, pages), intents)
+        report = score_whatif(labels, pages, overrides_from_html(html_by_url, pages), intents, targets=bundle_targets([manifest]))
         text = render_whatif(report, statuses)
         save_test_run(
             session,
@@ -1508,6 +1511,9 @@ def _test_bundle(database: str, args) -> None:
             is_google=True,
             summary_json={
                 "predicted": True,
+                "kind": "bundle",
+                "agreement_note": "Held-out agreement with the labeled snapshot (same snapshot), not accuracy on unseen results.",
+                "n_pairs": report.n_pairs,
                 "pairwise_accuracy": report.pairwise_accuracy,
                 "ndcg_at_10": report.ndcg_at_10,
                 "spearman": report.spearman,

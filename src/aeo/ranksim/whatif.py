@@ -13,6 +13,8 @@ from datetime import date
 
 from aeo.crawl.urls import domain_of, normalize_url
 from aeo.ranksim.attribution import LABELS
+from aeo.ranksim.intents import normalize_query
+from aeo.ranksim.urlkey import match_key
 from aeo.ranksim.features import MODEL_FEATURES, PageDoc, raw_features
 from aeo.ranksim.groundtruth import SerpLabel
 from aeo.ranksim.lambdamart import (
@@ -138,12 +140,15 @@ def score_whatif(
     intents: dict[str, str] | None = None,
     *,
     today: date | None = None,
+    targets: dict[str, set[str]] | None = None,
 ) -> WhatIfReport:
     """Score every labeled query before the bundle and after it.
 
-    Each query is scored by a model trained on the other queries only.
+    Each query is scored by a model trained on the other queries only. A bundle page replaces the
+    stored HTML of a URL labeled for the query; a bundle page that is not labeled there is added only
+    to the queries whose ``targets`` (normalized query -> match keys of target URLs) name it.
     """
-    reports = score_many(labels, pages, {"bundle": overrides}, intents, today=today)
+    reports = score_many(labels, pages, {"bundle": overrides}, intents, today=today, targets=targets)
     return reports["bundle"]
 
 
@@ -155,6 +160,7 @@ def score_many(
     *,
     today: date | None = None,
     compute_accuracy: bool = True,
+    targets: dict[str, set[str]] | None = None,
 ) -> dict[str, WhatIfReport]:
     """Score several HTML bundles with one leave-one-query-out fit per query.
 
@@ -203,6 +209,7 @@ def score_many(
                 models[query],
                 today,
                 withhold=withheld,
+                targets=(targets or {}).get(normalize_query(query), set()),
             )
             for query in by_query
         ]
@@ -230,8 +237,11 @@ def render_whatif(
     lines: list[str] = []
     lines.append("Predicted positions. Not live Google ranks.")
     lines.append("Model: LambdaMART, leave-one-query-out. The query being scored was not in that model.")
-    lines.append("Cross-validated accuracy on the labeled file, using the pages stored before this HTML change:")
-    lines.append(f"  Pairwise accuracy: {_num(report.pairwise_accuracy)}")
+    lines.append(
+        "Held-out agreement with the labeled snapshot (each query held out in turn; the same snapshot as the "
+        "training queries, so not accuracy on unseen results), using the pages stored before this HTML change:"
+    )
+    lines.append(f"  Pairwise agreement: {_num(report.pairwise_accuracy)}")
     lines.append(f"  NDCG at 10: {_num(report.ndcg_at_10)}")
     lines.append(f"  Spearman: {_num(report.spearman)}")
     lines.append(f"  Top-3 hit rate: {_num(report.top3_hit_rate)}")
@@ -240,13 +250,14 @@ def render_whatif(
         f"Queries: {report.n_queries}. Pairs: {report.n_pairs}."
     )
     lines.append(
-        "Confidence: use the cross-validated numbers above. Pairwise accuracy is the one to trust first. "
+        "These are same-snapshot numbers on a small file, not accuracy. Pairwise agreement is the steadiest; "
         "Spearman and the top-3 hit rate move around on a 16-query file. A predicted slot is a score inside "
         "the crawled set."
     )
     lines.append(
         "Before set: crawled URLs from the labeled file. After set: those URLs, with bundle HTML on a matching URL, "
-        "plus bundle URLs that were not in that query. A new URL gets crawl PageRank 0. Domain PageRank is copied "
+        "plus a bundle URL that is this query's target page (keywords.csv, or the manifest's query column). A query "
+        "with no stored competitor gets no position. A new URL gets crawl PageRank 0. Domain PageRank is copied "
         "from other pages on the same host. No competitor HTML was invented."
     )
     lines.append("")
@@ -295,6 +306,7 @@ def _score_query(
     today: date,
     *,
     withhold: bool,
+    targets: set[str] | None = None,
 ) -> QueryWhatIf:
     intent = _intent(query, intents)
     labeled: list[tuple[SerpLabel, PageDoc]] = []
@@ -315,8 +327,11 @@ def _score_query(
         doc.url = page.url
         swap_docs.append(doc)
     extras: list[tuple[Override, PageDoc]] = []
+    wanted = targets or set()
     for key, override in overrides.items():
-        if key in labeled_keys:
+        # Only a page meant for this query joins it, and never a query with no stored competitor,
+        # where a lone page would be "rank 1 of 1".
+        if key in labeled_keys or not labeled or match_key(override.doc.url) not in wanted:
             continue
         extras.append((override, _clone(override.doc, 0.0)))
     after_docs = swap_docs + [doc for _override, doc in extras]
@@ -1039,3 +1054,42 @@ def _short(url: str | None) -> str:
     if marker not in key:
         return key
     return "/" + key.split(marker, 1)[1].split("/", 1)[1] if key.count("/") >= 3 else "/"
+
+
+def bundle_targets(manifest_paths, keywords=None) -> dict[str, set[str]]:
+    """Which queries each bundle page is meant for: a ``query`` column in the bundle manifest, plus
+    every query whose suggested target page in keywords.csv is that URL. Keys are normalized
+    queries; values are page match keys."""
+    import csv as _csv
+    from pathlib import Path as _Path
+
+    if keywords is None:
+        from aeo.ranksim.keywords import build_keywords
+
+        keywords = build_keywords()
+    by_page: dict[str, set[str]] = {}
+    for row in keywords:
+        if row.suggested_target_page:
+            by_page.setdefault(match_key(row.suggested_target_page), set()).add(normalize_query(row.query))
+    targets: dict[str, set[str]] = {}
+    for manifest_path in manifest_paths:
+        manifest = _Path(manifest_path)
+        if not manifest.is_file():
+            continue
+        with manifest.open(newline="", encoding="utf-8-sig") as handle:
+            reader = _csv.DictReader(handle)
+            fields = {name.strip().lower(): name for name in reader.fieldnames or []}
+            for raw in reader:
+                url = (raw.get(fields.get("url", "url")) or "").strip()
+                if not url:
+                    continue
+                key = match_key(url)
+                queries = set(by_page.get(key, set()))
+                if "query" in fields:
+                    named = normalize_query(raw.get(fields["query"]) or "")
+                    if named:
+                        queries.add(named)
+                for query in queries:
+                    targets.setdefault(query, set()).add(key)
+    return targets
+

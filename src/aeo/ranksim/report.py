@@ -49,7 +49,7 @@ def render_report(database_url: str | None = None, keywords: list[Keyword] | Non
 <body>
 <main>
   <h1>SmartCrew rank simulator</h1>
-  <p class="banner">Predicted positions are model scores on our index. They are not live Google ranks. LambdaMART accuracy is omitted until a file of real Google positions is provided. See docs/accuracy.md.</p>
+  <p class="banner">Predicted positions are model scores on our index. They are not live Google ranks. Accuracy on unseen Google results is not shown here: only a forward check against a later snapshot measures it. Numbers computed on the labeled snapshot are labeled as same-snapshot agreement.</p>
   <div class="stats">
     <div class="stat"><b>{summary["queries"]}</b>target queries</div>
     <div class="stat"><b>{summary["with_page"]}</b>queries with a sitemap page</div>
@@ -100,6 +100,8 @@ def _test_block(database_url: str | None) -> str:
     if row is None:
         return "<p>No page test has been saved. Run <code>python -m aeo.ranksim test</code> after a corpus exists.</p>"
     summary = row.summary_json or {}
+    if summary.get("queries") is not None:
+        return _bundle_block(row, summary)
     synthetic = " The corpus is synthetic." if row.synthetic_corpus else ""
     google = "Google SERP" if row.is_google else "a non-Google or unlabeled source"
     lines = [
@@ -126,6 +128,47 @@ def _test_block(database_url: str | None) -> str:
         + "</tbody></table>"
     )
     return "\n".join(lines)
+
+
+def _bundle_block(row, summary: dict) -> str:
+    """A `test --bundle` run: predicted slots per labeled query before and after the bundle HTML."""
+    agreement = summary.get("pairwise_accuracy")
+    pairs = summary.get("n_pairs")
+    head = (
+        f"<p>Source: {escape(row.source_label)}. Model: LambdaMART, each query scored by a model trained on the other "
+        "queries. Positions are PREDICTED slots among the stored candidate pages of each query, not Google ranks.</p>"
+    )
+    if agreement is not None:
+        head += (
+            f"<p>Held-out agreement with the labeled snapshot (the same snapshot as the training queries, so not accuracy "
+            f"on unseen results): pairwise {_fmt(agreement)}"
+            + (f" on {int(pairs)} pairs" if pairs else "")
+            + ".</p>"
+        )
+    body_rows = []
+    for item in summary.get("queries") or []:
+        body_rows.append(
+            "<tr>"
+            f"<td>{escape(str(item.get('query') or ''))}</td>"
+            f"<td>{_fmt_pos(item.get('real_position'))}</td>"
+            f"<td>{_slot(item.get('before_predicted'), item.get('before_n'))}</td>"
+            f"<td>{_slot(item.get('after_predicted'), item.get('after_n'))}</td>"
+            f"<td>{escape(str(item.get('after_url') or ''))}</td>"
+            "</tr>"
+        )
+    return (
+        head
+        + "<table><thead><tr><th>Query</th><th>Labeled Google position</th><th>Predicted before</th>"
+        "<th>Predicted after</th><th>Our best page after</th></tr></thead><tbody>"
+        + "\n".join(body_rows)
+        + "</tbody></table>"
+    )
+
+
+def _slot(rank, total) -> str:
+    if rank is None:
+        return "none"
+    return f"slot {int(rank)} of {int(total)}" if total else f"slot {int(rank)}"
 
 
 def _track_block(database_url: str | None) -> str:

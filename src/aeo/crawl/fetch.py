@@ -4,9 +4,12 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass, field
+from email.utils import parsedate_to_datetime
 from urllib.parse import urljoin, urlsplit
 
 import httpx
+
+from aeo.crawl import guard
 
 from aeo.crawl.robots import crawl_delay_seconds, parse_robots
 from aeo.crawl.sitemap import parse_sitemap
@@ -18,6 +21,12 @@ MAX_REDIRECTS = 5
 # Whole-response budget. httpx timeouts apply per read, so a server that drips one byte at a
 # time could otherwise hold a fetch open far longer than the configured timeout.
 TOTAL_DEADLINE_SECONDS = 30.0
+# A host that answers 429 or 503 gets no request until its Retry-After (or a doubling backoff from
+# BACKOFF_BASE_SECONDS when it gives none) has passed. A wait longer than MAX_BACKOFF_WAIT is not
+# slept through: the fetch is reported as deferred so a crawl stays bounded.
+BACKOFF_BASE_SECONDS = 2.0
+MAX_BACKOFF_WAIT = 120.0
+MAX_RETRY_AFTER = 3600.0
 READABLE_TYPES = ("html", "xml", "text/plain")
 
 
@@ -41,6 +50,35 @@ class CrawlBatch:
 
 class RedirectProblem(Exception):
     """A redirect chain that ends without a page: a loop, too many hops, or no Location."""
+
+
+class DeadlineExceeded(Exception):
+    """No complete response before the request deadline (for example, headers dripped slowly)."""
+
+
+class HostBackoff(Exception):
+    """The host asked crawlers to wait longer than this crawl will wait."""
+
+
+def retry_after_seconds(value: str | None, *, now: float | None = None) -> float | None:
+    """Seconds from a Retry-After header (delay-seconds or an HTTP date), or None."""
+    text = (value or "").strip()
+    if not text:
+        return None
+    if text.isdigit():
+        return min(float(text), MAX_RETRY_AFTER)
+    try:
+        moment = parsedate_to_datetime(text)
+    except (TypeError, ValueError, IndexError):
+        return None
+    if moment is None:
+        return None
+    from datetime import datetime, timezone
+
+    current = datetime.now(timezone.utc).timestamp() if now is None else now
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=timezone.utc)
+    return min(max(0.0, moment.timestamp() - current), MAX_RETRY_AFTER)
 
 
 ROBOTS_UNREACHABLE = object()
@@ -67,6 +105,9 @@ class Crawler:
         )
         self._robots: dict[str, object] = {}
         self._last_fetch: dict[str, float] = {}
+        self._backoff: dict[str, tuple[float, int]] = {}  # origin -> (monotonic until, consecutive 429/503)
+        # A client passed in (tests, custom transports) is used as given.
+        self._guards = guard.install(self.client, pin=not allow_private) if self._owns_client else []
 
     def close(self) -> None:
         if self._owns_client:
@@ -97,11 +138,20 @@ class Crawler:
                 error=error,
             )
 
-        self._polite_wait(current)
+        try:
+            self._polite_wait(current)
+        except HostBackoff as exc:
+            return Fetched(url=current, final_url=current, error=str(exc), robots_status=robots_status)
         try:
             response, final_url = self._get_following_redirects(current)
         except UnsafeURL:
             raise
+        except httpx.ConnectError as exc:
+            if isinstance(exc.__cause__, guard.UnsafeConnect):
+                raise UnsafeURL(str(exc.__cause__)) from None
+            return Fetched(url=current, final_url=current, error=f"Fetch failed: {exc}", robots_status=robots_status)
+        except DeadlineExceeded as exc:
+            return Fetched(url=current, final_url=current, error=str(exc), robots_status=robots_status)
         except RedirectProblem as exc:
             return Fetched(url=current, final_url=current, error=str(exc), robots_status=robots_status)
         except (ValueError, httpx.InvalidURL) as exc:
@@ -122,6 +172,18 @@ class Crawler:
                 content_type=content_type,
             )
         body = self._read_capped(response)
+        if response.status_code in (429, 503):
+            wait = self._note_rate_limit(final_url, response.headers.get("retry-after"))
+            return Fetched(
+                url=current,
+                final_url=final_url,
+                status_code=response.status_code,
+                error=f"HTTP {response.status_code}: the host asked crawlers to slow down; no request goes to it for {wait:.0f} s",
+                robots_status=robots_status,
+                content_type=content_type,
+            )
+        if response.status_code < 400:
+            self._backoff.pop(self._origin(final_url), None)
         if response.status_code >= 400:
             return Fetched(
                 url=current,
@@ -263,10 +325,26 @@ class Crawler:
             robots_delay = crawl_delay_seconds(parser, self.user_agent)
             if robots_delay is not None:
                 delay = max(delay, robots_delay)
-        elapsed = time.monotonic() - self._last_fetch.get(origin, 0.0)
-        if elapsed < delay:
-            time.sleep(delay - elapsed)
+        now = time.monotonic()
+        wait = delay - (now - self._last_fetch.get(origin, 0.0))
+        until, _count = self._backoff.get(origin, (0.0, 0))
+        wait = max(wait, until - now)
+        if wait > MAX_BACKOFF_WAIT:
+            raise HostBackoff(f"The host asked crawlers to wait {wait:.0f} s (HTTP 429/503); not fetched now")
+        if wait > 0:
+            time.sleep(wait)
         self._last_fetch[origin] = time.monotonic()
+
+    def _note_rate_limit(self, url: str, retry_after: str | None) -> float:
+        """Start or extend this host's backoff. Returns the wait in seconds."""
+        origin = self._origin(url)
+        _until, count = self._backoff.get(origin, (0.0, 0))
+        count += 1
+        wait = retry_after_seconds(retry_after)
+        if wait is None:
+            wait = min(MAX_RETRY_AFTER, BACKOFF_BASE_SECONDS * 2 ** (count - 1))
+        self._backoff[origin] = (time.monotonic() + wait, count)
+        return wait
 
     def _get_following_redirects(self, url: str, *, any_type: bool = False) -> tuple[httpx.Response, str]:
         current = url
@@ -298,7 +376,21 @@ class Crawler:
         )
         clock = getattr(self, "_clock", time.monotonic)
         started = clock()
-        response = self.client.send(request, stream=True)
+        for item in self._guards:
+            item.clock = clock
+            item.deadline = started + TOTAL_DEADLINE_SECONDS
+        try:
+            response = self.client.send(request, stream=True)
+        except httpx.TimeoutException as exc:
+            self._clear_deadline()
+            if clock() - started >= TOTAL_DEADLINE_SECONDS:
+                raise DeadlineExceeded(
+                    f"No complete response headers within {TOTAL_DEADLINE_SECONDS:.0f} s; the page was not used"
+                ) from exc
+            raise
+        except BaseException:
+            self._clear_deadline()
+            raise
         chunks: list[bytes] = []
         truncated = ""
         try:
@@ -309,17 +401,23 @@ class Crawler:
             )
             if readable:
                 size = 0
-                for chunk in response.iter_bytes():
-                    chunks.append(chunk)
-                    size += len(chunk)
-                    if size >= MAX_BYTES:
-                        truncated = "size"
-                        break
-                    if clock() - started > TOTAL_DEADLINE_SECONDS:
-                        truncated = "deadline"
-                        break
+                try:
+                    for chunk in response.iter_bytes():
+                        chunks.append(chunk)
+                        size += len(chunk)
+                        if size >= MAX_BYTES:
+                            truncated = "size"
+                            break
+                        if clock() - started > TOTAL_DEADLINE_SECONDS:
+                            truncated = "deadline"
+                            break
+                except httpx.TimeoutException:
+                    if clock() - started < TOTAL_DEADLINE_SECONDS:
+                        raise
+                    truncated = "deadline"
         finally:
             response.close()
+            self._clear_deadline()
         headers = [
             (name, value)
             for name, value in response.headers.items()
@@ -333,6 +431,10 @@ class Crawler:
         )
         capped.extensions["truncated"] = truncated
         return capped
+
+    def _clear_deadline(self) -> None:
+        for item in self._guards:
+            item.deadline = None
 
     def _read_capped(self, response: httpx.Response) -> str:
         raw = response.content[:MAX_BYTES]

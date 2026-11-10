@@ -106,8 +106,9 @@ fixed in advance.
 - [x] B2. Calibrate on the statistic the check uses: adjacent-page gaps, pre-gate scores, gated
   pairs excluded (P1-13). Done: separate head-to-head and predicted-rank thresholds, rule-placed
   pages always UNSURE (E13).
-- [ ] B3. Crawler: connect to the vetted IP (DNS rebinding), deadline covers response headers,
-  honour Retry-After with per-host backoff (P0-4 remainder).
+- [x] B3. Crawler: connect to the vetted IP (DNS rebinding), deadline covers response headers,
+  honour Retry-After with per-host backoff (P0-4 remainder). Done: `crawl/guard.py`; local tests
+  for rebinding, dripped headers and a 429 storm; a real fetch through the proxy still works.
 - [ ] B4. robots.txt RFC 9309 matcher (wildcards, longest match on 3.11/3.12); refuse a placeholder
   user agent for third-party crawls (P1-6).
 - [x] B5. URL match key for joining labels to pages; persist final URL and canonical; flag labeled

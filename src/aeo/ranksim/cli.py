@@ -1114,9 +1114,8 @@ def _benchmark_snapshot(args, registry_database: str) -> None:
     if args.final:
         notes.append("Final split: trained on every dev query, scored the final queries once.")
         notes.append(
-            "This is a same-snapshot holdout, not accuracy. The final queries come from the same frozen snapshot "
-            "as the dev queries, collected on the same day. Only a forward check against a later snapshot (the ledger) "
-            "can measure that."
+            "This is a same-snapshot holdout, not accuracy. The final queries come from the same frozen label file "
+            "as the dev queries. Only a forward check against a later snapshot (the ledger) can measure accuracy."
         )
         report = _run_benchmark_report(
             args,

@@ -15,20 +15,21 @@ from aeo.ranksim.snapshot import final_runs
 REPO = Path(__file__).resolve().parents[1]
 
 
-def _corpus(tmp_path, *, newline="\n"):
+def _corpus(tmp_path, *, newline="\n", dated=False):
+    """Eight queries of three labeled pages each. With ``dated``, each query has its own observed_on day."""
     from aeo.ranksim.loop import FetchResult, store_fetched_page
     from aeo.ranksim.store import open_session
 
     db = f"sqlite:///{tmp_path / 'live.db'}"
     session = open_session(db)
-    lines = ["query,url,position"]
+    lines = ["query,url,position" + (",observed_on" if dated else "")]
     for q in range(8):
         for position in range(1, 4):
             url = f"https://site{q}{position}.example/page"
             words = " ".join(["dirt", "work", "software"][: 4 - position] * (60 // position))
             html = f"<html><body><main><h1>Dirt work</h1><p>{words} {'filler ' * 200}</p></main></body></html>"
             store_fetched_page(session, FetchResult(url=url, html=html, status="fetched"))
-            lines.append(f"dirt work software {q},{url},{position}")
+            lines.append(f"dirt work software {q},{url},{position}" + (f",2026-10-{20 + q}" if dated else ""))
     session.close()
     serp = tmp_path / "serp.csv"
     serp.write_bytes((newline.join(lines) + newline).encode())
@@ -51,7 +52,22 @@ _FINAL_AS_LATER_SNAPSHOT = (
     re.compile(r"later snapshot[^.;]*(?:--final|\bfinal[ -](?:split|run)\b)", re.IGNORECASE),
     re.compile(r"(?:--final|\bfinal[ -](?:split|run)\b)[^.;]*\b(?:is|as|counts as) a later snapshot", re.IGNORECASE),
 )
+# Only the word "accuracy": "accurate" would flag correct sentences such as EXPERIMENTS.md's
+# "looked accurate in-sample ... but was right on 114 of 217 held-out cases".
 _ACCURACY = re.compile(r"\baccuracy\b(?!\.md)", re.IGNORECASE)
+# A negation that governs the "accuracy" right after it, in the same clause: "not accuracy", "does not
+# measure accuracy", "cannot be called accuracy", "No same-snapshot number is accuracy". At most three
+# words in between, with no comma, colon, semicolon or bracket and no "but", "so" or "yet". "Not only"
+# and "not just" do not negate.
+_NEGATED = re.compile(
+    r"\b(?:not|never|no|nor|cannot|\w+n['\u2019]t)\b(?!\s+(?:only|just|merely|simply)\b)"
+    r"(?:\s+(?!(?:but|so|yet)\b)[\w`'\u2019-]+){0,3}\s+$",
+    re.IGNORECASE,
+)
+# The rule's own wording: "never present a training, same-snapshot or test-tuned score as accuracy".
+_NEVER_PRESENT_AS = re.compile(
+    r"\bnever (?:present|report|call|show)\b[^.;:]{0,80}\b(?:score|number|figure|result)s?\s+as\s+$", re.IGNORECASE
+)
 
 
 def _sentences(text: str) -> list[str]:
@@ -66,15 +82,16 @@ def _sentences(text: str) -> list[str]:
 
 
 def _accuracy_claims(sentence: str) -> list[str]:
-    """What in a sentence calls a --final, final-split or same-snapshot number accuracy. A negation
-    ("not accuracy", "never as accuracy", a clause that starts with "never") is not a claim."""
+    """Where a sentence about a --final run, the final split or another same-snapshot number uses
+    "accuracy" without a negation that governs that word (see ``_NEGATED``), or names
+    --final as the later snapshot. A pattern check for plain wording, not a parser: it can miss a
+    claim phrased around these words."""
     if not _SAME_SNAPSHOT.search(sentence):
         return []
     claims = [match.group(0) for pattern in _FINAL_AS_LATER_SNAPSHOT for match in pattern.finditer(sentence)]
     for match in _ACCURACY.finditer(sentence):
         before = sentence[: match.start()]
-        clause = re.split(r"[;:]", before)[-1]
-        if re.search(r"\b(?:not|never)(?:\s+as)?\s+$", before, re.IGNORECASE) or re.match(r"\s*(?:not|never|no)\b", clause, re.IGNORECASE):
+        if _NEGATED.search(before) or _NEVER_PRESENT_AS.search(before):
             continue
         claims.append(sentence[max(0, match.start() - 40) : match.end()])
     return claims
@@ -87,6 +104,20 @@ def test_the_claim_check_flags_final_as_accuracy_and_passes_the_negations():
         "A `--final` run measures accuracy on unseen results.",
         "The final split gives an accuracy of 0.561.",
         "Held-out accuracy is 0.58.",
+        # A sentence that opens with a negation and then makes the claim (B20 review).
+        "Not only dev agreement, a `--final` run is the accuracy number to report.",
+        "No leakage, so the --final number is accuracy on unseen results.",
+        "Never tuned on it, the final split measures accuracy.",
+        "Not just same-snapshot agreement: a `--final` run gives accuracy on unseen results.",
+        "It is not dev agreement; the final split is accuracy.",
+        "A `--final` run is not just agreement but accuracy.",
+        "A `--final` run is not agreement but accuracy.",
+        "Never report the dev number, report the final split as accuracy.",
+        "The --final run (E12) gives the model's true accuracy: 0.561.",
+        "E12's final split, 0.561 pairwise, is our accuracy estimate.",
+        "Final-split accuracy was 0.561.",
+        "Run --final once to get a real accuracy figure.",
+        "A same-snapshot holdout is accuracy on unseen data.",
     ):
         assert _accuracy_claims(claim), claim
     for negation in (
@@ -95,14 +126,23 @@ def test_the_claim_check_flags_final_as_accuracy_and_passes_the_negations():
         "Rules: never present a training, same-snapshot or test-tuned score as accuracy; score held-out data once.",
         "A `--final` number is a same-snapshot holdout, not accuracy.",
         "Only a forward check against a later snapshot (the ledger) measures accuracy on unseen results.",
+        "The final split is a same-snapshot holdout; it is not accuracy.",
+        "Held-out agreement is not accuracy.",
+        "No same-snapshot number is accuracy.",
+        # Common negations a correct future sentence may use (B20 review).
+        "A --final run does not measure accuracy.",
+        "The --final number cannot be called accuracy.",
+        "A `--final` number isn't accuracy.",
+        "A --final run is neither dev agreement nor accuracy.",
     ):
         assert _accuracy_claims(negation) == [], negation
 
 
 def test_no_doc_calls_a_final_run_or_a_same_snapshot_number_accuracy():
     """MISSION: a --final number is a same-snapshot holdout (held-out queries from the same frozen
-    snapshot, same day as the training queries). Only a forward check on a later snapshot measures
-    accuracy. No sentence in README.md or docs/*.md may say otherwise."""
+    label file as the dev queries). Only a forward check on a later snapshot measures accuracy. No
+    sentence in README.md or docs/*.md may call it accuracy in the plain wording ``_accuracy_claims``
+    checks."""
     docs = [REPO / "README.md", *sorted((REPO / "docs").glob("*.md"))]
     assert REPO / "docs" / "accuracy.md" in docs
     claims = [(path.name, sentence) for path in docs for sentence in _sentences(path.read_text(encoding="utf-8")) if _accuracy_claims(sentence)]
@@ -123,6 +163,32 @@ def test_a_final_run_says_it_is_a_same_snapshot_holdout_not_accuracy(tmp_path, c
     assert [sentence for sentence in _sentences(out) if _accuracy_claims(sentence)] == []
     (run,) = final_runs(tmp_path / "a")
     assert any("same-snapshot holdout, not accuracy" in note for note in run["notes"])
+
+
+def test_the_final_note_states_only_what_holds_when_queries_have_different_dates(tmp_path, capsys):
+    """A label file can give each query its own observed_on date, and freeze keeps it. The --final
+    note and docs/accuracy.md must not say the final queries were collected on the same day as the
+    dev queries: the tool never checks that. They come from the same frozen label file (B20 review)."""
+    from aeo.ranksim.groundtruth import load_serp_file
+    from aeo.ranksim.snapshot import load_manifest
+
+    db, serp = _corpus(tmp_path, dated=True)
+    _freeze(db, serp, tmp_path / "a")
+    split = load_manifest(tmp_path / "a")["split"]
+    days = {row.query: row.observed_on for row in load_serp_file(tmp_path / "a" / "labels.csv")}
+    assert split["final_queries"] and not {days[q] for q in split["final_queries"]} & {days[q] for q in split["dev_queries"]}
+    capsys.readouterr()
+    main(["--database", db, "benchmark", "--snapshot", str(tmp_path / "a"), "--final", "--bootstrap", "10"])
+    out = capsys.readouterr().out
+    assert "same-snapshot holdout, not accuracy" in out
+    assert "The final queries come from the same frozen label file as the dev queries." in out
+    assert not re.search(r"same[ -]day", out, re.IGNORECASE)
+    (run,) = final_runs(tmp_path / "a")
+    assert not any(re.search(r"same[ -]day", note, re.IGNORECASE) for note in run["notes"])
+    text = (REPO / "docs" / "accuracy.md").read_text(encoding="utf-8")
+    final_sentences = [sentence for sentence in _sentences(text) if re.search(r"--final|\bfinal queries\b", sentence)]
+    assert final_sentences
+    assert [sentence for sentence in final_sentences if re.search(r"same[ -]day", sentence, re.IGNORECASE)] == []
 
 
 # F17 ------------------------------------------------------------------------------------------

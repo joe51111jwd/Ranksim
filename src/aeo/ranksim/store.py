@@ -255,11 +255,11 @@ def append_serp(
     source: str = "live",
 ) -> str | None:
     """Store one collected list as a new collection; earlier collections stay. Returns its id, or
-    None when the query already has this exact collection. A live collect is its own observation
-    unless its collection time is the same, so a re-collect that found the same list is kept. A
-    label file matches on its date, or on its list alone when it has no date, so re-importing
-    the same file adds nothing on any day. An empty list is a real observation and is kept."""
-    import hashlib
+    None when the query already has this exact collection, at any point in its history (not only
+    as its latest one). A live collect is its own observation unless its collection time is the
+    same, so a re-collect that found the same list is kept. A label file matches on its date, or
+    on its list alone when it has no date, so re-importing the same file adds nothing on any day,
+    even after a live collect of the query. An empty list is a real observation and is kept."""
     import uuid
 
     first = hits[0] if hits else None
@@ -275,11 +275,26 @@ def append_serp(
     else:
         when = "undated"
     body = "|".join(f"{hit.position}:{hit.url}" for hit in sorted(hits, key=lambda item: item.position))
-    signature = hashlib.sha256(f"{source}|{provider}|{when}|{body}".encode()).hexdigest()
-    seen = session.query(RsSerpCollection.id).filter(
+    signature = _collection_signature(source, provider, when, body)
+    seen = session.query(RsSerpCollection).filter(
         RsSerpCollection.query == query, RsSerpCollection.signature == signature
     ).first()
+    if seen is None and not dated:
+        # A database from before the dated column signed an undated import with its import day.
+        legacy = session.query(RsSerpCollection).filter(
+            RsSerpCollection.query == query,
+            RsSerpCollection.source == source,
+            RsSerpCollection.provider == provider,
+            RsSerpCollection.dated.is_(None),
+        )
+        seen = next(
+            (row for row in legacy if _collection_signature(source, provider, row.collected_at.date().isoformat(), body) == row.signature),
+            None,
+        )
     if seen is not None:
+        if seen.dated is None and source != "live":
+            seen.dated = dated  # a re-import now says whether that older row carried a date
+            session.commit()
         return None
     collection_id = uuid.uuid4().hex
     session.add(
@@ -324,13 +339,29 @@ def replace_serp(session: Session, query: str, hits: list[SerpHit]) -> None:
     append_serp(session, query, hits)
 
 
+def _collection_signature(source: str, provider: str, when: str, body: str) -> str:
+    import hashlib
+
+    return hashlib.sha256(f"{source}|{provider}|{when}|{body}".encode()).hexdigest()
+
+
 def latest_collection(session: Session, query: str) -> RsSerpCollection | None:
-    return (
-        session.query(RsSerpCollection)
-        .filter(RsSerpCollection.query == query)
-        .order_by(RsSerpCollection.collected_at.desc(), RsSerpCollection.recorded_at.desc(), RsSerpCollection.id.desc())
-        .first()
-    )
+    """The query's latest collection (see pick_latest)."""
+    return pick_latest(session.query(RsSerpCollection).filter(RsSerpCollection.query == query).all())
+
+
+def pick_latest(collections: list[RsSerpCollection]) -> RsSerpCollection | None:
+    """The latest of one query's collections, by collection time.
+
+    A label file with no date was stored at its import time, which says nothing about when its
+    list was observed. So it is the latest only when the query has no dated, non-synthetic
+    collection. Importing an old undated file after a live collect does not replace the live list.
+    """
+    if any(collection_dated(c) and not c.synthetic for c in collections):
+        collections = [c for c in collections if collection_dated(c)]
+    if not collections:
+        return None
+    return max(collections, key=lambda c: (c.collected_at, c.recorded_at or c.collected_at, c.id))
 
 
 def serp_collections(session: Session, query: str | None = None, *, include_synthetic: bool = False) -> list[RsSerpCollection]:

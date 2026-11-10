@@ -17,7 +17,7 @@ from aeo.ranksim.loop import FetchResult, store_fetched_page
 from aeo.ranksim.saved_html import load_saved_html
 from aeo.ranksim.serp import SerpHit
 from aeo.ranksim.urlkey import match_key
-from aeo.ranksim.store import EVALUATION_EXCLUDED_SOURCES, RsPage, append_serp, open_session
+from aeo.ranksim.store import EVALUATION_EXCLUDED_SOURCES, RsPage, append_serp, collection_dated, latest_collection, open_session
 
 
 def index_serp_csv(
@@ -77,6 +77,7 @@ def index_serp_csv(
     # Search Console positions are averages over a period for your own pages, not a results page.
     # They are not stored as collections, so export-serp, noise and the ledger never read them as one.
     search_console = bool(labels) and labels[0].kind == "search_console_avg"
+    behind_dated = 0  # queries of an undated file whose dated results list stays the latest
     try:
         for url in saved_used:
             store_fetched_page(
@@ -105,6 +106,7 @@ def index_serp_csv(
                 for row in sorted(rows, key=lambda item: item.position)
             ]
             first = rows[0]
+            observed = _observed_time(first.observed_on)
             append_serp(
                 session,
                 query,
@@ -115,9 +117,13 @@ def index_serp_csv(
                 country=first.country,
                 language=first.language,
                 device=first.device,
-                collected_at=_observed_time(first.observed_on),
+                collected_at=observed,
                 source="label_file",
             )
+            if observed is None:
+                latest = latest_collection(session, query)
+                if latest is not None and collection_dated(latest):
+                    behind_dated += 1
     finally:
         session.close()
     return {
@@ -126,6 +132,7 @@ def index_serp_csv(
         "attempted": len(to_crawl),
         "saved_missing": missing_files,
         "search_console": search_console,
+        "undated_behind_dated": behind_dated,
         **counts,
         "blocked_urls": [url for url, result in fetched if result.status == "blocked"],
         "error_urls": [(url, result.error) for url, result in fetched if result.status == "error"],

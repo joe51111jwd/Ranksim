@@ -93,9 +93,10 @@ def load_serp_file(path: str | Path, *, report: ImportReport | None = None) -> l
 
     Rows that cannot be used are dropped and counted in ``report`` with their CSV row numbers:
     blank query or URL, a URL without http(s), a position that is not a finite number >= 1,
-    non-organic rows when a result_type column says so, and rows a synthetic column marks as
-    mock results. Queries are whitespace-collapsed and case-folded. A repeated query+URL keeps
-    its best position and is reported. A file that holds more than one collection of a query
+    non-organic rows when a result_type column says so, rows a synthetic column marks as mock
+    results, and rows a google column marks as not Google (export-serp writes google=no for
+    Brave and mock lists). Queries are whitespace-collapsed and case-folded. A repeated
+    query+URL keeps its best position and is reported. A file that holds more than one collection of a query
     (an export-serp --all file, told apart by collection_id) is refused: merging the lists
     would give a results page nobody observed.
     """
@@ -134,6 +135,7 @@ def load_serp_file(path: str | Path, *, report: ImportReport | None = None) -> l
         report.kind = kind
         source = "search_console" if kind == "search_console_avg" else "manual_csv"
         synthetic_key = fields.get("synthetic")
+        google_key = fields.get("google")
         collection_key = fields.get("collection_id")
         collections: dict[str, set[str]] = {}
         best: dict[tuple[str, str], SerpLabel] = {}
@@ -157,6 +159,9 @@ def load_serp_file(path: str | Path, *, report: ImportReport | None = None) -> l
                 continue
             if (_meta(raw, synthetic_key) or "").casefold() in {"yes", "true", "1"}:
                 report.drop("synthetic (mock) result, not Google", row_number)
+                continue
+            if (_meta(raw, google_key) or "").casefold() in {"no", "false", "0"}:
+                report.drop(f"not a Google result ({_meta(raw, meta_keys['provider']) or 'unknown provider'})", row_number)
                 continue
             position = _float(raw.get(position_key))
             if position is None or not math.isfinite(position) or position < 1:

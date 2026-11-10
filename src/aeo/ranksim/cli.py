@@ -113,13 +113,13 @@ def main(argv: list[str] | None = None) -> None:
 
     noise = sub.add_parser("noise", help="Compare two Google snapshots. One file is not enough.")
     noise.add_argument("snapshots", nargs="*")
-    noise.add_argument("--from-db", action="store_true", help="Compare each query's two latest collections with the same source, provider and locale (dated, Google, not synthetic)")
+    noise.add_argument("--from-db", action="store_true", help="Compare one pair of collections per query with the same source, provider and locale, from different days when it has them (dated, Google, not synthetic)")
 
     export_serp = sub.add_parser(
         "export-serp", help="Write collected results lists as a query,url,position CSV (for evaluate, noise or ledger observe)"
     )
     export_serp.add_argument("out")
-    export_serp.add_argument("--all", action="store_true", help="Every collection, not only the latest per query (evaluate, noise and ledger observe refuse such a file)")
+    export_serp.add_argument("--all", action="store_true", help="Every collection, not only the latest Google list per query (evaluate, noise and ledger observe refuse such a file)")
     export_serp.add_argument("--include-synthetic", action="store_true", help="Also mock results (marked synthetic; never Google; readers drop them)")
 
     competitors = sub.add_parser("competitors", help="Import competitor domains")
@@ -455,7 +455,7 @@ def _noise(args, database: str) -> None:
     from aeo.ranksim.noise import noise_ceiling
 
     if args.from_db:
-        left, right, pairing = _two_latest_collections(database)
+        left, right, pairing = _paired_collections(database)
         compared = pairing["compared"]
         unpaired = (
             f"Could not pair {pairing['unpaired']} queries that have more than one collection. Their collections differ "
@@ -466,7 +466,11 @@ def _noise(args, database: str) -> None:
             if pairing["unpaired"]:
                 print(unpaired)
             return
-        print(f"Comparing the two latest collections of {compared} queries from the database.")
+        print(f"Comparing one pair of collections for each of {compared} queries from the database.")
+        print(
+            "For each query, the newest collection that has a comparable one from an earlier day is paired with the "
+            "latest such collection. A pair from the same day is used only when there is none."
+        )
         groups = ", ".join(f"{name} ({count} queries)" for name, count in sorted(pairing["groups"].items()))
         print(f"Each pair has the same source, provider, country, language and device: {groups}.")
         if pairing["unpaired"]:
@@ -497,12 +501,15 @@ def _noise(args, database: str) -> None:
     print(f"Mean absolute position change (URLs present both days): {fmt(report.mean_abs_position_change)}.")
 
 
-def _two_latest_collections(database: str):
-    """(older labels, newer labels, pairing summary) from each query's two latest comparable collections.
+def _paired_collections(database: str):
+    """(older labels, newer labels, pairing summary): one pair of comparable collections per query.
 
     Two collections are comparable only when they share source, provider, country, language and
     device. Synthetic and non-Google lists and label files with no date are never compared: an
-    undated file's stored time is when it was imported, not when it was observed.
+    undated file's stored time is when it was imported, not when it was observed. A query's pair
+    is the newest collection that has a comparable one from an earlier UTC day, with the latest
+    such collection, so a re-collect later on the same day does not hide the day-to-day change.
+    A same-day pair is used only when the query has no pair across days.
     """
     from collections import Counter
 
@@ -522,13 +529,17 @@ def _two_latest_collections(database: str):
             by_query.setdefault(collection.query, []).append(collection)
         for query, collections in sorted(by_query.items()):
             usable = [c for c in collections if c.is_google and collection_dated(c)]
-            pair = None
+            pair = same_day = None
             for index in range(len(usable) - 1, 0, -1):
                 newer = usable[index]
-                older = next((c for c in reversed(usable[:index]) if key(c) == key(newer)), None)
-                if older is not None:
-                    pair = (older, newer)
+                earlier = [c for c in usable[:index] if key(c) == key(newer)]
+                across = [c for c in earlier if c.collected_at.date() < newer.collected_at.date()]
+                if across:
+                    pair = (across[-1], newer)
                     break
+                if earlier and same_day is None:
+                    same_day = (earlier[-1], newer)
+            pair = pair or same_day
             if pair is None:
                 if len(collections) >= 2:
                     pairing["unpaired"] += 1
@@ -555,33 +566,44 @@ def _two_latest_collections(database: str):
 def _export_serp(database: str, args) -> None:
     import csv
 
-    from aeo.ranksim.store import collection_dated, collection_hits, serp_collections
+    from aeo.ranksim.store import collection_dated, collection_hits, pick_latest, serp_collections
 
     session = open_session(database)
     written = undated = 0
+    not_google: set[str] = set()
     try:
         collections = serp_collections(session, include_synthetic=args.include_synthetic)
         if not args.all:
-            latest: dict[str, object] = {}
+            # Readers treat every row as a Google results page, so each query gets its latest
+            # Google list. A query with no Google list gets its latest list, marked google=no.
+            by_query: dict[str, list] = {}
             for collection in collections:
-                latest[collection.query] = collection  # ordered by collection time, so the last wins
-            collections = list(latest.values())
+                by_query.setdefault(collection.query, []).append(collection)
+            collections = [
+                pick_latest([c for c in group if c.is_google] or group) for group in by_query.values()
+            ]
         out = Path(args.out)
         out.parent.mkdir(parents=True, exist_ok=True)
         with out.open("w", newline="", encoding="utf-8") as handle:
             writer = csv.writer(handle)
-            writer.writerow(["query", "url", "position", "observed_on", "country", "language", "device", "provider", "synthetic", "collected_at", "collection_id"])
+            writer.writerow([
+                "query", "url", "position", "observed_on", "country", "language", "device", "provider", "synthetic",
+                "collected_at", "collection_id", "google",
+            ])
             for collection in collections:
                 # An undated label file was stored at its import time. That is not when the list
                 # was observed, so its date columns stay blank.
                 dated = collection_dated(collection)
                 if not dated:
                     undated += 1
+                if not collection.is_google and not collection.synthetic:
+                    not_google.add(collection.provider)
                 for hit in collection_hits(session, collection.id):
                     writer.writerow([
                         collection.query, hit.url, hit.position, collection.collected_at.date().isoformat() if dated else "",
                         collection.country or "", collection.language or "", collection.device or "", collection.provider,
                         "yes" if collection.synthetic else "", collection.collected_at.isoformat() if dated else "", collection.id,
+                        "yes" if collection.is_google else "no",
                     ])
                     written += 1
     finally:
@@ -589,6 +611,11 @@ def _export_serp(database: str, args) -> None:
     print(f"Wrote {written} rows from {len(collections)} collections to {args.out}.")
     if undated:
         print(f"{undated} collections come from label files with no date. Their observed_on is blank, not the import date.")
+    if not_google:
+        print(
+            f"Some collections are not Google results ({', '.join(sorted(not_google))}). "
+            "Their rows say google=no, and readers drop them."
+        )
     if args.include_synthetic:
         print("Rows marked synthetic come from the mock provider. They are not Google results. Readers drop them.")
     if args.all:
@@ -1726,6 +1753,11 @@ def _index_serp(settings, database: str, args) -> None:
         print(
             "This is a Search Console file. Its positions are averages for your own pages, not a results page, "
             "so they were not stored as results lists. Only its URLs were crawled."
+        )
+    if summary.get("undated_behind_dated"):
+        print(
+            f"This file has no dates. {summary['undated_behind_dated']} of its queries already have a dated results list, "
+            "which stays their latest list. Add an observed_on column if this file was observed later."
         )
     if summary["saved_missing"]:
         print("Saved HTML manifest rows with no file were not invented:")

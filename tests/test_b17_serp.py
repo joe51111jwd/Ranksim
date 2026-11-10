@@ -189,7 +189,7 @@ def test_c18_noise_from_db_pairs_only_the_same_source_provider_and_locale(tmp_pa
     session.close()
     main(["--database", db, "noise", "--from-db"])
     report = capsys.readouterr().out
-    assert "two latest collections of 1 queries" in report
+    assert "one pair of collections for each of 1 queries" in report
     assert "Could not pair 2 queries" in report and "live serper us/en/default (1 queries)" in report
     assert "Pairwise agreement, URLs present both days: 1.000" in report and "Top-1 same rate: 1.000" in report
 
@@ -211,5 +211,173 @@ def test_u2_a_same_day_recollect_that_found_the_same_list_is_kept(tmp_path, caps
     session.close()
     main(["--database", db, "noise", "--from-db"])
     report = capsys.readouterr().out
-    assert "two latest collections of 4 queries" in report and "Top-1 same rate: 0.750" in report
+    assert "one pair of collections for each of 4 queries" in report and "Top-1 same rate: 0.750" in report
     assert "4 of 4 pairs were collected on the same day" in report
+
+
+# Review follow-up of the fixes above.
+
+
+def _cli_index(path, db, tmp_path, monkeypatch):
+    import aeo.ranksim.cli as cli
+    import aeo.ranksim.index_serp as index_serp
+
+    real = index_serp.index_serp_csv
+    monkeypatch.setattr(index_serp, "_fetch_host", lambda urls, *_a: [])
+    monkeypatch.setattr(cli, "index_serp_csv", lambda p, d, s, **_k: real(p, d, s, include_sitemap=False, saved_dir=tmp_path / "none"))
+    cli.main(["--database", db, "index-serp", str(path)])
+
+
+def test_noise_pairs_across_days_before_a_same_day_retry(tmp_path, capsys):
+    from aeo.ranksim.cli import main
+
+    db = f"sqlite:///{tmp_path / 's.db'}"
+    session = open_session(db)
+    stable = _urls(*"abcdefgh")
+    swapped = [stable[1], stable[0], *stable[2:]]
+    for query in ("q1", "q2", "q3", "q4"):
+        append_serp(session, query, _hits(stable), country="us", language="en", collected_at=_at(1, 12))
+        day2 = stable if query in ("q1", "q2") else swapped
+        append_serp(session, query, _hits(day2), country="us", language="en", collected_at=_at(2, 9))
+        # A retry later on day 2 found the same list. It must not replace the day 1 vs day 2 pair.
+        assert append_serp(session, query, _hits(day2), country="us", language="en", collected_at=_at(2, 10))
+    # A query collected twice on one day only still gets its same-day pair.
+    for hour in (9, 10):
+        append_serp(session, "q5", _hits(stable), country="us", language="en", collected_at=_at(2, hour))
+    session.close()
+    main(["--database", db, "noise", "--from-db"])
+    report = capsys.readouterr().out
+    assert "Snapshots match exactly" not in report and "Top-1 same rate: 0.600" in report
+    assert "1 of 5 pairs were collected on the same day" in report
+    assert "one pair of collections for each of 5 queries" in report
+
+
+def test_noise_never_pairs_lists_that_are_not_google(tmp_path, capsys):
+    from aeo.ranksim.cli import main
+
+    db = f"sqlite:///{tmp_path / 's.db'}"
+    session = open_session(db)
+    for day, order in ((1, "abc"), (2, "cba")):
+        append_serp(session, "q brave", _hits(_urls(*order), provider="brave", is_google=False), collected_at=_at(day))
+    session.close()
+    main(["--database", db, "noise", "--from-db"])
+    report = capsys.readouterr().out
+    assert "Noise ceiling was not computed" in report and "Could not pair 1 queries" in report
+
+
+def test_reimporting_an_undated_file_after_a_live_collect_adds_nothing(tmp_path, monkeypatch):
+    import aeo.ranksim.store as store
+    from aeo.ranksim.store import latest_collection
+
+    db = f"sqlite:///{tmp_path / 's.db'}"
+    serp = tmp_path / "serp.csv"
+    serp.write_text("query,url,position\n" + "".join(f"q1,{url},{i}\n" for i, url in enumerate(_urls("a", "b", "c"), 1)))
+    monkeypatch.setattr(store, "utcnow", lambda: _at(1))
+    _index(serp, db, tmp_path, monkeypatch)
+    session = open_session(db)
+    append_serp(session, "q1", _hits(_urls("c", "a", "b")), country="us", language="en", collected_at=_at(2))
+    session.close()
+    monkeypatch.setattr(store, "utcnow", lambda: _at(3))  # re-run to retry failed crawls
+    _index(serp, db, tmp_path, monkeypatch)
+    session = open_session(db)
+    assert [c.source for c in serp_collections(session, "q1")] == ["label_file", "live"]
+    assert latest_collection(session, "q1").source == "live"
+    session.close()
+
+
+def test_an_undated_file_imported_after_a_dated_list_does_not_become_the_latest(tmp_path, monkeypatch, capsys):
+    import aeo.ranksim.store as store
+    from aeo.ranksim.cli import main
+    from aeo.ranksim.store import latest_collection, serp_for_query
+
+    db = f"sqlite:///{tmp_path / 's.db'}"
+    session = open_session(db)
+    append_serp(session, "q1", _hits(_urls("c", "a", "b")), country="us", language="en", collected_at=_at(2))
+    session.close()
+    serp = tmp_path / "serp.csv"  # observed earlier, but the file does not say when
+    serp.write_text("query,url,position\n" + "".join(f"{q},{url},{i}\n" for q in ("q1", "q2") for i, url in enumerate(_urls("a", "b", "c"), 1)))
+    monkeypatch.setattr(store, "utcnow", lambda: _at(3))
+    _cli_index(serp, db, tmp_path, monkeypatch)
+    printed = capsys.readouterr().out
+    session = open_session(db)
+    assert latest_collection(session, "q1").source == "live"
+    assert [row.url for row in serp_for_query(session, "q1")] == _urls("c", "a", "b")
+    assert latest_collection(session, "q2").source == "label_file"  # nothing dated to prefer
+    session.close()
+    assert "1 of its queries already have a dated results list, which stays their latest list" in printed
+    out = tmp_path / "latest.csv"
+    main(["--database", db, "export-serp", str(out)])
+    rows = {(row.query, row.url): (row.position, row.observed_on) for row in load_serp_file(out)}
+    assert rows[("q1", _urls("c")[0])] == (1.0, "2026-11-02") and rows[("q2", _urls("a")[0])] == (1.0, None)
+
+
+def test_an_undated_collection_from_before_the_dated_column_is_matched_on_reimport(tmp_path, monkeypatch):
+    import hashlib
+
+    import aeo.ranksim.store as store
+    from aeo.ranksim.store import RsSerpCollection
+
+    db = f"sqlite:///{tmp_path / 's.db'}"
+    serp = tmp_path / "serp.csv"
+    urls = _urls("a", "b", "c")
+    serp.write_text("query,url,position\n" + "".join(f"q1,{url},{i}\n" for i, url in enumerate(urls, 1)))
+    monkeypatch.setattr(store, "utcnow", lambda: _at(1, 15))
+    _index(serp, db, tmp_path, monkeypatch)
+    # Make the row look like one written before the dated column: no flag, and signed with its import day.
+    session = open_session(db)
+    row = session.query(RsSerpCollection).one()
+    body = "|".join(f"{i}:{url}" for i, url in enumerate(urls, 1))
+    row.dated = None
+    row.signature = hashlib.sha256(f"label_file|browser_export|2026-11-01|{body}".encode()).hexdigest()
+    session.commit()
+    session.close()
+    monkeypatch.setattr(store, "utcnow", lambda: _at(5))
+    _index(serp, db, tmp_path, monkeypatch)
+    session = open_session(db)
+    collections = serp_collections(session, "q1")
+    assert len(collections) == 1 and collections[0].dated is False
+    session.close()
+
+
+def test_keyword_lists_with_commas_and_semicolon_or_tab_exports(tmp_path):
+    two_comma = tmp_path / "two_comma.txt"
+    two_comma.write_text("crm, for contractors\npaving software, free\n")
+    assert [row.query for row in load_keyword_file(two_comma)] == ["crm, for contractors", "paving software, free"]
+    one_column = tmp_path / "one_column.csv"
+    one_column.write_text('query\ncrm, for contractors\n"paving software, free"\n')
+    assert [row.query for row in load_keyword_file(one_column)] == ["crm, for contractors", "paving software, free"]
+    semi = tmp_path / "semi.csv"
+    semi.write_text("Keyword;Intent;Volume\nhcss alternative;commercial;320\n")
+    assert [(row.query, row.intent) for row in load_keyword_file(semi)] == [("hcss alternative", "commercial")]
+    tab = tmp_path / "tab.tsv"
+    tab.write_text("Keyword\tVolume\nhcss alternative\t320\n")
+    assert [row.query for row in load_keyword_file(tab)] == ["hcss alternative"]
+    german = tmp_path / "german.csv"
+    german.write_text("Suchbegriff;Suchvolumen\nbaggersoftware;90\nbausoftware;1.200\n")
+    with pytest.raises(ValueError, match="none is a query column"):
+        load_keyword_file(german)
+
+
+def test_export_serp_marks_lists_that_are_not_google_and_readers_drop_them(tmp_path, capsys):
+    from aeo.ranksim.cli import main
+
+    db = f"sqlite:///{tmp_path / 's.db'}"
+    session = open_session(db)
+    append_serp(session, "q both", _hits(_urls("a", "b")), country="us", language="en", collected_at=_at(1))
+    append_serp(session, "q both", _hits(_urls("b", "a"), provider="brave", is_google=False), collected_at=_at(2))
+    append_serp(session, "q brave", _hits(_urls("c", "d"), provider="brave", is_google=False), collected_at=_at(2))
+    session.close()
+    out = tmp_path / "latest.csv"
+    main(["--database", db, "export-serp", str(out)])
+    printed = capsys.readouterr().out
+    report = ImportReport()
+    labels = load_serp_file(out, report=report)
+    # The later Brave list does not hide the Google one, and a Brave-only query is not read as Google.
+    assert [(row.query, row.url, row.position) for row in labels] == [("q both", _urls("a")[0], 1.0), ("q both", _urls("b")[0], 2.0)]
+    assert report.dropped == {"not a Google result (brave)": [4, 5]}
+    assert "not Google results (brave)" in printed
+    brave_only = tmp_path / "brave.csv"
+    brave_only.write_text("".join(line + "\n" for line in out.read_text().splitlines() if "q both" not in line))
+    with pytest.raises(SystemExit):
+        main(["--database", db, "ledger", "observe", str(brave_only), "--observed-on", "2026-11-02", "--provider", "serper"])
+    assert "Recorded observations" not in capsys.readouterr().out

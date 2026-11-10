@@ -193,6 +193,32 @@ class CheckResult:
     error: str = ""
     candidate_hashes: dict[str, str | None] = field(default_factory=dict)
     warnings: list[str] = field(default_factory=list)
+    scope: str = ""  # which question this check answers, and which it cannot (check_scope)
+
+
+def check_scope(added_draft: bool, competitors: int) -> str:
+    """Say which question a check answers, in words a reader can act on (BACKLOG P0-5).
+
+    The model learned only from pages already in Google's results, so a check orders a page among
+    stored results; it cannot say whether Google would show a new page at all. The evidence cited
+    is in docs/EXPERIMENTS.md and is stated with its size.
+    """
+    pages = f"{competitors} stored competitor page{'s' if competitors != 1 else ''}"
+    if added_draft:
+        return (
+            f"What this answers: where your page would sit among the {pages} from Google's results for this "
+            "query. It cannot say whether Google would show your page at all, because the model learned only "
+            "from pages that already rank. In the tests so far (16 labeled queries, and 30 queries checked again "
+            "from Nov 6 to Nov 9, 2026), which site a page is on ordered pages as well as or better than page text "
+            "did, on samples too small for a firm verdict (docs/EXPERIMENTS.md E16, E18). A text edit alone may "
+            "not change a real position."
+        )
+    return (
+        f"What this answers: where this version of your page would sit among the {pages} from Google's "
+        "results for this query, which already include your page. In the one forward test so far (30 queries "
+        "checked again from Nov 6 to Nov 9, 2026), the previous Google order predicted the next one better than "
+        "any page text model did (docs/EXPERIMENTS.md E14)."
+    )
 
 
 @dataclass
@@ -308,6 +334,7 @@ def check_draft(
     result.predicted_of = len(docs)
     ordered_scores = [scores[id(example)] for example in examples]
     result.competitors = _competitors(docs, ranks, positions, ours, ordered_scores)
+    result.scope = check_scope(result.added_draft, len(docs) - 1)
     by_url = {doc.url: index for index, doc in enumerate(docs)}
     for row in result.competitors:
         other = by_url.get(row.url)

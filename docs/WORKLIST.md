@@ -101,6 +101,8 @@ Requests for other roles, drafted here and not posted (posting on another role's
   stay_on_that_cohort` fails against this branch's one-cluster guard; pr8_v3 drafts stored under
   live URLs are counted as covered.
 - PR #1: `track-record score` compares raw query text, while label import casefolds queries.
+- PR #2 (UI owner): show `CheckResult.scope` near the verdict in `demo.py`, so a reader of a new
+  page's check sees that it cannot say whether Google would show the page at all (B18, P0-5).
 - PR #2 / PR #5 owners: `project.guess_intent` and `forward_eval.py` (hard-coded "commercial") can
   call `intents.query_intents(labels)` / `intent_for(query, intents)` so every path agrees.
 
@@ -171,6 +173,11 @@ fixed in advance.
 - [ ] B17. Independent review of B1-B16 (multi-lens review with adversarial verification); fix
   confirmed defects with regression tests. B1, B2 and I1 to I6 were reviewed in I7; B3 to B16 and
   the I7 fixes (e883b45..f281274) are under review now.
+
+- [x] B18. A check says which question it answers (P0-5, backend half): where the page would sit
+  among the stored results, not whether Google would show a new page at all; the evidence it cites
+  is stated with its size (E14, E16, E18). Done: `CheckResult.scope`, printed by the CLI; the web UI
+  is PR #2's (request above). Tests fail on the previous commit (no `check_scope`).
 
 ## C. Blocked on credentials or decisions
 

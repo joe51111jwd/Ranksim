@@ -84,6 +84,9 @@ Each item lists the problem, the change, acceptance criteria, dependencies, effo
   and not in git, and `forward_eval.py` belongs to the SEO Tool Builder. Persistence (keep the
   previous order) covers pages already ranking (MISSION next work 2) and needs no content model;
   see E14.
+- 2026-11-10 (B18, backend half): every check carries a `scope` sentence saying it orders the page
+  among stored results and cannot say whether Google would show a new page; the CLI prints it. The
+  web UI showing it is PR #2's. Ordering within the top 10 is still the only task the benchmark scores.
 
 ## P1: quality and trust
 

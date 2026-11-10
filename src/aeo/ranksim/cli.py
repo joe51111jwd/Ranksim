@@ -1266,6 +1266,7 @@ def _ai_eval(settings, database: str, args) -> None:
                 f"PREDICTED slot {result.predicted_rank} of {result.predicted_of} supplied pages "
                 f"(not a Google position). Confidence: {result.confidence}."
             )
+            print(result.scope)
             print(result.fix_note)
             rounds_dir = Path(args.rounds_dir) if args.rounds_dir else None
             for round_ in result.fix_rounds:

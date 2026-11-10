@@ -70,7 +70,7 @@ sentences with no em or en dashes.
   `synthetic` flag that forces UNSURE. Done: both also set every competitor row to UNSURE; the
   draft's own URL is not counted as a competitor.
 - [x] I5. Label import accepts a Serper export whose URL column is `link` (as PR #5 847ef71).
-- [ ] I6. Docs: `--final` is a same-snapshot holdout, not accuracy; README numbers labeled as
+- [x] I6. Docs: `--final` is a same-snapshot holdout, not accuracy; README numbers labeled as
   same-snapshot agreement; E14 recomputes PR #5's committed forward figures with ties as half
   (analysis of f76f7f1, not a new claim).
 - [ ] I7. Adversarial review of I1 to I6 (workflow); fix confirmed defects with regression tests.

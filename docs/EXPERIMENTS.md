@@ -242,3 +242,30 @@ Conventions for every entry:
   on 30 cases even in-sample. Dev split of the snapshot, all protocols: no cross-fitted adjacent
   call. Every call stays UNSURE, as before; the change matters once the data supports a threshold.
 
+## 2026-11-10 E14. The integration branch's forward check, with ties counted as half
+
+Analysis of committed files only, not a new run and not a new claim. Source:
+`evals/forward-2026-11-09/report.json` on PR #5 (`cursor/integration-review-175f`, commit f76f7f1):
+models frozen on a Nov 6 Serper snapshot of 30 queries, scored once against the Nov 9 snapshot of
+the same queries, 1,341 pairs over the Nov 9 candidate lists. That report counts a tie as wrong. This
+benchmark counts a tie as half (what random tie-breaking scores), so the figures below are
+(correct + ties / 2) / pairs from the same counts.
+
+| scorer | ties | published (ties wrong) | ties as half | draft vs draft (116 pairs) | draft vs ranking page (281 pairs) |
+|---|---:|---:|---:|---:|---:|
+| LambdaMART (content) | 104 | 0.507 | 0.546 | 0.414 | 0.528 |
+| BM25 | 105 | 0.444 | 0.484 | 0.444 | 0.472 |
+| persistence (keep Nov 6 order) | 195 | 0.694 | 0.767 | 0.500 (all ties) | 0.712 |
+| equal-weight blend | 29 | 0.702 | 0.713 | 0.591 | 0.705 |
+| history-aware rule | 29 | 0.751 | 0.762 | 0.591 | 0.712 |
+
+- With ties counted as half, persistence is at least as good as the history-aware rule; counting
+  ties as wrong is what put the rule ahead, because persistence ties every pair of new pages.
+- Content models are near chance overall and below it on draft vs draft (16 queries). This matches
+  E4 to E12: the core use case, placing a page Google has not ranked, is not supported yet.
+- Limits: one 2.5-day interval on one site's 30 queries; no intervals can be computed from the
+  committed file (it has no per-query counts); the page HTML behind the content scores is private,
+  so only persistence and overlap can be recomputed from git. The forward ledger rows carry a stated
+  time of 2026-11-07 although they were written after the Nov 9 results existed; I2 makes this
+  branch's ledger date such rows by when they were written.
+

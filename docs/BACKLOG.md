@@ -39,7 +39,9 @@ Each item lists the problem, the change, acceptance criteria, dependencies, effo
   recrawl. Split clusters and sites into dev and final; `benchmark --final` runs once per model id and
   appends to a results log it never rewrites.
 - Acceptance: two machines produce identical numbers from the same snapshot; a second `--final` run
-  for the same model id is refused; README quotes only `--final` numbers.
+  for the same model id is refused. A `--final` number is a same-snapshot holdout (held-out queries
+  from the same day as the training queries), so it is reported as that and never as accuracy
+  (`docs/MISSION.md`). Accuracy claims come only from forward evaluation on a later snapshot.
 - Depends on: P0-1. Effort M.
 - Status 2026-11-05: built (`benchmark-freeze`, `benchmark --snapshot`, `--final`; E12). The split
   is by query cluster only; splitting by site as well needs more labeled sites (P0-1).
@@ -74,6 +76,12 @@ Each item lists the problem, the change, acceptance criteria, dependencies, effo
   separately from ordering within the top 10.
 - Acceptance: the benchmark reports both tasks with baselines; the UI says which one a check answers.
 - Depends on: P0-1 (deeper collection). Effort L.
+- 2026-11-10: this is MISSION next work item 1 ("a draft/new-page predictor ... evaluated on URLs
+  that newly entered the top 10 between snapshots"). The integration branch (PR #5) now holds two
+  dated 30-query snapshots (Nov 6 and Nov 9) with 97 entrant rows, but their page HTML is private
+  and not in git, and `forward_eval.py` belongs to the SEO Tool Builder. Persistence (keep the
+  previous order) covers pages already ranking (MISSION next work 2) and needs no content model;
+  see E14.
 
 ## P1: quality and trust
 

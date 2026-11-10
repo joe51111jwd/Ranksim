@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import html as html_lib
 import json
+import signal
+import threading
 import time
 from dataclasses import dataclass, field
 from urllib.parse import urlsplit
@@ -192,6 +194,26 @@ class PlaywrightSession:
         self._browser = self._playwright.chromium.launch(headless=True)
 
     def render(self, url: str) -> BrowserRender:
+        # A page that never goes idle must not stall the crawl. The alarm is a backstop
+        # for a Playwright call that ignores its own timeout.
+        if threading.current_thread() is not threading.main_thread():
+            return self._render(url)
+
+        def _alarm(_signum, _frame):
+            raise TimeoutError("browser timed out")
+
+        previous = signal.signal(signal.SIGALRM, _alarm)
+        signal.alarm(40)
+        try:
+            return self._render(url)
+        except TimeoutError:
+            self.close()
+            return BrowserRender(error="browser timed out")
+        finally:
+            signal.alarm(0)
+            signal.signal(signal.SIGALRM, previous)
+
+    def _render(self, url: str) -> BrowserRender:
         self._ensure()
         context = self._browser.new_context(
             user_agent=BROWSER_UA,
@@ -200,16 +222,22 @@ class PlaywrightSession:
             timezone_id="America/New_York",
         )
         page = context.new_page()
+        page.set_default_timeout(15000)
+        page.set_default_navigation_timeout(20000)
         error = None
         try:
             try:
-                page.goto(url, wait_until="networkidle", timeout=30000)
+                page.goto(url, wait_until="domcontentloaded", timeout=20000)
+                try:
+                    page.wait_for_load_state("networkidle", timeout=8000)
+                except Exception as exc:  # noqa: BLE001 - idle is best-effort after the DOM is ready
+                    error = f"networkidle: {type(exc).__name__}"
             except Exception as exc:  # noqa: BLE001 - a timeout can still leave a rendered page
                 error = f"{type(exc).__name__}: {exc}"
             try:
                 html = page.content()
                 title = page.title()
-                visible = page.inner_text("body")
+                visible = page.inner_text("body", timeout=8000)
             except Exception as exc:  # noqa: BLE001
                 return BrowserRender(error=error or f"{type(exc).__name__}: {exc}")
             if not html:

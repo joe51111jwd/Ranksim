@@ -303,6 +303,15 @@ fixed in advance.
   is the only reason they resolve. This branch's ledger verifies the chain and scores none of it.
   Request drafted below (not posted).
 
+- [ ] B24. More incoming code, 2026-11-10: PR #5 moved to 6b25ea5 (a layered fetcher with HTTP,
+  headless Chromium and a paid Serper scrape; off-page scores for pages with no HTML; a recovered
+  content check on Nov 9, not adopted; MISSION.md rewritten in part), and `claude/kind-hopper-lglg98`
+  moved to 4480761 (the Studio as a password-gated hosted tool with live SERP pulls, server-side
+  URL fetches and a Vercel Blob store). Review both read-only: fetch safety against this branch's
+  crawler guarantees, Studio auth, CSRF, SSRF and credit spend, deployment exposure, and the
+  recovered check (reproduce, leakage, timeline, ties as half). Record E20 and draft requests (not
+  posted); report any live security or cost risk to James.
+
 - [x] B18. A check says which question it answers (P0-5, backend half): where the page would sit
   among the stored results, not whether Google would show a new page at all; the evidence it cites
   is stated with its size (E14, E16, E18). Done: `CheckResult.scope`, printed by the CLI; the web UI

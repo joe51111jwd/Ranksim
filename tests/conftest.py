@@ -64,6 +64,8 @@ def _isolate_settings_environment(request, monkeypatch):
     # --database (and any registry it writes) must use a per-test file instead.
     tmp_path = request.getfixturevalue("tmp_path")
     monkeypatch.setenv("RANKSIM_DATABASE_URL", f"sqlite:///{tmp_path / 'ranksim-default.db'}")
+    # A --final run appends to the git-tracked smartcrew/final_runs.jsonl; tests use a per-test file.
+    monkeypatch.setenv("RANKSIM_FINAL_RUNS", str(tmp_path / "final_runs.jsonl"))
 
 
 @pytest.fixture(autouse=True)

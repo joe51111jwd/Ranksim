@@ -854,7 +854,12 @@ def _run_benchmark_report(
         notes.append(f"navboost_prior was withheld: {navboost_withhold_reason(labels)}.")
     from aeo.ranksim.benchmark import has_prior_positions
 
-    if not has_prior_positions(examples):
+    if withheld:
+        notes.append(
+            "No persistence row: the labels carry prior_position, but it was withheld for the reason above, so keeping "
+            "the previous order is not scored. With valid dates it would be."
+        )
+    elif not has_prior_positions(examples):
         notes.append(
             "No persistence row: the labels carry no earlier Google position (prior_position), so keeping the previous "
             "order cannot be scored on this file."
@@ -968,6 +973,8 @@ def _benchmark_freeze(database: str, args) -> None:
 
     intent_map = query_intents(load_serp_file(args.serp_file))
     intents = intent_map.intents
+    # Read the final-run registry before writing anything: a line that cannot be read stops here.
+    _final_registry_rows()
     try:
         manifest = freeze(
             database,
@@ -991,16 +998,11 @@ def _benchmark_freeze(database: str, args) -> None:
     )
     for line in manifest.get("import_report") or []:
         print(line)
-    from aeo.ranksim.snapshot import final_key
-    from aeo.ranksim.store import RsFinalRun
+    from aeo.ranksim.snapshot import snapshot_final_key
 
-    session = open_session(database)
-    try:
-        earlier = session.query(RsFinalRun).filter(RsFinalRun.final_key == final_key(manifest)).all()
-    finally:
-        session.close()
+    earlier = _scored_models(database, manifest, snapshot_final_key(args.out, manifest))
     if earlier:
-        models = ", ".join(sorted({row.model_id for row in earlier}))
+        models = ", ".join(sorted(earlier))
         print(
             f"This is the same final split as an earlier snapshot. Already scored on it: {models}. "
             "Those configurations will not be scored on it again."
@@ -1016,13 +1018,27 @@ def _benchmark_snapshot(args, registry_database: str) -> None:
     from aeo.ranksim.benchmark import git_commit, lightgbm_version
     from aeo.ranksim.groundtruth import ImportReport, load_serp_file
     from aeo.ranksim.lambdamart import model_id
-    from aeo.ranksim.snapshot import SnapshotError, final_key, final_runs, graph_path, labels_path, load_manifest, materialize, record_final
+    from aeo.ranksim.snapshot import (
+        SnapshotError,
+        final_registry_path,
+        final_runs,
+        graph_path,
+        labels_path,
+        load_manifest,
+        materialize,
+        record_final,
+        register_final,
+        snapshot_final_key,
+    )
     from aeo.ranksim.store import close_database
 
     try:
         manifest = load_manifest(args.snapshot)
     except SnapshotError as exc:
         raise SystemExit(str(exc)) from None
+    split_key = snapshot_final_key(args.snapshot, manifest)
+    # Runs recorded only in this snapshot's results.jsonl (E12 predates rs_final_runs) protect re-frozen copies too.
+    _backfill_final_runs(registry_database, split_key, args.snapshot)
     if args.graph:
         raise SystemExit("--graph is not used with --snapshot. Freeze the graph with the pages (benchmark-freeze --graph).")
     split = manifest["split"]
@@ -1046,17 +1062,27 @@ def _benchmark_snapshot(args, registry_database: str) -> None:
         if args.protocol:
             raise SystemExit("--protocol does not apply to --final, which runs final and final-url.")
         previous = [row for row in final_runs(args.snapshot) if row.get("model_id") == model]
-        registered = _registered_final_run(registry_database, final_key(manifest), model)
+        registered = _scored_models(registry_database, manifest, split_key).get(model)
         if previous or registered:
             when = previous[0].get("created_at") if previous else registered
             raise SystemExit(
-                f"Model {model} was already scored on this final split ({when}). See {Path(args.snapshot) / 'results.jsonl'} "
-                "or the rs_final_runs table. A final split is scored once per model configuration, also after re-freezing it."
+                f"Model {model} was already scored on this final split ({when}). See {Path(args.snapshot) / 'results.jsonl'}, "
+                f"the rs_final_runs table or {final_registry_path()}. A final split is scored once per model configuration, "
+                "also after re-freezing it."
             )
     import_report = ImportReport()
     labels = load_serp_file(labels_path(args.snapshot), report=import_report)
-    print("\n".join(import_report.lines()))
-    notes.extend(line.strip() for line in import_report.lines()[1:])
+    report_lines = import_report.lines()
+    if not args.final:
+        # A duplicate example names a query, a URL and two positions. A dev run shows none from the final split.
+        dev_queries = set(split["dev_queries"])
+        hidden = sum(1 for row in import_report.duplicates if row[0] not in dev_queries)
+        import_report.duplicates = [row for row in import_report.duplicates if row[0] in dev_queries]
+        report_lines = import_report.lines()
+        if hidden:
+            report_lines.append(f"  {hidden} duplicate query+URL rows in final-split queries are not shown.")
+    print("\n".join(report_lines))
+    notes.extend(line.strip() for line in report_lines[1:])
     intents = dict(manifest.get("intents") or {})
     with tempfile.TemporaryDirectory(prefix="ranksim-snapshot-") as tmp:
         database = f"sqlite:///{Path(tmp) / 'snapshot.db'}"
@@ -1104,20 +1130,26 @@ def _benchmark_snapshot(args, registry_database: str) -> None:
             "seed": args.seed,
             "protocols": [_final_summary(result) for result in report.protocols],
             "notes": list(report.notes),
-            "final_key": final_key(manifest),
+            "final_key": split_key,
         }
         try:
             _register_final_run(registry_database, entry, args.snapshot)
             record_final(args.snapshot, entry)
         except SnapshotError as exc:
             raise SystemExit(str(exc)) from None
+        try:
+            registry = register_final({**entry, "snapshot_dir": str(args.snapshot)})
+            kept = f" Commit {registry} so a fresh checkout or database also refuses a second run."
+        except OSError as exc:
+            kept = f" Could not append to {final_registry_path()} ({exc}). Add the run there by hand."
         _print_benchmark(report, args)
-        print(f"Recorded in {Path(args.snapshot) / 'results.jsonl'} as {model}.")
+        print(f"Recorded in {Path(args.snapshot) / 'results.jsonl'} as {model}.{kept}")
         return
     dev = set(split["dev_queries"])
     notes.append(
-        "Dev split only. Final-split labels were not loaded or scored; their pages stay in the corpus as "
-        "unlabeled pages, because in-corpus links and PageRank use every stored page."
+        "Dev split only. Final-split labels were not scored or shown. Only their URLs were read, to keep query "
+        "clusters whole. Their pages stay in the corpus as unlabeled pages, because in-corpus links and PageRank "
+        "use every stored page."
     )
     report = _run_benchmark_report(
         args,
@@ -1135,14 +1167,61 @@ def _benchmark_snapshot(args, registry_database: str) -> None:
         _print_benchmark(report, args)
 
 
-def _registered_final_run(database: str, key: str, model: str) -> str | None:
-    """When this model configuration was already scored on this final split, per the main database."""
+def _scored_models(database: str, manifest: dict, key: str) -> dict[str, str]:
+    """Model configurations already scored on this final split, with when: the git-tracked registry
+    (smartcrew/final_runs.jsonl) and the main database, under the current or the legacy key."""
+    from aeo.ranksim.snapshot import legacy_final_key
     from aeo.ranksim.store import RsFinalRun
 
+    found: dict[str, str] = {}
+    for row in _final_registry_rows():
+        if row["final_key"] == key:
+            found.setdefault(row["model_id"], str(row.get("created_at") or "date not recorded"))
     session = open_session(database)
     try:
-        row = session.query(RsFinalRun).filter(RsFinalRun.final_key == key, RsFinalRun.model_id == model).first()
-        return None if row is None else row.created_at.isoformat(timespec="seconds")
+        for row in session.query(RsFinalRun).filter(RsFinalRun.final_key.in_([key, legacy_final_key(manifest)])):
+            found.setdefault(row.model_id, row.created_at.isoformat(timespec="seconds"))
+    finally:
+        session.close()
+    return found
+
+
+def _final_registry_rows() -> list[dict]:
+    """The git-tracked final-run registry. A line that cannot be read stops the command with its
+    file and line number: failing closed, since a skipped line could allow a second final run."""
+    from aeo.ranksim.snapshot import SnapshotError, registered_final_runs
+
+    try:
+        return registered_final_runs()
+    except SnapshotError as exc:
+        raise SystemExit(str(exc)) from None
+
+
+def _backfill_final_runs(database: str, key: str, snapshot_dir) -> None:
+    """Copy final runs recorded only in a snapshot's results.jsonl into rs_final_runs. Adds rows,
+    never changes or removes one."""
+    from datetime import datetime
+
+    from aeo.ranksim.snapshot import final_runs
+    from aeo.ranksim.store import RsFinalRun
+
+    runs = [row for row in final_runs(snapshot_dir) if row.get("model_id")]
+    if not runs:
+        return
+    session = open_session(database)
+    try:
+        known = {row.model_id for row in session.query(RsFinalRun).filter(RsFinalRun.final_key == key)}
+        for row in runs:
+            if row["model_id"] in known:
+                continue
+            extra = {}
+            try:
+                extra["created_at"] = datetime.fromisoformat(str(row.get("created_at")))
+            except ValueError:
+                pass
+            session.add(RsFinalRun(final_key=key, model_id=row["model_id"], snapshot_dir=str(snapshot_dir), summary=row, **extra))
+            known.add(row["model_id"])
+        session.commit()
     finally:
         session.close()
 

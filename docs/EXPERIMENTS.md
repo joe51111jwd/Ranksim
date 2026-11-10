@@ -301,9 +301,13 @@ benchmark counts a tie as half (what random tie-breaking scores), so the figures
 
   | protocol | LambdaMART | BM25F | domain prior | site prior | random 95% band |
   |---|---:|---:|---:|---:|---:|
-  | loqo | 0.632 | 0.487 | 0.642 | 0.656 (0.585 to 0.705) | 0.418 to 0.582 |
-  | cluster | 0.543 | 0.487 | 0.571 | 0.602 (0.545 to 0.682) | 0.418 to 0.582 |
-  | cluster-url | 0.528 | 0.487 | 0.568 | 0.614 (0.581 to 0.666) | 0.418 to 0.582 |
+  | loqo | 0.632 | 0.487 | 0.642 | 0.656 | 0.418 to 0.582 |
+  | cluster | 0.543 | 0.487 | 0.571 | 0.602 | 0.418 to 0.582 |
+  | cluster-url | 0.528 | 0.487 | 0.568 | 0.614 | 0.418 to 0.582 |
+
+  Point values only. The cluster bootstrap intervals of this run are not given: over 8 clusters
+  they look tight and are not, and the report withholds them below 10 scored clusters. The random
+  band comes from random scores on the same pairs, not from that bootstrap.
 
 - Reading: a signal that reads no page text is the best row under every protocol here, including
   the one closest to scoring an unseen draft. With 8 clusters no verdict is given, and these are
@@ -331,8 +335,9 @@ benchmark counts a tie as half (what random tie-breaking scores), so the figures
   | cluster | 0.543 | 0.537 |
   | cluster-url | 0.528 | 0.531 |
 
-  Paired difference under cluster-url: +0.003 (95% interval -0.060 to +0.074). Not adopted: the gain
-  is under 0.05, the interval includes 0, and only 8 clusters were scored.
+  Paired difference under cluster-url: +0.003. Its interval is withheld: a bootstrap over 8 clusters
+  is not trustworthy, and the report gives none below 10 scored clusters. Not adopted: the gain is
+  under 0.05, and only 8 clusters were scored.
 - In-sample agreement (trained and scored on the same 11 queries): current 0.950, regularized 0.893.
   Against held-out cluster-url (0.528, 0.531), both memorize most of what they fit; regularization
   narrows the gap without improving held-out agreement. The final split was not used.

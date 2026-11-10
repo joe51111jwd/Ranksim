@@ -7,9 +7,20 @@ added (in-corpus PageRank and anchors use every stored page). A snapshot pins al
 - ``pages.jsonl.gz``: every stored page with its HTML, source, fetch time and HTML sha256.
 - ``manifest.json``: hashes, counts, ``as_of``, the intent of each labeled query, and the split.
 - ``graph.json``: optional copy of a link-graph file, with its sha256 in the manifest.
-- ``results.jsonl``: append-only log of final-split runs (see ``record_final``). The main database
-  also records each final run by split (``final_key``), so a re-frozen copy of the same split does
-  not allow a second run of the same model configuration.
+- ``results.jsonl``: append-only log of final-split runs (see ``record_final``).
+
+A final split is identified by ``final_key``: its final query set and the parsed labels of those
+queries (query, URL match key, position). The label file's bytes (line endings, column order, dev
+rows), the cluster threshold and the folder do not enter it, so a re-frozen copy of the same split
+has the same key. Each final run is recorded under that key in three places: the snapshot's
+``results.jsonl``, the main database (``rs_final_runs``) and ``smartcrew/final_runs.jsonl``, which
+is kept in git so a fresh checkout or database also knows it. A run recorded only in an older
+snapshot's ``results.jsonl`` (E12) is in that file too, and opening any snapshot copies its
+``results.jsonl`` runs into the database. ``--final`` refuses a model configuration found in any
+of them, so a split is scored at most once per model configuration, also after re-freezing it.
+Rows written under the first key (label file bytes, cluster threshold, final queries) are still
+looked up. A registry line that cannot be read stops ``benchmark-freeze`` and ``--final`` before
+they write anything, with the file and the line number.
 
 The split assigns whole query clusters (URL-overlap clusters from the label file) to ``dev`` or
 ``final`` from a hash of each cluster's queries and a seed, so it is deterministic and never puts
@@ -25,6 +36,7 @@ import gzip
 import hashlib
 import json
 import math
+import os
 import shutil
 from datetime import datetime, timezone
 from pathlib import Path
@@ -74,12 +86,36 @@ def split_clusters(clusters: dict[str, int], *, final_share: float, seed: int) -
     return dev, final
 
 
-def final_key(manifest: dict) -> str:
-    """Identity of a final split: the labels, the cluster threshold and the final queries. Freezing
-    the same labels and seed again gives the same key, wherever the snapshot is written."""
+def final_key(manifest: dict, labels) -> str:
+    """Identity of a final split: the sorted final queries and the parsed label rows of those
+    queries as (query, URL match key, position). ``labels`` is the snapshot's label file as
+    ``load_serp_file`` returns it.
+
+    Bytes that do not change what is held out leave the key alone: CRLF or LF line endings, column
+    order, a duplicate row the loader drops, dev-split rows, the cluster threshold and the folder.
+    Dev rows are left out on purpose: training on more dev labels does not make a second look at
+    the same held-out labels a new result."""
+    final = set(manifest["split"]["final_queries"])
+    from aeo.ranksim.urlkey import match_key
+
+    rows = sorted({(row.query, match_key(row.url), repr(float(row.position))) for row in labels if row.query in final})
+    body = "final-split-v2\n" + "\n".join(sorted(final)) + "\n--\n" + "\n".join("\t".join(row) for row in rows)
+    return hashlib.sha256(body.encode()).hexdigest()
+
+
+def legacy_final_key(manifest: dict) -> str:
+    """The key the first rs_final_runs rows were stored under (label file bytes, cluster threshold,
+    final queries). Only looked up, so runs registered with it stay protected."""
     split = manifest["split"]
     body = f"{manifest['labels_sha256']}|{split['cluster_threshold']}|" + "\n".join(sorted(split["final_queries"]))
     return hashlib.sha256(body.encode()).hexdigest()
+
+
+def snapshot_final_key(snapshot_dir: str | Path, manifest: dict) -> str:
+    """``final_key`` of a frozen snapshot, from its own label copy."""
+    from aeo.ranksim.groundtruth import load_serp_file
+
+    return final_key(manifest, load_serp_file(Path(snapshot_dir) / LABELS))
 
 
 def freeze(
@@ -246,3 +282,65 @@ def record_final(snapshot_dir: str | Path, entry: dict) -> None:
         raise SnapshotError(f"Model {model} already has a final-split result in this snapshot. Final runs are not repeated.")
     with (Path(snapshot_dir) / RESULTS).open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(entry, sort_keys=True) + "\n")
+
+
+def final_registry_path() -> Path:
+    """``smartcrew/final_runs.jsonl`` under the repo root, kept in git. ``RANKSIM_FINAL_RUNS`` overrides it."""
+    override = os.environ.get("RANKSIM_FINAL_RUNS")
+    if override:
+        return Path(override)
+    from aeo.ranksim.keywords import repo_root
+
+    return repo_root() / "smartcrew" / "final_runs.jsonl"
+
+
+def registered_final_runs(path: str | Path | None = None) -> list[dict]:
+    """Every final run in the git-tracked registry: one JSON object per line, never rewritten.
+
+    A line that is not a JSON object with a ``final_key`` and a ``model_id`` raises SnapshotError
+    naming the file and that line's number, so no final run is checked against a partial list."""
+    target = Path(path) if path is not None else final_registry_path()
+    if not target.is_file():
+        return []
+    rows: list[dict] = []
+    for number, raw in enumerate(target.read_bytes().split(b"\n"), start=1):
+        try:
+            line = raw.decode("utf-8-sig" if number == 1 else "utf-8")
+        except UnicodeDecodeError:
+            raise SnapshotError(_registry_problem(target, number, "it is not UTF-8 text")) from None
+        if not line.strip():
+            continue
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError as exc:
+            raise SnapshotError(_registry_problem(target, number, f"it is not valid JSON ({exc.msg} at column {exc.colno})")) from None
+        if not isinstance(row, dict) or not all(isinstance(row.get(name), str) and row[name] for name in ("final_key", "model_id")):
+            raise SnapshotError(_registry_problem(target, number, "it needs a final_key and a model_id"))
+        rows.append(row)
+    return rows
+
+
+def _registry_problem(target: Path, number: int, what: str) -> str:
+    origin = " (set by RANKSIM_FINAL_RUNS)" if os.environ.get("RANKSIM_FINAL_RUNS") else ""
+    return (
+        f"Line {number} of the final-run registry {target}{origin} cannot be read: {what}. "
+        'Fix that line by hand. Each line is one JSON object, for example {"final_key": "...", "model_id": "..."}. '
+        "Until then benchmark-freeze and benchmark --final stop here, because they cannot check earlier final runs."
+    )
+
+
+def register_final(entry: dict, path: str | Path | None = None) -> Path:
+    """Append one final run (identity and provenance only, no scores) to the git-tracked registry."""
+    target = Path(path) if path is not None else final_registry_path()
+    keep = ("final_key", "model_id", "created_at", "as_of", "labels_sha256", "corpus_sha256", "git_commit", "snapshot_dir", "source")
+    row = {name: entry.get(name) for name in keep if entry.get(name) is not None}
+    target.parent.mkdir(parents=True, exist_ok=True)
+    # A line added by hand may lack its newline. Start a new line so the two runs do not merge into one.
+    prefix = ""
+    if target.is_file() and target.stat().st_size:
+        with target.open("rb") as handle:
+            handle.seek(-1, os.SEEK_END)
+            prefix = "" if handle.read(1) == b"\n" else "\n"
+    with target.open("a", encoding="utf-8") as handle:
+        handle.write(prefix + json.dumps(row, sort_keys=True) + "\n")
+    return target

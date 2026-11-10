@@ -78,8 +78,9 @@ class RsSerpCollection(Base):
 
 class RsFinalRun(Base):
     """A model configuration scored on a frozen final split. Kept in the main database, keyed by the
-    split itself (labels, cluster threshold, final queries), so re-freezing the same split into a new
-    snapshot directory does not allow a second final run of the same configuration."""
+    split itself (``snapshot.final_key``: the final queries and their parsed labels), so re-freezing
+    the same split into a new snapshot directory does not allow a second final run of the same
+    configuration. Older rows keep the key they were written with and are still looked up."""
 
     __tablename__ = "rs_final_runs"
     __table_args__ = (UniqueConstraint("final_key", "model_id", name="uq_final_run"),)

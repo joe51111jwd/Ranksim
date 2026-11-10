@@ -573,7 +573,7 @@ def _render_query(row: QueryWhatIf, statuses: dict[str, tuple[str, str | None]])
     if row.after_words is not None and row.after_words < 150:
         lines.append(
             f"That page has {row.after_words} extracted words. The built file is a short crawl shell, not a full article. "
-            "With pairwise agreement at the held-out number above, this slot is not evidence the shell would outrank the crawled pages."
+            "With pairwise agreement at the same-snapshot number above, this slot is not evidence the shell would outrank the crawled pages."
         )
     if row.content_url and row.content_url != row.after_url:
         lines.append(
@@ -994,7 +994,8 @@ def render_three_way(live: WhatIfReport, v1: WhatIfReport, v2: WhatIfReport) -> 
     lines = [
         "Predicted positions. Not live Google ranks.",
         "Model: LambdaMART, leave-one-query-out. The query being scored was not in that model.",
-        "Held-out agreement with the labeled file, using the stored pages. Each query was held out in turn:",
+        "Held-out agreement with the labeled snapshot (each query held out in turn; the same snapshot as the "
+        "training queries, so not accuracy on unseen results), using the stored pages:",
         f"  Pairwise agreement: {_num(live.pairwise_accuracy)}",
         f"  NDCG at 10: {_num(live.ndcg_at_10)}",
         f"  Spearman: {_num(live.spearman)}",
@@ -1003,7 +1004,6 @@ def render_three_way(live: WhatIfReport, v1: WhatIfReport, v2: WhatIfReport) -> 
             f"  Labeled URLs with HTML: {live.n_labeled_urls}. Uncovered URLs: {live.uncovered_urls}. "
             f"Queries: {live.n_queries}. Pairs: {live.n_pairs}."
         ),
-        "These are same-snapshot numbers on a small file, not accuracy on unseen results.",
         (
             "Live is the stored crawl. v1 and v2 replace the HTML of a labeled URL with its bundle page. A bundle URL "
             "joins a query that did not have it only when the query is one of its targets and has a stored competitor."

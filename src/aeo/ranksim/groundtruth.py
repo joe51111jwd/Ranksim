@@ -69,7 +69,7 @@ class ImportReport:
 
 
 QUERY_COLUMNS = ("query", "top queries", "queries", "keyword")
-URL_COLUMNS = ("url", "page", "landing page", "top pages")
+URL_COLUMNS = ("url", "page", "landing page", "top pages", "link")  # Serper exports use "link"
 POSITION_COLUMNS = ("position", "average position", "rank", "organic position")
 META_COLUMNS = {
     "observed_on": ("observed_on", "collected_at", "date", "checked_on"),
@@ -112,7 +112,7 @@ def load_serp_file(path: str | Path, *, report: ImportReport | None = None) -> l
             found = ", ".join(repr(name) for name in reader.fieldnames)
             raise ValueError(
                 f"{file_path}: CSV needs query, url, and position columns (comma separated). Found: {found}. "
-                "Search Console exports need Query, Page, and Position."
+                "A Serper export may name the URL column link. Search Console exports need Query, Page, and Position."
             )
         meta_keys = {name: _pick(fields, aliases) for name, aliases in META_COLUMNS.items()}
         report.metadata_columns = sorted(name for name, key in meta_keys.items() if key and name != "result_type")

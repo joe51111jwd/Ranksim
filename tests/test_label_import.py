@@ -86,3 +86,16 @@ def test_smartcrew_file_still_loads_unchanged():
     assert report.kept == 135 and not report.dropped and not report.duplicates
     assert any("cannot be dated" in line for line in report.lines())
     assert len({row.query for row in rows}) == 16
+
+
+def test_a_serper_export_with_a_link_column_is_a_snapshot(tmp_path):
+    # Same input as the integration branch's test for 847ef71.
+    path = tmp_path / "serper.csv"
+    path.write_text(
+        "query,position,link,title\n"
+        "hcss alternative,1,https://example.com/a,HCSS alternatives\n"
+        "hcss alternative,2,https://example.com/b,Another page\n"
+    )
+    rows = load_serp_file(path)
+    assert [row.url for row in rows] == ["https://example.com/a", "https://example.com/b"]
+    assert rows[0].position == 1 and rows[0].kind == "serp_snapshot"

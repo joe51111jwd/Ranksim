@@ -169,12 +169,16 @@ fixed in advance.
   split, fixed adoption rule; +0.003 under cluster-url on 8 clusters, not adopted, no final run
   (E17).
 - [ ] B17. Independent review of B1-B16 (multi-lens review with adversarial verification); fix
-  confirmed defects with regression tests.
+  confirmed defects with regression tests. B1, B2 and I1 to I6 were reviewed in I7; B3 to B16 and
+  the I7 fixes (e883b45..f281274) are under review now.
 
 ## C. Blocked on credentials or decisions
 
 - [-] C1. 300+ dated queries across sites and niches (P0-1): needs a SERP key.
-- [-] C2. Repeated snapshots for volatility and ledger outcomes (P0-3): needs a SERP key.
+- [-] C2. Repeated snapshots for volatility and ledger outcomes (P0-3): needs a SERP key. PR #5 holds
+  two Serper snapshots (Nov 6, Nov 9); each further 30-query snapshot costs about 30 credits.
 - [-] C3. Non-ranking candidates / "enters the top 10" task (P0-5): needs deeper SERP collection.
+  E18 used PR #5's two snapshots for a pre-registered test of content-blind signals on new entrants:
+  no evidence yet (195 entrant pairs). Page-text models on entrants need the private HTML.
 - [-] C4. AI relevance judge rerun: needs an LLM key and a few hundred labeled pairs.
 - [-] C5. Durable shared deployment (storage, accounts): needs a decision from James.

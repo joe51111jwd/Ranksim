@@ -895,6 +895,8 @@ def _benchmark_freeze(database: str, args) -> None:
 
     intent_map = query_intents(load_serp_file(args.serp_file))
     intents = intent_map.intents
+    # Read the final-run registry before writing anything: a line that cannot be read stops here.
+    _final_registry_rows()
     try:
         manifest = freeze(
             database,
@@ -1090,12 +1092,12 @@ def _benchmark_snapshot(args, registry_database: str) -> None:
 def _scored_models(database: str, manifest: dict, key: str) -> dict[str, str]:
     """Model configurations already scored on this final split, with when: the git-tracked registry
     (smartcrew/final_runs.jsonl) and the main database, under the current or the legacy key."""
-    from aeo.ranksim.snapshot import legacy_final_key, registered_final_runs
+    from aeo.ranksim.snapshot import legacy_final_key
     from aeo.ranksim.store import RsFinalRun
 
     found: dict[str, str] = {}
-    for row in registered_final_runs():
-        if row.get("final_key") == key and row.get("model_id"):
+    for row in _final_registry_rows():
+        if row["final_key"] == key:
             found.setdefault(row["model_id"], str(row.get("created_at") or "date not recorded"))
     session = open_session(database)
     try:
@@ -1104,6 +1106,17 @@ def _scored_models(database: str, manifest: dict, key: str) -> dict[str, str]:
     finally:
         session.close()
     return found
+
+
+def _final_registry_rows() -> list[dict]:
+    """The git-tracked final-run registry. A line that cannot be read stops the command with its
+    file and line number: failing closed, since a skipped line could allow a second final run."""
+    from aeo.ranksim.snapshot import SnapshotError, registered_final_runs
+
+    try:
+        return registered_final_runs()
+    except SnapshotError as exc:
+        raise SystemExit(str(exc)) from None
 
 
 def _backfill_final_runs(database: str, key: str, snapshot_dir) -> None:

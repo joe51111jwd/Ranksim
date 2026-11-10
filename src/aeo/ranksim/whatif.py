@@ -885,9 +885,8 @@ def render_three_way(live: WhatIfReport, v1: WhatIfReport, v2: WhatIfReport) -> 
             f"Queries: {live.n_queries}. Pairs: {live.n_pairs}."
         ),
         (
-            "Live is the stored crawl. v1 and v2 replace the HTML of a URL labeled for the query. A bundle URL that is "
-            "not labeled there joins only the queries it targets (keywords.csv, or the manifest's query column), and "
-            "never a query with no stored competitor."
+            "Live is the stored crawl. v1 and v2 replace the HTML of a labeled URL with its bundle page. A bundle URL "
+            "joins a query that did not have it only when the query is one of its targets and has a stored competitor."
         ),
         "A BLOCK line means v2's predicted rank number is worse than live. That blocks shipping.",
         "",

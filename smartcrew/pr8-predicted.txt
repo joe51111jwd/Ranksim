@@ -1,12 +1,16 @@
+Note added in B17 (2026-11-10). This is the test --bundle output recorded on 2026-10-29 (commit 55b0353). It was not rerun, because this checkout has no crawl database.
+B17 relabeled three lines below. They said "Cross-validated accuracy" and "Pairwise accuracy", and called pairwise accuracy the one to trust first. The numbers are same-snapshot agreement under leave-one-query-out, not accuracy. The numbers and ranks are unchanged.
+The ranks use the rule of that time, given in the "Before set" line: every bundle URL joined every query that did not have it. B13 replaced that rule. A bundle URL now joins only its target queries that have a stored competitor. Rerun test --bundle for ranks under the current rule.
+
 Predicted positions. Not live Google ranks.
 Model: LambdaMART, leave-one-query-out. The query being scored was not in that model.
-Cross-validated accuracy on the labeled file, using the pages stored before this HTML change:
-  Pairwise accuracy: 0.534
+Held-out agreement with the labeled snapshot (each query held out in turn; the same snapshot as the training queries, so not accuracy on unseen results), using the pages stored before this HTML change:
+  Pairwise agreement: 0.534
   NDCG at 10: 0.695
   Spearman: 0.075
   Top-3 hit rate: 0.500
   Labeled URLs with HTML: 122. Uncovered URLs: 13. Queries: 16. Pairs: 414.
-Confidence: use the cross-validated numbers above. Pairwise accuracy is the one to trust first. Spearman and the top-3 hit rate move around on a 16-query file. A predicted slot is a score inside the crawled set.
+These are same-snapshot numbers on a small file, not accuracy. Pairwise agreement is the steadiest; Spearman and the top-3 hit rate move around on a 16-query file. A predicted slot is a score inside the crawled set.
 Before set: crawled URLs from the labeled file. After set: those URLs, with bundle HTML on a matching URL, plus bundle URLs that were not in that query. A new URL gets crawl PageRank 0. Domain PageRank is copied from other pages on the same host. No competitor HTML was invented.
 
 query	real_google	before_predicted	after_predicted	after_url	after_words	content_page_predicted	content_page_url	before_n	after_n

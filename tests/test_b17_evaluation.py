@@ -171,6 +171,76 @@ def test_a_run_recorded_only_in_an_old_results_file_protects_a_refrozen_copy(tmp
     assert final_runs(tmp_path / "new") == []
 
 
+def test_a_run_stored_under_the_87511c0_key_blocks_a_refrozen_copy(tmp_path, capsys):
+    """87511c0 wrote rs_final_runs rows under a key of the label file bytes, the cluster threshold and
+    the final queries. Such a row has to keep blocking the same split under the new key."""
+    import hashlib
+
+    from aeo.ranksim.features import MODEL_FEATURES
+    from aeo.ranksim.lambdamart import model_id
+    from aeo.ranksim.snapshot import load_manifest, snapshot_final_key
+    from aeo.ranksim.store import RsFinalRun, open_session
+
+    db, serp = _corpus(tmp_path)
+    main(["--database", db, "benchmark-freeze", str(serp), "--out", str(tmp_path / "a"), "--as-of", "2026-11-01"])
+    manifest = load_manifest(tmp_path / "a")
+    split = manifest["split"]
+    # The 87511c0 formula, written out here so the test does not depend on legacy_final_key.
+    old_key = hashlib.sha256(
+        (f"{manifest['labels_sha256']}|{split['cluster_threshold']}|" + "\n".join(sorted(split["final_queries"]))).encode()
+    ).hexdigest()
+    assert old_key != snapshot_final_key(tmp_path / "a", manifest)
+    model = model_id(list(MODEL_FEATURES))
+    session = open_session(db)
+    try:
+        session.add(RsFinalRun(final_key=old_key, model_id=model, snapshot_dir="written by 87511c0", summary={}))
+        session.commit()
+    finally:
+        session.close()
+    capsys.readouterr()
+    main(["--database", db, "benchmark-freeze", str(serp), "--out", str(tmp_path / "b"), "--as-of", "2026-11-01"])
+    assert f"Already scored on it: {model}" in capsys.readouterr().out
+    with pytest.raises(SystemExit, match="already scored on this final split"):
+        main(["--database", db, "benchmark", "--snapshot", str(tmp_path / "b"), "--final", "--bootstrap", "10"])
+    assert final_runs(tmp_path / "b") == []
+    assert not (tmp_path / "final_runs.jsonl").exists()  # the refusal came from the database row alone
+
+
+@pytest.mark.parametrize(
+    ("bad_line", "problem"),
+    [
+        ('{"final_key": "def", "model_id": "m2",}', "is not valid JSON"),
+        ('{"final_key": "def"}', "needs a final_key and a model_id"),
+        ('["def", "m2"]', "needs a final_key and a model_id"),
+    ],
+)
+def test_an_unreadable_registry_line_is_named_and_nothing_is_written(tmp_path, capsys, bad_line, problem):
+    db, serp = _corpus(tmp_path)
+    main(["--database", db, "benchmark-freeze", str(serp), "--out", str(tmp_path / "good"), "--as-of", "2026-11-01"])
+    registry = tmp_path / "final_runs.jsonl"
+    registry.write_text('{"final_key": "abc", "model_id": "m1"}\n\n' + bad_line + "\n")
+    for argv, written in (
+        (["benchmark-freeze", str(serp), "--out", str(tmp_path / "new"), "--as-of", "2026-11-01"], tmp_path / "new"),
+        (["benchmark", "--snapshot", str(tmp_path / "good"), "--final", "--bootstrap", "10"], tmp_path / "good" / "results.jsonl"),
+    ):
+        with pytest.raises(SystemExit) as caught:
+            main(["--database", db, *argv])
+        message = str(caught.value.code)
+        assert f"Line 3 of the final-run registry {registry} (set by RANKSIM_FINAL_RUNS)" in message
+        assert problem in message and "Fix that line by hand" in message
+        assert not written.exists()
+    assert registry.read_text().endswith(bad_line + "\n")  # never rewritten
+
+
+def test_a_registry_line_added_by_hand_without_a_newline_stays_its_own_line(tmp_path):
+    from aeo.ranksim.snapshot import register_final, registered_final_runs
+
+    registry = tmp_path / "final_runs.jsonl"
+    registry.write_text('{"final_key": "abc", "model_id": "m1"}')
+    register_final({"final_key": "def", "model_id": "m2", "protocols": []})
+    assert [(row["final_key"], row["model_id"]) for row in registered_final_runs()] == [("abc", "m1"), ("def", "m2")]
+
+
 # C15 ------------------------------------------------------------------------------------------
 
 
@@ -197,10 +267,28 @@ def test_three_way_and_bundle_output_call_same_snapshot_numbers_agreement():
     assert "Pairwise agreement: 0.592" in text
     assert _accuracy_words(text) == []
     assert "did not already have" not in text
-    assert "joins only the queries it targets" in text
+    # The B13 rule, in words that do not depend on one phrasing: targets only, and a stored competitor.
+    assert "targets" in text and "stored competitor" in text
     shell = render_whatif(report(1, words=40))
     assert "short crawl shell" in shell
     assert _accuracy_words(shell) == []
+
+
+def test_committed_what_if_outputs_do_not_call_same_snapshot_numbers_accuracy():
+    """smartcrew/pr8-*.txt were written before B13 and cannot be rerun without the crawl database.
+    Each carries a B17 note; below it, no line calls the same-snapshot numbers accuracy, and an
+    insertion rule from before B13 is marked as replaced."""
+    outputs = sorted((REPO / "smartcrew").glob("pr8*.txt"))
+    assert {path.name for path in outputs} >= {"pr8-v2-compare.txt", "pr8-predicted.txt"}
+    for path in outputs:
+        text = path.read_text()
+        note, _, body = text.partition("\n\n") if text.startswith("Note added in B17") else ("", "", text)
+        assert _accuracy_words(body) == [], path.name
+        assert "trust first" not in body, path.name
+        if "accuracy" in note.lower():
+            assert "not accuracy" in note and "numbers and ranks are unchanged" in note, path.name
+        if "did not already have" in body or "bundle URLs that were not in that query" in body:
+            assert "B13 replaced that rule" in note, path.name
 
 
 # U4 -------------------------------------------------------------------------------------------

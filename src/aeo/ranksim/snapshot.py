@@ -18,6 +18,9 @@ is kept in git so a fresh checkout or database also knows it. A run recorded onl
 snapshot's ``results.jsonl`` (E12) is in that file too, and opening any snapshot copies its
 ``results.jsonl`` runs into the database. ``--final`` refuses a model configuration found in any
 of them, so a split is scored at most once per model configuration, also after re-freezing it.
+Rows written under the first key (label file bytes, cluster threshold, final queries) are still
+looked up. A registry line that cannot be read stops ``benchmark-freeze`` and ``--final`` before
+they write anything, with the file and the line number.
 
 The split assigns whole query clusters (URL-overlap clusters from the label file) to ``dev`` or
 ``final`` from a hash of each cluster's queries and a seed, so it is deterministic and never puts
@@ -33,6 +36,7 @@ import gzip
 import hashlib
 import json
 import math
+import os
 import shutil
 from datetime import datetime, timezone
 from pathlib import Path
@@ -282,8 +286,6 @@ def record_final(snapshot_dir: str | Path, entry: dict) -> None:
 
 def final_registry_path() -> Path:
     """``smartcrew/final_runs.jsonl`` under the repo root, kept in git. ``RANKSIM_FINAL_RUNS`` overrides it."""
-    import os
-
     override = os.environ.get("RANKSIM_FINAL_RUNS")
     if override:
         return Path(override)
@@ -293,11 +295,38 @@ def final_registry_path() -> Path:
 
 
 def registered_final_runs(path: str | Path | None = None) -> list[dict]:
-    """Every final run in the git-tracked registry: one JSON object per line, never rewritten."""
+    """Every final run in the git-tracked registry: one JSON object per line, never rewritten.
+
+    A line that is not a JSON object with a ``final_key`` and a ``model_id`` raises SnapshotError
+    naming the file and that line's number, so no final run is checked against a partial list."""
     target = Path(path) if path is not None else final_registry_path()
     if not target.is_file():
         return []
-    return [json.loads(line) for line in target.read_text(encoding="utf-8").splitlines() if line.strip()]
+    rows: list[dict] = []
+    for number, raw in enumerate(target.read_bytes().split(b"\n"), start=1):
+        try:
+            line = raw.decode("utf-8-sig" if number == 1 else "utf-8")
+        except UnicodeDecodeError:
+            raise SnapshotError(_registry_problem(target, number, "it is not UTF-8 text")) from None
+        if not line.strip():
+            continue
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError as exc:
+            raise SnapshotError(_registry_problem(target, number, f"it is not valid JSON ({exc.msg} at column {exc.colno})")) from None
+        if not isinstance(row, dict) or not all(isinstance(row.get(name), str) and row[name] for name in ("final_key", "model_id")):
+            raise SnapshotError(_registry_problem(target, number, "it needs a final_key and a model_id"))
+        rows.append(row)
+    return rows
+
+
+def _registry_problem(target: Path, number: int, what: str) -> str:
+    origin = " (set by RANKSIM_FINAL_RUNS)" if os.environ.get("RANKSIM_FINAL_RUNS") else ""
+    return (
+        f"Line {number} of the final-run registry {target}{origin} cannot be read: {what}. "
+        'Fix that line by hand. Each line is one JSON object, for example {"final_key": "...", "model_id": "..."}. '
+        "Until then benchmark-freeze and benchmark --final stop here, because they cannot check earlier final runs."
+    )
 
 
 def register_final(entry: dict, path: str | Path | None = None) -> Path:
@@ -306,6 +335,12 @@ def register_final(entry: dict, path: str | Path | None = None) -> Path:
     keep = ("final_key", "model_id", "created_at", "as_of", "labels_sha256", "corpus_sha256", "git_commit", "snapshot_dir", "source")
     row = {name: entry.get(name) for name in keep if entry.get(name) is not None}
     target.parent.mkdir(parents=True, exist_ok=True)
+    # A line added by hand may lack its newline. Start a new line so the two runs do not merge into one.
+    prefix = ""
+    if target.is_file() and target.stat().st_size:
+        with target.open("rb") as handle:
+            handle.seek(-1, os.SEEK_END)
+            prefix = "" if handle.read(1) == b"\n" else "\n"
     with target.open("a", encoding="utf-8") as handle:
-        handle.write(json.dumps(row, sort_keys=True) + "\n")
+        handle.write(prefix + json.dumps(row, sort_keys=True) + "\n")
     return target

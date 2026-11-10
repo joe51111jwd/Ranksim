@@ -53,12 +53,13 @@ Scope: Google SEO only. The AI search (AEO) track is parked.
 - Drafts: LambdaMART 134/281 (0.477) against pages already ranking, 34/116 (0.293) draft vs draft. Persistence cannot order drafts at all.
 - Nov 10 new-page check (family-out, Nov 6 only, scored once on Nov 9; details in `evals/forward-2026-11-09/new_page.md`). The 34/116 figure is 28 ties of pages with no HTML, 22 right and 44 wrong when one page has text and the other does not, and 12/22 when both have text. The full list is 680 right and 557 wrong, so the comparator is not flipped. Dropping the largest query leaves 24/71. Three cheap rules (domain prior, URL overlap plus BM25, and a blend whose weight was fit on Nov 6) all failed the pre-set gate: beat LambdaMART by 0.05 on both draft slices, stay at least at BM25, and keep the bootstrap gain interval above zero. The ranker is unchanged.
 - Nov 10 fetch and recovered forward look (gate commit 6a0910a, scores in `evals/forward-2026-11-09/recovered.md`). Label: PREDICTED. The ranker is still not promoted.
+- Nov 10 Serper scrape fill (gate commit bb18150, same rules as 6a0910a, scores in `evals/forward-2026-11-09/scrape.md`). 61 of 64 scraped URLs had more than 500 characters. The text was captured on Nov 10, after both SERP days. Label: PREDICTED. The ranker is still not promoted.
 
 ## Fetch design
 The collector tries three methods, in order, and records which one worked and why the others did not. The delay is 1 second per host.
 1. The existing polite HTTP fetch. It still obeys robots.txt for the bot user agent and still refuses private addresses.
 2. Headless Chromium (Playwright), with a current Chrome user agent and a 1366x768 viewport. It waits for the DOM, then for network idle, and reads the rendered HTML, visible text, title, headings, links, and schema. Robots are checked again for that browser user agent. A disallow is not bypassed. A 40 second alarm closes the browser if a page never goes idle.
-3. Serper scrape (`POST https://scrape.serper.dev`) only when `SERPER_API_KEY` is set and `serper_scrape_credit_cap` is above zero. The cap is a hard ceiling: a call that might cost more than the credits left is not sent. The default cap is 0, so scrape is off. This run did not have the key and did not call Serper. Tests use a fake key and a mock HTTP client.
+3. Serper scrape (`POST https://scrape.serper.dev`) only when `SERPER_API_KEY` is set and `serper_scrape_credit_cap` is above zero. The cap is a hard ceiling: a call that might cost more than the credits left is not sent. The default cap is 0, so a live scrape is off. A folder of scrape JSON that was already captured can be imported with no key: text, title, and description, source `serper_scrape`, plus the capture date. Text of 500 characters or fewer is not used as page content.
 
 A page with no HTML is unknown content, not a shared low score. The feature `content_missing` is 1 for that row. Its ordering score is the mean of the Nov 6 LambdaMART training scores, shifted by the average within-query z-score of the off-page parts that exist. A missing part adds nothing. The domain prior uses Nov 6 rows from the other query families only. Recovered HTML is used at score time only. It is not a Nov 6 training row.
 
@@ -101,10 +102,35 @@ The adoption gate was fixed in 6a0910a before these scores. Promote only if ever
 
 The all-pairs lift is mostly the 71 rows that still have no HTML. They used to share one floor under every fetched page. They now take an off-page score, so they are not tied at the bottom. That is not a claim that the pasted-draft path got better. On drafts that have text, the count moved from 12/22 to 18/31 because a few recovered pages entered that slice.
 
+## Serper scrape fill (PREDICTED, ranker not promoted)
+James supplied a Nov 10 Serper scrape of 64 unique URLs that had no stored HTML. 61 had more than 500 characters of text. Three did not: a help.hcss.com article (456 characters), a Facebook post (74), and a Quora URL that returned a scrape error. The importer does not call Serper and does not need a key. Each usable page is source `serper_scrape`, captured on 2026-11-10. The gate for this look was committed in bb18150 before the scores, with the same rule as 6a0910a: every draft slice must clear.
+
+Caveat: the words were captured on Nov 10. That is three to four days after the Nov 6 SERP and one day after the Nov 9 SERP. The text can differ from the page Google ranked.
+
+The model was still fit only on the original 215 Nov 6 HTML rows. None of the scrape URLs entered training. At score time, 78 Nov 9 rows used scrape text (a URL can appear on more than one query), 35 used the original Nov 9 fetch, 183 used Nov 6 HTML, and 3 still had no usable text. Pairwise is still 1,341 pairs. Persistence is still 931/1341.
+
+| Scorer | All pairs | NDCG@10 | Spearman |
+| --- | --- | --- | --- |
+| Published LambdaMART | 680/1341 (0.507) | 0.715 | 0.096 |
+| LambdaMART, scrape text filled in | 909/1341 (0.678) [0.633, 0.721] | 0.798 [0.736, 0.857] | 0.432 [0.317, 0.545] |
+| BM25, same pages | 734/1341 (0.547) [0.510, 0.587] | 0.665 [0.615, 0.717] | 0.142 [0.035, 0.253] |
+| Persistence | 931/1341 (0.694) [0.605, 0.773] | 0.902 [0.848, 0.946] | 0.649 [0.544, 0.739] |
+| Equal-weight blend | 923/1341 (0.688) [0.649, 0.729] | 0.846 [0.798, 0.890] | 0.495 [0.399, 0.589] |
+| History-aware rule, not adopted | 1004/1341 (0.749) [0.704, 0.789] | 0.890 [0.843, 0.930] | 0.614 [0.510, 0.711] |
+
+| Slice | Published LambdaMART | This run, LambdaMART | This run, BM25 |
+| --- | --- | --- | --- |
+| Draft vs draft | 34/116 (0.293) | 68/116 (0.586) [0.508, 0.717] | 57/116 (0.491) |
+| Draft vs draft, both have text | 12/22 (0.545) | 68/116 (0.586) [0.519, 0.725] | 57/116 (0.491) |
+| Draft vs already ranking | 134/281 (0.477) | 184/281 (0.655) [0.569, 0.736] | 143/281 (0.509) |
+| Draft vs already ranking, draft has text | 87/167 (0.521) | 184/281 (0.655) [0.568, 0.735] | 143/281 (0.509) |
+
+Draft versus draft and the text-only version are the same 68/116. The scrape gave text to the drafts that used to have none, so the text slice is no longer 22 pairs. It is the full 116. The rate 0.586 does not clear the published text rate 0.545 by 0.05 (the bar is 0.595). The gain interval is [-0.038, 0.172]. The other three slices cleared their bars, including staying above BM25. The rule needs every slice. `ranker_change` is `none`.
+
 ## The main gap and next work
-Ranksim's core use case, predicting where a new or draft page lands, is still open. On drafts that have text, this run is 18/31 against another draft and 111/176 (0.631) against a page that already ranked. Neither number clears the gate. Next work:
+Ranksim's core use case, predicting where a new or draft page lands, is still open. With scrape text on the drafts, draft versus draft is 68/116 (0.586) and draft versus a page that already ranked is 184/281 (0.655). The text slice does not clear the gate. Next work:
 1. Take the next snapshot of the same 30 queries. Keep scoring new pages that have text as their own line.
-2. Most missing pages are robots blocks or challenge pages. HTTP and a headless browser did not get them. Serper scrape is wired and stayed off. A credit cap is required before anyone turns it on.
+2. The Nov 10 scrape is later than the SERPs. A scrape from the same day as the SERP would remove that caveat.
 3. Use persistence for pages already ranking, and keep the 90% target measured on unseen data with coverage stated.
 4. Apple mockup: blocked on a Superdesign browser sign-in. Resume when that is done, then wait for James's approval.
 

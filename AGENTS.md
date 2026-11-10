@@ -32,7 +32,14 @@ python -m aeo.ranksim forward-eval \
   --ledger-json evals/forward-2026-11-09/ledger.json
 ```
 
-The scored file already in git is `evals/forward-2026-11-09/report.json`. The new-page check that does not need the private HTML is `evals/forward-2026-11-09/new_page.md`. The Nov 10 recovered-content look is `evals/forward-2026-11-09/recovered.md`. Read `docs/MISSION.md` before treating any rerun as a new accuracy claim.
+The scored file already in git is `evals/forward-2026-11-09/report.json`. The new-page check that does not need the private HTML is `evals/forward-2026-11-09/new_page.md`. The Nov 10 recovered-content look is `evals/forward-2026-11-09/recovered.md`. The Serper scrape fill is `evals/forward-2026-11-09/scrape.md`. Read `docs/MISSION.md` before treating any rerun as a new accuracy claim.
+
+A saved Serper scrape folder (manifest.csv plus raw JSON) is imported with no key:
+
+```python
+from aeo.ranksim.serper_scrape import load_scrape_dir
+pages = load_scrape_dir("path/to/scrape", captured_on="2026-11-10")
+```
 
 Refetch URLs that have no stored HTML. Serper scrape stays off unless you pass a credit cap and `SERPER_API_KEY` is set. Do not commit the HTML or the key.
 

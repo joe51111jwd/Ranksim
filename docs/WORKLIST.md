@@ -264,6 +264,12 @@ fixed in advance.
 - [ ] B22. Review of the B21 fixes as merged (22bcd90..HEAD), including the follow-up commits:
   multi-lens review with adversarial verification; fix confirmed defects with regression tests.
 
+- [ ] B23. PR #5 moved (384c4a6 to 96d4a25, 2026-11-10): a family-out new-page check (`new_page.py`,
+  `new-page-eval`) and its Nov 9 results, none adopted. Reproduce it from git alone, check it for
+  Nov 9 leakage and the protocol timeline, recompute it with ties as half (E10 convention), check
+  the timing of its 897 ledger rows and that no page text is committed; record E19 and draft a
+  request to PR #5 (not posted).
+
 - [x] B18. A check says which question it answers (P0-5, backend half): where the page would sit
   among the stored results, not whether Google would show a new page at all; the evidence it cites
   is stated with its size (E14, E16, E18). Done: `CheckResult.scope`, printed by the CLI; the web UI

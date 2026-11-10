@@ -320,22 +320,33 @@ def gap_summary(rows: list[Keyword] | None = None) -> dict[str, int]:
 
 
 def load_keyword_file(path: str | Path) -> list[Keyword]:
-    """Queries to collect or track from a file: a CSV with a ``query`` column (optional ``intent``)
-    or one query per line. Intent falls back to the shared rule (aeo.ranksim.intents)."""
+    """Queries to collect or track from a file: a CSV with a query column (optional ``intent``)
+    or one query per line. The query column may be named query, keyword, queries or top queries,
+    as keyword tool and Search Console exports name it. A CSV whose header has none of those is
+    refused rather than read as one query per line, since each row would become a paid search.
+    Intent falls back to the shared rule (aeo.ranksim.intents)."""
     import csv as _csv
 
+    from aeo.ranksim.groundtruth import QUERY_COLUMNS
     from aeo.ranksim.intents import KNOWN_INTENTS, intent_for, normalize_query
 
     text = Path(path).read_text(encoding="utf-8-sig")
     lines = [line for line in text.splitlines() if line.strip() and not line.lstrip().startswith("#")]
     rows: list[tuple[str, str | None]] = []
-    if lines and "query" in [cell.strip().lower() for cell in next(_csv.reader([lines[0]]))]:
+    header = [cell.strip().lower() for cell in next(_csv.reader([lines[0]]))] if lines else []
+    query_column = next((name for name in QUERY_COLUMNS if name in header), None)
+    if query_column:
         reader = _csv.DictReader(lines)
         fields = {name.strip().lower(): name for name in reader.fieldnames or []}
         for raw in reader:
-            query = (raw.get(fields["query"]) or "").strip()
+            query = (raw.get(fields[query_column]) or "").strip()
             intent = (raw.get(fields.get("intent", ""), "") or "").strip().lower() if "intent" in fields else ""
             rows.append((query, intent if intent in KNOWN_INTENTS else None))
+    elif len(lines) > 1 and len(header) > 1 and all(len(next(_csv.reader([line]))) == len(header) for line in lines[:20]):
+        raise ValueError(
+            f"{path} looks like a CSV with the columns {', '.join(header)}, but none is a query column. "
+            f"Name the query column one of: {', '.join(QUERY_COLUMNS)}. Or put one query per line."
+        )
     else:
         rows = [(line.strip(), None) for line in lines]
     seen: set[str] = set()

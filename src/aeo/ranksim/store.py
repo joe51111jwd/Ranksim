@@ -71,6 +71,9 @@ class RsSerpCollection(Base):
     requested_depth: Mapped[int | None] = mapped_column(Integer, nullable=True)
     hits: Mapped[int] = mapped_column(Integer, default=0)
     signature: Mapped[str] = mapped_column(String(64), default="")
+    # False: a label file with no date. collected_at then holds the import time, which is not
+    # when the list was observed. None: a row from before this column (see collection_dated).
+    dated: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
 
 
 class RsFinalRun(Base):
@@ -252,8 +255,10 @@ def append_serp(
     source: str = "live",
 ) -> str | None:
     """Store one collected list as a new collection; earlier collections stay. Returns its id, or
-    None when the list is identical to the query's latest collection from the same source and
-    time (re-importing the same file adds nothing). An empty list is a real observation and is kept."""
+    None when the query already has this exact collection. A live collect is its own observation
+    unless its collection time is the same, so a re-collect that found the same list is kept. A
+    label file matches on its date, or on its list alone when it has no date, so re-importing
+    the same file adds nothing on any day. An empty list is a real observation and is kept."""
     import hashlib
     import uuid
 
@@ -261,11 +266,20 @@ def append_serp(
     provider = provider or (first.provider if first else "unknown")
     synthetic = bool(first.synthetic if synthetic is None and first else synthetic)
     is_google = bool(first.is_google if is_google is None and first else is_google)
+    dated = collected_at is not None or source == "live"
     collected_at = collected_at or utcnow()
+    if source == "live":
+        when = collected_at.isoformat()
+    elif dated:
+        when = collected_at.date().isoformat()
+    else:
+        when = "undated"
     body = "|".join(f"{hit.position}:{hit.url}" for hit in sorted(hits, key=lambda item: item.position))
-    signature = hashlib.sha256(f"{source}|{provider}|{collected_at.date().isoformat()}|{body}".encode()).hexdigest()
-    latest = latest_collection(session, query)
-    if latest is not None and latest.signature == signature:
+    signature = hashlib.sha256(f"{source}|{provider}|{when}|{body}".encode()).hexdigest()
+    seen = session.query(RsSerpCollection.id).filter(
+        RsSerpCollection.query == query, RsSerpCollection.signature == signature
+    ).first()
+    if seen is not None:
         return None
     collection_id = uuid.uuid4().hex
     session.add(
@@ -283,6 +297,7 @@ def append_serp(
             requested_depth=requested_depth,
             hits=len(hits),
             signature=signature,
+            dated=dated,
         )
     )
     for hit in hits:
@@ -325,6 +340,15 @@ def serp_collections(session: Session, query: str | None = None, *, include_synt
     if not include_synthetic:
         rows = rows.filter(RsSerpCollection.synthetic.is_(False))
     return list(rows.order_by(RsSerpCollection.query, RsSerpCollection.collected_at, RsSerpCollection.recorded_at).all())
+
+
+def collection_dated(collection: RsSerpCollection) -> bool:
+    """True when collected_at is when the list was observed. A live collect always is. A label
+    file is only when it carried a date; an older label_file row that did not record this is
+    treated as undated."""
+    if collection.dated is not None:
+        return bool(collection.dated)
+    return collection.source == "live"
 
 
 def collection_hits(session: Session, collection_id: str) -> list[RsSerp]:

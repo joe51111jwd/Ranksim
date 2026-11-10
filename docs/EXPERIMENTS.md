@@ -269,3 +269,23 @@ benchmark counts a tie as half (what random tie-breaking scores), so the figures
   time of 2026-11-07 although they were written after the Nov 9 results existed; I2 makes this
   branch's ledger date such rows by when they were written.
 
+## 2026-11-10 E15. One client-rendered shell, and how much one row moves the numbers
+
+- B6 marks pages whose stored HTML is an empty app shell (an empty `#root`/`#__next` mount point,
+  a noscript asking for JavaScript, or almost no visible text, with scripts). On the fresh crawl
+  (`freeze-src.db`, 163 fetched pages) exactly one page qualifies: `https://www.dirtworksoftware.com/`
+  (0 words, empty `#root`). It is a labeled result on a dev-split query. The low-text SmartCrew
+  pages (58 to 172 words) are card lists with their text in the HTML and are not flagged.
+- Frozen dev split, before and after leaving that one row out (344 to 337 pairs, 200 resamples):
+
+  | protocol | LambdaMART before | after | BM25F before | after | domain prior before | after |
+  |---|---:|---:|---:|---:|---:|---:|
+  | loqo | 0.605 | 0.632 | 0.480 | 0.487 | 0.634 | 0.642 |
+  | cluster | 0.520 | 0.543 | 0.480 | 0.487 | 0.564 | 0.571 |
+  | cluster-url | 0.532 | 0.528 | 0.480 | 0.487 | 0.562 | 0.568 |
+
+- Reading: one row out of 92 moves a headline number by up to 2.7 points. Every interval is wider
+  than any of these changes and only 8 clusters are scored, so no verdict changes. This is a data
+  cleaning decision made from inspecting the crawl, not from any result; the model configuration
+  and its id are unchanged, so the recorded final-split run (E12) is not repeated.
+

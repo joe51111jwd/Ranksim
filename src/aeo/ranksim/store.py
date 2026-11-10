@@ -79,6 +79,8 @@ class RsPage(Base):
     # from before this column) and the page's own rel=canonical (None: none declared).
     final_url: Mapped[str | None] = mapped_column(String(2000), nullable=True)
     canonical_url: Mapped[str | None] = mapped_column(String(2000), nullable=True)
+    # Client-rendered shell (aeo.ranksim.jsshell). None: not checked yet (older rows).
+    js_shell: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     last_attempt_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     last_attempt_status: Mapped[str | None] = mapped_column(String(32), nullable=True)
     last_attempt_error: Mapped[str | None] = mapped_column(Text, nullable=True)

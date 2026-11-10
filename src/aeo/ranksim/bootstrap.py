@@ -59,6 +59,22 @@ def flag_known_drafts(database: str, folders: tuple[Path, ...] | None = None) ->
     return flagged
 
 
+def backfill_js_shell(database: str) -> int:
+    """Check stored pages written before the js_shell column existed. Returns how many are shells."""
+    from aeo.ranksim.jsshell import is_js_shell
+
+    session = open_session(database)
+    found = 0
+    try:
+        for row in session.query(RsPage).filter(RsPage.status == "fetched", RsPage.js_shell.is_(None)).all():
+            row.js_shell = bool((row.raw_html or "").strip()) and is_js_shell(row.raw_html, row.word_count)
+            found += int(row.js_shell)
+        session.commit()
+    finally:
+        session.close()
+    return found
+
+
 def seed_corpus_if_empty(database: str) -> str:
     flagged = flag_known_drafts(database)
     session = open_session(database)

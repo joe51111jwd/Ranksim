@@ -111,7 +111,9 @@ fixed in advance.
 - [x] B5. URL match key for joining labels to pages; persist final URL and canonical; flag labeled
   URLs that redirect (P1-4). Done: `urlkey.match_key` equals PR #2's `loose_key` on test vectors;
   `normalize_url` unchanged; benchmark numbers on the snapshot dev split unchanged.
-- [ ] B6. Detect client-rendered (JS shell) pages and report them as a coverage reason (P1-5).
+- [x] B6. Detect client-rendered (JS shell) pages and report them as a coverage reason (P1-5). Done:
+  left out of training and evaluation; a shell draft is refused with a request for rendered HTML;
+  one shell in the real crawl (E15).
 - [x] B7. Per-label coverage table with thin/empty/JS-shell reasons (`--coverage-csv`); saved HTML
   and seeds found from the repo root, not the cwd (P1-9). Done: reasons covered, thin, empty,
   draft_only, blocked, error, not_attempted (JS shell comes with B6); from another directory the

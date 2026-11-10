@@ -103,8 +103,9 @@ def build_examples(
     uncovered = 0
     for label in labels:
         page = _lookup_page(pages, label.url)
-        if page is None or getattr(page, "source", "crawl") in EVALUATION_EXCLUDED_SOURCES:
-            # A draft stored under a live URL is not the page Google ranked. Count it as uncovered.
+        if page is None or getattr(page, "source", "crawl") in EVALUATION_EXCLUDED_SOURCES or getattr(page, "js_shell", False):
+            # A draft stored under a live URL, or a client-rendered shell, is not the page Google
+            # ranked. Count it as uncovered.
             uncovered += 1
             continue
         grouped.setdefault(label.query, []).append((label, page))

@@ -95,6 +95,7 @@ class PageDoc:
     crawl_inlinks: int | None = None
     source: str = "crawl"
     html_sha256: str | None = None
+    js_shell: bool = False  # client-rendered shell: the stored text is not what Google rendered
     graph_pagerank: float | None = None  # PageRank inside the link-graph crawl; not a model feature
 
 

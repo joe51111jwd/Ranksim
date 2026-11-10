@@ -243,6 +243,17 @@ def check_draft(
     """
     today = today or date.today()
     result = CheckResult(query=query, url=url, predicted_rank=None, predicted_of=0, confidence="UNSURE", confidence_note=calibration.note)
+    if html and draft_doc is None:
+        from aeo.ranksim.jsshell import js_shell_reason
+
+        shell = js_shell_reason(html)
+        if shell:
+            result.error = (
+                f"This HTML is a client-rendered shell ({shell}). Google runs the page's scripts before indexing it; "
+                "this tool does not, so it cannot score the page. Paste the HTML after it has rendered (for example, "
+                "save the page from the browser) instead. No position was invented."
+            )
+            return result
     if model is None:
         labeled = any(label.query == query for label in labels)
         result.error = (
@@ -259,12 +270,18 @@ def check_draft(
     docs: list[PageDoc] = []
     positions: dict[str, float] = {}
     replaced = False
+    shells: list[str] = []
     for label in labels:
         if label.query != query:
             continue
         page = _lookup_page(pages, label.url)
         if page is None:
             result.missing_urls.append(label.url)
+            continue
+        if getattr(page, "js_shell", False) and normalize_url(page.url) != draft_key:
+            # Its stored text is not what Google rendered: leave it out and say so.
+            result.missing_urls.append(label.url)
+            shells.append(label.url)
             continue
         positions[normalize_url(page.url)] = label.position
         if normalize_url(page.url) == draft_key:
@@ -299,6 +316,11 @@ def check_draft(
     result.candidate_hashes = {doc.url: doc.html_sha256 for doc in docs}
     result.gaps = _top_gaps(raw, ours, ranks, model, docs)
     result.warnings = stuffing_warnings(query, docs[ours], [doc for index, doc in enumerate(docs) if index != ours])
+    if shells:
+        result.warnings.append(
+            f"{len(shells)} competitor pages are client-rendered shells whose stored HTML has almost no text; Google "
+            "renders them, this tool cannot, so they were left out: " + ", ".join(shells[:5]) + ("." if len(shells) <= 5 else ", ...")
+        )
     result.confidence, result.confidence_note = rank_confidence(calibration, examples, raw_scores, ours, synthetic=synthetic)
     labeled, stored = _competitor_coverage(labels, query, draft_key, result.missing_urls)
     if labeled and stored * 2 < labeled:

@@ -517,6 +517,11 @@ def _flag_old_drafts(database: str) -> None:
     flagged = flag_known_drafts(database)
     if flagged:
         print(f"{flagged} stored pages match bundled draft HTML and were marked as drafts, not evaluation rows.")
+    from aeo.ranksim.bootstrap import backfill_js_shell
+
+    shells = backfill_js_shell(database)
+    if shells:
+        print(f"{shells} older stored pages are client-rendered shells and were marked; they are not evaluation rows.")
 
 
 def _bench_corpus(database: str, labels, coverage_csv: str | None = None):

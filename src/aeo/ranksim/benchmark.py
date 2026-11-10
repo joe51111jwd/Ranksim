@@ -636,7 +636,7 @@ def build_report(
     )
 
 
-COVERAGE_REASONS = ("covered", "thin", "empty", "draft_only", "blocked", "error", "not_attempted")
+COVERAGE_REASONS = ("covered", "thin", "js_shell", "empty", "draft_only", "blocked", "error", "not_attempted")
 COVERAGE_COLUMNS = (
     "query", "url", "position", "reason", "stored_url", "status", "source", "word_count", "fetched_at", "error",
     "final_url", "redirected", "canonical_url", "canonical_elsewhere",
@@ -647,7 +647,9 @@ def coverage_rows(labels, session) -> list[dict]:
     """One row per labeled result: whether usable stored HTML exists, and if not, why.
 
     covered: stored HTML with at least 150 words of main text. thin: stored HTML under 150 words;
-    still used, but the 150-word rule decides its order. empty: fetched, no HTML. draft_only: the
+    still used, but the 150-word rule decides its order. js_shell: the stored HTML is a
+    client-rendered shell (``aeo.ranksim.jsshell``); Google renders it, this tool cannot, so it is
+    not used. empty: fetched, no HTML. draft_only: the
     only stored HTML is an unpublished draft, which is not the page Google ranked. blocked: robots
     or URL safety refused it. error: the fetch failed (HTTP 403/404, timeout). not_attempted:
     never stored. Stored rows are matched by page identity (``urlkey.match_key``: www, scheme,
@@ -656,13 +658,14 @@ def coverage_rows(labels, session) -> list[dict]:
     page as canonical. Either means the stored HTML may not be what Google ranked at that URL.
     """
     from aeo.ranksim.features import THIN_WORD_GATE
+    from aeo.ranksim.jsshell import is_js_shell
     from aeo.ranksim.store import EVALUATION_EXCLUDED_SOURCES, RsPage
 
     from aeo.ranksim.urlkey import same_page
 
     rows = session.query(
         RsPage.url, RsPage.status, RsPage.raw_html, RsPage.source, RsPage.word_count, RsPage.fetched_at, RsPage.error,
-        RsPage.final_url, RsPage.canonical_url,
+        RsPage.final_url, RsPage.canonical_url, RsPage.js_shell,
     ).order_by(RsPage.url).all()
     by_key: dict[str, tuple] = {}
     for row in rows:
@@ -680,8 +683,11 @@ def coverage_rows(labels, session) -> list[dict]:
             continue
         has_html = bool((found.raw_html or "").strip())
         source = found.source or "unknown"
+        shell = found.js_shell if found.js_shell is not None else (has_html and is_js_shell(found.raw_html, found.word_count))
         if found.status == "fetched" and has_html and source in EVALUATION_EXCLUDED_SOURCES:
             reason = "draft_only"
+        elif found.status == "fetched" and has_html and shell:
+            reason = "js_shell"
         elif found.status == "fetched" and has_html:
             reason = "thin" if (found.word_count or 0) < THIN_WORD_GATE else "covered"
         elif found.status == "fetched":

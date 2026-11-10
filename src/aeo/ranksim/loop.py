@@ -14,6 +14,7 @@ from aeo.ranksim.features import PageDoc
 from aeo.ranksim.keywords import Keyword
 from aeo.ranksim.score import HAND_WEIGHTS, best_our_position, fit_weights, score_pages
 from aeo.ranksim.serp import SerpCollectError, SerpProvider
+from aeo.ranksim.jsshell import is_js_shell
 from aeo.ranksim.store import (
     EVALUATION_EXCLUDED_SOURCES,
     RsPage,
@@ -110,6 +111,7 @@ def page_from_row(row: RsPage) -> PageDoc:
         is_ours=is_our_url(row.url),
         source=row.source or "unknown",
         html_sha256=row.html_sha256,
+        js_shell=bool(row.js_shell),
     )
 
 
@@ -151,6 +153,7 @@ def store_fetched_page(session: Session, fetched: FetchResult) -> None:
         source=fetched.source,
         final_url=fetched.final_url,
         canonical_url=extracted.canonical or None,
+        js_shell=is_js_shell(fetched.html, doc.word_count),
     )
 
 
@@ -561,6 +564,7 @@ def reextract_pages(session: Session) -> tuple[int, int]:
         if doc.word_count != row.word_count:
             changed += 1
         row.canonical_url = extracted.canonical or None
+        row.js_shell = is_js_shell(row.raw_html, doc.word_count)
         row.title = doc.title
         row.h1 = doc.h1
         row.headings_text = doc.headings

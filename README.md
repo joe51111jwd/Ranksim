@@ -142,6 +142,8 @@ Persistence puts a URL that was absent on Nov 6 for that query at a tied score b
 
 A draft has no Nov 6 position and no stored Nov 6 page. Persistence still does not order two drafts (0 of 116 pairs, all ties). LambdaMART on those drafts is 134 of 281 pairs against a page that was already ranking (0.477) and 34 of 116 pairs against another draft (0.293). BM25 is 118 of 281 (0.420) and 37 of 116 (0.319). Content does not place a new page.
 
+A later check on the same two snapshots, with query families held out, is in `evals/forward-2026-11-09/new_page.md`. The 34/116 split is 28 ties of pages with no HTML, 22 right and 44 wrong when only one page has text, and 12/22 when both have text. A domain prior, a URL-plus-BM25 score, and a blend fit on Nov 6 were scored once. None cleared the pre-set margin against LambdaMART on both draft slices. The ranker is unchanged.
+
 The history-aware rule (prior position, plus one BM25 standard deviation as one position of movement, new pages starting at position 11) was fixed before this score. There is no split that can test a prior position without using the Nov 9 labels, so the rule is not adopted. On the pages that were in both snapshots it is worse than persistence alone (575/667 against 594/667). Its higher full-list pairwise comes from breaking ties among new URLs, and those calls are 93 of 195 (0.477). The ranker is unchanged.
 
 The ledger records each scorer's PREDICTED calls at 2026-11-07T04:00:00Z, labeled UNSURE, and scores them against the Nov 9 outcomes. Ties are not calls, so the ledger rates are higher than the pairwise rates above. Persistence is 931 of 1146 resolved calls (0.812). Re-run with the private snapshot directories (HTML is not in git):

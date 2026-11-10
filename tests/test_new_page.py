@@ -6,6 +6,7 @@ A later edit that moves a gate to fit those labels is a protocol break.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from aeo.ranksim.new_page import (
@@ -189,3 +190,33 @@ def test_published_draft_failure_is_the_missing_html_sentinel_not_a_flipped_labe
     assert counts["candidates"] == 299
     assert counts["queries"] == 30
     assert counts["score_gap_mismatches"] == 0
+    assert counts["missing_drafts"] == 29
+    assert counts["fetched_drafts"] == 34
+    assert counts["queries_with_at_least_3_pairs_under_half"] == 6
+    assert round(counts["missing_draft_mean_position"], 3) == 5.448
+    assert round(counts["fetched_draft_mean_position"], 3) == 7.441
+    assert counts["drafts_domain_seen_on_another_nov6_query"] == 37
+    assert counts["drafts_domain_absent_on_nov6"] == 26
+    assert counts["drafts_domain_only_on_this_query"] == 0
+
+
+def test_committed_new_page_report_matches_a_fresh_held_out_run():
+    report_path = ROOT / "evals" / "forward-2026-11-09" / "new_page_report.json"
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    loaded = load_forward_rows(LEDGER, BASELINE_CSV, FORWARD_CSV)
+    fresh = evaluate_held_out(loaded.candidates, loaded.history, loaded.baselines, draws=20, seed=1)
+    for scorer in ("lambdamart", "bm25", "domain_prior", "content_query", "calibrated_blend"):
+        for name in ("draft_vs_draft", "draft_vs_draft_with_content", "draft_vs_returning", "draft_vs_returning_with_content", "all"):
+            stored = report["metrics"][scorer][name]
+            got = fresh["metrics"][scorer][name]
+            assert (got["correct"], got["wrong"], got["ties"], got["pairs"]) == (
+                stored["correct"],
+                stored["wrong"],
+                stored["ties"],
+                stored["pairs"],
+            )
+    assert report["adopted_scorers"] == []
+    assert report["ranker_change"] == "none"
+    for decision in report["adoption"].values():
+        assert decision["published_draft_slices"]["adopt"] is False
+        assert decision["pasted_draft_path"]["adopt"] is False

@@ -32,4 +32,12 @@ python -m aeo.ranksim forward-eval \
   --ledger-json evals/forward-2026-11-09/ledger.json
 ```
 
-The scored file already in git is `evals/forward-2026-11-09/report.json`. Read `docs/MISSION.md` before treating any rerun as a new accuracy claim.
+The scored file already in git is `evals/forward-2026-11-09/report.json`. The new-page check that does not need the private HTML is `evals/forward-2026-11-09/new_page.md`. Read `docs/MISSION.md` before treating any rerun as a new accuracy claim.
+
+```bash
+python -m aeo.ranksim new-page-eval \
+  --ledger evals/forward-2026-11-09/ledger.json \
+  --baseline-csv evals/forward-2026-11-09/baseline_serp.csv \
+  --forward-csv evals/forward-2026-11-09/forward_serp.csv \
+  --out evals/forward-2026-11-09/new_page_report.json
+```

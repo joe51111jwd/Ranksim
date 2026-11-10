@@ -51,12 +51,13 @@ Scope: Google SEO only. The AI search (AEO) track is parked.
 
   Persistence on URLs present both days: 594/667 pairs (0.891), mean Spearman 0.816. Ledger: 1,495 PREDICTED rows, all UNSURE; persistence right on 931/1,146 resolved calls (0.812).
 - Drafts: LambdaMART 134/281 (0.477) against pages already ranking, 34/116 (0.293) draft vs draft. Persistence cannot order drafts at all.
+- Nov 10 new-page check (family-out, Nov 6 only, scored once on Nov 9; details in `evals/forward-2026-11-09/new_page.md`). The 34/116 figure is 28 ties of pages with no HTML, 22 right and 44 wrong when one page has text and the other does not, and 12/22 when both have text. The full list is 680 right and 557 wrong, so the comparator is not flipped. Dropping the largest query leaves 24/71. Three cheap rules (domain prior, URL overlap plus BM25, and a blend whose weight was fit on Nov 6) all failed the pre-set gate: beat LambdaMART by 0.05 on both draft slices, stay at least at BM25, and keep the bootstrap gain interval above zero. The ranker is unchanged.
 
 ## The main gap and next work
-Ranksim's core use case, predicting where a new or draft page lands, is at or below chance. Next work:
-1. Build a draft/new-page predictor and evaluate it on URLs that newly entered the top 10 between snapshots (true unseen pages), selected on training data only.
-2. Use persistence for pages already ranking, and keep the 90% target measured on unseen data with coverage stated.
-3. Keep adding snapshots so forward evals have more new-entry examples.
+Ranksim's core use case, predicting where a new or draft page lands, is still open. On pages that have text, draft versus draft is 12/22 and draft versus a page that already ranked is 87/167 (0.521). Next work:
+1. Take the next snapshot of the same 30 queries. Judge a new-page rule on pages that have text. Twenty-two text-versus-text pairs are too few to change the ranker.
+2. Keep the no-HTML pairs visible in the report. They are what pulls 34/116 under half, and they are not the pasted-draft path.
+3. Use persistence for pages already ranking, and keep the 90% target measured on unseen data with coverage stated.
 4. Apple mockup: blocked on a Superdesign browser sign-in. Resume when that is done, then wait for James's approval.
 
 ## Coordination

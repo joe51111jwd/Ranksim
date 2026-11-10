@@ -225,6 +225,17 @@ James moved the UI and end-to-end web flow to Claude at about 3:30pm Eastern and
 - Local: Python 3.12 keys unset 330 passed, 1 warning, 15.31s; fake keys 330 passed, 1 warning, 18.71s. Python 3.11.18 keys unset 330 passed, 1 warning, 21.06s; fake keys 330 passed, 1 warning, 18.89s. Python 3.13.18 keys unset 330 passed, 1 warning, 20.40s. No `data/` directory was created.
 - Not merged. Not deployed.
 
+### 2026-11-10, SEO Tool Builder, new-page scores, none adopted
+
+- Branch: `cursor/integration-review-175f`. Pull request: https://github.com/joe51111jwd/Ranksim/pull/5
+- The Nov 9 draft miss was checked before any new score was treated as a result. LambdaMART draft versus draft is 34/116 (28 ties, 54 wrong). 28 ties are both pages missing HTML. 44 of 66 mixed pairs put the fetched page above the page with no HTML, and the pages with no HTML have the better mean position (5.448 on 29 rows, 7.441 on 34 fetched drafts). Both-have-text is 12/22. Full list is 680 right and 557 wrong. The largest query is 10/45; dropping it leaves 24/71. Six queries with at least 3 pairs are all under half.
+- Protocol was committed before the Nov 9 look. Family holdout, three scorers, margin 0.05, bootstrap 2000, seed 20261110. Report: `evals/forward-2026-11-09/new_page.md`.
+- Held-out draft versus draft: domain prior 46/116, content and query match 60/116, blend 62/116, LambdaMART 34/116, BM25 37/116. Draft versus an already ranking page: 124/281, 121/281, 135/281, against LambdaMART 134/281. Text-only draft versus draft: 9/22, 14/22, 14/22, against LambdaMART 12/22 and BM25 15/22. All three are rejected. The content rule's draft-versus-draft gain interval is above zero, and its draft-versus-ranking rate falls to 121/281, so the both-slices gate fails.
+- Ledger: new file `evals/forward-2026-11-09/new_page_ledger.json`, 897 PREDICTED rows, UNSURE, protocol time 2026-11-07T04:00:00Z, chain head `d6e51fedbecba9485fd37db13587b996b3efeef99043c466977a126c91877f8c`. The Nov 9 ledger file was not rewritten.
+- Local: Python 3.12 keys unset, 341 passed, 1 warning, 19.0s; fake keys, 341 passed, 1 warning, 18.2s. No `data/` directory was created. Python 3.11 and 3.13 are the GitHub matrix.
+- Ranker unchanged. No merge. No deploy. No new SERP pull.
+- Next: the same 30 queries, next snapshot, and score pages that have text as their own line.
+
 ### Template
 
 Copy this block. Do not delete earlier handoffs.

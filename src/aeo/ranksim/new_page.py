@@ -840,6 +840,31 @@ def draft_failure_counts(loaded: ForwardLoad) -> dict:
         dropped_correct = draft["correct"] - per_query[largest_name][0]
         dropped_total = draft["pairs"] - sum(per_query[largest_name])
         loo = None if dropped_total == 0 else dropped_correct / dropped_total
+    missing_positions = [
+        row.label_position for row in loaded.candidates if is_draft(row) and row.html_source == "missing"
+    ]
+    fetch_positions = [
+        row.label_position for row in loaded.candidates if is_draft(row) and row.html_source == "forward_fetch"
+    ]
+    wide = [
+        query
+        for query, counts in per_query.items()
+        if sum(counts) >= 3 and counts[0] / sum(counts) < 0.5
+    ]
+    seen_queries: dict[str, set[str]] = defaultdict(set)
+    for row in loaded.history:
+        seen_queries[domain_of(row.url)].add(row.query)
+    domain_on_other = domain_absent = domain_only_here = 0
+    for row in loaded.candidates:
+        if not is_draft(row):
+            continue
+        earlier = seen_queries.get(domain_of(row.url), set())
+        if not earlier:
+            domain_absent += 1
+        elif earlier - {row.query}:
+            domain_on_other += 1
+        else:
+            domain_only_here += 1
     return {
         "label": "diagnosis of the frozen LambdaMART scores, not a new prediction",
         "candidates": len(loaded.candidates),
@@ -855,6 +880,14 @@ def draft_failure_counts(loaded: ForwardLoad) -> dict:
         "largest_query": largest_name,
         "largest_query_pairs": largest_pairs,
         "largest_query_loo_pairwise": loo,
+        "queries_with_at_least_3_pairs_under_half": len(wide),
+        "missing_drafts": len(missing_positions),
+        "fetched_drafts": len(fetch_positions),
+        "missing_draft_mean_position": None if not missing_positions else sum(missing_positions) / len(missing_positions),
+        "fetched_draft_mean_position": None if not fetch_positions else sum(fetch_positions) / len(fetch_positions),
+        "drafts_domain_seen_on_another_nov6_query": domain_on_other,
+        "drafts_domain_absent_on_nov6": domain_absent,
+        "drafts_domain_only_on_this_query": domain_only_here,
         "forward_csv_mismatches": loaded.forward_csv_mismatches,
         "score_gap_mismatches": loaded.gap_mismatches,
         "per_query": {

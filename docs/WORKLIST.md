@@ -66,8 +66,9 @@ sentences with no em or en dashes.
   callers can switch to it. Done: `product_label` keeps PR #5's signature and returns (label,
   note) from the predicted-rank threshold; `rank_confidence` and `pair_confidence` are the helpers;
   a threshold without the held-out flag never gives CLEARER.
-- [ ] I4. check.py: UNSURE when fewer than half of the labeled candidates have stored pages, and a
-  `synthetic` flag that forces UNSURE.
+- [x] I4. check.py: UNSURE when fewer than half of the labeled candidates have stored pages, and a
+  `synthetic` flag that forces UNSURE. Done: both also set every competitor row to UNSURE; the
+  draft's own URL is not counted as a competitor.
 - [ ] I5. Label import accepts a Serper export whose URL column is `link` (as PR #5 847ef71).
 - [ ] I6. Docs: `--final` is a same-snapshot holdout, not accuracy; README numbers labeled as
   same-snapshot agreement; E14 recomputes PR #5's committed forward figures with ties as half

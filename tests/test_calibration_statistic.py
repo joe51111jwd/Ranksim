@@ -65,7 +65,7 @@ class _FixedModel:
         return [0.0]
 
 
-def _check(draft_words: int, calibration: Calibration):
+def _check(draft_words: int, calibration: Calibration, *, synthetic: bool = False, stored: int = 3):
     from aeo.ranksim.check import check_draft
 
     filler = " ".join(f"word{index}" for index in range(400))
@@ -73,7 +73,8 @@ def _check(draft_words: int, calibration: Calibration):
     for position in range(1, 4):
         url = f"https://c{position}.example/"
         labels.append(SerpLabel(QUERY, url, position, None, "manual_csv"))
-        pages[url] = PageDoc(url=url, title="Dirt work software", body=f"dirt work software {filler}", word_count=400)
+        if position <= stored:
+            pages[url] = PageDoc(url=url, title="Dirt work software", body=f"dirt work software {filler}", word_count=400)
     draft = PageDoc(
         url="https://draft.example/",
         title="Dirt work software",
@@ -82,7 +83,7 @@ def _check(draft_words: int, calibration: Calibration):
     )
     return check_draft(
         query=QUERY, html="", url=draft.url, labels=labels, pages=pages, model=_FixedModel(),
-        calibration=calibration, run_ai=False, draft_doc=draft,
+        calibration=calibration, run_ai=False, draft_doc=draft, synthetic=synthetic,
     )
 
 
@@ -138,3 +139,17 @@ def test_validation_sets_the_held_out_flag():
     unvalidated = loo_fit(examples, ["bm25_title"], validate=False)
     assert unvalidated.calibration.threshold is not None and not unvalidated.calibration.held_out
     assert unvalidated.calibration.product_label(100.0, kind="pairs")[0] == "UNSURE"
+
+
+def test_synthetic_data_and_thin_coverage_stay_unsure():
+    held = _held(0.5, 0.5)
+    assert _check(400, held).confidence == "CLEARER"
+    synthetic = _check(400, held, synthetic=True)
+    assert synthetic.confidence == "UNSURE" and "Synthetic" in synthetic.confidence_note
+    assert {row.confidence for row in synthetic.competitors} == {"UNSURE"}
+    # 3 labeled competitors, only 1 stored: under half, so nothing is CLEARER.
+    sparse = _check(400, held, stored=1)
+    assert sparse.confidence == "UNSURE" and "Only 1 of 3" in sparse.confidence_note
+    assert {row.confidence for row in sparse.competitors} == {"UNSURE"}
+    # 2 of 3 stored is enough.
+    assert _check(400, held, stored=2).confidence == "CLEARER"

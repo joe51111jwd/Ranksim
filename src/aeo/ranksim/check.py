@@ -230,12 +230,16 @@ def check_draft(
     llm: LlmClient | None = None,
     run_ai: bool = True,
     draft_doc: PageDoc | None = None,
+    synthetic: bool = False,
 ) -> CheckResult:
     """Score one page against the stored competitors for a query.
 
     ``draft_doc`` scores an already-built page (for example a stored page) as is. Without it the
     HTML is parsed; rebuilding HTML from a stored doc loses tables, FAQs, links and dates, which
     made the same page get different ranks in different views.
+
+    ``synthetic`` marks example data: every label stays UNSURE. When fewer than half of the query's
+    labeled competitor pages have stored HTML, every label also stays UNSURE.
     """
     today = today or date.today()
     result = CheckResult(query=query, url=url, predicted_rank=None, predicted_of=0, confidence="UNSURE", confidence_note=calibration.note)
@@ -289,14 +293,28 @@ def check_draft(
     by_url = {doc.url: index for index, doc in enumerate(docs)}
     for row in result.competitors:
         other = by_url.get(row.url)
-        row.confidence = "UNSURE" if other is None else pair_confidence(calibration, examples, raw_scores, ours, other)
+        row.confidence = (
+            "UNSURE" if other is None else pair_confidence(calibration, examples, raw_scores, ours, other, synthetic=synthetic)
+        )
     result.candidate_hashes = {doc.url: doc.html_sha256 for doc in docs}
     result.gaps = _top_gaps(raw, ours, ranks, model, docs)
     result.warnings = stuffing_warnings(query, docs[ours], [doc for index, doc in enumerate(docs) if index != ours])
-    result.confidence, result.confidence_note = rank_confidence(calibration, examples, raw_scores, ours)
+    result.confidence, result.confidence_note = rank_confidence(calibration, examples, raw_scores, ours, synthetic=synthetic)
+    labeled, stored = _competitor_coverage(labels, query, draft_key, result.missing_urls)
+    if labeled and stored * 2 < labeled:
+        result.confidence = "UNSURE"
+        result.confidence_note = (
+            f"Only {stored} of {labeled} labeled competitor pages for this query have stored HTML, under half, "
+            "so every PREDICTED position here is UNSURE."
+        )
+        for row in result.competitors:
+            row.confidence = "UNSURE"
     if run_ai:
         result.explanation, result.explanation_stub = _explain(llm, result)
-        rounds, stub, note = _fix_loop(llm, query, html, url, labels, pages, model, calibration, today, intent, result.predicted_rank, result.predicted_of, result.gaps)
+        rounds, stub, note = _fix_loop(
+            llm, query, html, url, labels, pages, model, calibration, today, intent, result.predicted_rank, result.predicted_of,
+            result.gaps, synthetic=synthetic,
+        )
         result.fix_rounds = rounds
         result.fix_stub = stub
         result.fix_note = note
@@ -489,6 +507,21 @@ def _competitors(docs, ranks, positions, ours: int, scores: list[float] | None =
 NON_MONOTONE_LENGTH = frozenset({"word_count", "content_effort"})
 
 
+def _competitor_coverage(labels, query: str, draft_key: str, missing_urls: list[str]) -> tuple[int, int]:
+    """(labeled competitor pages for the query, how many of them have stored HTML). The checked
+    page's own URL is not a competitor."""
+
+    def key(url: str) -> str:
+        try:
+            return normalize_url(url)
+        except ValueError:
+            return url
+
+    labeled = {key(label.url) for label in labels if label.query == query} - {draft_key}
+    missing = {key(url) for url in missing_urls} - {draft_key}
+    return len(labeled), len(labeled - missing)
+
+
 def _top_gaps(raw, ours: int, ranks, model, docs=None, limit: int = 3) -> list[GapFix]:
     gains = {}
     if model is not None:
@@ -555,7 +588,9 @@ def _explain(llm: LlmClient | None, result: CheckResult) -> tuple[str, bool]:
     return "PREDICTED. " + reply.text.strip(), False
 
 
-def _fix_loop(llm, query, html, url, labels, pages, model, calibration, today, intent, before_rank, before_of, gaps) -> tuple[list[FixRound], bool, str]:
+def _fix_loop(
+    llm, query, html, url, labels, pages, model, calibration, today, intent, before_rank, before_of, gaps, synthetic: bool = False
+) -> tuple[list[FixRound], bool, str]:
     if before_rank is None:
         return [], True, "No starting rank, so the rewrite loop did not run."
     start = FixRound(0, before_rank, before_of, "Draft as submitted. The original is never changed.", html)
@@ -602,6 +637,7 @@ def _fix_loop(llm, query, html, url, labels, pages, model, calibration, today, i
             today=today,
             intent=intent,
             run_ai=False,
+            synthetic=synthetic,
         )
         if checked.predicted_rank is None:
             return rounds, False, "A rewrite could not be scored. The loop stopped."

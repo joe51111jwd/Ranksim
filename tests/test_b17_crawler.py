@@ -415,3 +415,74 @@ def test_the_user_agent_check_and_its_exemption_are_documented(monkeypatch):
     paragraphs = [block for block in readme.split("\n\n") if "CRAWL_USER_AGENT" in block]
     assert any("site you submit" in block for block in paragraphs)
     assert paragraphs and all("CRAWL_ALLOW_PRIVATE=true" in block for block in paragraphs)
+
+
+# Review follow-up
+
+
+@pytest.mark.parametrize("charset", ["ISO-8859-1", "windows-1252"])
+def test_a_byte_order_mark_wins_over_a_declared_single_byte_charset(charset):
+    hits = []
+
+    class BomRobots(_Handler):
+        def do_GET(self):  # noqa: N802
+            hits.append(self.path)
+            if self.path == "/robots.txt":
+                body = "﻿User-agent: *\nDisallow: /private\nDisallow: /café\n".encode("utf-8")
+                return self.page(body, kind=f"text/plain; charset={charset}")
+            return self.page(b"<html><body>secret</body></html>")
+
+    server = _Server(BomRobots)
+    crawler = Crawler(user_agent=UA, delay_seconds=0, allow_private=True)
+    try:
+        private = crawler.fetch(server.origin + "/private/page")
+        cafe = crawler.fetch(server.origin + "/café/menu")  # the rest of the file is read as UTF-8
+    finally:
+        crawler.close()
+        server.close()
+    assert private.blocked and private.robots_status == "disallowed"
+    assert cafe.blocked and cafe.robots_status == "disallowed"
+    assert hits == ["/robots.txt"]
+
+
+def test_a_declared_charset_still_applies_without_a_byte_order_mark():
+    class Latin1Robots(_Handler):
+        def do_GET(self):  # noqa: N802
+            if self.path == "/robots.txt":
+                return self.page("User-agent: *\nDisallow: /café\n".encode("latin-1"), kind="text/plain; charset=ISO-8859-1")
+            return self.page(b"<html><body>page</body></html>")
+
+    server = _Server(Latin1Robots)
+    crawler = Crawler(user_agent=UA, delay_seconds=0, allow_private=True)
+    try:
+        result = crawler.fetch(server.origin + "/café/menu")
+    finally:
+        crawler.close()
+        server.close()
+    assert result.blocked and result.robots_status == "disallowed"
+
+
+def test_an_ipv6_literal_contact_is_read_not_raised():
+    public = "MyBot/1.0 (+https://[2606:4700::6810:85e5]/bot)"
+    assert user_agent_problem(public) is None
+    assert user_agent_problem("MyBot/1.0 (+https://[2606:4700::6810:85e5]/bot; bot@ranksim-crawler.org)") is None
+    assert user_agent_problem("MyBot/1.0 (+https://[2606:4700::6810:85e5]:8443/bot)") is None
+    Crawler(user_agent=public).close()  # the constructor checks the user agent and must not raise
+    for agent in (
+        "MyBot/1.0 (+https://[not-an-address]/bot)",
+        "MyBot/1.0 (+https://[2606:4700::1/bot)",
+        "MyBot/1.0 (+https://[::1]/bot)",  # loopback, like localhost
+        "MyBot/1.0 (+https://[2001:db8::1]/bot)",  # documentation range, like example.com
+        "MyBot/1.0 (+http://127.0.0.1/bot)",
+    ):
+        assert user_agent_problem(agent) is not None, agent
+    assert user_agent_problem("MyBot/1.0 (+https://[::1]/bot; bot@ranksim-crawler.org)") is None
+
+
+def test_yourdomain_subdomains_are_placeholders_too():
+    for agent in (
+        "MyBot/1.0 (+https://www.yourdomain.com/bot)",
+        "MyBot/1.0 (bot@mail.yourdomain.com)",
+    ):
+        assert "placeholder" in user_agent_problem(agent), agent
+    assert user_agent_problem("MyBot/1.0 (+https://www.notyourdomain.com/bot)") is None

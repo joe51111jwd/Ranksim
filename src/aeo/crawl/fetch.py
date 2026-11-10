@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import codecs
+import ipaddress
+import re
 import time
 from dataclasses import dataclass, field
 from email.utils import parsedate_to_datetime
@@ -62,7 +65,38 @@ class HostBackoff(Exception):
 
 # yourdomain.com is the example in the refusal message below, so pasting it verbatim is refused too.
 PLACEHOLDER_DOMAINS = frozenset({"example.com", "example.org", "example.net", "localhost", "yourdomain.com"})
-PLACEHOLDER_SUFFIXES = (".example", ".test", ".invalid", ".localhost", ".example.com", ".example.org", ".example.net")
+PLACEHOLDER_SUFFIXES = (
+    ".example",
+    ".test",
+    ".invalid",
+    ".localhost",
+    ".example.com",
+    ".example.org",
+    ".example.net",
+    ".yourdomain.com",
+)
+# The authority of a contact URL. Punctuation after it ("https://example.com; bot@...") is not part
+# of the host, but a bracketed IPv6 literal ("https://[2606:4700::1]/bot") is kept whole.
+_CONTACT_URL = re.compile(r"https?://((?:\[[^\]\s]*\]|[^\s)\]<>\"',;\[/?#])+)", re.IGNORECASE)
+_CONTACT_EMAIL = re.compile(r"[\w.+-]+@([\w-]+(?:\.[\w-]+)+)")
+_DOMAIN_NAME = re.compile(r"[\w-]+(?:\.[\w-]+)+")
+
+
+def _contact_host(authority: str) -> str:
+    try:
+        return urlsplit("//" + authority).hostname or ""
+    except ValueError:
+        return authority  # a malformed bracketed host: kept as written, so it is named and refused
+
+
+def _real_contact_host(host: str) -> bool:
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError:
+        return bool(_DOMAIN_NAME.fullmatch(host)) and host not in PLACEHOLDER_DOMAINS and not host.endswith(PLACEHOLDER_SUFFIXES)
+    # Loopback, private and documentation addresses (192.0.2.0/24, 2001:db8::/32) are the address
+    # form of localhost and example.com: no site owner can reach them.
+    return address.is_global
 
 
 def user_agent_problem(user_agent: str) -> str | None:
@@ -71,23 +105,13 @@ def user_agent_problem(user_agent: str) -> str | None:
     Site owners need to know who is crawling and how to reach them, so the user agent must name the
     crawler and give a contact URL or email that is not a placeholder (example.com and the like).
     """
-    import re
-
     text = (user_agent or "").strip()
     if not text:
         return "the crawler user agent is empty"
-    # Punctuation after a URL ("https://example.com; bot@...") is not part of its host.
-    hosts = [urlsplit(url).hostname or "" for url in re.findall(r"https?://[^\s)\]<>\"',;]+", text)]
-    hosts += [domain for domain in re.findall(r"[\w.+-]+@([\w-]+(?:\.[\w-]+)+)", text)]
-    hosts = [host.lower().rstrip(".") for host in hosts]
-    real = [
-        host
-        for host in hosts
-        if re.fullmatch(r"[\w-]+(?:\.[\w-]+)+", host)
-        and host not in PLACEHOLDER_DOMAINS
-        and not host.endswith(PLACEHOLDER_SUFFIXES)
-    ]
-    if real:
+    hosts = [_contact_host(authority) for authority in _CONTACT_URL.findall(text)]
+    hosts += _CONTACT_EMAIL.findall(text)
+    hosts = [host.lower().rstrip(".") for host in hosts if host]
+    if any(_real_contact_host(host) for host in hosts):
         return None
     if hosts:
         return f"the crawler user agent's contact is a placeholder ({hosts[0]})"
@@ -365,7 +389,7 @@ class Crawler:
             parser = parse_robots("")
             self._robots[origin] = parser
             return parser
-        parser = parse_robots(self._read_capped(response))
+        parser = parse_robots(self._read_robots(response))
         self._robots[origin] = parser
         return parser
 
@@ -508,6 +532,15 @@ class Crawler:
         raw = response.content[:MAX_BYTES]
         encoding = response.encoding or "utf-8"
         return raw.decode(encoding, errors="replace")
+
+    def _read_robots(self, response: httpx.Response) -> str:
+        """robots.txt text. RFC 9309 says the file is UTF-8, so a UTF-8 byte order mark wins over a
+        declared charset such as ISO-8859-1. Decoded with that charset, the mark would become
+        stray characters that hide the first user-agent line."""
+        raw = response.content[:MAX_BYTES]
+        if raw.startswith(codecs.BOM_UTF8):
+            return raw[len(codecs.BOM_UTF8) :].decode("utf-8", errors="replace")
+        return self._read_capped(response)
 
     @staticmethod
     def _origin(url: str) -> str:

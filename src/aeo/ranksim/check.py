@@ -647,23 +647,68 @@ def _explain(llm: LlmClient | None, result: CheckResult) -> tuple[str, bool]:
     return "PREDICTED. " + reply.text.strip(), False
 
 
-_NUMBER = re.compile(r"(?<![\w.])\d+(?:[.,]\d+)*")
+# Every digit run, also one glued to a word or a period (top3, x10, No.5); ".85" is read as 0.85.
+_NUMBER = re.compile(r"(?:(?<![\w.])\.)?\d+(?:[.,]\d+)*")
+# Ordered-list numbering: "1." or "1)" after a space or the start, before a space or the end.
+_LIST_MARKER = re.compile(r"(?:^|(?<=\s))\(?(\d{1,2})[.)](?=\s|$)")
+_HEADING_TAG = re.compile(r"h[1-6]")
 
 
 def _number_key(text: str) -> str:
     value = text.replace(",", "")
+    if value.startswith("."):
+        value = "0" + value
     if "." in value:
         value = value.rstrip("0").rstrip(".")
     return value
 
 
+def _numbers(text: str) -> list[tuple[str, str, int]]:
+    """(number, the word it is glued to or "" when it stands alone, start offset) for each number."""
+    found = []
+    for match in _NUMBER.finditer(text):
+        start, end = match.span()
+        word = ""
+        if start and (text[start - 1].isalnum() or text[start - 1] in "._"):
+            while start and (text[start - 1].isalnum() or text[start - 1] in "._"):
+                start -= 1
+            while end < len(text) and (text[end].isalnum() or text[end] == "_"):
+                end += 1
+            word = text[start:end].strip(".").lower()
+        found.append((match.group(), word, match.start()))
+    return found
+
+
+def _list_numbering(text: str) -> set[int]:
+    """Start offsets of the numbers of an ordered list: 1, 2, 3 ... in order, at least two."""
+    starts, expected = [], 1
+    for match in _LIST_MARKER.finditer(text):
+        if int(match.group(1)) == expected:
+            starts.append(match.start(1))
+            expected += 1
+    return set(starts) if len(starts) >= 2 else set()
+
+
 def invented_numbers(reply: str, brief: str) -> list[str]:
     """Numbers in an LLM reply that do not appear in the brief it was given. The explanation may
-    restate the brief, never add to it. Limits: digits only (spelled-out numbers are not checked),
-    and a number present anywhere in the brief passes even if the reply attaches it to something
-    else (for example a rival's Google position restated as the page's own rank)."""
-    allowed = {_number_key(found) for found in _NUMBER.findall(brief)}
-    return sorted({found for found in _NUMBER.findall(reply) if _number_key(found) not in allowed})
+    restate the brief, never add to it. Digits glued to a word or a period count too (top3, x10,
+    No.5); a glued word copied from the brief (a feature name such as BM25F) and a heading tag
+    (H2) pass. The numbers of an ordered list (1. 2. 3., in order) are list numbering, not claims.
+    Limits: digits only (spelled-out numbers are not checked), and a number present anywhere in the
+    brief passes even if the reply attaches it to something else (for example a rival's Google
+    position restated as the page's own rank)."""
+    brief_numbers = _numbers(brief)
+    allowed = {_number_key(number) for number, word, _ in brief_numbers if not word}
+    brief_words = {word for _, word, _ in brief_numbers if word}
+    numbering = _list_numbering(reply)
+    invented = set()
+    for number, word, start in _numbers(reply):
+        if start in numbering or _number_key(number) in allowed:
+            continue
+        if word and (word in brief_words or _HEADING_TAG.fullmatch(word)):
+            continue
+        invented.add(number)
+    return sorted(invented)
 
 
 def _fix_loop(

@@ -207,7 +207,7 @@ def main(argv: list[str] | None = None) -> None:
     ledger_sub = ledger.add_subparsers(dest="ledger_command", required=True)
     ledger_verify = ledger_sub.add_parser("verify", help="Check that no recorded prediction was changed, removed, or reordered")
     ledger_verify.add_argument(
-        "--expect-head", default=None, help="A latest hash published earlier; fails if it is no longer in the chain (newest rows removed)"
+        "--expect-head", default=None, help="A latest hash published earlier, in full or its first 12 characters or more; fails if it is no longer in the chain (newest rows removed)"
     )
     ledger_list = ledger_sub.add_parser("list", help="Show recorded predictions")
     ledger_list.add_argument("--limit", type=int, default=20)
@@ -1128,7 +1128,7 @@ def _ledger(database: str, args) -> None:
         if args.ledger_command == "verify":
             ok, message = verify_ledger(session)
             print(message)
-            if ok and args.expect_head:
+            if ok and args.expect_head is not None:
                 from aeo.ranksim.ledger import head_is_anchored
 
                 ok, anchored = head_is_anchored(session, args.expect_head)

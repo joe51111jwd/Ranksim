@@ -26,7 +26,8 @@ position. Scoring against an outcome:
 - a prediction is dated by the later of its stated time (``created_at``, which a caller may set
   to a protocol time) and the wall clock when it was written (``payload.recorded_at``, set here
   and covered by the hash). A row written after its stated time is "backdated": only outcomes
-  observed after it was really written can resolve it;
+  observed after it was really written can resolve it. A row without a write time from this
+  ledger (another writer, whatever its hash version) is "undated": counted, not scored;
 - predictions and outcomes match only within one named project (``project_slug``). A blank slug
   is legacy and matches nothing. Single-project use passes ``DEFAULT_PROJECT_SLUG``.
 Unresolved calls are counted, never dropped silently. Checks of pasted HTML with no real URL
@@ -41,6 +42,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import threading
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
@@ -62,6 +64,8 @@ BACKDATE_TOLERANCE = timedelta(hours=1)
 # Predictions recorded for these datasets are not scored as a track record.
 UNSCORED_DATASETS = frozenset({"synthetic", "historical", "none"})
 _APPEND_LOCK = threading.Lock()
+# The shortest head-hash prefix `ledger verify --expect-head` accepts.
+MIN_HEAD_PREFIX = 12
 
 
 class LedgerError(RuntimeError):
@@ -127,7 +131,7 @@ class LedgerScore:
     backdated: int = 0  # predictions written later than their stated time
     unscored: int = 0  # predictions on synthetic, historical or no data
     legacy: int = 0  # predictions with no project (written before projects existed): kept, not scored
-    undated: int = 0  # version 2 rows with no write time (another writer): stated time unverifiable, not scored
+    undated: int = 0  # rows with no write time from this ledger (another writer): stated time unverifiable, not scored
 
     @property
     def accuracy(self) -> float | None:
@@ -223,7 +227,7 @@ def record_outcome(
     after a prediction written later. The file fields describe an imported file, not a live
     Google pull.
     """
-    if observed_on > (_now() + timedelta(hours=14)).date().isoformat():
+    if observed_on > (_now().astimezone(timezone.utc) + timedelta(hours=14)).date().isoformat():
         raise LedgerError(f"observed_on {observed_on} is in the future; an outcome cannot be observed before it happens.")
     row = RsOutcome(
         observed_on=observed_on,
@@ -265,14 +269,26 @@ def verify_ledger(session: Session) -> tuple[bool, str]:
     return True, note
 
 
-def head_is_anchored(session: Session, expected_head: str) -> tuple[bool, str]:
+def head_is_anchored(session: Session, expected_head: str | None) -> tuple[bool, str]:
     """Whether a head hash published earlier is still a row of the chain.
 
     ``verify_ledger`` only checks the rows that remain, so deleting the newest rows (or rebuilding
     the whole chain) passes it. Comparing against a head recorded somewhere else catches both.
+    The full hash or a unique prefix of at least ``MIN_HEAD_PREFIX`` hex characters is accepted,
+    in any case. An empty value is refused, never skipped.
     """
     wanted = (expected_head or "").strip().lower()
-    row = session.query(RsPrediction).filter(RsPrediction.row_hash == wanted).first()
+    if not wanted:
+        return False, f"The published head is empty. Give the hash that verify printed (at least {MIN_HEAD_PREFIX} characters)."
+    if not re.fullmatch(f"[0-9a-f]{{{MIN_HEAD_PREFIX},64}}", wanted):
+        return False, (
+            f"The published head {wanted[:16]!r} is not a hash. Give the hash that verify printed, "
+            f"in full or its first {MIN_HEAD_PREFIX} characters or more."
+        )
+    matches = session.query(RsPrediction).filter(RsPrediction.row_hash.startswith(wanted)).order_by(RsPrediction.id).limit(2).all()
+    if len(matches) > 1:
+        return False, f"The published head {wanted}... matches more than one row. Give more characters of the hash."
+    row = matches[0] if matches else None
     if row is None:
         return False, f"The published head {wanted[:16]}... is not in this ledger: rows were removed or the chain was rebuilt."
     later = session.query(RsPrediction).filter(RsPrediction.id > row.id).count()
@@ -290,15 +306,16 @@ def prediction_time(prediction: RsPrediction) -> tuple[datetime | None, bool]:
     """(the time the prediction is dated by, whether it was backdated).
 
     The later of the stated ``created_at`` and the wall-clock ``payload.recorded_at``: a row
-    cannot be resolved by an outcome that existed before the row did. A version 2 row without
-    ``recorded_at`` comes from another writer that does not stamp the write time (for example a
-    replay at a stated protocol time); its time cannot be checked, so it is ``None`` (undated).
-    Version 1 rows predate the stamp and keep their stated time.
+    cannot be resolved by an outcome that existed before the row did. Only this ledger's own
+    write time counts, and it writes ``recorded_at`` only in version 2 rows, whose hash also binds
+    the project. Any other row (another writer that does not stamp the write time, for example a
+    replay at a stated protocol time, whatever its hash version) cannot have its time checked, so
+    it is ``None`` (undated).
     """
     stated = _aware(datetime.fromisoformat(prediction.created_at))
     written_text = (prediction.payload or {}).get("recorded_at")
-    if not written_text:
-        return (None, False) if _hash_version(prediction.payload) >= 2 else (stated, False)
+    if not written_text or _hash_version(prediction.payload) < 2:
+        return None, False
     written = _aware(datetime.fromisoformat(written_text))
     return max(stated, written), written - stated > BACKDATE_TOLERANCE
 
@@ -332,7 +349,8 @@ def score_ledger(session: Session, *, project_slug: str | None = None) -> Ledger
             score.undated += 1
             continue
         score.backdated += int(backdated)
-        latest_local_day = (made + timedelta(hours=14)).date().isoformat()
+        # In UTC: the stated time may carry any offset, and its own calendar date is not the rule.
+        latest_local_day = (made.astimezone(timezone.utc) + timedelta(hours=14)).date().isoformat()
         later = [
             row
             for row in by_query.get(" ".join(prediction.query.split()), [])
@@ -384,7 +402,7 @@ def render_score(score: LedgerScore) -> str:
         )
     if score.undated:
         lines.append(
-            f"{score.undated} predictions carry no write time (written by another tool). Their stated time cannot be "
+            f"{score.undated} predictions carry no write time from this ledger (written by another tool). Their stated time cannot be "
             "checked, so they are not evidence that the prediction came before the result, and are not scored."
         )
     if score.resolved:

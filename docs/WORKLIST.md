@@ -286,11 +286,23 @@ fixed in advance.
     a participle right after the negation, so "never seen and measures accuracy" is flagged.
   - [x] G7: the B20 line above said every new test fails on 15f23b2; 9 of 58 pass there by design.
   - Known limits: a Google Ads totals label in another language in the query column of a
-    keyword-first export (such as "Gesamt: Konto") is still read as a query. A docs claim inside a
-    relative clause before the negation can still pass the pattern check.
+    keyword-first export (such as "Gesamt: Konto") is still read as a query. The docs claim check
+    can still pass a claim after a negation inside a relative clause with no "that", "which" or
+    "who" (such as "queries the model never saw give accuracy"), a claim in a "whose" or "where"
+    clause right after a negation, and a participle after the negation followed by a verb outside
+    its list (such as "never seen show accuracy"). (B22 H5 corrected this line.)
 
 - [ ] B22. Review of the B21 fixes as merged (22bcd90..HEAD), including the follow-up commits:
-  multi-lens review with adversarial verification; fix confirmed defects with regression tests.
+  multi-lens review with adversarial verification; fix confirmed defects with regression tests. Review: 6 lenses, 10 findings
+  verified, 6 confirmed (all low), 4 refuted.
+  - [ ] Crawler (H0): a robots.txt or page that declares a non-text charset (base64, rot13, hex)
+    raises LookupError and aborts the whole crawl or simulation run (older than B21).
+  - [ ] SERP store (H1, H2): an undated label re-import does not take off a wrong averages mark;
+    index-serp, calibrate and test drop a query whose latest list is unknown with no reason.
+  - [ ] Observe (H3, H4): the noise undated reason sends a hand-written file to index-serp; README
+    says a plain list keeps every line, but `#` lines are comments; Keyword Planner's UTF-16 CSV
+    download is refused with a bare codec error.
+  - [x] H5: the B21 known-limits line named the reverse of the docs check's real gap (corrected).
 
 - [x] B23. PR #5 moved (384c4a6 to 96d4a25, 2026-11-10): a family-out new-page check (`new_page.py`,
   `new-page-eval`) and its Nov 9 results, none adopted. Reviewed by four readers with an adversarial

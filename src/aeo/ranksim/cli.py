@@ -90,6 +90,7 @@ def main(argv: list[str] | None = None) -> None:
     evaluate = sub.add_parser("evaluate", help="Cross-validate LambdaMART on a real Google position file")
     evaluate.add_argument("serp_file", help="CSV with query, url, position")
     evaluate.add_argument("--folds", choices=["loo", "kfold"], default="loo")
+    evaluate.add_argument("--coverage-csv", default=None, help="Write one row per label: stored HTML or the reason it is missing")
 
     index_serp = sub.add_parser("index-serp", help="Crawl URLs from a Google position file plus the SmartCrew sitemap")
     index_serp.add_argument("serp_file")
@@ -150,6 +151,7 @@ def main(argv: list[str] | None = None) -> None:
         help="Add speed, orphan, link_depth and crawl_inlinks back into the model (experiments only)",
     )
     bench.add_argument("--json", dest="json_out", default=None, help="Write the full report as JSON")
+    bench.add_argument("--coverage-csv", default=None, help="Write one row per label: stored HTML or the reason it is missing")
     bench.add_argument(
         "--snapshot",
         default=None,
@@ -517,16 +519,22 @@ def _flag_old_drafts(database: str) -> None:
         print(f"{flagged} stored pages match bundled draft HTML and were marked as drafts, not evaluation rows.")
 
 
-def _bench_corpus(database: str, labels):
+def _bench_corpus(database: str, labels, coverage_csv: str | None = None):
     """Pages, labeled-row coverage and (url, html) of every stored page for the fingerprint."""
-    from aeo.ranksim.benchmark import labeled_coverage
+    from aeo.ranksim.benchmark import coverage_rows, write_coverage_csv
     from aeo.ranksim.corpus import load_corpus_docs
     from aeo.ranksim.store import RsPage
 
     session = open_session(database)
     try:
         pages = load_corpus_docs(session)
-        coverage = labeled_coverage(labels, session)
+        rows = coverage_rows(labels, session)
+        coverage: dict[str, int] = {}
+        for row in rows:
+            coverage[row["reason"]] = coverage.get(row["reason"], 0) + 1
+        if coverage_csv:
+            write_coverage_csv(rows, coverage_csv)
+            print(f"Wrote per-label coverage to {coverage_csv}")
         stored = [
             (url, html or "")
             for url, html in session.query(RsPage.url, RsPage.raw_html).filter(RsPage.status == "fetched").all()
@@ -559,7 +567,7 @@ def _benchmark(database: str, args) -> None:
     labels = load_serp_file(args.serp_file, report=import_report)
     print("\n".join(import_report.lines()))
     intents = {row.query: row.intent for row in build_keywords()}
-    pages, coverage, stored = _bench_corpus(database, labels)
+    pages, coverage, stored = _bench_corpus(database, labels, args.coverage_csv)
     notes = []
     if args.graph:
         _attach_graph_file(pages, args.graph, notes)
@@ -627,7 +635,9 @@ def _run_benchmark_report(
         notes.append(f"navboost_prior was withheld: {navboost_withhold_reason(labels)}.")
     if len({row.query for row in examples}) < 2:
         print("Benchmark not computed. Need at least 2 queries with 2 stored pages each.")
-        print("Coverage of labeled rows: " + ", ".join(f"{k} {v}" for k, v in sorted(coverage.items())))
+        from aeo.ranksim.benchmark import render_coverage
+
+        print(render_coverage(coverage))
         return None
     cluster_source = cluster_labels if cluster_labels is not None else labels
     try:
@@ -776,11 +786,11 @@ def _benchmark_snapshot(args) -> None:
         try:
             materialize(args.snapshot, database)
             if args.final:
-                pages, coverage, stored = _bench_corpus(database, labels)
+                pages, coverage, stored = _bench_corpus(database, labels, args.coverage_csv)
             else:
                 dev = set(split["dev_queries"])
                 dev_labels = [row for row in labels if row.query in dev]
-                pages, coverage, stored = _bench_corpus(database, dev_labels)
+                pages, coverage, stored = _bench_corpus(database, dev_labels, args.coverage_csv)
         except SnapshotError as exc:
             raise SystemExit(str(exc)) from None
         finally:
@@ -1349,11 +1359,11 @@ def _train(database: str, args) -> None:
 
 
 def _evaluate(database: str, args) -> None:
-    report = _score_file(database, args.serp_file, fit=False, model_out=None, folds=args.folds)
+    report = _score_file(database, args.serp_file, fit=False, model_out=None, folds=args.folds, coverage_csv=args.coverage_csv)
     _print_accuracy(report)
 
 
-def _score_file(database: str, path: str, *, fit: bool, model_out: str | None, folds: str = "loo"):
+def _score_file(database: str, path: str, *, fit: bool, model_out: str | None, folds: str = "loo", coverage_csv: str | None = None):
     _flag_old_drafts(database)
     from aeo.ranksim.groundtruth import ImportReport, load_serp_file
     from aeo.ranksim.lambdamart import build_examples, cross_validate, fit_lambdamart, save_model
@@ -1363,11 +1373,20 @@ def _score_file(database: str, path: str, *, fit: bool, model_out: str | None, f
     print("\n".join(import_report.lines()))
     session = open_session(database)
     try:
+        from aeo.ranksim.benchmark import coverage_rows, render_coverage, write_coverage_csv
         from aeo.ranksim.corpus import load_corpus_docs
 
         pages = load_corpus_docs(session)
+        rows = coverage_rows(labels, session)
     finally:
         session.close()
+    counts: dict[str, int] = {}
+    for row in rows:
+        counts[row["reason"]] = counts.get(row["reason"], 0) + 1
+    print(render_coverage(counts))
+    if coverage_csv:
+        write_coverage_csv(rows, coverage_csv)
+        print(f"Wrote per-label coverage to {coverage_csv}")
     intents = {row.query: row.intent for row in build_keywords()}
     examples, uncovered, withheld = build_examples(labels, pages, intents)
     real = True

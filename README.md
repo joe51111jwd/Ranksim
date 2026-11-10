@@ -262,6 +262,8 @@ python -m aeo.ranksim report
 
 `ledger` is the prediction track record. Every draft check with a real URL is appended as a PREDICTED row in a hash chain; `ledger verify` detects an edited, removed or reordered row. `ledger observe` appends later Google positions with the file name and sha256, and `ledger score` scores each call against the first observation made after the prediction. Rows belong to a project (`--project`, default `default`); a prediction is scored only against observations of the same project, and a row with no project is legacy and stays unresolved. The ledger also stores when each row was really written, inside the hashed payload. A row stated as earlier than that (a protocol time) is reported as backdated and scored from when it was written, so results that already existed cannot resolve it. The hash format matches the integration branch (version 2 binds the project).
 
+`evaluate` and `benchmark` print why each labeled row is or is not usable: covered, thin (stored but under 150 words, so the 150-word rule decides its order), empty, draft_only (only an unpublished draft is stored), blocked, error, or not_attempted. `--coverage-csv FILE` writes the per-label table. Bundled folders (`smartcrew/saved_html`, the pr8 draft folders) are found from the repo root, or `RANKSIM_ROOT`, whatever the working directory.
+
 Blocked pages can be added later without a refetch. Put the HTML in `smartcrew/saved_html/` and list `url,file` in `manifest.csv`. A missing file is skipped. No page text is invented.
 
 `test` with one source re-fetches that page, or reads a local file, and rescores with the linear weights. Competitors stay as stored. A blank before-position means SmartCrew was outside the stored results, not a rank of 151.

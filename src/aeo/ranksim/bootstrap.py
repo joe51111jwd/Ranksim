@@ -13,11 +13,18 @@ from aeo.ranksim.loop import FetchResult, store_fetched_page
 from aeo.ranksim.saved_html import load_saved_html
 from aeo.ranksim.store import RsPage, open_session
 
-PR8_V3 = Path("smartcrew/pr8_v3")
-DRAFT_FOLDERS = (Path("smartcrew/pr8"), Path("smartcrew/pr8_v2"), PR8_V3)
+def _smartcrew(name: str) -> Path:
+    """A bundled folder under the repo root (``RANKSIM_ROOT`` overrides), whatever the cwd."""
+    from aeo.ranksim.keywords import repo_root
+
+    return repo_root() / "smartcrew" / name
 
 
-def flag_known_drafts(database: str, folders: tuple[Path, ...] = DRAFT_FOLDERS) -> int:
+def draft_folders() -> tuple[Path, ...]:
+    return (_smartcrew("pr8"), _smartcrew("pr8_v2"), _smartcrew("pr8_v3"))
+
+
+def flag_known_drafts(database: str, folders: tuple[Path, ...] | None = None) -> int:
     """Mark stored pages whose HTML is byte-identical to a bundled draft as draft_bundle.
 
     Databases seeded before page provenance existed stored the pr8 drafts as ordinary pages
@@ -28,7 +35,7 @@ def flag_known_drafts(database: str, folders: tuple[Path, ...] = DRAFT_FOLDERS) 
     from aeo.ranksim.saved_html import load_saved_html as load_dir
 
     digests = set()
-    for folder in folders:
+    for folder in folders if folders is not None else draft_folders():
         if (folder / "manifest.csv").is_file():
             found, _missing = load_dir(folder)
             digests.update(hashlib.sha256(html.encode("utf-8", "replace")).hexdigest() for html in found.values())
@@ -70,7 +77,7 @@ def seed_corpus_if_empty(database: str) -> str:
             note += f" {flagged} stored pages match bundled draft HTML and were marked as drafts, not evaluation rows."
         return note
     saved, missing = load_saved_html()
-    bundled = _bundle_html(PR8_V3)
+    bundled = _bundle_html(_smartcrew("pr8_v3"))
     session = open_session(database)
     count = 0
     drafts = 0

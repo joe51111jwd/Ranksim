@@ -111,8 +111,10 @@ fixed in advance.
 - [ ] B5. URL match key for joining labels to pages; persist final URL and canonical; flag labeled
   URLs that redirect (P1-4).
 - [ ] B6. Detect client-rendered (JS shell) pages and report them as a coverage reason (P1-5).
-- [ ] B7. Per-label coverage table with thin/empty/JS-shell reasons (`--coverage-csv`); saved HTML
-  and seeds found from the repo root, not the cwd (P1-9).
+- [x] B7. Per-label coverage table with thin/empty/JS-shell reasons (`--coverage-csv`); saved HTML
+  and seeds found from the repo root, not the cwd (P1-9). Done: reasons covered, thin, empty,
+  draft_only, blocked, error, not_attempted (JS shell comes with B6); from another directory the
+  old code flagged 0 bundled drafts, so they counted as evaluation rows.
 - [ ] B8. One intents source for training, checks and space; every labeled query has an intent or
   is reported as unknown (P1-14).
 - [ ] B9. Space metrics: top-k only when the set has more than k pages; observed top 10 means

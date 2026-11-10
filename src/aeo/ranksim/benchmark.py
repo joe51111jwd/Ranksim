@@ -636,39 +636,86 @@ def build_report(
     )
 
 
-def labeled_coverage(labels, session) -> dict[str, int]:
-    """Why each labeled row does or does not have usable stored HTML.
+COVERAGE_REASONS = ("covered", "thin", "empty", "draft_only", "blocked", "error", "not_attempted")
+COVERAGE_COLUMNS = ("query", "url", "position", "reason", "stored_url", "status", "source", "word_count", "fetched_at", "error")
 
-    covered: stored HTML. draft_only: the only stored HTML is an unpublished draft, which is
-    not the page Google ranked. blocked: robots or URL safety refused it. error: fetch failed
-    (HTTP 403/404, timeout). empty: fetched but no HTML. not_attempted: never stored.
+
+def coverage_rows(labels, session) -> list[dict]:
+    """One row per labeled result: whether usable stored HTML exists, and if not, why.
+
+    covered: stored HTML with at least 150 words of main text. thin: stored HTML under 150 words;
+    still used, but the 150-word rule decides its order. empty: fetched, no HTML. draft_only: the
+    only stored HTML is an unpublished draft, which is not the page Google ranked. blocked: robots
+    or URL safety refused it. error: the fetch failed (HTTP 403/404, timeout). not_attempted:
+    never stored.
     """
+    from aeo.ranksim.features import THIN_WORD_GATE
     from aeo.ranksim.store import EVALUATION_EXCLUDED_SOURCES, RsPage
 
-    rows = session.query(RsPage.url, RsPage.status, RsPage.raw_html, RsPage.source).all()
-    by_key: dict[str, tuple[str, bool, str]] = {}
-    for url, status, html, source in rows:
-        entry = (status, bool((html or "").strip()), source or "unknown")
-        by_key[url] = entry
-        by_key.setdefault(_url_key(url), entry)
-    counts: dict[str, int] = defaultdict(int)
+    rows = session.query(
+        RsPage.url, RsPage.status, RsPage.raw_html, RsPage.source, RsPage.word_count, RsPage.fetched_at, RsPage.error
+    ).all()
+    by_key: dict[str, tuple] = {}
+    for row in rows:
+        by_key[row.url] = row
+        by_key.setdefault(_url_key(row.url), row)
+    out = []
     for label in labels:
         found = by_key.get(label.url) or by_key.get(_url_key(label.url))
+        record = {"query": label.query, "url": label.url, "position": label.position}
         if found is None:
-            counts["not_attempted"] += 1
+            out.append({**record, "reason": "not_attempted", "stored_url": "", "status": "", "source": "", "word_count": "", "fetched_at": "", "error": ""})
             continue
-        status, has_html, source = found
-        if status == "fetched" and has_html and source in EVALUATION_EXCLUDED_SOURCES:
-            counts["draft_only"] += 1
-        elif status == "fetched" and has_html:
-            counts["covered"] += 1
-        elif status == "fetched":
-            counts["empty"] += 1
-        elif status == "blocked":
-            counts["blocked"] += 1
+        has_html = bool((found.raw_html or "").strip())
+        source = found.source or "unknown"
+        if found.status == "fetched" and has_html and source in EVALUATION_EXCLUDED_SOURCES:
+            reason = "draft_only"
+        elif found.status == "fetched" and has_html:
+            reason = "thin" if (found.word_count or 0) < THIN_WORD_GATE else "covered"
+        elif found.status == "fetched":
+            reason = "empty"
+        elif found.status == "blocked":
+            reason = "blocked"
         else:
-            counts["error"] += 1
+            reason = "error"
+        out.append(
+            {
+                **record,
+                "reason": reason,
+                "stored_url": found.url,
+                "status": found.status,
+                "source": source,
+                "word_count": found.word_count if found.word_count is not None else "",
+                "fetched_at": found.fetched_at.isoformat() if found.fetched_at else "",
+                "error": found.error or "",
+            }
+        )
+    return out
+
+
+def labeled_coverage(labels, session) -> dict[str, int]:
+    """Counts of ``coverage_rows`` reasons."""
+    counts: dict[str, int] = defaultdict(int)
+    for row in coverage_rows(labels, session):
+        counts[row["reason"]] += 1
     return dict(counts)
+
+
+def write_coverage_csv(rows: list[dict], path) -> None:
+    import csv
+    from pathlib import Path
+
+    target = Path(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    with target.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=list(COVERAGE_COLUMNS))
+        writer.writeheader()
+        writer.writerows(rows)
+
+
+def render_coverage(counts: dict[str, int]) -> str:
+    ordered = [f"{reason} {counts[reason]}" for reason in COVERAGE_REASONS if counts.get(reason)]
+    return "Coverage of labeled rows: " + (", ".join(ordered) if ordered else "none") + "."
 
 
 # Rendering ---------------------------------------------------------------------------
@@ -683,7 +730,7 @@ def render_report(report: BenchmarkReport) -> str:
             f"queries {report.n_queries}, query clusters {len(set(report.clusters.values()))} "
             f"(URL-overlap Jaccard >= {report.cluster_threshold})."
         ),
-        "Coverage of labeled rows: " + ", ".join(f"{key} {value}" for key, value in sorted(report.coverage.items())) + ".",
+        render_coverage(report.coverage),
         (
             f"as_of {report.as_of}. labels sha256 {_short(report.labels_sha)}. corpus sha256 {_short(report.corpus_sha)} "
             f"over {report.corpus_pages if report.corpus_pages is not None else 'n/a'} stored pages. "

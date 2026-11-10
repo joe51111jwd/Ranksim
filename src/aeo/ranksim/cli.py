@@ -128,6 +128,18 @@ def main(argv: list[str] | None = None) -> None:
     forward_eval.add_argument("--ledger-json", default=None, help="Export the prediction chain and the later outcomes.")
     forward_eval.add_argument("--ledger-db", default=None, help="SQLite file for the ledger. Default is in memory.")
 
+    new_page = sub.add_parser(
+        "new-page-eval",
+        help="Score domain, URL, and blend rules for new pages. Nov 9 labels are not used to fit them.",
+    )
+    new_page.add_argument("--ledger", required=True, help="Frozen forward ledger.json. It is read, not rewritten.")
+    new_page.add_argument("--baseline-csv", required=True, help="Nov 6 positions. HTML is not required.")
+    new_page.add_argument("--forward-csv", required=True, help="Nov 9 positions, used as the outcome only.")
+    new_page.add_argument("--out", required=True)
+    new_page.add_argument("--ledger-json", default=None, help="New append-only ledger for these PREDICTED rows.")
+    new_page.add_argument("--ledger-db", default=None)
+    new_page.add_argument("--draws", type=int, default=2000)
+
     competitors = sub.add_parser("competitors", help="Import competitor domains")
     comp_sub = competitors.add_subparsers(dest="competitors_command", required=True)
     comp_import = comp_sub.add_parser("import", help="Save a competitor list, optionally from the labeled top 10")
@@ -264,6 +276,26 @@ def main(argv: list[str] | None = None) -> None:
             if args.ledger_db:
                 forward_args.extend(["--ledger-db", args.ledger_db])
             raise SystemExit(forward_main(forward_args))
+        elif args.command == "new-page-eval":
+            from aeo.ranksim.new_page import main as new_page_main
+
+            new_page_args = [
+                "--ledger",
+                args.ledger,
+                "--baseline-csv",
+                args.baseline_csv,
+                "--forward-csv",
+                args.forward_csv,
+                "--out",
+                args.out,
+                "--draws",
+                str(args.draws),
+            ]
+            if args.ledger_json:
+                new_page_args.extend(["--ledger-json", args.ledger_json])
+            if args.ledger_db:
+                new_page_args.extend(["--ledger-db", args.ledger_db])
+            raise SystemExit(new_page_main(new_page_args))
         elif args.command == "serve":
             _serve(settings, database, args)
         elif args.command == "ai-eval":

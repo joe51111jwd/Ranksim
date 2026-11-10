@@ -363,3 +363,28 @@ can be tested. This protocol is committed before any number is computed; the ana
   entrant vs entrant pairs, the lower end of its interval is above the random band's upper edge.
   Otherwise the result is "no evidence". The numbers are recorded whatever they are.
 
+E18 results (the single run of the protocol above; script and inputs kept outside the repo):
+
+| subset | pairs | persistence | site prior | combined | random 95% band |
+|---|---:|---:|---:|---:|---:|
+| all | 1341 | 0.767 (0.714 to 0.817) | 0.624 (0.592 to 0.656) | 0.783 (0.738 to 0.826) | 0.456 to 0.544 |
+| returning only | 667 | 0.891 (0.849 to 0.929) | 0.641 (0.599 to 0.679) | 0.891 | 0.439 to 0.561 |
+| entrant vs returning | 479 | 0.704 (0.629 to 0.779) | 0.605 (0.552 to 0.663) | 0.704 | 0.436 to 0.566 |
+| entrant vs entrant | 195 | 0.500 (all ties) | 0.613 (0.522 to 0.696) | 0.613 | 0.395 to 0.605 |
+
+- Decision under the rule: no evidence. On entrant vs entrant pairs (23 queries) the site prior's
+  interval starts at 0.522, inside the random band (0.395 to 0.605). Its point estimate is at the
+  band's upper edge.
+- Context, not part of the rule: PR #5's committed report gives the content models on the same 195
+  entrant pairs, with ties as half, LambdaMART 0.472 and BM25 0.479. Persistence alone reproduces
+  E14 (0.767 on 1341 pairs, 195 ties). The combined rule adds about 0.016 overall by ordering
+  entrants among themselves.
+- Correction, recorded rather than hidden: the first run computed the random band from independent
+  coin flips per pair (entrant vs entrant 0.426 to 0.574), not from random scores per URL as the
+  protocol says. That band is too narrow, because pairs in one query share URLs. The band above is
+  the protocol's; with either band the rule is not met, and the signals' numbers did not change.
+- Reading: on this one 2.5-day interval, nothing tested here places new entrants reliably. The
+  content-blind site prior points the right way (as E16 and PR #2's lab did) but 195 pairs in 23
+  queries cannot separate it from luck. More snapshots of the same queries (C2) are the cheapest way
+  to grow the entrant set; each Serper snapshot of 30 queries costs about 30 credits.
+

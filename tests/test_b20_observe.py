@@ -91,7 +91,7 @@ def test_f2_f5_ledger_observe_refuses_an_export_with_lists_from_other_days_or_un
     assert "No observation date in a file that has dates: 1 of 3 queries, for example 'grading software'." in message
     assert "From another provider than serper: 1 of 3 queries, for example 'grading software' from browser_export." in message
     assert "Record each day and provider from its own file with that --observed-on and --provider, or re-collect" in message
-    assert "—" not in message and "–" not in message
+    assert "\u2014" not in message and "\u2013" not in message
     assert _outcomes(db) == 0
     assert "Recorded observations" not in capsys.readouterr().out
 
@@ -199,7 +199,7 @@ def test_f4_noise_files_leave_out_other_locales_and_the_wrong_order(tmp_path, ca
     _noise(tmp_path, second, first)
     printed = capsys.readouterr().out
     assert "Left out 2 of 2 queries that are in both files" in printed
-    assert "Not dated earlier in the first file than in the second: 1. Pass the earlier file first." in printed
+    assert "Dated later in the first file than in the second: 1. Pass the earlier file first." in printed
     assert "Noise ceiling was not computed." in printed and "Queries compared" not in printed
 
 
@@ -270,3 +270,86 @@ def test_f15_track_sends_no_title_header_or_metric_row_as_a_search(tmp_path, mon
     ragged.write_text("\n".join(KP_TITLE + [KP_HEADER] + KP_ROWS) + "\n")
     cli.main(["--database", f"sqlite:///{tmp_path / 't.db'}", "track", "--mock", "--keywords", str(ragged)])
     assert sent == ["dirt work software", "hcss alternative"]
+
+
+# Review follow-up (R2 to R6).
+
+
+def test_r2_observe_names_a_date_it_cannot_read_and_says_how_to_fill_a_blank_one(tmp_path):
+    db = f"sqlite:///{tmp_path / 'l.db'}"
+    us_date = tmp_path / "us_date.csv"  # an Excel-saved file with a Date column
+    us_date.write_text(f"query,url,position,date\nq,{OURS},1,11/10/2026\nq,{RIVAL},2,11/10/2026\n")
+    with pytest.raises(SystemExit) as refused:
+        _observe(db, us_date, "2026-11-10", provider="manual_browser")
+    message = str(refused.value)
+    assert "Nothing was recorded" in message
+    assert (
+        "Date that cannot be read as YYYY-MM-DD: 1 of 1 queries, for example 'q' with 11/10/2026. "
+        "Write each date as YYYY-MM-DD, such as 2026-11-10."
+    ) in message
+    assert "Observed on another day" not in message and "Record each day" not in message
+    blank = tmp_path / "blank.csv"  # a hand-written template whose observed_on column was left empty
+    blank.write_text(f"query,url,position,observed_on\nq,{OURS},1,\nq,{RIVAL},2,\n")
+    with pytest.raises(SystemExit) as refused:
+        _observe(db, blank, "2026-11-10", provider="manual_browser")
+    message = str(refused.value)
+    assert "No observation date in a file that has dates: 1 of 1 queries, for example 'q'." in message
+    assert "In a file you wrote, fill in the dates, or remove the date column if it is empty." in message
+    assert _outcomes(db) == 0
+
+
+def test_r3_noise_files_from_the_same_day_are_not_told_to_swap(tmp_path, capsys):
+    db = f"sqlite:///{tmp_path / 's.db'}"
+    session = open_session(db)
+    append_serp(session, "q", _hits(_urls("a", "b", "c")), country="us", language="en", collected_at=_at(10, 8))
+    session.close()
+    morning = tmp_path / "morning.csv"
+    main(["--database", db, "export-serp", str(morning)])
+    session = open_session(db)
+    append_serp(session, "q", _hits(_urls("c", "b", "a")), country="us", language="en", collected_at=_at(10, 20))
+    session.close()
+    evening = tmp_path / "evening.csv"
+    main(["--database", db, "export-serp", str(evening)])
+    capsys.readouterr()
+    for pair in ((morning, evening), (evening, morning)):
+        _noise(tmp_path, *pair)
+        printed = capsys.readouterr().out
+        assert "Dated the same day in both files, or on days that overlap: 1. Compare files from different days." in printed
+        assert "Pass the earlier file first" not in printed
+        assert "Noise ceiling was not computed." in printed
+
+
+def _queries(path):
+    return [row.query for row in load_keyword_file(path)]
+
+
+def test_r4_titled_exports_without_a_metric_name_are_read_or_refused(tmp_path):
+    ads = tmp_path / "ads_keywords.csv"  # a keyword list report: a query column, no metric column
+    ads.write_text(
+        "Search keyword report\nOctober 1, 2026 - October 31, 2026\nKeyword,Match type,Campaign,Ad group\n"
+        "dirt work software,Phrase match,Brand,Core\nhcss alternative,Exact match,Brand,Core\n"
+    )
+    assert _queries(ads) == ["dirt work software", "hcss alternative"]
+    numeric = tmp_path / "numeric_titled.csv"  # no query column, a column of numbers below title rows
+    numeric.write_text("Keyword report\nOctober 2026\nTerm,Searches\ndirt work software,320\nhcss alternative,90\n")
+    with pytest.raises(ValueError, match="the columns term, searches, but none is a query column"):
+        load_keyword_file(numeric)
+
+
+def test_r5_r6_plain_lists_with_commas_stay_queries(tmp_path):
+    cases = {
+        # A cell that is a metric word, with no numbers under it (R5).
+        "metric_word.txt": "dirt work software\nwebsite, traffic\nseo, tools\n",
+        # A cell that names the query column, next to a column no keyword tool exports.
+        "keyword_comma.txt": "dirt work software\nhcss alternative\nkeyword, research tools\nseo, tools\n",
+        # A query column and a metric name, but the line below has another number of cells.
+        "next_width.txt": "dirt work software\nkeyword, clicks\nhcss alternative\n",
+        # The same, where only a later line breaks the width.
+        "later_width.txt": "dirt work software\nkeyword, clicks\nseo, tools\nhcss alternative\n",
+        # The same as the last line, with no row under it.
+        "last_line.txt": "dirt work software\nkeyword, clicks\n",
+    }
+    for name, body in cases.items():
+        path = tmp_path / name
+        path.write_text(body)
+        assert _queries(path) == [line for line in body.splitlines()], name

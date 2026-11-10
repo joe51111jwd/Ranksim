@@ -220,8 +220,8 @@ def main(argv: list[str] | None = None) -> None:
     observe.add_argument(
         "--observed-on",
         required=True,
-        help="Date the results were collected, YYYY-MM-DD. A file with rows dated another day, undated rows in a file "
-        "with dates, or rows from another provider is refused.",
+        help="Date the results were collected, YYYY-MM-DD. A file with rows dated another day, dates not written as "
+        "YYYY-MM-DD, undated rows in a file with dates, or rows from another provider is refused.",
     )
     observe.add_argument("--provider", required=True, help="Where the results came from, e.g. serper, manual_browser")
     observe.add_argument(
@@ -593,23 +593,25 @@ _FILE_PAIR_REASONS = {
     "undated": "No observation date in a file that has dates (a label file with no date): {count}.",
     "same": "Same collection_id in both files, so the list was not collected again in between: {count}.",
     "settings": "Different provider, country, language or device: {count}.",
-    "order": "Not dated earlier in the first file than in the second: {count}. Pass the earlier file first.",
+    "later": "Dated later in the first file than in the second: {count}. Pass the earlier file first.",
+    "same_day": "Dated the same day in both files, or on days that overlap: {count}. Compare files from different days.",
 }
 
 
-def _row_day(value: str) -> str:
-    """The YYYY-MM-DD day of an observed_on or collected_at value, or the value as written when it is not one."""
+def _row_day(value: str) -> str | None:
+    """The YYYY-MM-DD day of an observed_on or collected_at value, or None when it cannot be read as one."""
     from datetime import date
 
     try:
         return date.fromisoformat(value.strip()[:10]).isoformat()
     except ValueError:
-        return value.strip()
+        return None
 
 
 def _file_lists(labels, report) -> dict[str, dict]:
-    """What a results file says about each query's list: its days, whether a row is undated in a file
-    that has dates, its collection ids, and its provider, country, language and device.
+    """What a results file says about each query's list: its days, dates it cannot read as YYYY-MM-DD,
+    whether a row is undated in a file that has dates, its collection ids, and its provider, country,
+    language and device.
 
     A file has dates when it has a date column or collection ids. export-serp leaves the date of an
     undated label file blank, because its stored time is when it was imported, not when it was observed.
@@ -618,10 +620,18 @@ def _file_lists(labels, report) -> dict[str, dict]:
     lists: dict[str, dict] = {}
     for label in labels:
         entry = lists.setdefault(
-            label.query, {"days": set(), "undated": False, "collections": set(), **{name: set() for name in _LIST_SETTINGS}}
+            label.query,
+            {
+                "days": set(), "unreadable": set(), "undated": False, "collections": set(),
+                **{name: set() for name in _LIST_SETTINGS},
+            },
         )
         if label.observed_on:
-            entry["days"].add(_row_day(label.observed_on))
+            day = _row_day(label.observed_on)
+            if day:
+                entry["days"].add(day)
+            else:
+                entry["unreadable"].add(label.observed_on.strip())
         elif dated_file:
             entry["undated"] = True
         if label.collection_id:
@@ -640,10 +650,9 @@ def _comparable_file_lists(left, left_report, right, right_report):
     out when a row is undated in a file that has dates, when its list has the same collection_id in
     both (it was not collected again), when the provider, country, language or device are set in both
     files and differ, or when its first-file day is not earlier than its second-file day. Files with
-    no such columns are compared as they are.
+    no such columns, or with a date that is not YYYY-MM-DD, are compared as they are.
     """
     from collections import Counter
-    from datetime import date
 
     a_lists, b_lists = _file_lists(left, left_report), _file_lists(right, right_report)
     shared = sorted(set(a_lists) & set(b_lists))
@@ -656,13 +665,12 @@ def _comparable_file_lists(left, left_report, right, right_report):
             reasons[query] = "same"
         elif any(a[name] and b[name] and a[name] != b[name] for name in _LIST_SETTINGS):
             reasons[query] = "settings"
-        elif a["days"] and b["days"]:
-            try:
-                in_order = max(map(date.fromisoformat, a["days"])) < min(map(date.fromisoformat, b["days"]))
-            except ValueError:
-                in_order = True  # a date that is not YYYY-MM-DD cannot be ordered; compare as before
-            if not in_order:
-                reasons[query] = "order"
+        elif a["days"] and b["days"] and not (a["unreadable"] or b["unreadable"]):
+            # YYYY-MM-DD days sort as dates. Swapping the files helps only when every first-file day is later.
+            if min(a["days"]) > max(b["days"]):
+                reasons[query] = "later"
+            elif max(a["days"]) >= min(b["days"]):
+                reasons[query] = "same_day"
     if not reasons:
         return left, right, len(shared), Counter()
     return (
@@ -677,28 +685,37 @@ def _observe_conflicts(labels, report, observed_on: str, provider: str, name: st
     """Why ledger observe must not record this file with one date and provider, or None.
 
     Every query is recorded as observed on --observed-on from --provider. A row the file dates on
-    another day, a blank date in a file that has dates (an undated label file from export-serp), or
-    a row from another provider would be recorded with a date or provider it does not have.
+    another day, a date that is not YYYY-MM-DD, a blank date in a file that has dates (an undated
+    label file from export-serp), or a row from another provider would be recorded with a date or
+    provider it does not have.
     """
     lists = _file_lists(labels, report)
     total = len(lists)
     wanted = provider.strip().casefold()
     other_day = sorted(query for query, entry in lists.items() if entry["days"] - {observed_on})
+    unreadable = sorted(query for query, entry in lists.items() if entry["unreadable"])
     undated = sorted(query for query, entry in lists.items() if entry["undated"])
     other_provider = sorted(query for query, entry in lists.items() if entry["provider"] - {wanted})
-    if not (other_day or undated or other_provider):
+    if not (other_day or unreadable or undated or other_provider):
         return None
     lines = [
         f"Nothing was recorded. ledger observe records one day and one provider per file, and {name} has lists "
-        f"that were not observed on {observed_on} from {provider}."
+        f"it cannot record as observed on {observed_on} from {provider}."
     ]
     if other_day:
         days = ", ".join(sorted(lists[other_day[0]]["days"] - {observed_on}))
         lines.append(f"Observed on another day: {len(other_day)} of {total} queries, for example {other_day[0]!r} on {days}.")
+    if unreadable:
+        values = ", ".join(sorted(lists[unreadable[0]]["unreadable"]))
+        lines.append(
+            f"Date that cannot be read as YYYY-MM-DD: {len(unreadable)} of {total} queries, "
+            f"for example {unreadable[0]!r} with {values}. Write each date as YYYY-MM-DD, such as {observed_on}."
+        )
     if undated:
         lines.append(
             f"No observation date in a file that has dates: {len(undated)} of {total} queries, for example {undated[0]!r}. "
-            "export-serp leaves the date blank for a label file with no date."
+            "export-serp leaves the date blank for a label file with no date. "
+            "In a file you wrote, fill in the dates, or remove the date column if it is empty."
         )
     if other_provider:
         providers = ", ".join(sorted(lists[other_provider[0]]["provider"] - {wanted}))
@@ -706,10 +723,11 @@ def _observe_conflicts(labels, report, observed_on: str, provider: str, name: st
             f"From another provider than {provider}: {len(other_provider)} of {total} queries, "
             f"for example {other_provider[0]!r} from {providers}."
         )
-    lines.append(
-        "Record each day and provider from its own file with that --observed-on and --provider, "
-        "or re-collect those queries and export again."
-    )
+    if other_day or undated or other_provider:
+        lines.append(
+            "Record each day and provider from its own file with that --observed-on and --provider, "
+            "or re-collect those queries and export again."
+        )
     return "\n".join(lines)
 
 

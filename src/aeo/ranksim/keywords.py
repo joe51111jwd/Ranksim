@@ -325,6 +325,12 @@ _EXPORT_COLUMNS = frozenset({
     "intent", "volume", "search volume", "avg. monthly searches", "kd", "keyword difficulty", "difficulty", "cpc",
     "competition", "competitive density", "clicks", "impressions", "ctr", "position", "traffic", "url",
 })
+# Other columns that Google Ads and Keyword Planner put next to the keyword. Below title rows, a
+# header with the query column counts only when it also names one of these or a metric column.
+_EXPORT_LABEL_COLUMNS = frozenset({
+    "match type", "campaign", "ad group", "currency", "keyword status", "status", "impr.", "avg. cpc", "cost",
+    "conversions", "max. cpc", "three month change", "yoy change", "competition (indexed value)",
+})
 _DELIMITERS = (",", "\t", ";")
 # Keyword Planner and Google Ads exports put a title and a date range above the header row.
 _HEADER_LINES = 10
@@ -336,14 +342,16 @@ def load_keyword_file(path: str | Path) -> list[Keyword]:
     as keyword tool and Search Console exports name it, and the file may be separated by commas,
     tabs or semicolons. The header may sit below title rows within the first 10 lines, as in
     Keyword Planner and Google Ads exports; the rows above it are dropped. Below the first line,
-    only a row of two or more cells that names a metric column, followed by a row of the same
-    width, counts as a header, so a later line that is just "keyword" stays a query.
+    a row counts as a header only when it has two or more cells, every row under it has as many,
+    and it names the query column next to an export column (volume, clicks, match type, campaign
+    and the like) or has a column of only numbers. So a later line that is just "keyword", or a
+    query with commas in a plain list, stays a query.
     A table whose header has none of those is refused rather than read as one query per line,
     since each row would become a paid search. It counts as a table when every line has the
     same number of cells and the header names a metric column (volume, clicks, CPC and the
-    like) or a column holds only numbers below a text header, or when such a metric header sits
-    below title rows. A plain list whose queries contain commas is still read one query per line.
-    Intent falls back to the shared rule (aeo.ranksim.intents)."""
+    like) or a column holds only numbers below a text header, or when a header below title rows
+    has a column of only numbers. A plain list whose queries contain commas is still read one
+    query per line. Intent falls back to the shared rule (aeo.ranksim.intents)."""
     import csv as _csv
 
     from aeo.ranksim.groundtruth import QUERY_COLUMNS
@@ -403,26 +411,32 @@ def load_keyword_file(path: str | Path) -> list[Keyword]:
     return out
 
 
-def _metric_table_header(lines: list[str], delimiter: str, cells) -> list[str] | None:
-    """The header of a keyword table with no query column, or None when the lines read as queries."""
+def _number(cell: str) -> bool:
     import math
 
-    def number(cell: str) -> bool:
-        value = cell.strip().strip("$€£%<>~").replace(",", "").replace(" ", "")
-        try:
-            return math.isfinite(float(value))
-        except ValueError:
-            return False
+    value = cell.strip().strip("$€£%<>~").replace(",", "").replace(" ", "")
+    try:
+        return math.isfinite(float(value))
+    except ValueError:
+        return False
 
+
+def _numeric_column(header: list[str], body: list[list[str]]) -> bool:
+    """Whether a column with a text name holds only numbers in the rows below it."""
+    for column, name in enumerate(header):
+        values = [row[column] for row in body if row[column]]
+        if name and not _number(name) and values and all(_number(value) for value in values):
+            return True
+    return False
+
+
+def _metric_table_header(lines: list[str], delimiter: str, cells) -> list[str] | None:
+    """The header of a keyword table with no query column, or None when the lines read as queries."""
     table = [cells(line, delimiter) for line in lines[:21]]
     if table and len(table[0]) >= 2 and all(len(row) == len(table[0]) for row in table):
         header = [cell.lower() for cell in table[0]]
-        if any(cell in _EXPORT_COLUMNS for cell in header):
+        if any(cell in _EXPORT_COLUMNS for cell in header) or _numeric_column(header, table[1:]):
             return header
-        for column, name in enumerate(header):
-            values = [row[column] for row in table[1:] if row[column]]
-            if name and not number(name) and values and all(number(value) for value in values):
-                return header
     for start in range(1, min(_HEADER_LINES, len(lines))):
         header = _titled_table_header(lines, start, delimiter, cells)
         if header:
@@ -433,13 +447,18 @@ def _metric_table_header(lines: list[str], delimiter: str, cells) -> list[str] |
 def _titled_table_header(lines: list[str], start: int, delimiter: str, cells) -> list[str] | None:
     """The header of an export table that starts below title rows, at ``lines[start]``, or None.
 
-    It needs two or more filled cells, one of them a metric column (volume, clicks, CPC and the
-    like), and the next line, if any, must have the same number of cells. A query line further
-    down a plain list rarely looks like that."""
+    It needs two or more filled cells and at least one row below it, and each of the next 20
+    rows must have as many cells. It must also name the query column next to an export column
+    (volume, clicks, match type, campaign and the like), or have a column of only numbers.
+    A line further down a plain list of queries, even one with commas, rarely looks like that."""
+    from aeo.ranksim.groundtruth import QUERY_COLUMNS
+
     header = [cell.lower() for cell in cells(lines[start], delimiter)]
-    if sum(1 for cell in header if cell) < 2 or not any(cell in _EXPORT_COLUMNS for cell in header):
+    body = [cells(line, delimiter) for line in lines[start + 1 : start + 21]]
+    if sum(1 for cell in header if cell) < 2 or not body or any(len(row) != len(header) for row in body):
         return None
-    if start + 1 < len(lines) and len(cells(lines[start + 1], delimiter)) != len(header):
-        return None
-    return header
+    named = any(cell in QUERY_COLUMNS for cell in header) and any(
+        cell in _EXPORT_COLUMNS or cell in _EXPORT_LABEL_COLUMNS for cell in header
+    )
+    return header if named or _numeric_column(header, body) else None
 

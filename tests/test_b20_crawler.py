@@ -1,17 +1,22 @@
 """B20 crawler fixes: robots.txt is checked on every redirect hop (F1), a host httpx cannot encode
 does not crash a fetch (F8), robots.txt is read as UTF-8 whatever the declared charset (F9), dot
 segments are removed before the robots check (F10), and robots.txt requests respect 429/503
-backoff (F11). No network: mock transports only."""
+backoff (F11). No external network: mock transports, and a local server for the guarded
+client."""
 
 import socket
+import threading
 import time
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+import httpcore
 import httpx
 import pytest
 
 import aeo.crawl.fetch as fetch_module
 from aeo.crawl.fetch import ROBOTS_UNREACHABLE, Crawler
 from aeo.crawl.urls import normalize_url
+from aeo.errors import UnsafeURL
 
 UA = "RanksimTest/1.0 (+https://ci.ranksim-tests.org/bot)"
 PUBLIC = "93.184.216.34"
@@ -127,6 +132,124 @@ def test_a_crawl_does_not_store_a_page_reached_through_a_disallowed_redirect():
     go = [page for page in batch.pages if page.url == "https://site.test/go"]
     assert go and go[0].blocked and not go[0].html
     assert ("site.test", "/private/page") not in hits
+
+
+class _RebindWorld:
+    """A real guarded crawler (allow_private=False). site.test and redirecting.test resolve to a
+    public address that is served by a local server. rebind.test resolves to a public address at
+    the URL check and to 10.0.0.5 at connect time (DNS rebinding). site.test/go redirects to
+    rebind.test, and the robots.txt of redirecting.test redirects to rebind.test."""
+
+    def __init__(self, monkeypatch):
+        for name in ("HTTP_PROXY", "http_proxy", "ALL_PROXY", "all_proxy"):
+            monkeypatch.delenv(name, raising=False)  # plain http goes direct, through the pinned pool
+        self.connects = []
+        self.hits = []
+        world = self
+
+        class Handler(BaseHTTPRequestHandler):
+            def do_GET(self):  # noqa: N802
+                host = self.headers.get("Host", "")
+                world.hits.append((host, self.path))
+                if host == "redirecting.test" and self.path == "/robots.txt":
+                    location = "http://rebind.test/robots.txt"
+                elif self.path == "/go":
+                    location = "http://rebind.test/secret"
+                else:
+                    body = b"User-agent: *\nAllow: /\n"
+                    self.send_response(200)
+                    self.send_header("Content-Type", "text/plain")
+                    self.send_header("Content-Length", str(len(body)))
+                    self.end_headers()
+                    self.wfile.write(body)
+                    return
+                self.send_response(302)
+                self.send_header("Location", location)
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+
+            def log_message(self, *args):
+                pass
+
+        self.httpd = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        self.httpd.daemon_threads = True
+        threading.Thread(target=self.httpd.serve_forever, daemon=True).start()
+        port = self.httpd.server_port
+
+        real = socket.getaddrinfo
+
+        def resolve(host, wanted_port, *args, **kwargs):
+            if not str(host).endswith(".test"):
+                return real(host, wanted_port, *args, **kwargs)  # the local server itself
+            # The URL check asks without a port; the connection asks with one.
+            address = "10.0.0.5" if host == "rebind.test" and wanted_port is not None else PUBLIC
+            return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", (address, wanted_port or 0))]
+
+        monkeypatch.setattr(socket, "getaddrinfo", resolve)
+
+        class Local(httpcore.NetworkBackend):
+            def __init__(self, inner):
+                self.inner = inner
+
+            def connect_tcp(self, host, wanted_port, timeout=None, local_address=None, socket_options=None):
+                world.connects.append(host)
+                if host != PUBLIC:
+                    raise httpcore.ConnectError("only the public test address is served here")
+                return self.inner.connect_tcp("127.0.0.1", port, timeout=timeout)
+
+            def sleep(self, seconds):
+                self.inner.sleep(seconds)
+
+        self._local = Local
+        self.crawlers = []
+
+    def crawler(self) -> Crawler:
+        crawler = Crawler(user_agent=UA, delay_seconds=0)
+        assert crawler._guards and all(item.check_ip for item in crawler._guards)
+        for item in crawler._guards:
+            item._inner = self._local(item._inner)
+        self.crawlers.append(crawler)
+        return crawler
+
+    def close(self):
+        for crawler in self.crawlers:
+            crawler.close()
+        self.httpd.shutdown()
+        self.httpd.server_close()
+
+
+def test_a_redirect_hop_that_rebinds_to_a_private_address_is_an_unsafe_url(monkeypatch):
+    world = _RebindWorld(monkeypatch)
+    try:
+        crawler = world.crawler()
+        with pytest.raises(UnsafeURL, match="rebind.test resolves to a non-public address at connect time"):
+            crawler.fetch("http://site.test/go")
+        assert "http://rebind.test" not in crawler._robots  # not cached as a robots.txt that did not answer
+        batch = world.crawler().crawl("http://site.test/go", sitemap_url=None, max_pages=3)
+    finally:
+        world.close()
+    assert batch.pages == []  # no blocked page that names the internal host as its final URL
+    assert any("rebind.test resolves to a non-public address at connect time" in item for item in batch.warnings)
+    assert set(world.connects) == {PUBLIC}  # the private address got no connection
+    assert all(host != "rebind.test" for host, _path in world.hits)
+
+
+def test_a_rebinding_start_host_is_unsafe_and_a_robots_txt_redirect_to_one_stays_unreachable(monkeypatch):
+    world = _RebindWorld(monkeypatch)
+    try:
+        crawler = world.crawler()
+        with pytest.raises(UnsafeURL, match="rebind.test resolves to a non-public address at connect time"):
+            crawler.fetch("http://rebind.test/page")
+        # Another host's robots.txt that redirects to the rebinding host is a robots.txt that could
+        # not be read, as a redirect to a plainly private host is: the page is blocked, fail closed.
+        result = crawler.fetch("http://redirecting.test/page")
+    finally:
+        world.close()
+    assert result.blocked and result.robots_status == "unreachable" and not result.html
+    assert crawler._robots["http://redirecting.test"] is ROBOTS_UNREACHABLE
+    assert "http://rebind.test" not in crawler._robots
+    assert set(world.connects) == {PUBLIC}
+    assert ("redirecting.test", "/page") not in world.hits
 
 
 # F8

@@ -399,6 +399,14 @@ class Crawler:
         except RedirectProblem:
             self._robots[origin] = None  # redirect loop: treat as unavailable
             return None
+        except httpx.ConnectError as exc:
+            if isinstance(exc.__cause__, guard.UnsafeConnect) and self._origin(str(exc.request.url)) == origin:
+                # The host itself resolved to a non-public address at connect time (DNS rebinding).
+                # robots.txt was never requested, so this is an unsafe URL, as in a page fetch, and
+                # nothing is cached. A robots.txt that redirects to such a host stays unreachable.
+                raise UnsafeURL(str(exc.__cause__)) from None
+            self._robots[origin] = ROBOTS_UNREACHABLE
+            return ROBOTS_UNREACHABLE
         except (httpx.HTTPError, httpx.InvalidURL, UnsafeURL, ValueError, DeadlineExceeded):
             # InvalidURL: a host httpx cannot encode (an emoji domain in Unicode form) never answers.
             self._robots[origin] = ROBOTS_UNREACHABLE

@@ -190,7 +190,9 @@ def test_final_runs_once_per_model_and_appends(tmp_path, capsys):
     main(["benchmark", "--snapshot", str(snap), "--final", "--bootstrap", "20"])
     out = capsys.readouterr().out
     assert "[final]" in out and "[final-url]" in out
-    assert "chosen on held-out dev pairs" in out
+    confidence = [line for line in out.splitlines() if line.strip().startswith("Confidence:")]
+    assert len(confidence) == 2 and all("held-out dev pairs" in line for line in confidence)
+    assert "Intervals withheld" in out  # 8 queries cannot give 10 scored clusters
     runs = final_runs(snap)
     assert len(runs) == 1 and runs[0]["model_id"].startswith("lgbm-")
     assert {row["protocol"] for row in runs[0]["protocols"]} == {"final", "final-url"}

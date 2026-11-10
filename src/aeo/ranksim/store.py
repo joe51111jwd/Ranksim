@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from pathlib import Path
 
-from sqlalchemy import Boolean, DateTime, Float, Integer, String, Text, create_engine, select
+from sqlalchemy import UniqueConstraint, Boolean, DateTime, Float, Integer, String, Text, create_engine, select
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
 from sqlalchemy.types import JSON
 
@@ -71,6 +71,22 @@ class RsSerpCollection(Base):
     requested_depth: Mapped[int | None] = mapped_column(Integer, nullable=True)
     hits: Mapped[int] = mapped_column(Integer, default=0)
     signature: Mapped[str] = mapped_column(String(64), default="")
+
+
+class RsFinalRun(Base):
+    """A model configuration scored on a frozen final split. Kept in the main database, keyed by the
+    split itself (labels, cluster threshold, final queries), so re-freezing the same split into a new
+    snapshot directory does not allow a second final run of the same configuration."""
+
+    __tablename__ = "rs_final_runs"
+    __table_args__ = (UniqueConstraint("final_key", "model_id", name="uq_final_run"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    final_key: Mapped[str] = mapped_column(String(64), index=True)
+    model_id: Mapped[str] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    snapshot_dir: Mapped[str] = mapped_column(String(1000), default="")
+    summary: Mapped[dict] = mapped_column(JSON)
 
 
 class RsPage(Base):

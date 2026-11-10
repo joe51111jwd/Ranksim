@@ -147,7 +147,7 @@ def main(argv: list[str] | None = None) -> None:
         choices=["loqo", "cluster", "cluster-url"],
         help="Repeat to pick several. Default: all three.",
     )
-    bench.add_argument("--cluster-threshold", type=float, default=0.3)
+    bench.add_argument("--cluster-threshold", type=float, default=None, help="Default 0.3; with --snapshot, the snapshot's own value")
     bench.add_argument("--bootstrap", type=int, default=2000)
     bench.add_argument("--seed", type=int, default=0)
     bench.add_argument(
@@ -193,7 +193,7 @@ def main(argv: list[str] | None = None) -> None:
     freeze.add_argument("serp_file", nargs="?", default="smartcrew/serp.csv")
     freeze.add_argument("--out", required=True, help="New directory for the snapshot. An existing snapshot is never overwritten.")
     freeze.add_argument("--as-of", required=True, help="Date (YYYY-MM-DD) the labels describe; freshness features use it")
-    freeze.add_argument("--final-share", type=float, default=0.3, help="Share of query clusters held out as the final test set")
+    freeze.add_argument("--final-share", type=float, default=0.3, help="Share of queries (whole clusters only) held out as the final test set")
     freeze.add_argument("--seed", type=int, default=0)
     freeze.add_argument("--cluster-threshold", type=float, default=0.3)
     freeze.add_argument("--graph", default=None, help="Optional link-graph JSON to freeze with the pages")
@@ -307,7 +307,7 @@ def main(argv: list[str] | None = None) -> None:
             if args.final and not args.snapshot:
                 parser.error("--final needs --snapshot: the final split exists only in a frozen snapshot")
             if args.snapshot:
-                _benchmark_snapshot(args)
+                _benchmark_snapshot(args, database)
             else:
                 _benchmark(database, args)
         elif args.command == "benchmark-freeze":
@@ -677,6 +677,8 @@ def _benchmark(database: str, args) -> None:
     _flag_old_drafts(database)
     from datetime import date
 
+    if args.cluster_threshold is None:
+        args.cluster_threshold = 0.3
     from aeo.ranksim.benchmark import file_sha256
     from aeo.ranksim.groundtruth import ImportReport, load_serp_file
 
@@ -893,18 +895,34 @@ def _benchmark_freeze(database: str, args) -> None:
         f"{split['clusters']} query clusters: {len(split['dev_queries'])} dev queries, "
         f"{len(split['final_queries'])} final queries (seed {split['seed']})."
     )
+    for line in manifest.get("import_report") or []:
+        print(line)
+    from aeo.ranksim.snapshot import final_key
+    from aeo.ranksim.store import RsFinalRun
+
+    session = open_session(database)
+    try:
+        earlier = session.query(RsFinalRun).filter(RsFinalRun.final_key == final_key(manifest)).all()
+    finally:
+        session.close()
+    if earlier:
+        models = ", ".join(sorted({row.model_id for row in earlier}))
+        print(
+            f"This is the same final split as an earlier snapshot. Already scored on it: {models}. "
+            "Those configurations will not be scored on it again."
+        )
     print("The snapshot holds third-party page HTML. Keep it out of git and do not publish it.")
     print(f"Develop with `benchmark --snapshot {args.out}` (dev split only). Score the final split once per model with --final.")
 
 
-def _benchmark_snapshot(args) -> None:
+def _benchmark_snapshot(args, registry_database: str) -> None:
     import tempfile
     from datetime import date, datetime, timezone
 
     from aeo.ranksim.benchmark import git_commit, lightgbm_version
     from aeo.ranksim.groundtruth import ImportReport, load_serp_file
     from aeo.ranksim.lambdamart import model_id
-    from aeo.ranksim.snapshot import SnapshotError, final_runs, graph_path, labels_path, load_manifest, materialize, record_final
+    from aeo.ranksim.snapshot import SnapshotError, final_key, final_runs, graph_path, labels_path, load_manifest, materialize, record_final
     from aeo.ranksim.store import close_database
 
     try:
@@ -914,10 +932,11 @@ def _benchmark_snapshot(args) -> None:
     if args.graph:
         raise SystemExit("--graph is not used with --snapshot. Freeze the graph with the pages (benchmark-freeze --graph).")
     split = manifest["split"]
-    if args.cluster_threshold != split["cluster_threshold"]:
+    if args.cluster_threshold is not None and args.cluster_threshold != split["cluster_threshold"]:
         raise SystemExit(
             f"This snapshot's split used cluster threshold {split['cluster_threshold']}; pass that value or omit it."
         )
+    args.cluster_threshold = split["cluster_threshold"]
     notes = [
         f"Frozen snapshot {args.snapshot}: created {manifest['created_at']}, split seed {split['seed']}, "
         f"{len(split['dev_queries'])} dev and {len(split['final_queries'])} final queries."
@@ -933,13 +952,17 @@ def _benchmark_snapshot(args) -> None:
         if args.protocol:
             raise SystemExit("--protocol does not apply to --final, which runs final and final-url.")
         previous = [row for row in final_runs(args.snapshot) if row.get("model_id") == model]
-        if previous:
+        registered = _registered_final_run(registry_database, final_key(manifest), model)
+        if previous or registered:
+            when = previous[0].get("created_at") if previous else registered
             raise SystemExit(
-                f"Model {model} was already scored on this final split ({previous[0].get('created_at')}). "
-                f"See {Path(args.snapshot) / 'results.jsonl'}. A final split is scored once per model configuration."
+                f"Model {model} was already scored on this final split ({when}). See {Path(args.snapshot) / 'results.jsonl'} "
+                "or the rs_final_runs table. A final split is scored once per model configuration, also after re-freezing it."
             )
     import_report = ImportReport()
     labels = load_serp_file(labels_path(args.snapshot), report=import_report)
+    print("\n".join(import_report.lines()))
+    notes.extend(line.strip() for line in import_report.lines()[1:])
     intents = dict(manifest.get("intents") or {})
     with tempfile.TemporaryDirectory(prefix="ranksim-snapshot-") as tmp:
         database = f"sqlite:///{Path(tmp) / 'snapshot.db'}"
@@ -959,10 +982,7 @@ def _benchmark_snapshot(args) -> None:
     if graph is not None:
         _attach_graph_file(pages, graph, notes)
     if args.final:
-        notes.append(
-            "Final split: trained on every dev query, scored the final queries once. The confidence threshold "
-            "was chosen on held-out dev pairs only."
-        )
+        notes.append("Final split: trained on every dev query, scored the final queries once.")
         report = _run_benchmark_report(
             args,
             labels=labels,
@@ -989,8 +1009,11 @@ def _benchmark_snapshot(args) -> None:
             "bootstrap": args.bootstrap,
             "seed": args.seed,
             "protocols": [_final_summary(result) for result in report.protocols],
+            "notes": list(report.notes),
+            "final_key": final_key(manifest),
         }
         try:
+            _register_final_run(registry_database, entry, args.snapshot)
             record_final(args.snapshot, entry)
         except SnapshotError as exc:
             raise SystemExit(str(exc)) from None
@@ -1018,17 +1041,51 @@ def _benchmark_snapshot(args) -> None:
         _print_benchmark(report, args)
 
 
+def _registered_final_run(database: str, key: str, model: str) -> str | None:
+    """When this model configuration was already scored on this final split, per the main database."""
+    from aeo.ranksim.store import RsFinalRun
+
+    session = open_session(database)
+    try:
+        row = session.query(RsFinalRun).filter(RsFinalRun.final_key == key, RsFinalRun.model_id == model).first()
+        return None if row is None else row.created_at.isoformat(timespec="seconds")
+    finally:
+        session.close()
+
+
+def _register_final_run(database: str, entry: dict, snapshot_dir: str) -> None:
+    from sqlalchemy.exc import IntegrityError
+
+    from aeo.ranksim.snapshot import SnapshotError
+    from aeo.ranksim.store import RsFinalRun
+
+    session = open_session(database)
+    try:
+        session.add(RsFinalRun(final_key=entry["final_key"], model_id=entry["model_id"], snapshot_dir=str(snapshot_dir), summary=entry))
+        session.commit()
+    except IntegrityError:
+        session.rollback()
+        raise SnapshotError(f"Model {entry['model_id']} already has a final run on this split in the database.") from None
+    finally:
+        session.close()
+
+
 def _final_summary(result) -> dict:
+    from aeo.ranksim.benchmark import MIN_VERDICT_CLUSTERS
+
     band = result.random_band
+    trustworthy = result.n_clusters >= MIN_VERDICT_CLUSTERS
     return {
         "protocol": result.protocol,
         "dropped_train_rows": result.dropped_train_rows,
+        "n_clusters": result.n_clusters,
+        "interval_trustworthy": trustworthy,
         "scorers": [
             {
                 "name": row.name,
                 "pairwise": row.pairwise.point,
-                "low": row.pairwise.low,
-                "high": row.pairwise.high,
+                "low": row.pairwise.low if trustworthy else None,
+                "high": row.pairwise.high if trustworthy else None,
                 "ndcg": row.ndcg,
                 "n_pairs": row.n_pairs,
                 "n_queries": row.n_queries,

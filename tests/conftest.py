@@ -60,6 +60,10 @@ def _isolate_settings_environment(request, monkeypatch):
         if name.lower() in fields:
             monkeypatch.delenv(name, raising=False)
     monkeypatch.setitem(Settings.model_config, "env_file", None)
+    # The default ranksim database is ./data/ranksim.db in the checkout. A command run without
+    # --database (and any registry it writes) must use a per-test file instead.
+    tmp_path = request.getfixturevalue("tmp_path")
+    monkeypatch.setenv("RANKSIM_DATABASE_URL", f"sqlite:///{tmp_path / 'ranksim-default.db'}")
 
 
 @pytest.fixture(autouse=True)

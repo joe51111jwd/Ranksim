@@ -7,7 +7,9 @@ added (in-corpus PageRank and anchors use every stored page). A snapshot pins al
 - ``pages.jsonl.gz``: every stored page with its HTML, source, fetch time and HTML sha256.
 - ``manifest.json``: hashes, counts, ``as_of``, the intent of each labeled query, and the split.
 - ``graph.json``: optional copy of a link-graph file, with its sha256 in the manifest.
-- ``results.jsonl``: append-only log of final-split runs (see ``record_final``).
+- ``results.jsonl``: append-only log of final-split runs (see ``record_final``). The main database
+  also records each final run by split (``final_key``), so a re-frozen copy of the same split does
+  not allow a second run of the same model configuration.
 
 The split assigns whole query clusters (URL-overlap clusters from the label file) to ``dev`` or
 ``final`` from a hash of each cluster's queries and a seed, so it is deterministic and never puts
@@ -60,11 +62,24 @@ def split_clusters(clusters: dict[str, int], *, final_share: float, seed: int) -
     dev: set[str] = set()
     for index, queries in enumerate(ranked):
         must_leave_dev = index == len(ranked) - 1 and not dev
-        if len(final) < target and not must_leave_dev and (not final or len(final) + len(queries) <= target):
+        if not must_leave_dev and len(final) + len(queries) <= target:
             final.update(queries)
         else:
             dev.update(queries)
+    if not final:
+        # Every cluster is larger than the target: hold out the smallest one (first in hash order).
+        smallest = min(ranked, key=len)
+        dev.difference_update(smallest)
+        final.update(smallest)
     return dev, final
+
+
+def final_key(manifest: dict) -> str:
+    """Identity of a final split: the labels, the cluster threshold and the final queries. Freezing
+    the same labels and seed again gives the same key, wherever the snapshot is written."""
+    split = manifest["split"]
+    body = f"{manifest['labels_sha256']}|{split['cluster_threshold']}|" + "\n".join(sorted(split["final_queries"]))
+    return hashlib.sha256(body.encode()).hexdigest()
 
 
 def freeze(
@@ -89,7 +104,10 @@ def freeze(
         raise SnapshotError(f"{out} already holds a snapshot. Freeze into a new directory; snapshots are not overwritten.")
     out.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(serp_file, out / LABELS)
-    labels = load_serp_file(out / LABELS)
+    from aeo.ranksim.groundtruth import ImportReport
+
+    import_report = ImportReport()
+    labels = load_serp_file(out / LABELS, report=import_report)
     if graph_file:
         shutil.copyfile(graph_file, out / GRAPH)
     clusters = query_clusters(labels, cluster_threshold)
@@ -140,6 +158,7 @@ def freeze(
             "final_queries": sorted(final),
         },
         "notice": "Contains third-party page HTML. Keep out of git; do not publish.",
+        "import_report": [line.strip() for line in import_report.lines()],
     }
     (out / MANIFEST).write_text(json.dumps(manifest, indent=2, sort_keys=True), encoding="utf-8")
     return manifest

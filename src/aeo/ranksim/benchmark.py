@@ -873,12 +873,25 @@ def render_report(report: BenchmarkReport) -> str:
             f"training rows dropped for URL overlap {protocol.dropped_train_rows}"
         )
         width = max([14] + [len(row.name) + 2 for row in protocol.scorers])
-        lines.append(f"  {'scorer':<{width}}{'pairwise (95% CI)':<26}{'macro':>7}{'ndcg10':>8}{'spearman':>9}{'pairs':>7}{'ties':>6}  vs bm25f_only (95% CI)")
+        # A cluster bootstrap over a handful of clusters gives intervals that look tight and are not;
+        # below MIN_VERDICT_CLUSTERS only point estimates are shown.
+        few = protocol.n_clusters < MIN_VERDICT_CLUSTERS
+        pair_head, diff_head = ("pairwise", "vs bm25f_only") if few else ("pairwise (95% CI)", "vs bm25f_only (95% CI)")
+        lines.append(f"  {'scorer':<{width}}{pair_head:<26}{'macro':>7}{'ndcg10':>8}{'spearman':>9}{'pairs':>7}{'ties':>6}  {diff_head}")
         for row in protocol.scorers:
-            diff = "" if row.diff_vs_bm25f is None else _interval(row.diff_vs_bm25f, signed=True)
+            if few:
+                pairwise = _num(row.pairwise.point)
+                diff = "" if row.diff_vs_bm25f is None or row.diff_vs_bm25f.point is None else f"{row.diff_vs_bm25f.point:+.3f}"
+            else:
+                pairwise = _interval(row.pairwise)
+                diff = "" if row.diff_vs_bm25f is None else _interval(row.diff_vs_bm25f, signed=True)
             lines.append(
-                f"  {row.name:<{width}}{_interval(row.pairwise):<26}{_num(row.pairwise_macro):>7}{_num(row.ndcg):>8}"
+                f"  {row.name:<{width}}{pairwise:<26}{_num(row.pairwise_macro):>7}{_num(row.ndcg):>8}"
                 f"{_num(row.spearman):>9}{row.n_pairs:>7}{row.n_ties:>6}  {diff}"
+            )
+        if few:
+            lines.append(
+                f"  Intervals withheld: only {protocol.n_clusters} query clusters were scored (fewer than {MIN_VERDICT_CLUSTERS})."
             )
         band = protocol.random_band
         if band is not None and band.mean is not None:

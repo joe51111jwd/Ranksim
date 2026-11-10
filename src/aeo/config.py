@@ -16,6 +16,9 @@ class Settings(BaseSettings):
     brave_api_key: str | None = None
     serpapi_key: str | None = None
     serper_api_key: str | None = None
+    # Serper's scrape endpoint is off unless this cap is above zero. The cap is a hard credit ceiling.
+    serper_scrape_credit_cap: int = 0
+    open_pagerank_api_key: str | None = None
     dataforseo_login: str | None = None
     dataforseo_password: str | None = None
     anthropic_api_key: str | None = None
@@ -47,6 +50,7 @@ class Settings(BaseSettings):
         "openrouter_api_key",
         "serpapi_key",
         "serper_api_key",
+        "open_pagerank_api_key",
         "dataforseo_login",
         "dataforseo_password",
         "anthropic_api_key",

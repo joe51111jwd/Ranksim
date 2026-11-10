@@ -187,13 +187,18 @@ class Crawler:
                 continue
         return pages[:max_pages]
 
-    def _allowed(self, url: str) -> tuple[bool, str]:
+    def allowed_for(self, url: str, user_agent: str | None = None) -> tuple[bool, str]:
+        """Whether this user agent may fetch the URL. A missing robots file is allowed."""
         origin = self._origin(url)
         parser = self._robots_for(origin)
         if parser is None:
             return True, "unavailable"
-        allowed = parser.can_fetch(self.user_agent, url)
+        agent = user_agent or self.user_agent
+        allowed = parser.can_fetch(agent, url)
         return allowed, "allowed" if allowed else "disallowed"
+
+    def _allowed(self, url: str) -> tuple[bool, str]:
+        return self.allowed_for(url, self.user_agent)
 
     def _robots_for(self, origin: str):
         if origin in self._robots:

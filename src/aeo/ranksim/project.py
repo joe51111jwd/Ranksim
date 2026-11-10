@@ -1758,34 +1758,37 @@ def classify_fetch(result: FetchResult) -> tuple[str, str]:
 
 
 def _crawler_batch(settings: Settings, delay_seconds: float) -> FetchBatch:
-    """Polite, robots-respecting, SSRF-safe fetch of URLs on one host."""
-    from aeo.crawl.fetch import Crawler
+    """Polite, robots-respecting, SSRF-safe fetch. HTTP, then a browser, then Serper if the cap allows."""
+    from aeo.crawl.layered import LayeredFetcher
 
     def fetch(urls: list[str]) -> list[FetchResult]:
-        crawler = Crawler(
+        layer = LayeredFetcher(
             user_agent=settings.crawl_user_agent,
             delay_seconds=delay_seconds,
             allow_private=settings.crawl_allow_private,
             timeout=min(settings.request_timeout_seconds, 20.0),
+            serper_api_key=settings.serper_api_key,
+            serper_credit_cap=settings.serper_scrape_credit_cap,
+            use_browser=True,
         )
         out: list[FetchResult] = []
         try:
             for url in urls:
-                began = time.perf_counter()
                 try:
-                    got = crawler.fetch(url)
+                    got = layer.fetch(url)
                 except UnsafeURL as exc:
-                    out.append(FetchResult(url=url, html="", status="blocked", error=str(exc)))
+                    out.append(FetchResult(url=url, html="", status="blocked", error=str(exc), attempts=[{"method": "http", "ok": False, "reason": str(exc)}]))
                     continue
-                elapsed = (time.perf_counter() - began) * 1000
-                if got.blocked:
-                    out.append(FetchResult(url=url, html="", status="blocked", error=got.error or "Blocked by robots.txt", fetch_ms=elapsed))
-                elif got.error or not got.html:
-                    out.append(FetchResult(url=url, html="", status="error", error=got.error or "empty response", fetch_ms=elapsed))
+                attempts = got.attempt_dicts()
+                reason = "; ".join(f"{item['method']}: {item['reason']}" for item in attempts if not item["ok"])
+                if got.method and got.html:
+                    out.append(FetchResult(url=url, html=got.html, status="fetched", fetch_ms=got.fetch_ms, method=got.method, attempts=attempts))
+                elif any("robots" in (item.get("reason") or "").lower() for item in attempts):
+                    out.append(FetchResult(url=url, html="", status="blocked", error=reason or "Blocked by robots.txt", fetch_ms=got.fetch_ms, attempts=attempts))
                 else:
-                    out.append(FetchResult(url=url, html=got.html, status="fetched", fetch_ms=elapsed))
+                    out.append(FetchResult(url=url, html="", status="error", error=reason or "empty response", fetch_ms=got.fetch_ms, attempts=attempts))
         finally:
-            crawler.close()
+            layer.close()
         return out
 
     return fetch

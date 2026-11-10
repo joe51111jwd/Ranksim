@@ -45,6 +45,7 @@ FEATURE_NAMES = (
     "orphan",
     "link_depth",
     "crawl_inlinks",
+    "content_missing",
 )
 
 # Crawl timing and link-budget fields describe this crawl, not the page. The audit
@@ -91,6 +92,8 @@ class PageDoc:
     orphan: bool | None = None
     link_depth: int | None = None
     crawl_inlinks: int | None = None
+    # True when this row has no page text. Lexical features are then unknown, not a low score.
+    content_missing: bool = False
 
 
 def url_text(url: str) -> str:
@@ -317,6 +320,7 @@ def raw_features(query: str, intent: str, pages: list[PageDoc], today: date) -> 
                 "orphan": _observed_flag(page.orphan),
                 "link_depth": float("nan") if page.link_depth is None else float(page.link_depth),
                 "crawl_inlinks": float("nan") if page.crawl_inlinks is None else float(page.crawl_inlinks),
+                "content_missing": 1.0 if page.content_missing else 0.0,
             }
         )
     return rows

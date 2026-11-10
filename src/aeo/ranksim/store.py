@@ -67,6 +67,8 @@ class RsPage(Base):
     updated_label: Mapped[str | None] = mapped_column(String(64), nullable=True)
     authority: Mapped[float | None] = mapped_column(Float, nullable=True)
     authority_source: Mapped[str] = mapped_column(String(64), default="unavailable")
+    fetch_method: Mapped[str] = mapped_column(String(32), default="")
+    fetch_log: Mapped[str] = mapped_column(Text, default="")
     fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
@@ -146,6 +148,12 @@ def _ensure_ledger_columns(engine) -> None:
         have = {column["name"] for column in inspector.get_columns("rs_predictions")}
         if "project_slug" not in have:
             statements.append("ALTER TABLE rs_predictions ADD COLUMN project_slug VARCHAR(200) DEFAULT ''")
+    if "rs_pages" in tables:
+        have = {column["name"] for column in inspector.get_columns("rs_pages")}
+        if "fetch_method" not in have:
+            statements.append("ALTER TABLE rs_pages ADD COLUMN fetch_method VARCHAR(32) DEFAULT ''")
+        if "fetch_log" not in have:
+            statements.append("ALTER TABLE rs_pages ADD COLUMN fetch_log TEXT DEFAULT ''")
     if not statements:
         return
     with engine.begin() as connection:

@@ -201,9 +201,13 @@ def test_forward_labels_do_not_enter_training_and_history_is_not_adopted(tmp_pat
     assert persistence["draft_vs_draft"]["ties"] == 1
     missing = [row for row in result.scored_rows if row["url"] == "https://f.example/missing"]
     assert len(missing) == 1
-    assert missing[0]["bm25"] == MISSING_CONTENT_SCORE
-    assert missing[0]["lambdamart"] == MISSING_CONTENT_SCORE
     assert missing[0]["html_source"] == "missing"
+    assert missing[0]["content_missing"] == 1
+    assert missing[0]["bm25"] > MISSING_CONTENT_SCORE
+    assert missing[0]["lambdamart"] > MISSING_CONTENT_SCORE
+    assert missing[0]["lambdamart"] == missing[0]["bm25"]
+    kept_score = [row for row in result.scored_rows if row["url"] == "https://a.example/old"][0]
+    assert kept_score["content_missing"] == 0
     newcomer = [row for row in result.scored_rows if row["url"] == "https://c.example/new"][0]
     assert newcomer["html_source"] == "forward_fetch"
     assert newcomer["entrant"] is True
@@ -215,6 +219,23 @@ def test_forward_labels_do_not_enter_training_and_history_is_not_adopted(tmp_pat
         block = report["scorers"][name]
         assert set(block["pairwise"]) >= {"correct", "wrong", "ties", "pairs", "pairwise"}
         assert "ndcg_at_10" in block and "spearman" in block
+
+
+def test_recovered_html_is_score_time_text_and_not_a_training_row(tmp_path):
+    baseline, forward = _pair(tmp_path)
+    recovered = {
+        "https://f.example/missing": (_page("alpha tools recovered page with field crew estimates"), "browser"),
+    }
+    result = evaluate_snapshot_pair(baseline, forward, recovered=recovered)
+    trained = {row.url for row in result.training_examples}
+    assert "https://f.example/missing" not in trained
+    row = [item for item in result.scored_rows if item["url"] == "https://f.example/missing"][0]
+    assert row["html_source"] == "recovered_browser"
+    assert row["html"] is True
+    assert row["content_missing"] == 0
+    assert row["bm25_value"] is not None
+    assert result.report["coverage"]["html_recovered"] == 1
+    assert result.report["coverage"]["html_missing"] == 0
 
 
 def test_ledger_writes_predictions_then_outcomes_and_scores_the_later_day(tmp_path):

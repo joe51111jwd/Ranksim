@@ -140,6 +140,15 @@ def main(argv: list[str] | None = None) -> None:
     new_page.add_argument("--ledger-db", default=None)
     new_page.add_argument("--draws", type=int, default=2000)
 
+    refetch = sub.add_parser(
+        "refetch-missing",
+        help="Fetch snapshot URLs that have no stored HTML. HTTP, then a headless browser. Serper stays off unless the credit cap is set.",
+    )
+    refetch.add_argument("snapshot", help="Snapshot directory with serp_serper_live.csv and html_manifest.csv")
+    refetch.add_argument("--out", required=True, help="JSON report. Recovered HTML is written beside it and is not committed.")
+    refetch.add_argument("--delay", type=float, default=1.0, help="Seconds between fetches to the same host.")
+    refetch.add_argument("--serper-credit-cap", type=int, default=0, help="Hard Serper scrape credit cap. 0 leaves scrape off.")
+
     competitors = sub.add_parser("competitors", help="Import competitor domains")
     comp_sub = competitors.add_subparsers(dest="competitors_command", required=True)
     comp_import = comp_sub.add_parser("import", help="Save a competitor list, optionally from the labeled top 10")
@@ -296,6 +305,19 @@ def main(argv: list[str] | None = None) -> None:
             if args.ledger_db:
                 new_page_args.extend(["--ledger-db", args.ledger_db])
             raise SystemExit(new_page_main(new_page_args))
+        elif args.command == "refetch-missing":
+            from aeo.ranksim.refetch import main as refetch_main
+
+            raise SystemExit(
+                refetch_main(
+                    args.snapshot,
+                    args.out,
+                    delay_seconds=args.delay,
+                    serper_credit_cap=args.serper_credit_cap,
+                    serper_api_key=settings.serper_api_key,
+                    user_agent=settings.crawl_user_agent,
+                )
+            )
         elif args.command == "serve":
             _serve(settings, database, args)
         elif args.command == "ai-eval":

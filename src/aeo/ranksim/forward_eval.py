@@ -30,6 +30,7 @@ from aeo.ranksim.snapshot_eval import TODAY as FEATURE_TODAY
 from aeo.ranksim.snapshot_eval import _corpus, _saved_html
 from aeo.ranksim.snapshot_protocol import assert_no_rank_leak, pair_counts
 from aeo.ranksim.store import open_session
+from aeo.ranksim.unknown_content import score_scale, unknown_content_value
 
 BASELINE_DAY = "2026-11-06"
 FORWARD_DAY = "2026-11-09"
@@ -381,14 +382,26 @@ def _rules() -> dict:
         "html": (
             "A URL stored on 2026-11-06 uses that HTML and that link graph. "
             "A URL with no 2026-11-06 HTML uses the 2026-11-09 fetch as the page text a user would paste, and pagerank 0. "
-            "A URL with neither has no content score."
+            "A URL with neither uses recovered HTML when a later polite fetch saved it. "
+            "Recovered HTML is not added to the Nov 6 training rows. "
+            "A URL that still has no HTML is unknown content, not a shared low score."
         ),
         "persistence": (
             f"Score is the negative of the 2026-11-06 position on the same query. "
             f"A URL absent from that query scores {ENTRANT_SCORE:g}, tied with every other absent URL and below every URL that was present."
         ),
-        "bm25": f"Score is bm25f on the HTML rule above. No HTML scores {MISSING_CONTENT_SCORE:g}.",
-        "lambdamart": "The frozen Nov 6 model scores the same HTML. No HTML uses the same missing-content score as BM25.",
+        "bm25": (
+            "Score is bm25f on the HTML rule above. No HTML is unknown content: "
+            "the score is the Nov 6 LambdaMART training-score mean, shifted by the "
+            "average within-query z-score of the off-page parts that are present. "
+            f"It is not the shared floor {MISSING_CONTENT_SCORE:g}."
+        ),
+        "lambdamart": (
+            "The frozen Nov 6 model scores pages that have HTML. "
+            "No HTML uses the same unknown-content score as BM25. "
+            "The domain prior is fit on the other query families' Nov 6 rows only. "
+            "Recovered HTML is score-time text only and is not a training row."
+        ),
         "blend": (
             f"Within a query, z-score the position base (observed position, or {ENTRANT_BASE_POSITION:g} for an entrant) "
             f"and z-score bm25f (missing HTML adds 0). "
@@ -404,7 +417,12 @@ def _rules() -> dict:
     }
 
 
-def evaluate_snapshot_pair(baseline: Path, forward: Path) -> ForwardEval:
+def evaluate_snapshot_pair(
+    baseline: Path,
+    forward: Path,
+    recovered: dict[str, tuple[str, str]] | None = None,
+    offpage_signals: dict[str, dict[str, float | None]] | None = None,
+) -> ForwardEval:
     baseline = Path(baseline)
     forward = Path(forward)
     baseline_labels = load_serp_file(baseline / "serp_serper_live.csv")
@@ -419,6 +437,19 @@ def evaluate_snapshot_pair(baseline: Path, forward: Path) -> ForwardEval:
     for example in training:
         assert_no_rank_leak(example.features)
     model = fit_lambdamart(training, list(FEATURE_NAMES)) if len({row.query for row in training}) >= 2 else None
+    train_scores: list[float] = []
+    if model is not None and training:
+        predicted_train = predict_scores(model, training, list(FEATURE_NAMES))
+        train_scores = [float(predicted_train[id(example)]) for example in training]
+    score_mean, score_std = score_scale(train_scores)
+    history = [(" ".join(label.query.split()), label.url, float(label.position)) for label in baseline_labels]
+    recovered_index: dict[str, tuple[str, str]] = {}
+    for raw_url, payload in (recovered or {}).items():
+        body, method = payload
+        label = str(method or "").strip() or "http"
+        if not label.startswith("recovered_"):
+            label = f"recovered_{label}"
+        recovered_index[_key(raw_url)] = (body, label)
 
     scored: list[dict] = []
     by_query: dict[str, list[dict]] = defaultdict(list)
@@ -438,6 +469,9 @@ def evaluate_snapshot_pair(baseline: Path, forward: Path) -> ForwardEval:
                     html_text = next(body for raw, body in forward_html.items() if _key(raw) == key)
                 page = page_from_html(url, html_text)
                 html_source = "forward_fetch"
+            elif key in recovered_index:
+                html_text, html_source = recovered_index[key]
+                page = page_from_html(url, html_text)
             else:
                 page = None
                 html_text = None
@@ -479,9 +513,13 @@ def evaluate_snapshot_pair(baseline: Path, forward: Path) -> ForwardEval:
             for row, value in zip(prepared, values):
                 row[key_name] = value
 
-    finite_model = [row["lambdamart"] for row in scored if row["html_source"] != "missing"]
+    unknown_content_value(scored, history, signals=offpage_signals, mean=score_mean, std=score_std)
+    finite_model = [row["lambdamart"] for row in scored if row.get("html")]
     if any(value <= MISSING_CONTENT_SCORE for value in finite_model):
         raise RuntimeError("A content score collided with the missing-HTML sentinel. The sentinel was not moved.")
+    missing_model = [row["lambdamart"] for row in scored if not row.get("html")]
+    if any(not math.isfinite(value) or value <= MISSING_CONTENT_SCORE for value in missing_model):
+        raise RuntimeError("A page with no HTML still received the shared missing-content floor.")
 
     queries = by_query
     scorers = {}
@@ -507,6 +545,8 @@ def evaluate_snapshot_pair(baseline: Path, forward: Path) -> ForwardEval:
         "html_baseline": sum(1 for row in scored if row["html_source"] == "baseline"),
         "html_forward_fetch_only": sum(1 for row in scored if row["html_source"] == "forward_fetch"),
         "html_missing": sum(1 for row in scored if row["html_source"] == "missing"),
+        "html_recovered": sum(1 for row in scored if str(row["html_source"]).startswith("recovered_")),
+        "content_missing": sum(1 for row in scored if row.get("content_missing")),
         "queries": len(forward_map),
         "training_examples": len(training),
         "training_queries": len({row.query for row in training}),

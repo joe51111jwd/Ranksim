@@ -107,7 +107,7 @@ def main(argv: list[str] | None = None) -> None:
     graph.add_argument("--internal-depth", type=int, default=2)
     graph.add_argument("--outbound-depth", type=int, default=1)
 
-    graph_eval = sub.add_parser("graph-eval", help="Compare held-out pairwise accuracy with and without link-graph features")
+    graph_eval = sub.add_parser("graph-eval", help="Compare held-out pairwise agreement with and without link-graph features")
     graph_eval.add_argument("--serp", default="smartcrew/serp.csv")
     graph_eval.add_argument("--graph", default="smartcrew/linkgraph.json")
 
@@ -433,7 +433,7 @@ def _graph_eval(database: str, args) -> None:
     after = loo_fit(after_examples, graph_names)
     print(f"With link-graph features: pairwise {_fmt(after.pairwise)} on {after.n_pairs} pairs. Pages updated from the graph: {attached}.")
     if not varied:
-        print("Link features did not vary on the stored pages, so a change in pairwise accuracy is not evidence they helped.")
+        print("Link features did not vary on the stored pages, so a change in pairwise agreement is not evidence they helped.")
     elif before.pairwise is not None and after.pairwise is not None:
         print(f"Pairwise delta: {after.pairwise - before.pairwise:+.3f}.")
     print("Web-wide backlinks were not included. No DataForSEO key was used.")
@@ -1386,7 +1386,7 @@ def _ai_eval(settings, database: str, args) -> None:
         skip_reason = f"LLM relevance was not measured: {n_pairs} labeled pairs is below {MIN_JUDGE_PAIRS}."
         print(
             f"Judge not run: {n_pairs} pairs is below {MIN_JUDGE_PAIRS}. On a sample this size random scores "
-            "move pairwise accuracy by several points either way, so the result could not support a decision. "
+            "move pairwise agreement by several points either way, so the result could not support a decision. "
             f"It would have cost about {len(examples)} judge calls. Build a crawled corpus with index-serp and more "
             "labeled queries, or pass --allow-small to spend anyway."
         )
@@ -1856,10 +1856,10 @@ def _print_accuracy(report) -> None:
     print(report.note)
     print(f"Labeled URLs: {report.n_labeled_urls}. Uncovered URLs: {report.uncovered_urls}. Queries: {report.n_queries}. Pairs: {report.n_pairs}.")
     if not report.cross_validated:
-        print("No NDCG, Spearman, top-3 hit rate, or pairwise accuracy is reported.")
+        print("No NDCG, Spearman, top-3 hit rate, or pairwise agreement is reported.")
         return
     print("Predicted metrics. Not live Google ranks.")
-    print(f"Pairwise accuracy: {_num(report.pairwise_accuracy)}")
+    print(f"Pairwise agreement: {_num(report.pairwise_accuracy)}")
     print(f"NDCG at 10: {_num(report.ndcg_at_10)}")
     print(f"Spearman: {_num(report.spearman)}")
     print(f"Top-3 hit rate: {_num(report.top3_hit_rate)}")
@@ -1871,7 +1871,10 @@ def _print_accuracy(report) -> None:
                 f"{_num(row.spearman)}\t{_num(row.top3_hit)}\t{_cell(row.smartcrew_real_position)}\t"
                 f"{_cell(row.smartcrew_predicted_rank)}"
             )
-    print("These figures describe the labeled file under query holdout. They are not a live Google rank.")
+    print(
+        "These figures describe the labeled file under query holdout. They are same-snapshot agreement, "
+        "not accuracy on unseen results, and not a live Google rank."
+    )
 
 
 def _report(database: str, out: str | None) -> None:

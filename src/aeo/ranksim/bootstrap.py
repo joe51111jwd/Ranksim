@@ -115,7 +115,7 @@ def seed_corpus_if_empty(database: str) -> str:
         session.close()
     note = (
         f"Seeded {count} pages from smartcrew/saved_html and smartcrew/pr8_v3. "
-        f"{drafts} are unpublished drafts and are excluded from accuracy numbers. "
+        f"{drafts} are unpublished drafts and are excluded from evaluation numbers. "
         "This seed is a demo corpus, not a crawl: run index-serp for an evaluation corpus."
     )
     if missing:

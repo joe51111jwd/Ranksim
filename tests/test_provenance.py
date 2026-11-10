@@ -72,7 +72,7 @@ def test_seeded_drafts_are_kept_for_the_demo_but_never_used_as_examples(tmp_path
     monkeypatch.chdir(repo)
     db = f"sqlite:///{tmp_path / 'seed.db'}"
     note = seed_corpus_if_empty(db)
-    assert "excluded from accuracy numbers" in note
+    assert "excluded from evaluation numbers" in note
     session = open_session(db)
     sources = {row.url: row.source for row in session.query(RsPage).all()}
     pages = load_corpus_docs(session)

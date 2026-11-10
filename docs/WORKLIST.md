@@ -180,9 +180,27 @@ fixed in advance.
   benchmark and documented whatever the result (P1-3). Done: `--candidate regularized` on the dev
   split, fixed adoption rule; +0.003 under cluster-url on 8 clusters, not adopted, no final run
   (E17).
-- [ ] B17. Independent review of B1-B16 (multi-lens review with adversarial verification); fix
+- [x] B17. Independent review of B1-B16 (multi-lens review with adversarial verification); fix
   confirmed defects with regression tests. B1, B2 and I1 to I6 were reviewed in I7; B3 to B16 and
-  the I7 fixes (e883b45..f281274) are under review now.
+  the I7 fixes (e883b45..f281274) were reviewed here. Done: 6 lenses, 45 findings, 36 after merging
+  duplicates; the top 20 were each given an adversarial verifier and all 20 were confirmed (2 high
+  and 6 medium were rated one step lower); the other 16 (low) were reproduced by the fixers before
+  any change. Fixed in five area branches, each with an independent reviewer and one follow-up
+  round (merged in 73b286d, 6f99c9f, 601bea3, 3018d15, bf53f94), plus f21fee5 (whole-site intents)
+  and the wording sweep below. Main fixes: the robots matcher no longer backtracks (a hostile
+  robots.txt could hang a crawl), a robots.txt past the deadline, cut off or BOM-prefixed fails
+  closed, backoff follows redirects, the pinned connection tries every vetted address; Search
+  Console averages can no longer be exported as dated snapshots past the ledger guard, undated
+  label files are not treated as dated snapshots, `noise --from-db` compares like with like;
+  what-if, space and coverage use one page identity and leave JS shells out, and the pr8 bundles
+  score their new pages; a final split is registered once per model, including E12
+  (`smartcrew/final_runs.jsonl`), `report` no longer crashes after a single-page test; ledger rows
+  without a write time are never scored, `--expect-head` refuses an empty value, the number guard
+  catches glued digits. Every user-facing same-snapshot number now says agreement, not accuracy
+  (`evaluate`, `train`, calibration notes, three-way and bundle output). Demo files owned by PR #2
+  got requests instead (above).
+- [ ] B20. Review of the B17 fixes as merged (87511c0..HEAD): multi-lens review with adversarial
+  verification; fix confirmed defects with regression tests.
 
 - [x] B18. A check says which question it answers (P0-5, backend half): where the page would sit
   among the stored results, not whether Google would show a new page at all; the evidence it cites

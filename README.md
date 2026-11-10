@@ -265,7 +265,7 @@ python -m aeo.ranksim space
 python -m aeo.ranksim report
 ```
 
-`evaluate` and `train` default to leave-one-query-out. They read `query,url,position` or a Search Console export with Query, Page, and Position. Optional `prior_position` is an older Google observation used as a Navboost stand-in. If that column copies `position`, it is withheld so the metric cannot cheat. With fewer than two usable queries, the command prints what file is needed and does not emit NDCG, Spearman, top-3 hit rate, or pairwise accuracy.
+`evaluate` and `train` default to leave-one-query-out. They read `query,url,position` or a Search Console export with Query, Page, and Position. Optional `prior_position` is an older Google observation used as a Navboost stand-in. If that column copies `position`, it is withheld so the metric cannot cheat. With fewer than two usable queries, the command prints what file is needed and does not emit NDCG, Spearman, top-3 hit rate, or pairwise agreement. These are same-snapshot numbers on the labeled file, not accuracy on unseen results.
 
 `benchmark-freeze` copies the label file, every stored page (HTML, source, fetch time, hashes) and an optional link graph into a new directory, and splits whole query clusters into dev and final. `benchmark --snapshot` reruns on that copy without a recrawl and scores the dev split only. `--final` trains on dev, scores the final split, and appends the result to the snapshot's `results.jsonl`; a second final run for the same model configuration is refused. With fewer than 10 scored query clusters the report gives no verdict. Snapshots contain third-party HTML: keep them under `data/` (ignored by git) and do not publish them.
 

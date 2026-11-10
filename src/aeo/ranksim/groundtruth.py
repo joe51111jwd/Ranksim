@@ -62,7 +62,7 @@ class ImportReport:
         if self.kind == "search_console_avg":
             out.append(
                 "  Search Console average positions are averages over a period for your own pages, not one "
-                "results page. Competitor pairwise accuracy from them is not a Google ranking measurement."
+                "results page. Competitor pairwise agreement from them is not a Google ranking measurement."
             )
         if not self.metadata_columns:
             out.append("  No collection date, country, language, device or provider columns: results cannot be dated.")

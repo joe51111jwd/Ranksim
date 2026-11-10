@@ -280,7 +280,7 @@ def _kind_margins(row, kind: str) -> list[PairMargin]:
 
 
 def calibrate(pairs: list[PairMargin], kind: str = "pairs") -> Calibration:
-    """Smallest gap at which held-in cases reach 0.65 accuracy on at least 30 cases."""
+    """Smallest gap at which held-in cases are right at least 65% of the time, on at least 30 cases."""
     if len(pairs) < 20:
         return Calibration(None, None, None, "Too few pairs to calibrate. The check stays UNSURE.")
     chosen: tuple[float, float, float] | None = None
@@ -298,7 +298,7 @@ def calibrate(pairs: list[PairMargin], kind: str = "pairs") -> Calibration:
             None,
             None,
             None,
-            f"No threshold on {KIND_TEXT.get(kind, 'a score gap')} lifts accuracy to 0.65 with at least 30 cases "
+            f"No threshold on {KIND_TEXT.get(kind, 'a score gap')} makes calls right at least 65% of the time on at least 30 cases "
             "on this backtest. Calls stay UNSURE.",
         )
     threshold, accuracy, coverage = chosen
@@ -307,7 +307,7 @@ def calibrate(pairs: list[PairMargin], kind: str = "pairs") -> Calibration:
         accuracy,
         coverage,
         (
-            f"With {KIND_TEXT.get(kind, 'a score gap')} of at least {threshold:.2f}, accuracy was {accuracy:.3f} "
+            f"With {KIND_TEXT.get(kind, 'a score gap')} of at least {threshold:.2f}, calls were right {accuracy:.3f} of the time "
             f"on {coverage:.0%} of backtest cases. Smaller gaps are UNSURE."
         ),
     )

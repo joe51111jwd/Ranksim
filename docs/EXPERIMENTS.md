@@ -208,7 +208,9 @@ Conventions for every entry:
   queries in 8 clusters. Labels sha256 4bcc6715f997, corpus sha256 f7603b465308. The snapshot holds
   third-party HTML, so it is not in git and lives only in this session's scratch space.
 - Two dev runs from the snapshot gave byte-identical JSON (apart from `created_at`). Dev, 344 pairs:
-  LambdaMART cluster-url 0.532 (0.402-0.624); BM25F 0.480; domain prior 0.562; random 0.413-0.584.
+  LambdaMART cluster-url 0.532; BM25F 0.480; domain prior 0.562; random 0.413-0.584. (A cluster
+  bootstrap interval from these 8 clusters was printed here; it is withheld now, like the report
+  does below 10 clusters. The random band is from random scores, not the bootstrap, and stays.)
 - One `--final` run for the current configuration, model id `lgbm-98ceb518acedd909` (MODEL_FEATURES,
   default monotone set, 40 rounds, 15 leaves), recorded in the snapshot's `results.jsonl`. 114 pairs:
 

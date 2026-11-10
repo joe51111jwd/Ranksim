@@ -444,7 +444,7 @@ def _folds(queries: list[str], fold_count: int) -> list[set[str]]:
 
 def _need_more(n_queries: int) -> str:
     return (
-        f"Accuracy was not computed ({n_queries} usable queries). "
+        f"Agreement was not computed ({n_queries} usable queries). "
         "Need at least 2 queries, each with at least 2 result URLs we have pages for. "
         "Best input is a real Google top 10 for many of the 150 keywords: query, url, position. "
         "A Search Console export with Query, Page, and Position also works. "

@@ -44,7 +44,7 @@ The file is not generated here. Positions you have not recorded are left out. Th
 
 On each held-out query:
 
-- Pairwise accuracy: among labeled URL pairs, how often the model scores the better Google position higher. This is the number to watch first.
+- Pairwise agreement: among labeled URL pairs, how often the model scores the better Google position higher. This is the number to watch first. On the labeled file it is same-snapshot agreement, not accuracy on unseen results; only a later snapshot (the ledger, or `--final` once) measures that.
 - NDCG at 10, with gain `max(0, 11 - position)` so a top-10 result has gain and a result past 10 has none.
 - Spearman correlation of predicted rank and labeled position. Constant scores make Spearman undefined, which is reported as n/a rather than zero.
 - Top-3 hit rate: the labeled position-1 URL appears in the model's top 3.
@@ -59,7 +59,7 @@ Pages that refuse the crawler can be supplied later as files. Put HTML in `smart
 
 ## What would raise the numbers
 
-Accuracy stays unreported until the file has at least two queries with two stored pages each. To move pairwise accuracy in a way that means something for SmartCrew:
+Agreement stays unreported until the file has at least two queries with two stored pages each. To move pairwise agreement in a way that means something for SmartCrew:
 
 1. Real Google top 10s for as many of the 150 keywords as you can check, especially `hcss alternative` and `best all-in-one dirtworks software`. Ten URLs per query beats one URL.
 2. Those URLs have to be in the crawl. A labeled URL we never fetched is counted as uncovered and dropped.

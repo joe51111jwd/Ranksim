@@ -57,11 +57,20 @@ _FINAL_AS_LATER_SNAPSHOT = (
 _ACCURACY = re.compile(r"\baccuracy\b(?!\.md)", re.IGNORECASE)
 # A negation that governs the "accuracy" right after it, in the same clause: "not accuracy", "does not
 # measure accuracy", "cannot be called accuracy", "No same-snapshot number is accuracy". At most three
-# words in between, with no comma, colon, semicolon or bracket and no "but", "so" or "yet". "Not only"
-# and "not just" do not negate.
+# words in between, with no comma, colon, semicolon or bracket and no "but", "so", "yet", "and", "that",
+# "which" or "who". Those words end the negated part: in "never seen and measures accuracy" the "never"
+# governs "seen" only. A negation does not count either when a past participle (a word ending in -ed, -en
+# or -wn) comes right after it, or right after "been", and a verb such as "is", "gives" or "measures"
+# follows: in "queries that were never seen give accuracy" the "never" governs "seen", not "give
+# accuracy". "Often" and "even" are not participles here. A verb followed by "of" is read as a noun, so
+# "is no proven measure of accuracy" stays a negation, and so does "no score reported is accuracy",
+# where the participle is not next to the negation. "Or" does not end the window, so "is not dev
+# agreement or accuracy" stays a negation. "Not only" and "not just" do not negate.
 _NEGATED = re.compile(
     r"\b(?:not|never|no|nor|cannot|\w+n['\u2019]t)\b(?!\s+(?:only|just|merely|simply)\b)"
-    r"(?:\s+(?!(?:but|so|yet)\b)[\w`'\u2019-]+){0,3}\s+$",
+    r"(?!\s+(?:been\s+)?(?!(?:often|even)\b)\w+(?:ed|en|wn)"
+    r"\s+(?:is|are|was|were|gives?|gave|measures?|measured|yields?|yielded)\b(?!\s+of\b))"
+    r"(?:\s+(?!(?:but|so|yet|and|that|which|who)\b)[\w`'\u2019-]+){0,3}\s+$",
     re.IGNORECASE,
 )
 # The rule's own wording: "never present a training, same-snapshot or test-tuned score as accuracy".
@@ -85,7 +94,10 @@ def _accuracy_claims(sentence: str) -> list[str]:
     """Where a sentence about a --final run, the final split or another same-snapshot number uses
     "accuracy" without a negation that governs that word (see ``_NEGATED``), or names
     --final as the later snapshot. A pattern check for plain wording, not a parser: it can miss a
-    claim phrased around these words."""
+    claim phrased around these words, such as "queries never really seen give accuracy", where a
+    word other than "been" comes between the negation and the participle. It can also flag a
+    correct sentence where "that", "which" or "who" comes inside the three words before "accuracy",
+    such as "is not one that measures accuracy"; reword that as "does not measure accuracy"."""
     if not _SAME_SNAPSHOT.search(sentence):
         return []
     claims = [match.group(0) for pattern in _FINAL_AS_LATER_SNAPSHOT for match in pattern.finditer(sentence)]
@@ -118,6 +130,16 @@ def test_the_claim_check_flags_final_as_accuracy_and_passes_the_negations():
         "Final-split accuracy was 0.561.",
         "Run --final once to get a real accuracy figure.",
         "A same-snapshot holdout is accuracy on unseen data.",
+        # A negation in an earlier phrase or clause does not negate the accuracy (B21 review).
+        "A `--final` run scores queries the model has never seen and measures accuracy on unseen results.",
+        "E12's final split was never tuned and gives accuracy of 0.561.",
+        "The final split is not leaked and measures accuracy.",
+        "The final split is not leaked which gives accuracy.",
+        "The final split uses queries never seen that give accuracy on unseen results.",
+        "Held-out queries that were never seen give accuracy on unseen results.",
+        "A `--final` run on queries never seen measures accuracy.",
+        "Held-out queries that have never been seen give accuracy on unseen results.",
+        "The final split is scored by people not involved who measure accuracy.",
     ):
         assert _accuracy_claims(claim), claim
     for negation in (
@@ -134,6 +156,19 @@ def test_the_claim_check_flags_final_as_accuracy_and_passes_the_negations():
         "The --final number cannot be called accuracy.",
         "A `--final` number isn't accuracy.",
         "A --final run is neither dev agreement nor accuracy.",
+        # Negations next to "and", a relative clause or a participle (B21 review).
+        "A `--final` number is a same-snapshot holdout and is not accuracy.",
+        "A `--final` number is a holdout that is not accuracy.",
+        "A `--final` run gives a number that cannot be called accuracy.",
+        "A `--final` number has never been called accuracy.",
+        "A `--final` number is not seen as accuracy.",
+        "Held-out queries that were never seen give agreement, not accuracy.",
+        "A `--final` number is not dev agreement or accuracy.",
+        "A `--final` run does not even give accuracy.",
+        # An -ed or -en word that does not end the negation (B21 review follow-up).
+        "Held-out scores are not unbiased measures of accuracy.",
+        "Held-out agreement is no proven measure of accuracy.",
+        "On the final split, no score reported is accuracy.",
     ):
         assert _accuracy_claims(negation) == [], negation
 

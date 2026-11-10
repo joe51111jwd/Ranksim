@@ -57,11 +57,17 @@ _FINAL_AS_LATER_SNAPSHOT = (
 _ACCURACY = re.compile(r"\baccuracy\b(?!\.md)", re.IGNORECASE)
 # A negation that governs the "accuracy" right after it, in the same clause: "not accuracy", "does not
 # measure accuracy", "cannot be called accuracy", "No same-snapshot number is accuracy". At most three
-# words in between, with no comma, colon, semicolon or bracket and no "but", "so" or "yet". "Not only"
-# and "not just" do not negate.
+# words in between, with no comma, colon, semicolon or bracket and no "but", "so", "yet", "and", "that",
+# "which" or "who". Those words end the negated part: in "never seen and measures accuracy" the "never"
+# governs "seen" only. A past participle (a word ending in -ed, -en or -wn) right before a verb such as
+# "is", "gives" or "measures" ends it too: in "queries that were never seen give accuracy" the "never"
+# governs "seen", not "give accuracy". "Or" does not end it, so "is not dev agreement or accuracy" stays
+# a negation. "Not only" and "not just" do not negate.
 _NEGATED = re.compile(
     r"\b(?:not|never|no|nor|cannot|\w+n['\u2019]t)\b(?!\s+(?:only|just|merely|simply)\b)"
-    r"(?:\s+(?!(?:but|so|yet)\b)[\w`'\u2019-]+){0,3}\s+$",
+    r"(?![\w\s`'\u2019-]*\b(?!(?:often|even)\b)\w+(?:ed|en|wn)"
+    r"\s+(?:is|are|was|were|gives?|gave|measures?|measured|yields?|yielded)\b)"
+    r"(?:\s+(?!(?:but|so|yet|and|that|which|who)\b)[\w`'\u2019-]+){0,3}\s+$",
     re.IGNORECASE,
 )
 # The rule's own wording: "never present a training, same-snapshot or test-tuned score as accuracy".
@@ -85,7 +91,8 @@ def _accuracy_claims(sentence: str) -> list[str]:
     """Where a sentence about a --final run, the final split or another same-snapshot number uses
     "accuracy" without a negation that governs that word (see ``_NEGATED``), or names
     --final as the later snapshot. A pattern check for plain wording, not a parser: it can miss a
-    claim phrased around these words."""
+    claim phrased around these words. It can also flag a correct sentence such as "is not one that
+    measures accuracy"; reword that as "does not measure accuracy"."""
     if not _SAME_SNAPSHOT.search(sentence):
         return []
     claims = [match.group(0) for pattern in _FINAL_AS_LATER_SNAPSHOT for match in pattern.finditer(sentence)]
@@ -118,6 +125,14 @@ def test_the_claim_check_flags_final_as_accuracy_and_passes_the_negations():
         "Final-split accuracy was 0.561.",
         "Run --final once to get a real accuracy figure.",
         "A same-snapshot holdout is accuracy on unseen data.",
+        # A negation in an earlier phrase or clause does not negate the accuracy (B21 review).
+        "A `--final` run scores queries the model has never seen and measures accuracy on unseen results.",
+        "E12's final split was never tuned and gives accuracy of 0.561.",
+        "The final split is not leaked and measures accuracy.",
+        "The final split is not leaked which gives accuracy.",
+        "The final split uses queries never seen that give accuracy on unseen results.",
+        "Held-out queries that were never seen give accuracy on unseen results.",
+        "A `--final` run on queries never seen measures accuracy.",
     ):
         assert _accuracy_claims(claim), claim
     for negation in (
@@ -134,6 +149,15 @@ def test_the_claim_check_flags_final_as_accuracy_and_passes_the_negations():
         "The --final number cannot be called accuracy.",
         "A `--final` number isn't accuracy.",
         "A --final run is neither dev agreement nor accuracy.",
+        # Negations next to "and", a relative clause or a participle (B21 review).
+        "A `--final` number is a same-snapshot holdout and is not accuracy.",
+        "A `--final` number is a holdout that is not accuracy.",
+        "A `--final` run gives a number that cannot be called accuracy.",
+        "A `--final` number has never been called accuracy.",
+        "A `--final` number is not seen as accuracy.",
+        "Held-out queries that were never seen give agreement, not accuracy.",
+        "A `--final` number is not dev agreement or accuracy.",
+        "A `--final` run does not even give accuracy.",
     ):
         assert _accuracy_claims(negation) == [], negation
 

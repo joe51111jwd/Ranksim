@@ -94,6 +94,9 @@ Requests for other roles, drafted here and not posted (posting on another role's
   predicted rank is labeled from `adjacent_note`; show the note that matches each label.
 - PR #5: its forward ledger rows have no write time; this branch's ledger counts them as undated and
   does not score them (I7). `forward_eval` can stamp `payload.recorded_at` with the real write time.
+- PR #2 (UI owner): the space table in `demo.py` shows `predicted_top3` over `predicted_queries`,
+  which counts "rank 3 of 3" as top 3; use `predicted_top3_qualified` over `predicted_top3_queries`
+  (and the top 10 pair), and say whose record a head-to-head row is (B9).
 - PR #4: after a union `conftest.py`, `test_later_snapshot_replaces_the_same_url_and_mock_scores_
   stay_on_that_cohort` fails against this branch's one-cluster guard; pr8_v3 drafts stored under
   live URLs are counted as covered.
@@ -136,8 +139,10 @@ fixed in advance.
 - [x] B8. One intents source for training, checks and space; every labeled query has an intent or
   is reported as unknown (P1-14). Done: `intents.query_intents`; the what-if rule is now the shared
   rule; 9 of 16 SmartCrew queries fall through to the default and are listed; numbers unchanged.
-- [ ] B9. Space metrics: top-k only when the set has more than k pages; observed top 10 means
+- [x] B9. Space metrics: top-k only when the set has more than k pages; observed top 10 means
   position <= 10; head-to-head perspective; business vs SERP competitors (P1-1, backend only).
+  Done: new `*_qualified`/`*_queries` fields (old fields kept for the UI, request above); REAL top
+  10 is position 1 to 10; `kind` column in competitors.csv; the CLI view says whose record it is.
 - [x] B10. Competitor import validation: csv.reader, IDNA, reject IPs/localhost/ports, report
   rejected lines (P1-2). Done: `space.competitor_host`; `competitors import` prints each rejected
   line with its reason. The UI path (`workspace.parse_competitors`, PR #2) is unchanged.

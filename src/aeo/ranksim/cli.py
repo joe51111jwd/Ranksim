@@ -24,7 +24,7 @@ from aeo.errors import ProviderConfigError, UnsafeURL
 from aeo.ranksim.authority import authority_client
 from aeo.ranksim.intents import intent_for, query_intents
 from aeo.ranksim.whatif import bundle_targets
-from aeo.ranksim.keywords import build_keywords, gap_summary, load_keyword_file, page_gaps, refresh_sitemap, write_keywords_csv
+from aeo.ranksim.keywords import build_keywords, gap_summary, load_keyword_file, repo_root, page_gaps, refresh_sitemap, write_keywords_csv
 from aeo.ranksim.loop import FetchResult, attach_authority, collect_corpus, calibrate, page_from_html, run_test, track_ranks
 from aeo.ranksim.report import render_report
 from aeo.ranksim.index_serp import index_serp_csv
@@ -554,17 +554,27 @@ def _competitors(settings, database: str, args) -> None:
     domains: list[str] = []
     source_bits = []
     rejected: list[tuple[int, str, str]] = []
+    kinds: dict[str, set[str]] = {}
     if args.from_serps:
-        domains.extend(domains_from_labels(load_serp_file(args.serp), "smartcrewhq.com"))
+        found = domains_from_labels(load_serp_file(args.serp), "smartcrewhq.com")
+        domains.extend(found)
+        for domain in found:
+            kinds.setdefault(domain, set()).add("serp")
         source_bits.append("labeled_top10")
     if args.file:
         file_rejected: list[tuple[int, str, str]] = []
-        domains.extend(parse_competitor_text(Path(args.file).read_text(encoding="utf-8"), file_rejected))
+        listed = parse_competitor_text(Path(args.file).read_text(encoding="utf-8"), file_rejected)
+        domains.extend(listed)
+        for domain in listed:
+            kinds.setdefault(domain, set()).add("business")
         rejected += [(f"{args.file} line {number}", text, reason) for number, text, reason in file_rejected]
         source_bits.append("file")
     if args.domains:
         argv_rejected: list[tuple[int, str, str]] = []
-        domains.extend(parse_competitor_text("\n".join(args.domains), argv_rejected))
+        listed = parse_competitor_text("\n".join(args.domains), argv_rejected)
+        domains.extend(listed)
+        for domain in listed:
+            kinds.setdefault(domain, set()).add("business")
         rejected += [(f"argument {number}", text, reason) for number, text, reason in argv_rejected]
         source_bits.append("argv")
     for where, text, reason in rejected:
@@ -572,7 +582,8 @@ def _competitors(settings, database: str, args) -> None:
     ordered = list(dict.fromkeys(domains))
     if not ordered:
         raise SystemExit("No competitors. Pass domains, --file, or --from-serps. Nothing was invented.")
-    write_competitors(args.out, ordered, "+".join(source_bits) or "import")
+    kind_names = {domain: ("both" if len(found) > 1 else next(iter(found))) for domain, found in kinds.items()}
+    write_competitors(args.out, ordered, "+".join(source_bits) or "import", kind_names)
     print(f"Wrote {len(ordered)} competitors to {args.out}")
     for domain in ordered:
         print(domain)
@@ -593,7 +604,7 @@ def _space(database: str, args) -> None:
     from aeo.ranksim.keywords import build_keywords
     from aeo.ranksim.lambdamart import build_examples
     from aeo.ranksim.linkgraph import attach_graph, load_graph
-    from aeo.ranksim.space import build_space, domains_from_labels, read_competitors, render_space_text
+    from aeo.ranksim.space import build_space, domains_from_labels, read_competitor_kinds, read_competitors, render_space_text
     from pathlib import Path
 
     labels = load_serp_file(args.serp)
@@ -608,12 +619,16 @@ def _space(database: str, args) -> None:
         pages = load_corpus_docs(session)
     finally:
         session.close()
-    graph_path = Path("smartcrew/linkgraph.json")
+    graph_path = repo_root() / "smartcrew" / "linkgraph.json"
     if graph_path.is_file():
         attach_graph(pages, load_graph(str(graph_path)))
     examples, uncovered, _withheld = build_examples(labels, pages, intents)
     fit = loo_fit(examples, keep_models=True)
-    report = build_space(labels, pages, fit.models, competitors, intents=intents)
+    if source == args.competitors:
+        kinds = read_competitor_kinds(args.competitors)
+    else:
+        kinds = {domain: "serp" for domain in competitors}  # taken from the labeled results
+    report = build_space(labels, pages, fit.models, competitors, intents=intents, kinds=kinds)
     print(f"Competitors from {source}. Uncovered labeled rows: {uncovered}.")
     if fit.pairwise is not None:
         print(f"PREDICTED backtest pairwise {fit.pairwise:.3f} on {fit.n_pairs} pairs.")

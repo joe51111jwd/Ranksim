@@ -45,14 +45,23 @@ class DomainShare:
     domain: str
     tracked_queries: int
     real_top3: int
-    real_top10: int
+    real_top10: int  # labeled positions 1 to 10 only
     predicted_queries: int
-    predicted_top3: int
+    predicted_top3: int  # kept for existing displays: rank 3 or better among however many pages were scored
     predicted_top10: int
+    # Top k where it means something: only queries where more than k pages were scored (a rank of 3
+    # among 3 pages is not "top 3"). Use these with their own denominators.
+    predicted_top3_qualified: int = 0
+    predicted_top3_queries: int = 0
+    predicted_top10_qualified: int = 0
+    predicted_top10_queries: int = 0
+    kind: str = ""  # business (listed by the user), serp (taken from the labeled results), both, or "" (client)
 
 
 @dataclass
 class HeadToHead:
+    """The client's record against one competitor: wins are queries where the client ranks above it."""
+
     domain: str
     real_queries: int
     real_wins: int
@@ -62,6 +71,7 @@ class HeadToHead:
     predicted_wins: int
     predicted_losses: int
     predicted_ties: int
+    kind: str = ""
 
 
 @dataclass
@@ -179,14 +189,33 @@ def read_competitors(path: str | Path) -> list[str]:
     return parse_competitor_text(file_path.read_text(encoding="utf-8"))
 
 
-def write_competitors(path: str | Path, domains: list[str], source: str) -> None:
+def read_competitor_kinds(path: str | Path) -> dict[str, str]:
+    """domain -> kind from a competitors file with a ``kind`` column (business, serp or both)."""
+    file_path = Path(path)
+    if not file_path.is_file():
+        return {}
+    with file_path.open(newline="", encoding="utf-8-sig") as handle:
+        reader = csv.DictReader(handle)
+        if not reader.fieldnames or "kind" not in [name.strip().lower() for name in reader.fieldnames]:
+            return {}
+        fields = {name.strip().lower(): name for name in reader.fieldnames}
+        kinds = {}
+        for raw in reader:
+            host, _reason = competitor_host(raw.get(fields.get("domain", "domain")) or "")
+            if host:
+                kinds[host] = (raw.get(fields["kind"]) or "").strip().lower()
+        return kinds
+
+
+def write_competitors(path: str | Path, domains: list[str], source: str, kinds: dict[str, str] | None = None) -> None:
+    """``kinds``: business (listed by the user), serp (taken from labeled results) or both."""
     file_path = Path(path)
     file_path.parent.mkdir(parents=True, exist_ok=True)
     with file_path.open("w", newline="", encoding="utf-8") as handle:
-        writer = csv.DictWriter(handle, fieldnames=["domain", "source"])
+        writer = csv.DictWriter(handle, fieldnames=["domain", "source", "kind"])
         writer.writeheader()
         for domain in domains:
-            writer.writerow({"domain": domain, "source": source})
+            writer.writerow({"domain": domain, "source": source, "kind": (kinds or {}).get(domain, "")})
 
 
 def build_space(
@@ -198,6 +227,7 @@ def build_space(
     our_domain: str = "smartcrewhq.com",
     today: date | None = None,
     intents: dict[str, str] | None = None,
+    kinds: dict[str, str] | None = None,
 ) -> SpaceReport:
     """``intents`` (query to intent) should be ``intents.query_intents(labels).intents``, the same
     source training used; without it each query gets the shared rule or the default."""
@@ -269,13 +299,14 @@ def build_space(
                 if our_doc is not None and their_doc is not None:
                     our_losses.append((query, domain, our_doc, their_doc))
 
+    kinds = kinds or {}
     shares = []
     for domain in players:
         real_top3 = sum(1 for query in queries if (pos := real_best.get((query, domain))) and pos[0] <= 3)
-        real_top10 = sum(1 for query in queries if (query, domain) in real_best)
+        real_top10 = sum(1 for query in queries if (pos := real_best.get((query, domain))) and pos[0] <= 10)
         pred_queries = [query for query in queries if (query, domain) in predicted_best]
-        pred_top3 = sum(1 for query in pred_queries if predicted_best[(query, domain)][0] <= 3)
-        pred_top10 = sum(1 for query in pred_queries if predicted_best[(query, domain)][0] <= 10)
+        over3 = [query for query in pred_queries if predicted_best[(query, domain)][1] > 3]
+        over10 = [query for query in pred_queries if predicted_best[(query, domain)][1] > 10]
         shares.append(
             DomainShare(
                 domain=domain,
@@ -283,8 +314,13 @@ def build_space(
                 real_top3=real_top3,
                 real_top10=real_top10,
                 predicted_queries=len(pred_queries),
-                predicted_top3=pred_top3,
-                predicted_top10=pred_top10,
+                predicted_top3=sum(1 for query in pred_queries if predicted_best[(query, domain)][0] <= 3),
+                predicted_top10=sum(1 for query in pred_queries if predicted_best[(query, domain)][0] <= 10),
+                predicted_top3_qualified=sum(1 for query in over3 if predicted_best[(query, domain)][0] <= 3),
+                predicted_top3_queries=len(over3),
+                predicted_top10_qualified=sum(1 for query in over10 if predicted_best[(query, domain)][0] <= 10),
+                predicted_top10_queries=len(over10),
+                kind="" if domain == our_domain else kinds.get(domain, ""),
             )
         )
     head = []
@@ -325,6 +361,7 @@ def build_space(
                 predicted_wins=pred_w,
                 predicted_losses=pred_l,
                 predicted_ties=pred_t,
+                kind=kinds.get(domain, ""),
             )
         )
     head.sort(key=lambda row: (-row.real_queries, row.domain))
@@ -356,28 +393,33 @@ def render_space_text(report: SpaceReport) -> str:
         f"Client domain: {report.our_domain}",
         "",
         "Share of tracked queries",
-        "domain\treal_top3\treal_top10\tpredicted_top3\tpredicted_top10\tpredicted_queries",
+        "domain\tkind\treal_top3\treal_top10\tpredicted_top3\tpredicted_top10\tpredicted_queries",
+        "PREDICTED top k counts only queries where more than k pages were scored; REAL top 10 is labeled position 1 to 10.",
     ]
     for row in report.shares:
-        pred3 = "n/a" if row.predicted_queries == 0 else f"{row.predicted_top3} of {row.predicted_queries}"
-        pred10 = "n/a" if row.predicted_queries == 0 else f"{row.predicted_top10} of {row.predicted_queries}"
+        pred3 = "n/a" if row.predicted_top3_queries == 0 else f"{row.predicted_top3_qualified} of {row.predicted_top3_queries}"
+        pred10 = "n/a" if row.predicted_top10_queries == 0 else f"{row.predicted_top10_qualified} of {row.predicted_top10_queries}"
         lines.append(
-            f"{row.domain}\tREAL {row.real_top3} of {row.tracked_queries}\tREAL {row.real_top10} of {row.tracked_queries}\t"
+            f"{row.domain}\t{row.kind or ('client' if row.domain == report.our_domain else 'unknown')}\t"
+            f"REAL {row.real_top3} of {row.tracked_queries}\tREAL {row.real_top10} of {row.tracked_queries}\t"
             f"PREDICTED {pred3}\tPREDICTED {pred10}\t{row.predicted_queries}"
         )
     lines.append("")
-    lines.append("Head to head versus " + report.our_domain)
-    lines.append("domain\treal_record\tpredicted_record")
+    lines.append(f"Head to head: {report.our_domain}'s record against each competitor (a win is a query where {report.our_domain} ranks above it)")
+    lines.append("competitor\tkind\treal_record\tpredicted_record")
     for row in report.headtohead:
         if row.real_queries == 0 and row.predicted_queries == 0:
             continue
-        real = "n/a" if row.real_queries == 0 else f"REAL {row.real_wins} wins, {row.real_losses} losses, {row.real_ties} ties, {row.real_queries} queries"
+        real = (
+            "n/a" if row.real_queries == 0
+            else f"REAL {report.our_domain} won {row.real_wins}, lost {row.real_losses}, tied {row.real_ties} of {row.real_queries} queries"
+        )
         pred = (
             "n/a"
             if row.predicted_queries == 0
-            else f"PREDICTED {row.predicted_wins} wins, {row.predicted_losses} losses, {row.predicted_ties} ties, {row.predicted_queries} queries"
+            else f"PREDICTED {report.our_domain} won {row.predicted_wins}, lost {row.predicted_losses}, tied {row.predicted_ties} of {row.predicted_queries} queries"
         )
-        lines.append(f"{row.domain}\t{real}\t{pred}")
+        lines.append(f"{row.domain}\t{row.kind or 'unknown'}\t{real}\t{pred}")
     lines.append("")
     lines.append("Per query")
     for board in report.boards:

@@ -3,6 +3,8 @@ page, and leave client-rendered shells out the way training and check_draft do. 
 new pages join their target queries. Synthetic pages, except the bundled manifests and label file."""
 
 import csv
+import re
+from dataclasses import replace
 from datetime import date
 from pathlib import Path
 
@@ -25,8 +27,10 @@ from aeo.ranksim.whatif import (
     WhatIfReport,
     bundle_targets,
     overrides_from_html,
+    render_regression,
     render_three_way,
     render_whatif,
+    score_many,
     score_whatif,
 )
 
@@ -124,13 +128,44 @@ def test_what_if_leaves_competitor_shells_out_and_says_so():
         assert shell not in [url for _rank, url, _ours in row.order]
         assert row.shells == [shell]
     first = _row(report)
-    assert first.before_n == 5  # four stored competitors plus our page, whose shell the bundle replaces
-    assert [page.role for page in first.pages] == ["labeled, HTML replaced"]
+    # Our own page's stored shell is in no before set either; the bundle HTML is scored after.
+    assert first.before_n == 4 and first.swap_n == first.after_n == 5
+    assert [page.role for page in first.pages] == ["labeled shell, HTML replaced"]
     assert all(row.before_n == 4 for row in report.queries if row.query != QUERY)
     text = render_whatif(report)
     assert "Labeled rows left out as client-rendered shells: 4." in text
     assert "https://site1.example/q0 | a client-rendered shell, left out of scoring." in text
     assert "\u2014" not in text and "\u2013" not in text
+
+
+def test_our_own_shell_has_no_before_or_live_rank_when_a_bundle_page_replaces_it():
+    # Review follow-up: the shell's stored HTML was kept in the before set when a bundle page
+    # replaced it, so the bundle variants scored it as a "before" or "live" rank (5 of 5) while
+    # the live variant left the same page out (n/a). check_draft never scores its own shell.
+    labels, pages, ours = _shell_corpus()
+    variants = {name: overrides_from_html({ours: _html(QUERY, 300)}, pages) for name in ("v2", "v3")}
+    reports = score_many(labels, pages, {"live": [], **variants}, today=TODAY)
+    live, v2, v3 = (_row(reports[name]) for name in ("live", "v2", "v3"))
+    assert live.before_n == v2.before_n == v3.before_n == live.after_n == 4  # the before set is the live set
+    assert v2.swap_n == v2.after_n == 5
+    assert (live.before_rank, v2.before_rank, v3.before_rank) == (None, None, None)
+    assert v2.before_url is None and v2.replaced_shells == [ours]
+    [page] = v3.pages
+    assert page.before_rank is None and page.swap_rank is not None and page.after_rank is not None
+    assert page.words_before is None and page.title_before == ""  # nothing from the shell's stored HTML
+    regression = render_regression(reports["live"], reports["v2"], reports["v3"])
+    head, same_set = regression.split("Same-set check.", 1)
+    assert f"\n{QUERY}\tn/a\t{page.after_rank} of 5 /app\t" in head
+    assert "/app" not in same_set  # no live rank to compare, so no same-set row
+    assert "v3 labeled rows where a bundle page replaces a client-rendered shell: 1." in regression
+    text = render_whatif(reports["v2"])
+    assert "Best predicted SmartCrew page before: n/a (none: the stored SmartCrew page is a client-rendered shell)." in text
+    assert f"{ours} | labeled shell, HTML replaced | before n/a | after {page.after_rank} of 5 | 1203 words" in text
+    assert "Stored as client-rendered shells and replaced by bundle HTML: 1." in text
+    assert "words 0 -> " not in text
+    assert "\u2014" not in text and "\u2013" not in text
+    live_text = render_whatif(reports["live"])
+    assert f"Real Google position: 6 at {ours} (its stored page is a client-rendered shell, so it has no before score)." in live_text
 
 
 def test_the_space_view_leaves_shells_out_of_predicted_ranks_and_counts_them():
@@ -178,6 +213,47 @@ def test_a_target_query_with_no_score_is_not_rendered_as_checked():
     assert lines == ["/all-in-one-heavy-civil-software\tall in one heavy civil software\ttarget, not scored\tn/a\tn/a\tn/a\t"]
     assert "Not scored: " in text and "The ship check did not cover them." in text
     assert "\u2014" not in text and "\u2013" not in text
+
+
+def test_three_way_finds_a_pr_page_under_any_spelling():
+    # C14 review follow-up: render_three_way keys PR pages by match_key, so a stored page without
+    # www, or the home page with a trailing slash, is the PAGE_TARGETS page it names.
+    compare = "https://smartcrewhq.com/compare/hcss-heavyjob-alternative/"
+    rows = {
+        "live": [_query("hcss alternative", compare, 3, 8), _query("paving case 0", None, None, 8), _query("paving case 1", None, None, 8)],
+        "v1": [_query("hcss alternative", compare, 2, 8), _query("paving case 0", None, None, 8), _query("paving case 1", None, None, 8)],
+        "v2": [
+            _query("hcss alternative", compare, 2, 8),
+            _query("paving case 0", compare, 2, 8),
+            _query("paving case 1", "https://www.smartcrewhq.com/", 1, 8),
+        ],
+    }
+    reports = [WhatIfReport("n", 0.5, 0.7, 0.1, 0.5, 1, 1, 1, 0, rows[name], []) for name in ("live", "v1", "v2")]
+    text = render_three_way(*reports)
+    lines = [line for line in text.splitlines() if line.startswith(("/compare/hcss-heavyjob-alternative\t", "/\t"))]
+    assert lines == [
+        "/\tpaving case 1\tranks\tn/a\tn/a\t1 of 8\t",
+        "/compare/hcss-heavyjob-alternative\thcss alternative\ttarget\t3 of 8\t2 of 8\t2 of 8\t",
+        "/compare/hcss-heavyjob-alternative\tpaving case 0\tranks\tn/a\tn/a\t2 of 8\t",
+    ]
+
+
+def test_three_way_and_regression_do_not_call_same_snapshot_agreement_accuracy():
+    # Project rule: a same-snapshot held-out number is agreement, not accuracy.
+    thin = replace(_query("paving case 0", STORED, 2, 8), after_words=90)
+    reports = [WhatIfReport("n", 0.592, 0.741, 0.219, 0.625, 1, 1, 1, 0, [thin], []) for _ in range(3)]
+    texts = {
+        "three-way": render_three_way(*reports),
+        "regression": render_regression(*reports),
+        "what-if": render_whatif(reports[0]),
+    }
+    assert "this slot is not evidence" in texts["what-if"]  # the thin-page line is rendered
+    for name, text in texts.items():
+        words = re.findall(r"(\w+)[ -]+accuracy", text.lower())
+        assert set(words) <= {"not"}, (name, words)
+        assert "cross-validated" not in text.lower() and "CV from" not in text, name
+        assert "0.592" in text and "agreement" in text, name  # the number is still shown, as agreement
+        assert "\u2014" not in text and "\u2013" not in text
 
 
 def test_a_bundle_page_that_joins_no_query_is_named():

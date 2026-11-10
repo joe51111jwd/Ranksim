@@ -394,13 +394,24 @@ class Crawler:
         robots_url = origin + "/robots.txt"
         try:
             safe = assert_safe_url(robots_url, allow_private=self.allow_private)
+        except UnsafeURL as exc:
+            if "Could not resolve" not in str(exc):
+                # The host itself now resolves to a non-public address, though the caller's check
+                # passed it (DNS rebinding). This is an unsafe URL, and nothing is cached.
+                raise
+            self._robots[origin] = ROBOTS_UNREACHABLE
+            return ROBOTS_UNREACHABLE
+        except ValueError:
+            self._robots[origin] = ROBOTS_UNREACHABLE
+            return ROBOTS_UNREACHABLE
+        try:
             self._backoff_wait(safe)
-            response, _final = self._get_following_redirects(safe, any_type=True)
+            response, _final = self._get_following_redirects(safe, any_type=True, vetted=True)
         except RedirectProblem:
             self._robots[origin] = None  # redirect loop: treat as unavailable
             return None
         except httpx.ConnectError as exc:
-            if isinstance(exc.__cause__, guard.UnsafeConnect) and self._origin(str(exc.request.url)) == origin:
+            if isinstance(exc.__cause__, guard.UnsafeConnect) and self._same_origin(exc.request.url, safe):
                 # The host itself resolved to a non-public address at connect time (DNS rebinding).
                 # robots.txt was never requested, so this is an unsafe URL, as in a page fetch, and
                 # nothing is cached. A robots.txt that redirects to such a host stays unreachable.
@@ -465,7 +476,7 @@ class Crawler:
         return wait
 
     def _get_following_redirects(
-        self, url: str, *, any_type: bool = False, polite: bool = False
+        self, url: str, *, any_type: bool = False, polite: bool = False, vetted: bool = False
     ) -> tuple[httpx.Response, str]:
         """The caller waited for the first URL's origin. A hop to another origin waits for that
         origin too, so a host in 429/503 backoff gets no request through a redirect.
@@ -473,11 +484,15 @@ class Crawler:
         ``polite`` (a page fetch): the caller checked robots.txt for the first URL, and every later
         hop is checked against the robots.txt of its own origin before it gets a request; a hop it
         does not allow raises RobotsBlocked. Without ``polite`` (robots.txt itself), a hop waits
-        only for its origin's 429/503 backoff."""
+        only for its origin's 429/503 backoff.
+
+        ``vetted``: the caller ran the URL check on ``url`` just now, so the first hop is not
+        checked again. The connection guard still checks the address it connects to."""
         current = url
         previous = self._origin(url)
         for hop in range(MAX_REDIRECTS + 1):
-            current = assert_safe_url(current, allow_private=self.allow_private, keep_trailing_slash=True)
+            if hop or not vetted:
+                current = assert_safe_url(current, allow_private=self.allow_private, keep_trailing_slash=True)
             if hop and polite:
                 allowed, status = self._allowed(current)
                 if not allowed:
@@ -589,9 +604,10 @@ class Crawler:
 
     def _read_robots(self, response: httpx.Response) -> str:
         """robots.txt text. RFC 9309 (2.3) says the file is UTF-8 whatever the server declares, so
-        bytes that are valid UTF-8 are read as UTF-8 even under a declared ISO-8859-1. Only bytes
-        that are not UTF-8 fall back to the declared charset. A UTF-8 byte order mark always wins:
-        decoded with another charset, it would become stray characters that hide the first
+        lines that are valid UTF-8 are read as UTF-8 even under a declared ISO-8859-1. Only a line
+        that is not UTF-8 falls back to the declared charset, so one stray latin-1 byte in a comment
+        does not change how the UTF-8 rules on other lines are read. A UTF-8 byte order mark always
+        wins: decoded with another charset, it would become stray characters that hide the first
         user-agent line."""
         raw = response.content[:MAX_BYTES]
         if raw.startswith(codecs.BOM_UTF8):
@@ -601,9 +617,28 @@ class Crawler:
             # A character cut in two by the size cap is dropped, not a reason to fall back.
             return codecs.getincrementaldecoder("utf-8")().decode(raw, final=not cut)
         except UnicodeDecodeError:
-            return self._read_capped(response)
+            pass
+        fallback = response.encoding or "utf-8"
+        if codecs.lookup(fallback).name.startswith(("utf-16", "utf-32")):
+            return self._read_capped(response)  # a line break is not one byte here, so read it whole
+        lines = raw.splitlines(keepends=True)
+        text = []
+        for number, line in enumerate(lines, 1):
+            try:
+                # UTF-8 never uses CR or LF bytes inside a character, so each line decodes alone.
+                text.append(codecs.getincrementaldecoder("utf-8")().decode(line, final=not (cut and number == len(lines))))
+            except UnicodeDecodeError:
+                text.append(line.decode(fallback, errors="replace"))
+        return "".join(text)
 
     @staticmethod
     def _origin(url: str) -> str:
         parts = urlsplit(url)
         return f"{parts.scheme}://{parts.netloc}"
+
+    @staticmethod
+    def _same_origin(request_url: httpx.URL, url: str) -> bool:
+        """Whether a request went to the origin of ``url``, compared as httpx sends it. An IDN host
+        is Unicode after normalize_url and punycode in the request; both name the same origin."""
+        other = httpx.URL(url)
+        return (request_url.scheme, request_url.raw_host, request_url.port) == (other.scheme, other.raw_host, other.port)

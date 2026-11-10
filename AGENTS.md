@@ -32,7 +32,13 @@ python -m aeo.ranksim forward-eval \
   --ledger-json evals/forward-2026-11-09/ledger.json
 ```
 
-The scored file already in git is `evals/forward-2026-11-09/report.json`. The new-page check that does not need the private HTML is `evals/forward-2026-11-09/new_page.md`. Read `docs/MISSION.md` before treating any rerun as a new accuracy claim.
+The scored file already in git is `evals/forward-2026-11-09/report.json`. The new-page check that does not need the private HTML is `evals/forward-2026-11-09/new_page.md`. The Nov 10 recovered-content look is `evals/forward-2026-11-09/recovered.md`. Read `docs/MISSION.md` before treating any rerun as a new accuracy claim.
+
+Refetch URLs that have no stored HTML. Serper scrape stays off unless you pass a credit cap and `SERPER_API_KEY` is set. Do not commit the HTML or the key.
+
+```bash
+python -m aeo.ranksim refetch-missing <snapshot dir> --out recovery.json --delay 1
+```
 
 ```bash
 python -m aeo.ranksim new-page-eval \

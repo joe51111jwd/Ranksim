@@ -1,4 +1,4 @@
-# Ranksim mission and handoff (as of Nov 9, 2026)
+# Ranksim mission and handoff (as of Nov 10, 2026)
 
 Owner: James Camarota (GitHub joe51111jwd). Any agent picking this up should read this file first.
 
@@ -24,7 +24,7 @@ Scope: Google SEO only. The AI search (AEO) track is parked.
 
 ## Repo state
 - Repo: https://github.com/joe51111jwd/Ranksim. Main is unchanged at ae6012b.
-- Integration PR: https://github.com/joe51111jwd/Ranksim/pull/5 (branch cursor/integration-review-175f, base claude/ranksim-mvp-eod-ifjitw). The forward-eval commit is f76f7f1. CI on that commit was green (run 42635653671, six pytest jobs on Python 3.11, 3.12, and 3.13, keys unset and fake keys). Docs added after f76f7f1 do not change the ranker or those scores.
+- Integration PR: https://github.com/joe51111jwd/Ranksim/pull/5 (branch cursor/integration-review-175f, base claude/ranksim-mvp-eod-ifjitw). The first forward-eval commit is f76f7f1. The fetch fallback and the unknown-content gate are commit 6a0910a, written before the recovered Nov 9 scores were read. The browser wait cap is 4391bb5. CI on f76f7f1 was green (run 42635653671, six pytest jobs on Python 3.11, 3.12, and 3.13, keys unset and fake keys).
 - Stack: Python package aeo.ranksim. BM25F retrieval plus LightGBM LambdaMART reranker with Google-leak-informed features. Entry point: `python -m aeo.ranksim` (console script `ranksim`). There is no onboard command. Commands include collect, evaluate, train, test, track, report, forward-eval, serve, and `project create`.
 - Ledger: append-only, hash-chained. Records PREDICTED rows and later outcomes. Calls stay UNSURE until held-out calibration passes.
 - LLM layer: OpenRouter with a cheap model (gpt-4o-mini). The key is an env var, never in git.
@@ -52,11 +52,59 @@ Scope: Google SEO only. The AI search (AEO) track is parked.
   Persistence on URLs present both days: 594/667 pairs (0.891), mean Spearman 0.816. Ledger: 1,495 PREDICTED rows, all UNSURE; persistence right on 931/1,146 resolved calls (0.812).
 - Drafts: LambdaMART 134/281 (0.477) against pages already ranking, 34/116 (0.293) draft vs draft. Persistence cannot order drafts at all.
 - Nov 10 new-page check (family-out, Nov 6 only, scored once on Nov 9; details in `evals/forward-2026-11-09/new_page.md`). The 34/116 figure is 28 ties of pages with no HTML, 22 right and 44 wrong when one page has text and the other does not, and 12/22 when both have text. The full list is 680 right and 557 wrong, so the comparator is not flipped. Dropping the largest query leaves 24/71. Three cheap rules (domain prior, URL overlap plus BM25, and a blend whose weight was fit on Nov 6) all failed the pre-set gate: beat LambdaMART by 0.05 on both draft slices, stay at least at BM25, and keep the bootstrap gain interval above zero. The ranker is unchanged.
+- Nov 10 fetch and recovered forward look (gate commit 6a0910a, scores in `evals/forward-2026-11-09/recovered.md`). Label: PREDICTED. The ranker is still not promoted.
+
+## Fetch design
+The collector tries three methods, in order, and records which one worked and why the others did not. The delay is 1 second per host.
+1. The existing polite HTTP fetch. It still obeys robots.txt for the bot user agent and still refuses private addresses.
+2. Headless Chromium (Playwright), with a current Chrome user agent and a 1366x768 viewport. It waits for the DOM, then for network idle, and reads the rendered HTML, visible text, title, headings, links, and schema. Robots are checked again for that browser user agent. A disallow is not bypassed. A 40 second alarm closes the browser if a page never goes idle.
+3. Serper scrape (`POST https://scrape.serper.dev`) only when `SERPER_API_KEY` is set and `serper_scrape_credit_cap` is above zero. The cap is a hard ceiling: a call that might cost more than the credits left is not sent. The default cap is 0, so scrape is off. This run did not have the key and did not call Serper. Tests use a fake key and a mock HTTP client.
+
+A page with no HTML is unknown content, not a shared low score. The feature `content_missing` is 1 for that row. Its ordering score is the mean of the Nov 6 LambdaMART training scores, shifted by the average within-query z-score of the off-page parts that exist. A missing part adds nothing. The domain prior uses Nov 6 rows from the other query families only. Recovered HTML is used at score time only. It is not a Nov 6 training row.
+
+Off-page sources that work with no signup:
+- Majestic Million CSV (referring subnets), free download, CC BY 3.0: https://downloads.majestic.com/majestic_million.csv. On this list, 52 of 84 domains had a value.
+- Tranco top list (popularity, not a backlink count): https://tranco-list.eu/top-1m.csv.zip. 50 of 84 domains were listed.
+- Common Crawl domain PageRank is free and keyless, and the file is multiple gigabytes. The loader is wired for a local file. This run did not download it, so that part added nothing.
+
+Needs a free signup key. Not requested:
+- Open PageRank: https://www.domcop.com/openpagerank/. The client is wired and stays off until `OPEN_PAGERANK_API_KEY` is set.
+- Moz Link API: https://moz.com/products/api. Not wired.
+- Majestic API beyond the Million CSV: https://developer.majestic.com/. Not wired.
+
+Clicks, impressions, and on-site behavior are not available. Nothing in this run invents them.
+
+## Recovered forward eval (PREDICTED, ranker not promoted)
+Missing HTML on the two snapshots: 46 URLs on Nov 6, 52 on Nov 9, 65 unique. HTTP recovered 3 unique URLs. The browser recovered 2 more. 5 of 65 unique pages came back. Nov 6: 3 of 46 (HTTP 2, browser 1). Nov 9: 4 of 52 (HTTP 2, browser 2). The same page can sit in both snapshots, so the per-day counts share some URLs. 60 unique pages stayed missing: 36 blocked by robots for both the bot and the browser, 12 HTTP challenge pages the browser still could not pass, and 12 HTTP 403s that were still challenges in the browser. The five recovered pages are thedigitalprojectmanager.com, sage.com heavy civil, topconsolutions.com/dirt-logic, meanjin.com.au/fiction/dirt-work, and zoho.com/crm/customers/dirt-rocks.html.
+
+The model was still fit only on the original 215 Nov 6 HTML rows. At score time, 10 Nov 9 rows used recovered HTML, 71 rows still had no HTML, 183 used Nov 6 HTML, and 35 used the original Nov 9 fetch. Pairwise still has 1,341 pairs. Intervals are a query bootstrap, 2000 draws, seed 20261110. NDCG@10 and Spearman intervals use the same draw count, seeds 20261110 and 20261111.
+
+| Scorer | All pairs | NDCG@10 | Spearman |
+| --- | --- | --- | --- |
+| Published LambdaMART (no recovery) | 680/1341 (0.507) | 0.715 | 0.096 |
+| LambdaMART, recovered text, unknown content | 885/1341 (0.660) [0.624, 0.691] | 0.777 [0.724, 0.828] | 0.413 [0.328, 0.488] |
+| BM25, same pages | 678/1341 (0.506) [0.466, 0.547] | 0.626 [0.577, 0.677] | 0.029 [-0.079, 0.139] |
+| Persistence | 931/1341 (0.694) [0.605, 0.773] | 0.902 [0.848, 0.946] | 0.649 [0.544, 0.739] |
+| Equal-weight blend | 934/1341 (0.696) [0.655, 0.738] | 0.836 [0.782, 0.885] | 0.535 [0.440, 0.627] |
+| History-aware rule, not adopted | 1009/1341 (0.752) [0.701, 0.800] | 0.879 [0.828, 0.925] | 0.625 [0.518, 0.724] |
+
+Persistence on the full list is the same 931/1341 as the published run. The candidate set did not change.
+
+| Slice | Published LambdaMART | This run, LambdaMART | This run, BM25 |
+| --- | --- | --- | --- |
+| Draft vs draft | 34/116 (0.293) | 76/116 (0.655) [0.393, 0.760] | 59/116 (0.509) |
+| Draft vs draft, both have text | 12/22 (0.545) | 18/31 (0.581) [0.353, 0.727] | 19/31 (0.613) |
+| Draft vs already ranking | 134/281 (0.477) | 182/281 (0.648) [0.578, 0.713] | 149/281 (0.530) |
+| Draft vs already ranking, draft has text | 87/167 (0.521) | 111/176 (0.631) [0.556, 0.697] | 84/176 (0.477) |
+
+The adoption gate was fixed in 6a0910a before these scores. Promote only if every draft slice, including both text slices, beats the published LambdaMART rate by 0.05, is at least BM25 on that slice, and the bootstrap interval of the gain over the published rate sits above zero. Draft versus draft with text is 18/31 (0.581). The bar is 0.595. It is also below BM25 at 19/31 (0.613). The gain interval is [-0.212, 0.182]. The other three slices cleared their bars. The rule needs every slice. `ranker_change` is `none`.
+
+The all-pairs lift is mostly the 71 rows that still have no HTML. They used to share one floor under every fetched page. They now take an off-page score, so they are not tied at the bottom. That is not a claim that the pasted-draft path got better. On drafts that have text, the count moved from 12/22 to 18/31 because a few recovered pages entered that slice.
 
 ## The main gap and next work
-Ranksim's core use case, predicting where a new or draft page lands, is still open. On pages that have text, draft versus draft is 12/22 and draft versus a page that already ranked is 87/167 (0.521). Next work:
-1. Take the next snapshot of the same 30 queries. Judge a new-page rule on pages that have text. Twenty-two text-versus-text pairs are too few to change the ranker.
-2. Keep the no-HTML pairs visible in the report. They are what pulls 34/116 under half, and they are not the pasted-draft path.
+Ranksim's core use case, predicting where a new or draft page lands, is still open. On drafts that have text, this run is 18/31 against another draft and 111/176 (0.631) against a page that already ranked. Neither number clears the gate. Next work:
+1. Take the next snapshot of the same 30 queries. Keep scoring new pages that have text as their own line.
+2. Most missing pages are robots blocks or challenge pages. HTTP and a headless browser did not get them. Serper scrape is wired and stayed off. A credit cap is required before anyone turns it on.
 3. Use persistence for pages already ranking, and keep the 90% target measured on unseen data with coverage stated.
 4. Apple mockup: blocked on a Superdesign browser sign-in. Resume when that is done, then wait for James's approval.
 

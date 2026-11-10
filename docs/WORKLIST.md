@@ -24,8 +24,68 @@ Legend: `[x]` done (commit noted), `[ ]` open, `[-]` blocked (reason given).
   `serve.py`/`demo.py` UI and re-apply only this branch's non-UI behaviour there (ledger record on
   check, held-out calibration note, draft provenance); keep this branch's crawler and label-import
   logic and fold in PR #2's smaller edits to the same functions; union the two conftest fixtures.
+- [x] A2b. 2026-11-10 lookout: new PR #4 (`cursor/t006-html-coverage-175f`, HTML snapshot join),
+  PR #5 (`cursor/integration-review-175f`, base PR #2: held-out confidence, project slugs in the
+  ledger, a frozen 20/10 split, a Nov 6 to Nov 9 forward eval), PR #6 (`docs/MISSION.md`,
+  `AGENTS.md`, UI brief), PR #1 moved to ca8dff2 (SERP JSONL import, CSV track record), and
+  `claude/kind-hopper-lglg98` (the Studio, on top of PR #5, no PR). `main` has not moved. Dry-run
+  merges against this branch: PR #6 none; PR #1 and PR #4 `tests/conftest.py`; PR #5 and
+  kind-hopper 16 files (README, crawl/fetch.py, crawl/urls.py, benchmark.py, check.py, cli.py,
+  confidence.py, demo.py, groundtruth.py, lambdamart.py, ledger.py, serve.py, store.py, conftest,
+  test_product_layer.py, test_ranksim.py). PR #5 holds byte copies of this branch's benchmark.py
+  (eff6162) and ledger.py, then diverges. Nothing on any board assigns work to this PR.
+  Decision: do not merge PR #5 or kind-hopper into this branch (they are not on `main` and carry
+  UI-owned files and `evals/` data). Make this branch interoperable instead (section I), so either
+  merge order resolves by simple rules.
 - [ ] A3. When `main` moves: merge it here, resolve, run the full suite on 3.11 and 3.13, push,
-  confirm CI. Repeat each time `main` moves.
+  confirm CI. Repeat each time `main` moves. Resolution guide if PR #5 lands first: take `main`
+  for UI files (serve.py, demo.py, workspace*, project.py); keep this branch's crawl/*, benchmark.py
+  and snapshot.py; ledger.py and confidence.py should already be supersets after I1 to I3.
+
+## I. Interoperability with PR #5 and PR #6 (added 2026-11-10)
+
+Rules from `docs/MISSION.md` (PR #5/#6) that this branch follows: never present a training,
+same-snapshot or test-tuned score as accuracy; select on training data only and score held-out and
+forward data once; no merge to `main` or deploy without James; no purchases; reports in short plain
+sentences with no em or en dashes.
+
+- [ ] I1. Ledger interoperability: `project_slug` on predictions and outcome provenance columns
+  (project_slug, source_file, source_sha256, uploaded_at) with server defaults; hash version 2
+  exactly as PR #5 ad8020f, version-aware `verify_ledger`; writers pass an explicit slug; scoring
+  matches outcomes to the same project; keep `record_check`; a NOT NULL failure is not retried as a
+  fork race.
+- [ ] I2. Ledger wall clock: store `recorded_at` from the clock next to the caller's `created_at`;
+  scoring counts an outcome only if it was observed after the row was actually recorded, and
+  reports backdated rows as protocol-time replays, not forward evidence.
+- [ ] I3. Confidence API: `Calibration.held_out`, `product_label(gap, synthetic=..., kind=...)`
+  routed to the predicted-rank or head-to-head threshold, synthetic data always UNSURE, a
+  too-few-clusters note, and one helper that labels a predicted rank from ungated scores so UI
+  callers can switch to it.
+- [ ] I4. check.py: UNSURE when fewer than half of the labeled candidates have stored pages, and a
+  `synthetic` flag that forces UNSURE.
+- [ ] I5. Label import accepts a Serper export whose URL column is `link` (as PR #5 847ef71).
+- [ ] I6. Docs: `--final` is a same-snapshot holdout, not accuracy; README numbers labeled as
+  same-snapshot agreement; E14 recomputes PR #5's committed forward figures with ties as half
+  (analysis of f76f7f1, not a new claim).
+- [ ] I7. Adversarial review of I1 to I6 (workflow); fix confirmed defects with regression tests.
+
+Requests for other roles, drafted here and not posted (posting on another role's PR needs James):
+- PR #5 / SEO Tool Builder: the thin-draft CLEARER bug fixed in B2 (`product_label` on gated
+  neighbour gaps); `_same_project` never resolves blank-slug rows; `evals/` is not excluded in
+  `.vercelignore`/`vercel.json` at 384c4a6 although Vercel builds the branch; "pre-registered"
+  wording and hand-set `created_at` on forward ledger rows; point `workspace._gap_confidence` and
+  `project._confidence` at the I3 helper; PR #5's benchmark.py `labeled_coverage` imports
+  `EVALUATION_EXCLUDED_SOURCES`, which its store.py lacks.
+- PR #4: after a union `conftest.py`, `test_later_snapshot_replaces_the_same_url_and_mock_scores_
+  stay_on_that_cohort` fails against this branch's one-cluster guard; pr8_v3 drafts stored under
+  live URLs are counted as covered.
+- PR #1: `track-record score` compares raw query text, while label import casefolds queries.
+
+Order for section B after section I: B7, B5, B6, B15 (with a persistence baseline), B8, B16, B3,
+B4, B10, B11, B12, B13, B14, B9, B17. Notes from the review: B5 must not change `normalize_url`
+(PR #4 tests rely on it) and should match PR #2's `project.loose_key`; B8 provides one backend
+function for intents; B14 defaults to OpenRouter gpt-4o-mini (MISSION); B16 uses an adoption rule
+fixed in advance.
 
 ## B. Backend work (no UI files)
 

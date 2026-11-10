@@ -112,7 +112,10 @@ Requests for other roles, drafted here and not posted (posting on another role's
   SmartCrew labels today, checked on all 16 queries). `build_space` is called without `intents` or
   `kinds`. `_fetch_html` swallows `ProviderConfigError`, so with the placeholder `CRAWL_USER_AGENT`
   every URL check says only "Could not fetch"; show its message. `score_site` and `suggest_links`
-  now default to the shared intents in the backend, so the whole-site table needs no change.
+  now default to the shared intents in the backend, but the demo trains `self.fit` with the
+  keywords-only map (`serve.py` line 53), so pass one shared map to `build_examples`, `score_site`,
+  `suggest_links` and `build_space` (B20 F16: with an `intent` column in the label file, the
+  whole-site table scored a query with another intent than the model was trained on).
 - PR #2 / PR #5 owners: `project.guess_intent` and `forward_eval.py` (hard-coded "commercial") can
   call `intents.query_intents(labels)` / `intent_for(query, intents)` so every path agrees.
 
@@ -199,8 +202,23 @@ fixed in advance.
   catches glued digits. Every user-facing same-snapshot number now says agreement, not accuracy
   (`evaluate`, `train`, calibration notes, three-way and bundle output). Demo files owned by PR #2
   got requests instead (above).
-- [ ] B20. Review of the B17 fixes as merged (87511c0..HEAD): multi-lens review with adversarial
-  verification; fix confirmed defects with regression tests.
+- [ ] B20. Review of the B17 fixes as merged (87511c0..15f23b2): multi-lens review with adversarial
+  verification; fix confirmed defects with regression tests. Review done: 7 lenses, 22 findings
+  verified, 20 confirmed (1 high, 7 medium, 12 low), 2 refuted. Fixes, one branch per area:
+  - [ ] F0 (high): `docs/accuracy.md` said a `--final` run measures accuracy on unseen results; it
+    is a same-snapshot holdout. F17 legacy final-run key, F19 damaged `results.jsonl` message.
+  - [ ] Crawler: F1 a redirect hop is fetched without its own robots.txt check; F8 an invalid
+    host escapes the robots path; F9 UTF-8 robots.txt read with a legacy charset header; F10 dot
+    segments pass a Disallow rule; F11 robots.txt requests ignore 429/503 backoff.
+  - [ ] SERP store: F3 Search Console averages stored by an older version stay Google lists; F6,
+    F7, F14 legacy dated label rows read or get marked as undated; F12 re-importing an earlier
+    version of an undated file is dropped; F13 a non-ISO `observed_on` silently makes a file
+    undated; F18 a draft at the slash twin blocks a recrawl.
+  - [ ] Observe: F2, F5 `ledger observe` ignores each row's own date and records old or undated
+    lists as observed today; F4 `noise FILE FILE` compares a list with itself; F15 keyword exports
+    with title rows send header and metric rows as paid queries.
+  - [x] F16: the demo trains with a keywords-only intent map while its whole-site table uses the
+    shared source. `serve.py` is PR #2's: README exception and the request above corrected.
 
 - [x] B18. A check says which question it answers (P0-5, backend half): where the page would sit
   among the stored results, not whether Google would show a new page at all; the evidence it cites

@@ -88,7 +88,7 @@ def _check(draft_words: int, calibration: Calibration):
 
 def test_a_thin_draft_is_never_clearer_from_the_rules_offset():
     # Before: the gated draft sat 1.0 below the last full page, and a 0.5 threshold called that CLEARER.
-    result = _check(100, Calibration(0.5, 0.9, 0.5, "pairs", adjacent_threshold=0.5, adjacent_note="adjacent"))
+    result = _check(100, _held(0.5, 0.5))
     assert result.predicted_rank == 4
     assert result.confidence == "UNSURE"
     assert "150 words" in result.confidence_note
@@ -97,9 +97,44 @@ def test_a_thin_draft_is_never_clearer_from_the_rules_offset():
 
 def test_the_predicted_rank_uses_the_adjacent_threshold_not_the_head_to_head_one():
     # Head-to-head gaps of 2.0 or more clear 0.5; no adjacent threshold passed, so the rank stays UNSURE.
-    result = _check(400, Calibration(0.5, 0.9, 0.5, "pairs", adjacent_threshold=None, adjacent_note="no adjacent threshold"))
+    result = _check(400, Calibration(0.5, 0.9, 0.5, "pairs", held_out=True, adjacent_threshold=None, adjacent_note="no adjacent threshold"))
     assert result.confidence == "UNSURE"
     assert result.confidence_note == "no adjacent threshold"
     assert {row.confidence for row in result.competitors} == {"CLEARER"}
-    both = _check(400, Calibration(0.5, 0.9, 0.5, "pairs", adjacent_threshold=0.5, adjacent_note="adjacent"))
+    both = _check(400, _held(0.5, 0.5))
     assert both.confidence == "CLEARER"
+
+
+def _held(pairs, adjacent):
+    return Calibration(pairs, 0.9, 0.5, "pairs", held_out=True, adjacent_threshold=adjacent, adjacent_note="adjacent", adjacent_held_out=True)
+
+
+def test_an_in_sample_threshold_is_never_a_product_label():
+    # Ported from the integration branch: a threshold that did not pass the held-out check
+    # (held_out False) gives no CLEARER, in the API or in a check.
+    in_sample = Calibration(0.5, 0.9, 0.5, "in sample", adjacent_threshold=0.5, adjacent_note="in sample")
+    assert in_sample.product_label(5.0) == ("UNSURE", "in sample")
+    assert in_sample.product_label(5.0, kind="pairs")[0] == "UNSURE"
+    result = _check(400, in_sample)
+    assert result.confidence == "UNSURE" and {row.confidence for row in result.competitors} == {"UNSURE"}
+    held = _held(0.5, 0.5)
+    assert held.product_label(5.0) == ("CLEARER", "adjacent")
+    assert held.product_label(0.1)[0] == "UNSURE"
+    label, note = held.product_label(5.0, synthetic=True)
+    assert label == "UNSURE" and "Synthetic" in note
+
+
+def test_validation_sets_the_held_out_flag():
+    from aeo.ranksim.confidence import loo_fit
+
+    # 14 queries of 5 pages whose signal follows the label exactly (as tests/test_benchmark.py).
+    examples = [
+        RankExample(f"query {q}", f"https://q{q}p{p}.example/page", float(p), {"bm25_title": (5 - p) * 3.0, "bm25f": (5 - p) * 3.0})
+        for q in range(14)
+        for p in range(1, 6)
+    ]
+    fit = loo_fit(examples, ["bm25_title"])
+    assert fit.calibration.threshold is not None and fit.calibration.held_out
+    unvalidated = loo_fit(examples, ["bm25_title"], validate=False)
+    assert unvalidated.calibration.threshold is not None and not unvalidated.calibration.held_out
+    assert unvalidated.calibration.product_label(100.0, kind="pairs")[0] == "UNSURE"

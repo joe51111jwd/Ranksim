@@ -60,10 +60,12 @@ sentences with no em or en dashes.
   reports backdated rows as protocol-time replays, not forward evidence. Done: `recorded_at` sits
   inside the hashed payload, so PR #5's version 2 verify still passes and the time cannot be moved
   unnoticed; an outcome dated in the future is refused.
-- [ ] I3. Confidence API: `Calibration.held_out`, `product_label(gap, synthetic=..., kind=...)`
+- [x] I3. Confidence API: `Calibration.held_out`, `product_label(gap, synthetic=..., kind=...)`
   routed to the predicted-rank or head-to-head threshold, synthetic data always UNSURE, a
   too-few-clusters note, and one helper that labels a predicted rank from ungated scores so UI
-  callers can switch to it.
+  callers can switch to it. Done: `product_label` keeps PR #5's signature and returns (label,
+  note) from the predicted-rank threshold; `rank_confidence` and `pair_confidence` are the helpers;
+  a threshold without the held-out flag never gives CLEARER.
 - [ ] I4. check.py: UNSURE when fewer than half of the labeled candidates have stored pages, and a
   `synthetic` flag that forces UNSURE.
 - [ ] I5. Label import accepts a Serper export whose URL column is `link` (as PR #5 847ef71).
@@ -77,7 +79,9 @@ Requests for other roles, drafted here and not posted (posting on another role's
   neighbour gaps); `_same_project` never resolves blank-slug rows; `evals/` is not excluded in
   `.vercelignore`/`vercel.json` at 384c4a6 although Vercel builds the branch; "pre-registered"
   wording and hand-set `created_at` on forward ledger rows; point `workspace._gap_confidence` and
-  `project._confidence` at the I3 helper; PR #5's benchmark.py `labeled_coverage` imports
+  `project._confidence` at the I3 helper (`rank_confidence`); after that change PR #5's
+  `test_in_sample_clearer_is_not_a_product_label` must set the predicted-rank threshold, because
+  `product_label(2)` on a head-to-head threshold alone is the B2 bug; PR #5's benchmark.py `labeled_coverage` imports
   `EVALUATION_EXCLUDED_SOURCES`, which its store.py lacks.
 - PR #4: after a union `conftest.py`, `test_later_snapshot_replaces_the_same_url_and_mock_scores_
   stay_on_that_cohort` fails against this branch's one-cluster guard; pr8_v3 drafts stored under

@@ -7,10 +7,10 @@ from datetime import date
 
 from aeo.crawl.urls import domain_of, normalize_url
 from aeo.ranksim.attribution import LABELS
-from aeo.ranksim.confidence import Calibration, neighbor_gap
+from aeo.ranksim.confidence import Calibration, pair_confidence, rank_confidence
 from aeo.ranksim.features import MODEL_FEATURES, PageDoc, raw_features
 from aeo.ranksim.groundtruth import SerpLabel
-from aeo.ranksim.lambdamart import RankExample, gate_thin_pages, gated_rows, predict_scores
+from aeo.ranksim.lambdamart import RankExample, gate_thin_pages, predict_scores
 from aeo.ranksim.linkgraph import LinkGraph
 from aeo.ranksim.llm import LlmClient
 from aeo.ranksim.loop import page_from_html
@@ -279,7 +279,6 @@ def check_draft(
     # Gaps come from the model's own scores; the order from the scores after the 150-word rule.
     raw_scores = predict_scores(model, examples, gate=False)
     scores = gate_thin_pages(examples, raw_scores)
-    gated = gated_rows(examples)
     order = sorted(range(len(docs)), key=lambda index: (-scores[id(examples[index])], index))
     ranks = {index: place for place, index in enumerate(order, start=1)}
     ours = next(index for index, doc in enumerate(docs) if normalize_url(doc.url) == draft_key or doc.url == url)
@@ -287,27 +286,14 @@ def check_draft(
     result.predicted_of = len(docs)
     ordered_scores = [scores[id(example)] for example in examples]
     result.competitors = _competitors(docs, ranks, positions, ours, ordered_scores)
-    our_id = id(examples[ours])
     by_url = {doc.url: index for index, doc in enumerate(docs)}
     for row in result.competitors:
         other = by_url.get(row.url)
-        if other is None or our_id in gated or id(examples[other]) in gated:
-            row.confidence = "UNSURE"  # the 150-word rule, not the model, decided this order
-            continue
-        row.confidence = calibration.label(abs(raw_scores[our_id] - raw_scores[id(examples[other])]))
+        row.confidence = "UNSURE" if other is None else pair_confidence(calibration, examples, raw_scores, ours, other)
     result.candidate_hashes = {doc.url: doc.html_sha256 for doc in docs}
     result.gaps = _top_gaps(raw, ours, ranks, model, docs)
     result.warnings = stuffing_warnings(query, docs[ours], [doc for index, doc in enumerate(docs) if index != ours])
-    raw_list = [raw_scores[id(example)] for example in examples]
-    neighbor, _used = neighbor_gap(raw_list, order, ours, gated, ids=lambda index: id(examples[index]))
-    result.confidence = calibration.label_adjacent(neighbor)
-    if our_id in gated:
-        result.confidence_note = (
-            "This page is under 150 words, so a fixed rule placed it behind every fuller page. "
-            "That placement is a rule, not a calibrated model call."
-        )
-    else:
-        result.confidence_note = calibration.adjacent_note or calibration.note
+    result.confidence, result.confidence_note = rank_confidence(calibration, examples, raw_scores, ours)
     if run_ai:
         result.explanation, result.explanation_stub = _explain(llm, result)
         rounds, stub, note = _fix_loop(llm, query, html, url, labels, pages, model, calibration, today, intent, result.predicted_rank, result.predicted_of, result.gaps)

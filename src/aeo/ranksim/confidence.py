@@ -9,6 +9,11 @@ Two statistics, each calibrated on its own pairs, because each answers a differe
 Both use the model's own scores. Pages placed by the 150-word rule are left out of both: their
 order comes from the rule and their gaps are synthetic.
 
+User-facing labels go through ``product_label`` (or ``rank_confidence`` / ``pair_confidence``,
+which compute the gap correctly): CLEARER needs a threshold that passed the held-out check
+(``held_out``), and synthetic data is always UNSURE. The signature matches the integration branch
+(PR #5), where every caller passes a predicted-rank gap, so it uses the predicted-rank threshold.
+
 A threshold picked on the backtest pairs and then scored on those same pairs is optimistic.
 Before a threshold is used for CLEARER labels, ``validate_calibration`` re-checks it with
 query clusters and their URLs held out and the threshold chosen on other folds only. That
@@ -42,8 +47,10 @@ class Calibration:
     confident_pairwise: float | None
     confident_coverage: float | None
     note: str
+    held_out: bool = False  # the head-to-head threshold passed the held-out check
     adjacent_threshold: float | None = None
     adjacent_note: str = ""
+    adjacent_held_out: bool = False  # the predicted-rank threshold passed the held-out check
 
     def label(self, gap: float | None) -> str:
         if self.threshold is None or gap is None or gap < self.threshold:
@@ -54,6 +61,24 @@ class Calibration:
         if self.adjacent_threshold is None or gap is None or gap < self.adjacent_threshold:
             return "UNSURE"
         return "CLEARER"
+
+    def product_label(self, gap: float | None, *, synthetic: bool = False, kind: str = "adjacent") -> tuple[str, str]:
+        """(label, note) for users. CLEARER only from a held-out threshold and never on synthetic data.
+
+        ``kind="adjacent"`` (default) labels a predicted rank from its gap to the nearest page;
+        ``kind="pairs"`` labels one head-to-head comparison.
+        """
+        if kind == "pairs":
+            threshold, held, note, label = self.threshold, self.held_out, self.note, self.label
+        elif kind == "adjacent":
+            threshold, held, note, label = self.adjacent_threshold, self.adjacent_held_out, self.adjacent_note or self.note, self.label_adjacent
+        else:
+            raise ValueError(f"Unknown kind {kind!r}")
+        if synthetic:
+            return "UNSURE", (note + " Synthetic example data cannot support a confident call.").strip()
+        if not held or threshold is None:
+            return "UNSURE", note
+        return label(gap), note
 
 
 @dataclass
@@ -134,8 +159,10 @@ def combine(pairs: Calibration, adjacent: Calibration) -> Calibration:
         pairs.confident_pairwise,
         pairs.confident_coverage,
         pairs.note,
+        held_out=pairs.held_out,
         adjacent_threshold=adjacent.threshold,
         adjacent_note=adjacent.note,
+        adjacent_held_out=adjacent.held_out,
     )
 
 
@@ -176,8 +203,23 @@ def validate_calibration(
     if queries is None:
         queries = held_out_queries(examples, feature_names)
     if queries is None:
-        return Calibration(None, None, None, "Too few query clusters to check the confidence threshold. Calls stay UNSURE.")
+        return Calibration(
+            None,
+            None,
+            None,
+            "Too few query clusters to check the confidence threshold. Calls stay UNSURE. " + _in_sample_text(in_sample, kind),
+        )
     return check_threshold(in_sample, queries, kind)
+
+
+def _in_sample_text(in_sample: Calibration, kind: str) -> str:
+    if in_sample.threshold is None or in_sample.confident_pairwise is None:
+        return in_sample.note
+    return (
+        f"On the leave-one-query-out backtest, {KIND_TEXT.get(kind, 'a score gap')} of at least {in_sample.threshold:.2f} "
+        f"looked accurate ({in_sample.confident_pairwise:.3f} on {in_sample.confident_coverage:.0%} of cases), but that "
+        "threshold was chosen and scored on the same pairs."
+    )
 
 
 def check_threshold(in_sample: Calibration, queries, kind: str) -> Calibration:
@@ -193,11 +235,7 @@ def check_threshold(in_sample: Calibration, queries, kind: str) -> Calibration:
     deployed_acc = deployed_right / len(deployed) if deployed else 0.0
     deployed_cov = len(deployed) / len(margins) if margins else 0.0
     what = KIND_TEXT.get(kind, "a score gap")
-    in_sample_text = (
-        f"On the leave-one-query-out backtest, {what} of at least {in_sample.threshold:.2f} looked accurate "
-        f"({in_sample.confident_pairwise:.3f} on {in_sample.confident_coverage:.0%} of cases), but that "
-        "threshold was chosen and scored on the same pairs."
-    )
+    in_sample_text = _in_sample_text(in_sample, kind)
     held_text = (
         f"With query clusters and their URLs held out, that gap was right on {deployed_right} of {len(deployed)} "
         f"cases; with each fold's threshold chosen on the other folds, {cross.correct} of "
@@ -206,6 +244,7 @@ def check_threshold(in_sample: Calibration, queries, kind: str) -> Calibration:
     passes = (
         len(deployed) >= MIN_CONFIDENT_CALLS
         and deployed_acc >= MIN_CONFIDENT_ACCURACY
+        and cross is not None
         and cross.calls >= MIN_CONFIDENT_CALLS
         and (cross.accuracy or 0.0) >= MIN_CONFIDENT_ACCURACY
     )
@@ -228,6 +267,7 @@ def check_threshold(in_sample: Calibration, queries, kind: str) -> Calibration:
             f"(The gap was chosen on leave-one-query-out pairs from the same queries, so this is still "
             "somewhat optimistic.) Smaller gaps are UNSURE. Still PREDICTED, not a Google rank."
         ),
+        held_out=True,
     )
 
 
@@ -324,3 +364,54 @@ def adjacent_margins(rows: list[RankExample], scores: list[float], gated: set[in
         )
         found.append(PairMargin(gap=gap, correct=correct))
     return found
+
+
+THIN_RULE_NOTE = (
+    "This page is under 150 words, so a fixed rule placed it behind every fuller page. "
+    "That placement is a rule, not a calibrated model call."
+)
+
+
+def rank_confidence(
+    calibration: Calibration,
+    examples: list[RankExample],
+    raw_scores: dict[int, float],
+    index: int,
+    *,
+    synthetic: bool = False,
+) -> tuple[str, str]:
+    """(label, note) for the predicted rank of ``examples[index]`` among ``examples`` (one query).
+
+    ``raw_scores`` are the model's own scores (``predict_scores(..., gate=False)``). The order
+    applies the 150-word rule; the gap is to the nearest predicted neighbour the rule did not
+    place. A page the rule placed is always UNSURE. Use this instead of computing a gap by hand.
+    """
+    from aeo.ranksim.lambdamart import gate_thin_pages
+
+    gated = gated_rows(examples)
+    if id(examples[index]) in gated:
+        return "UNSURE", THIN_RULE_NOTE
+    ordered = gate_thin_pages(examples, raw_scores)
+    order = sorted(range(len(examples)), key=lambda spot: (-ordered[id(examples[spot])], spot))
+    raw = [raw_scores[id(example)] for example in examples]
+    gap, _used = neighbor_gap(raw, order, index, gated, ids=lambda spot: id(examples[spot]))
+    return calibration.product_label(gap, synthetic=synthetic, kind="adjacent")
+
+
+def pair_confidence(
+    calibration: Calibration,
+    examples: list[RankExample],
+    raw_scores: dict[int, float],
+    left: int,
+    right: int,
+    *,
+    synthetic: bool = False,
+) -> str:
+    """Head-to-head label for two pages of one query, from the model's own scores. A pair the
+    150-word rule decided is UNSURE."""
+    gated = gated_rows(examples)
+    if id(examples[left]) in gated or id(examples[right]) in gated:
+        return "UNSURE"
+    gap = abs(raw_scores[id(examples[left])] - raw_scores[id(examples[right])])
+    return calibration.product_label(gap, synthetic=synthetic, kind="pairs")[0]
+

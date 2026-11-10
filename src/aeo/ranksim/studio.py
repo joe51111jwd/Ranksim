@@ -27,10 +27,11 @@ CSRF_HEADER = "x-ranksim-csrf"
 ASSETS = {
     "studio.css": "text/css; charset=utf-8",
     "studio.js": "application/javascript; charset=utf-8",
-    "inter.woff2": "font/woff2",
+    "sans.woff2": "font/woff2",
     "mono.woff2": "font/woff2",
 }
 VERSIONED = ("studio.css", "studio.js")
+SCREENS = {"studio", "rankings", "data", "overview", "issues", "searches", "competitors", "editor", "settings"}
 MAX_CSV_BYTES = 5 * 1024 * 1024
 DATE_RE = r"^\d{4}-\d{2}-\d{2}$"
 # Paths that answer without a login: the app shell (it holds no data), its assets, and the login itself.
@@ -473,7 +474,7 @@ def register(app: FastAPI, ui) -> None:
 
     @app.get("/app/{slug}/{screen}", response_class=HTMLResponse)
     def studio_screen(slug: str, screen: str) -> Response:
-        if screen not in {"studio", "rankings", "data"}:
+        if screen not in SCREENS:
             return serve._not_found(ui)
         return shell_response()
 
@@ -841,6 +842,60 @@ def register(app: FastAPI, ui) -> None:
         run["original_html"] = ws.draft_html_of(project, run_id, "original") or ""
         return JSONResponse(run)
 
+    # -- autopilot: a site in, a report out ----------------------------------------------------------
+
+    @app.post("/api/v1/sites")
+    async def api_analyze(request: Request) -> Response:
+        """Read the site, find its searches, ask Google, fetch the ranking pages, train, pick competitors.
+
+        Streams one JSON object per line: step events, then done (with the project slug) or error.
+        """
+        import queue
+        import threading
+
+        from fastapi.responses import StreamingResponse
+
+        _check_header_csrf(ui, request)
+        blocked = _not_public(ui)
+        if blocked is not None:
+            return blocked
+        body = await _json_body(request, 8192)
+        site = _text(body.get("site"), 300).strip()
+        if not site:
+            return _error(400, "Type your site's address, for example yoursite.com.")
+        lock = ui.jobs.project_lock("__analyze__")
+        if not lock.acquire(blocking=False):
+            return _error(409, "Another site is being analyzed right now. Try again in a minute.")
+        events: queue.Queue = queue.Queue()
+
+        def work() -> None:
+            try:
+                events.put({"type": "done", **_analyze(ui, site, events, body.get("searches"))})
+            except Exception as exc:  # noqa: BLE001 - shown to the owner, scrubbed of keys
+                events.put({"type": "error", "error": _analyze_error(ui, exc)})
+            finally:
+                lock.release()
+                events.put(None)
+
+        threading.Thread(target=work, name="analyze", daemon=True).start()
+
+        async def stream():
+            yield json.dumps({"type": "start", "google": google_status(ui)["ready"]}) + "\n"
+            while True:
+                item = await run_in_threadpool(events.get)
+                if item is None:
+                    break
+                yield json.dumps(item, default=str) + "\n"
+
+        return StreamingResponse(stream(), media_type="application/x-ndjson", headers={"cache-control": "no-store", "x-accel-buffering": "no"})
+
+    @app.get("/api/v1/projects/{slug}/report")
+    async def api_report(slug: str) -> JSONResponse:
+        try:
+            return JSONResponse(await run_in_threadpool(project_report, ui, slug))
+        except LookupError:
+            return _error(404, "No such project.")
+
     @app.exception_handler(HTTPException)
     async def _http_error(request: Request, exc: HTTPException):
         if request.url.path.startswith("/api/v1/"):
@@ -884,6 +939,14 @@ def _run_pull(ui, project, use_google: bool, events) -> dict:
         options.setdefault("skip_google", not use_google)
     report = pull(project, ui.settings, database=ui.database, progress=progress, **options)
     ui.forget(project.slug)
+    if report.google_kind == "api":
+        from aeo.ranksim import autopilot
+        from aeo.ranksim.project import latest_google
+
+        fresh = ws.load_meta(project)
+        if not fresh.competitors:  # competitors are picked for you; editing them in Settings sticks
+            fresh.competitors = autopilot.pick_competitors(latest_google(project), project.domain)
+            ws.save_meta(project, fresh)
     if report.google_kind == "api" and meta.dataset in {ws.DATASET_NONE, ws.DATASET_OBSERVED}:
         meta = ws.load_meta(project)
         meta.dataset = ws.DATASET_OBSERVED
@@ -905,3 +968,106 @@ def _pull_error(ui, project, exc: Exception) -> str:
             "or import a CSV of positions (query, url, position). Nothing was invented."
         )
     return ui.scrub(f"The pull failed: {type(exc).__name__}: {str(exc)[:300]}")
+
+
+def project_report(ui, slug: str) -> dict:
+    from aeo.ranksim import autopilot
+
+    project = ui.project(slug)
+    meta = ws.load_meta(project)
+    ready, _reason = ws.engine_state(project)
+    ctx = None
+    if ready:
+        try:
+            ctx = ui.context(slug)
+        except Exception:  # noqa: BLE001 - the report shows what it can without the engine
+            ctx = None
+    data = autopilot.build_report(project, meta, ui.database, ctx=ctx, google_ready=google_status(ui)["ready"])
+    data["slug"] = project.slug
+    data["data"] = _dataset_info(meta)
+    data["engine"] = {"ready": ready}
+    return data
+
+
+def _analyze(ui, site: str, events, searches=None) -> dict:
+    """The whole autopilot for one site. Every step reports progress on events."""
+    from aeo.ranksim import autopilot
+    from aeo.ranksim.project import ProjectError, clean_site, create_project, load_project, slugify, update_searches
+
+    def step(name: str, message: str, done: int = 0, total: int = 0, state: str = "active", **extra) -> None:
+        events.put({"type": "step", "step": name, "state": state, "message": ui.scrub(message), "done": done, "total": total, **extra})
+
+    host = clean_site(site)
+    fetcher = ui.pull_options.get("fetcher")
+    step("site", f"Reading {host}.")
+    pages = autopilot.read_site(host, ui.settings, ui.database, fetcher=fetcher, progress=lambda message, done, total: step("site", message, done, total))
+    readable = [page for page in pages if page.status == "fetched"]
+    if not readable:
+        first = pages[0] if pages else None
+        reason = (first.error or first.status) if first else "no answer"
+        raise ProjectError(f"We couldn't read {host} ({reason}). Check the address, or that the site allows crawlers.")
+    step("site", f"Read {len(readable)} of {len(pages)} pages.", len(pages), len(pages), state="done")
+
+    brand = autopilot.brand_of(pages, host)
+    chosen = _split(searches) if searches else autopilot.discover_searches(pages, brand, host=host)
+    if not chosen:
+        chosen = [brand.lower()]
+    step("searches", f"Found {len(chosen)} searches your pages are written for.", len(chosen), len(chosen), state="done", searches=chosen)
+
+    project = None
+    want_domain = host.removeprefix("www.")
+    for name in (brand, f"{brand} {want_domain}"):
+        try:
+            found = load_project(slugify(name), root=ui.root)
+        except (ProjectError, FileNotFoundError, OSError, ValueError):
+            project = create_project(name, host, chosen, root=ui.root)
+            break
+        if found.domain.removeprefix("www.") == want_domain:
+            project = update_searches(found, replace=chosen)  # a new analysis starts from what the site says now
+            break
+    if project is None:
+        raise ProjectError(f"A different site already uses the name {brand}. Rename that project first.")
+    meta = ws.load_meta(project)
+    ws.save_meta(project, meta)
+
+    google = google_status(ui)
+    if google["ready"]:
+        pull_events: list = []
+
+        class Relay:
+            def put(self, item):
+                if item.get("type") == "progress":
+                    name = {"google": "google", "crawl": "pages", "train": "model", "store": "save"}.get(item.get("step"))
+                    if name:
+                        events.put({"type": "step", "step": name, "state": "active", "message": item.get("message", ""), "done": item.get("done", 0), "total": item.get("total", 0)})
+                pull_events.append(item)
+
+        summary = _run_pull(ui, project, True, Relay())
+        meta = ws.load_meta(project)
+        from aeo.ranksim.project import latest_google
+
+        picked = autopilot.pick_competitors(latest_google(project), project.domain)
+        if picked and not meta.competitors:
+            meta.competitors = picked
+            ws.save_meta(project, meta)
+        step("competitors", f"Found {len(picked)} competitors.", len(picked), len(picked), state="done", competitors=picked)
+        cloud = getattr(ui, "cloud", None)
+        if cloud is not None and cloud.enabled:
+            cloud.save()
+    else:
+        summary = None
+        step("google", "Search data isn't connected on this server yet, so rankings are skipped. Your pages were still checked.", state="skipped")
+        cloud = getattr(ui, "cloud", None)
+        if cloud is not None and cloud.enabled:
+            cloud.save()
+    ui.forget(project.slug)
+    step("report", "Report ready.", 1, 1, state="done")
+    return {"slug": project.slug, "searches": chosen, "pull": summary}
+
+
+def _analyze_error(ui, exc: Exception) -> str:
+    from aeo.ranksim.project import ProjectError
+
+    if isinstance(exc, ProjectError):
+        return ui.scrub(str(exc).replace(str(ui.root), "the projects folder"))
+    return ui.scrub(f"The analysis stopped: {type(exc).__name__}: {str(exc)[:300]}")

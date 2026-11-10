@@ -1,22 +1,20 @@
-/* Ranksim Studio. One page: edit a page, preview it, and see where it is PREDICTED to land before it is published.
-   Every number shown comes from /api/v1. Model positions are predictions among the stored candidate pages, never a Google rank. */
+/* Ranksim. Type a site; Ranksim finds its searches, pulls Google, finds competitors, and reports what to fix.
+   Then edit a page right in the preview and test where it is PREDICTED to land before you publish.
+   Every number comes from /api/v1. Predicted positions are model estimates among stored pages, never a Google rank. */
 (() => {
   'use strict';
 
   const CSRF = (document.getElementById('csrf') || {}).value || '';
   const MODE = document.documentElement.dataset.mode || 'local';
   const SVGNS = 'http://www.w3.org/2000/svg';
-  const DESKTOP_WIDTH = 1024;
-  const PHONE_WIDTH = 390;
   const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
 
-  /* ------------------------------------------------------------------ dom helpers */
+  /* ------------------------------------------------------------------ helpers */
 
   const ICONS = {
     search: '<circle cx="11" cy="11" r="6.5"/><path d="m20 20-4.2-4.2"/>',
     chevron: '<path d="m6 9 6 6 6-6"/>',
     lock: '<rect x="5" y="11" width="14" height="10" rx="2.5"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/>',
-    info: '<circle cx="12" cy="12" r="9"/><path d="M12 11v5"/><path d="M12 7.5h.01"/>',
     close: '<path d="M17 7 7 17M7 7l10 10"/>',
     arrow: '<path d="M5 12h14M13 6l6 6-6 6"/>',
     up: '<path d="M12 19V5M6 11l6-6 6 6"/>',
@@ -27,15 +25,15 @@
     next: '<path d="m9 6 6 6-6 6"/>',
     warn: '<path d="M10.3 3.9 2.4 18a2 2 0 0 0 1.7 3h15.8a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4M12 17h.01"/>',
     pencil: '<path d="M4 20h4L18.5 9.5a2.1 2.1 0 0 0-4-4L4 16z"/><path d="m13.5 6.5 4 4"/>',
-    list: '<path d="M9 6h11M9 12h11M9 18h11"/><circle cx="4.5" cy="6" r="1"/><circle cx="4.5" cy="12" r="1"/><circle cx="4.5" cy="18" r="1"/>',
     plus: '<path d="M12 5v14M5 12h14"/>',
     check: '<path d="m5 12.5 4.5 4.5L19 7.5"/>',
     x: '<path d="M7 7l10 10M17 7 7 17"/>',
     globe: '<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.5 2.6 3.8 5.6 3.8 9s-1.3 6.4-3.8 9c-2.5-2.6-3.8-5.6-3.8-9S9.5 5.6 12 3z"/>',
-    upload: '<path d="M12 16V4M7 9l5-5 5 5"/><path d="M4 16v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/>',
-    db: '<ellipse cx="12" cy="6" rx="7" ry="3"/><path d="M5 6v12c0 1.7 3.1 3 7 3s7-1.3 7-3V6"/><path d="M5 12c0 1.7 3.1 3 7 3s7-1.3 7-3"/>',
     out: '<path d="M15 4h3a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-3"/><path d="M10 16l-4-4 4-4M6 12h10"/>',
-    link: '<path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1"/><path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/>',
+    code: '<path d="m9 8-4 4 4 4M15 8l4 4-4 4"/>',
+    eye: '<path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12z"/><circle cx="12" cy="12" r="3"/>',
+    refresh: '<path d="M20 11a8 8 0 1 0-2.3 5.7"/><path d="M20 4v7h-7"/>',
+    gear: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/>',
   };
 
   function icon(name, cls) {
@@ -99,17 +97,20 @@
     return String(text).replace(/[&<>"']/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[ch]);
   }
 
-  function plural(n, one, many) {
-    return `${n} ${n === 1 ? one : many || one + 's'}`;
-  }
-
-  function pct(value) {
-    return value == null ? null : `${Math.round(value * 100)}%`;
-  }
+  const plural = (n, one, many) => `${n} ${n === 1 ? one : many || one + 's'}`;
+  const pct = (value) => (value == null ? null : `${Math.round(value * 100)}%`);
 
   function hostOf(url) {
     try {
       return new URL(url).hostname.replace(/^www\./, '');
+    } catch (_err) {
+      return url || '';
+    }
+  }
+
+  function pathOf(url) {
+    try {
+      return new URL(url).pathname || '/';
     } catch (_err) {
       return url || '';
     }
@@ -127,6 +128,15 @@
   function initial(text) {
     const match = String(text || '').replace(/^www\./, '').match(/[a-z0-9]/i);
     return match ? match[0] : '?';
+  }
+
+  function bar(fraction, cls) {
+    const fill = h('i', { class: cls || null });
+    const track = h('div', { class: 'track' }, fill);
+    requestAnimationFrame(() => {
+      fill.style.width = `${Math.max(0, Math.min(100, Math.round(fraction * 100)))}%`;
+    });
+    return track;
   }
 
   /* ------------------------------------------------------------------ api */
@@ -163,121 +173,111 @@
     return data;
   }
 
-  const api = {
-    get: (path) => request('GET', path),
-    post: (path, body) => request('POST', path, body),
-  };
+  const api = { get: (path) => request('GET', path), post: (path, body) => request('POST', path, body) };
 
-  /* ------------------------------------------------------------------ state */
+  /* Lines of JSON from a streaming POST. onEvent gets each object as it arrives. */
+  async function stream(path, body, onEvent) {
+    const response = await fetch(path, {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'content-type': 'application/json', 'x-ranksim-csrf': CSRF, accept: 'application/x-ndjson' },
+      body: JSON.stringify(body || {}),
+    });
+    if (!response.ok) {
+      let data = null;
+      try {
+        data = await response.json();
+      } catch (_err) {
+        data = null;
+      }
+      if (response.status === 401 && data && data.login) renderLogin();
+      throw new Error((data && data.error) || `Ranksim answered ${response.status}.`);
+    }
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      let cut;
+      while ((cut = buffer.indexOf('\n')) >= 0) {
+        const line = buffer.slice(0, cut).trim();
+        buffer = buffer.slice(cut + 1);
+        if (line) onEvent(JSON.parse(line));
+      }
+    }
+    if (buffer.trim()) onEvent(JSON.parse(buffer.trim()));
+  }
+
+  /* ------------------------------------------------------------------ state and routing */
 
   const S = {
     session: null,
-    setup: null,
     projects: [],
-    publicDemo: MODE === 'public',
     demoSlug: 'synthetic-demo',
+    publicDemo: MODE === 'public',
     slug: null,
+    screen: 'overview',
+    params: new URLSearchParams(),
+    report: null,
     project: null,
-    screen: 'studio',
-    q: '',
     compare: new Map(),
     pages: new Map(),
     drafts: new Map(),
     results: new Map(),
-    previewMode: 'page',
-    device: 'desktop',
-    sort: 'observed',
+    issueFilter: 'all',
     sheet: null,
   };
 
   const main = document.getElementById('main');
-  const bar = $('#bar .bar-inner');
-
-  function queryRow(q) {
-    return ((S.project && S.project.queries) || []).find((row) => row.q === q) || null;
-  }
-
-  async function getCompare(q) {
-    if (!S.compare.has(q)) {
-      S.compare.set(q, api.get(`/api/v1/projects/${enc(S.slug)}/compare?q=${enc(q)}`).catch((err) => {
-        S.compare.delete(q);
-        throw err;
-      }));
-    }
-    return S.compare.get(q);
-  }
-
-  async function getPage(url) {
-    if (!S.pages.has(url)) {
-      S.pages.set(url, api.get(`/api/v1/projects/${enc(S.slug)}/page?url=${enc(url)}`).catch((err) => {
-        S.pages.delete(url);
-        throw err;
-      }));
-    }
-    return S.pages.get(url);
-  }
-
-  /* ------------------------------------------------------------------ routing */
-
-  const SCREENS = ['studio', 'rankings', 'data'];
+  const barInner = $('#bar .bar-inner');
+  const SCREENS = ['overview', 'issues', 'searches', 'competitors', 'editor', 'settings'];
+  const ALIASES = { studio: 'editor', rankings: 'searches', data: 'settings' };
+  const NAV = [['overview', 'Overview'], ['issues', 'Issues'], ['searches', 'Searches'], ['competitors', 'Competitors'], ['editor', 'Editor']];
 
   function parseLocation() {
     const parts = location.pathname.split('/').filter(Boolean);
     const params = new URLSearchParams(location.search);
-    if (parts[0] === 'start') return { slug: null, screen: 'new', q: '' };
     if (parts[0] === 'app' && parts[1]) {
-      return { slug: decodeURIComponent(parts[1]), screen: SCREENS.includes(parts[2]) ? parts[2] : 'studio', q: params.get('q') || '' };
+      const raw = ALIASES[parts[2]] || parts[2];
+      return { slug: decodeURIComponent(parts[1]), screen: SCREENS.includes(raw) ? raw : 'overview', params };
     }
-    return { slug: null, screen: 'home', q: params.get('q') || '' };
+    return { slug: null, screen: 'home', params };
   }
 
-  function navigate(path) {
-    if (path !== location.pathname + location.search) history.pushState({}, '', path);
+  function pathFor(screen, params) {
+    const query = params ? new URLSearchParams(params).toString() : '';
+    return `/app/${enc(S.slug)}${screen && screen !== 'overview' ? `/${screen}` : ''}${query ? `?${query}` : ''}`;
+  }
+
+  function navigate(path, { replace = false } = {}) {
+    if (path !== location.pathname + location.search) history[replace ? 'replaceState' : 'pushState']({}, '', path);
     closeSheet(true);
     window.scrollTo(0, 0);
     route();
   }
 
-  function pathFor(screen, q) {
-    return `/app/${enc(S.slug)}/${screen}${q ? `?q=${enc(q)}` : ''}`;
+  function go(screen, params) {
+    navigate(pathFor(screen, params));
   }
 
-  function go(screen, q, { replace = false, scroll = true } = {}) {
-    S.screen = screen;
-    if (q != null) S.q = q;
-    const url = pathFor(S.screen, S.q);
-    if (url !== location.pathname + location.search) history[replace ? 'replaceState' : 'pushState']({}, '', url);
-    renderBar();
-    render();
-    if (scroll) window.scrollTo(0, 0);
-  }
-
-  function link(screen, q, label, props = {}) {
+  function link(screen, label, props = {}, params) {
     return h('a', {
-      href: pathFor(screen, q),
+      href: pathFor(screen, params),
       ...props,
       onClick: (event) => {
         if (event.metaKey || event.ctrlKey || event.shiftKey || event.button === 1) return;
         event.preventDefault();
-        go(screen, q);
+        go(screen, params);
       },
     }, label);
   }
 
   window.addEventListener('popstate', () => {
     closeSheet(true);
-    const where = parseLocation();
-    if (where.slug && where.slug === S.slug && S.project) {
-      S.screen = where.screen;
-      if (where.q && queryRow(where.q)) S.q = where.q;
-      renderBar();
-      render();
-      return;
-    }
     route();
   });
-
-  /* ------------------------------------------------------------------ toast */
 
   let toastTimer = 0;
   function toast(message) {
@@ -308,7 +308,6 @@
       await route();
     } catch (err) {
       if (S.session && S.session.login_required && !S.session.signed_in) return;
-      renderBar();
       renderProblem('Ranksim could not load', err.message);
     }
   }
@@ -321,473 +320,641 @@
 
   async function route() {
     const where = parseLocation();
-    if (where.screen === 'new' && !S.publicDemo) {
-      S.project = null;
-      S.slug = null;
-      renderBar();
-      renderNewProject();
-      return;
-    }
-    if (where.slug && S.projects.some((p) => p.slug === where.slug)) {
-      if (where.slug === S.slug && S.project) {
+    S.params = where.params;
+    try {
+      if (where.slug && S.projects.some((p) => p.slug === where.slug)) {
+        if (where.slug !== S.slug || !S.report) await openSite(where.slug);
         S.screen = where.screen;
-        if (where.q && queryRow(where.q)) S.q = where.q;
         renderBar();
         render();
         return;
       }
-      await openProject(where.slug, where);
-      return;
-    }
-    if (S.publicDemo) {
-      if (!S.projects.length) {
-        await buildDemo(true);
+      if (S.publicDemo && S.projects.length) {
+        history.replaceState({}, '', `/app/${enc(S.demoSlug)}`);
+        await openSite(S.demoSlug);
+        S.screen = 'overview';
+        renderBar();
+        render();
         return;
       }
-      await openProject(S.demoSlug, { slug: S.demoSlug, screen: where.screen === 'home' ? 'studio' : where.screen, q: where.q });
+    } catch (err) {
+      renderProblem('This site could not be opened', err.message);
       return;
     }
-    S.project = null;
     S.slug = null;
+    S.report = null;
+    S.project = null;
     renderBar();
     renderHome();
   }
 
-  async function openProject(slug, route) {
+  async function openSite(slug) {
     S.slug = slug;
     S.compare.clear();
     S.pages.clear();
     S.drafts.clear();
     S.results.clear();
+    S.report = null;
     S.project = null;
     renderBar();
     clear(main).append(h('div', { class: 'boot' }, h('span', { class: 'spinner', 'aria-hidden': 'true' })));
-    try {
-      S.project = await api.get(`/api/v1/projects/${enc(slug)}`);
-    } catch (err) {
-      renderProblem('This project could not be opened', err.message);
-      return;
-    }
-    const qs = S.project.queries.map((row) => row.q);
-    S.q = qs.includes(route.q) ? route.q : qs[0] || '';
-    S.screen = SCREENS.includes(route.screen) ? route.screen : 'studio';
-    if (!S.project.engine.ready && S.screen !== 'data' && !S.publicDemo) S.screen = 'data';
-    renderBar();
-    render();
+    const [report, project] = await Promise.all([api.get(`/api/v1/projects/${enc(slug)}/report`), api.get(`/api/v1/projects/${enc(slug)}`)]);
+    S.report = report;
+    S.project = project;
   }
 
-  async function reloadProject() {
+  async function reloadSite() {
+    if (!S.slug) return;
     S.compare.clear();
     S.pages.clear();
-    S.project = await api.get(`/api/v1/projects/${enc(S.slug)}`);
-    const qs = S.project.queries.map((row) => row.q);
-    if (!qs.includes(S.q)) S.q = qs[0] || '';
-    const list = await api.get('/api/v1/projects');
-    S.projects = list.projects || [];
+    const [report, project] = await Promise.all([api.get(`/api/v1/projects/${enc(S.slug)}/report`), api.get(`/api/v1/projects/${enc(S.slug)}`)]);
+    S.report = report;
+    S.project = project;
+    await loadProjects();
   }
 
-  async function buildDemo(auto) {
-    clear(main).append(
-      h('div', { class: 'wrap screen' },
-        h('section', { class: 'hero' },
-          h('div', { class: 'boot', style: null }, h('span', { class: 'spinner', 'aria-hidden': 'true' })),
-          h('p', { class: 'lede', text: 'Building the demo engine. This takes a few seconds.' }))));
-    try {
-      await api.post('/api/v1/demo', {});
-      await loadProjects();
-      const where = auto ? parseLocation() : { screen: 'studio', q: '' };
-      await openProject(S.demoSlug, { slug: S.demoSlug, screen: SCREENS.includes(where.screen) ? where.screen : 'studio', q: where.q });
-      if (!auto) history.pushState({}, '', pathFor('studio', S.q));
-    } catch (err) {
-      renderProblem('The demo could not be built', err.message);
-    }
-  }
-
-  /* ------------------------------------------------------------------ bar */
+  /* ------------------------------------------------------------------ top bar */
 
   function renderBar() {
-    clear(bar);
-    bar.append(
-      h('a', {
-        class: 'brand',
-        href: '/',
-        'aria-label': 'Ranksim home',
-        onClick: (event) => {
-          if (event.metaKey || event.ctrlKey || S.publicDemo) return;
-          event.preventDefault();
-          navigate('/');
-        },
+    clear(barInner);
+    barInner.append(h('a', {
+      class: 'brand',
+      href: '/',
+      'aria-label': 'Ranksim home',
+      onClick: (event) => {
+        if (event.metaKey || event.ctrlKey) return;
+        event.preventDefault();
+        navigate('/');
       },
-      h('span', { class: 'logo', 'aria-hidden': 'true' }, h('i'), h('i'), h('i')),
-      h('span', { class: 'brand-name', text: 'Ranksim' })),
-    );
-    if (S.project) {
-      const nav = h('nav', { class: 'seg nav-seg', 'aria-label': 'Screens' });
-      const screens = [['studio', 'Studio'], ['rankings', 'Rankings']];
-      if (!S.publicDemo) screens.push(['data', 'Data']);
-      for (const [key, label] of screens) nav.append(link(key, S.q, label, { 'aria-current': S.screen === key ? 'page' : null }));
-      bar.append(nav);
+    }, h('span', { class: 'logo', 'aria-hidden': 'true' }, h('i'), h('i'), h('i')), h('span', { class: 'brand-name', text: 'Ranksim' })));
+    if (S.slug && S.report) {
+      const nav = h('nav', { class: 'seg nav-seg', 'aria-label': 'Sections' });
+      for (const [key, label] of NAV) nav.append(link(key, label, { 'aria-current': S.screen === key ? 'page' : null }));
+      barInner.append(nav);
     } else {
-      bar.append(h('span'));
+      barInner.append(h('span'));
     }
     const right = h('div', { class: 'bar-right' });
-    if (S.project) {
-      if (S.project.data && S.project.data.kind === 'synthetic') right.append(h('span', { class: 'tag tag-demo', text: 'Demo data' }));
-      if (S.projects.length > 1) {
-        const select = h('select', { 'aria-label': 'Project' }, S.projects.map((p) => h('option', { value: p.slug, selected: p.slug === S.slug, text: p.name })));
-        select.addEventListener('change', () => navigate(`/app/${enc(select.value)}/studio`));
-        right.append(h('label', { class: 'select-pill' }, select, icon('chevron', 'chev')));
-      } else {
-        right.append(h('span', { class: 'bar-note', text: S.project.name }));
-      }
+    if (S.slug && S.projects.length > 1) {
+      const select = h('select', { 'aria-label': 'Site' }, S.projects.map((p) => h('option', { value: p.slug, selected: p.slug === S.slug, text: p.name })));
+      select.addEventListener('change', () => navigate(`/app/${enc(select.value)}`));
+      right.append(h('label', { class: 'select' }, select, icon('chevron', 'chev')));
+    }
+    if (S.slug && S.report && !S.publicDemo) right.append(link('settings', icon('gear'), { class: 'icon-btn', title: 'Settings', 'aria-label': 'Settings', 'aria-current': S.screen === 'settings' ? 'page' : null }));
+    if (!S.publicDemo && S.session && (S.session.signed_in || !S.session.login_required)) {
+      right.append(h('button', { class: 'icon-btn', type: 'button', title: 'Analyze a new site', 'aria-label': 'Analyze a new site', onClick: () => navigate('/') }, icon('plus')));
     }
     if (S.session && S.session.login_required && S.session.signed_in) {
-      right.append(h('button', { class: 'icon-btn', type: 'button', 'aria-label': 'Sign out', title: 'Sign out', onClick: signOut }, icon('out')));
+      right.append(h('button', { class: 'icon-btn', type: 'button', title: 'Sign out', 'aria-label': 'Sign out', onClick: signOut }, icon('out')));
     }
-    if (!(S.session && S.session.login_required && !S.session.signed_in)) {
-      right.append(h('button', { class: 'icon-btn', type: 'button', 'aria-label': 'About Ranksim', title: 'About', onClick: openAbout }, icon('info')));
-    }
-    bar.append(right);
+    barInner.append(right);
   }
 
-  /* ------------------------------------------------------------------ render */
-
-  function render() {
-    closeSheet(true);
-    if (!S.project) return;
-    if (S.screen === 'data' && !S.publicDemo) {
-      renderData();
-      document.title = `Data · ${S.project.name} · Ranksim`;
-      return;
-    }
-    if (!S.project.engine.ready || S.project.error) {
-      renderNotBuilt();
-      return;
-    }
-    if (!S.project.queries.length) {
-      renderProblem('No queries yet', 'Add the queries you want to rank for on the classic Setup screen.');
-      return;
-    }
-    if (S.screen === 'rankings') renderRankings();
-    else renderStudio();
-    document.title = `${S.screen === 'rankings' ? 'Rankings' : 'Studio'} · ${S.q} · Ranksim`;
+  /* A pull label is a date when one was recorded, or a phrase such as "pull date not recorded". Show dates only. */
+  function pulledText(prefix) {
+    const pulled = S.report && S.report.pulled;
+    return pulled && /\d{4}/.test(pulled) ? `${prefix}${pulled}` : '';
   }
 
   function footer() {
     const left = h('div', { class: 'fl' });
-    const data = (S.project && S.project.data) || { kind: 'none', short: '' };
-    if (S.publicDemo) {
-      left.append(h('span', { text: 'Demo data · Not Google results' }), h('span', { text: "Drafts aren't saved" }));
-    } else {
-      if (S.project) left.append(h('span', { text: data.kind === 'synthetic' ? 'Demo data · Not Google results' : data.short }));
-      left.append(h('span', { text: S.session && S.session.storage === 'cloud' ? 'Saved to your private cloud storage' : 'Draft tests are saved in this project' }));
-    }
-    const right = h('div', { class: 'fl' }, h('span', { text: 'Predicted positions are model estimates among the pages shown, never a Google rank.' }));
-    if (S.session && S.session.mode === 'local') right.append(h('a', { href: S.slug ? `/p/${enc(S.slug)}` : '/projects', text: 'Classic screens' }));
-    return h('footer', { class: 'foot' }, left, right);
+    if (S.report && S.report.data && S.report.data.kind === 'synthetic') left.append(h('span', { text: 'Demo data, not Google results' }));
+    else if (pulledText('')) left.append(h('span', { text: pulledText('Google results from ') }));
+    left.append(h('span', { text: 'Predicted positions are model estimates among the pages shown, never a Google rank.' }));
+    return h('footer', { class: 'foot' }, left, h('div', { class: 'fl' }, h('span', { text: 'Ranksim' })));
+  }
+
+  function page(title, sub, actions, ...body) {
+    return h('div', { class: 'wrap screen' },
+      h('div', { class: 'head' },
+        h('div', null, h('h1', { text: title }), sub ? h('p', { class: 'sub', text: sub }) : null),
+        actions ? h('div', { class: 'actions' }, actions) : null),
+      body);
   }
 
   function renderProblem(title, text) {
-    clear(main).append(
-      h('div', { class: 'wrap screen' },
-        h('section', { class: 'hero' }),
-        h('div', { class: 'card center-card' },
-          h('h2', { text: title }),
-          h('p', { text: text || 'Something went wrong.' }),
-          h('button', { class: 'btn btn-gray', type: 'button', onClick: () => location.reload() }, 'Try again'))),
-    );
+    renderBar();
+    clear(main).append(h('div', { class: 'wrap screen' }, h('div', { class: 'tile white login' }, h('h1', { text: title }), h('p', { text: text || 'Something went wrong.' }),
+      h('div', { class: 'form' }, h('button', { class: 'btn btn-dark btn-large', type: 'button', onClick: () => location.reload() }, 'Try again')))));
   }
 
-  function renderEmpty() {
-    clear(main).append(
-      h('div', { class: 'wrap screen' },
-        h('section', { class: 'hero' },
-          h('h1', { text: 'Test your next edit.' }),
-          h('p', { class: 'lede', text: 'Preview a page and see where it would rank among the pages that rank today, before you publish.' })),
-        h('div', { class: 'card center-card' },
-          h('h2', { text: 'No projects yet' }),
-          h('p', { text: 'Load the demo to try it, or create a project with your own queries.' }),
-          h('div', { class: 'result-actions' },
-            h('button', { class: 'btn btn-primary btn-large', type: 'button', onClick: () => buildDemo(false) }, 'Load the demo'),
-            h('a', { class: 'btn btn-large', href: '/start', onClick: (event) => { event.preventDefault(); navigate('/start'); } }, 'Create a project')))),
-      footer(),
-    );
-  }
+  /* ------------------------------------------------------------------ sign in */
 
-  function renderNotBuilt() {
-    const P = S.project;
-    clear(main).append(
-      h('div', { class: 'wrap screen' },
-        h('section', { class: 'hero' },
-          h('h1', { text: P.name }),
-          h('p', { class: 'lede', text: P.site })),
-        h('div', { class: 'card center-card' },
-          h('h2', { text: 'Pull data first' }),
-          h('p', { text: P.error || 'Ranksim needs the pages that rank for your queries before it can predict anything. Pull them on the Data screen.' }),
-          S.publicDemo ? null : link('data', S.q, 'Open Data', { class: 'btn btn-primary btn-large' }))),
-      footer(),
-    );
-  }
-
-  /* ------------------------------------------------------------------ studio */
-
-  function draftFor(q) {
-    let draft = S.drafts.get(q);
-    if (!draft) {
-      const row = queryRow(q);
-      draft = {
-        text: '',
-        url: (row && row.your_url) || `https://${S.project.site}/new-page/`,
-        base: null,
-        baseUrl: null,
-        loading: false,
-        touched: false,
-      };
-      S.drafts.set(q, draft);
-      if (row && row.your_url) loadCurrent(q, true);
-    }
-    return draft;
-  }
-
-  async function loadCurrent(q, auto) {
-    const row = queryRow(q);
-    const draft = draftFor(q);
-    if (!row || !row.your_url) {
-      toast("You don't have a page for this query yet. Start a new one.");
-      return;
-    }
-    draft.loading = true;
-    refreshStudio();
-    try {
-      const page = await getPage(row.your_url);
-      if (auto && draft.touched) return;
-      draft.text = tidyHtml(page.html);
-      draft.base = draft.text;
-      draft.baseUrl = page.url;
-      draft.url = page.url;
-      draft.touched = false;
-    } catch (err) {
-      if (!auto) toast(err.message);
-    } finally {
-      draft.loading = false;
-      if (S.q === q && S.screen === 'studio') refreshStudio(true);
-    }
-  }
-
-  let studio = null; // live references into the rendered Studio
-
-  function renderStudio() {
-    const P = S.project;
-    const draft = draftFor(S.q);
-    const row = queryRow(S.q);
-
-    const select = h('select', { 'aria-label': 'Search query' },
-      P.queries.map((r) => h('option', { value: r.q, selected: r.q === S.q, text: r.q })));
-    select.addEventListener('change', () => go('studio', select.value, { scroll: false }));
-
-    const editor = h('textarea', {
-      class: 'editor',
-      spellcheck: 'false',
-      autocomplete: 'off',
-      'aria-label': 'Draft HTML or text',
-      placeholder: 'Paste the page HTML, or just start writing. The first line becomes the title.',
-      value: draft.text,
-    });
-    const onEdit = debounce(() => {
-      paintPreview();
-    }, 260);
-    editor.addEventListener('input', () => {
-      draft.text = editor.value;
-      draft.touched = true;
-      paintStats();
-      onEdit();
-    });
-    editor.addEventListener('keydown', (event) => {
-      if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
-        event.preventDefault();
-        runTest();
-      }
-    });
-
-    const testBtn = h('button', { class: 'btn btn-primary btn-large', type: 'button', onClick: runTest }, 'Test draft');
-    const stats = h('div', { class: 'stats', 'aria-live': 'polite' });
-    const editorCard = h('section', { class: 'card editor-card', 'aria-label': 'Draft editor' },
-      h('div', { class: 'card-head' },
-        h('h2', null, 'Draft', h('span', { class: 'hint', text: 'HTML or plain text' })),
-        h('div', { class: 'tools' },
-          row && row.your_url ? h('button', { class: 'btn btn-plain', type: 'button', onClick: () => loadCurrent(S.q, false) }, 'Load current page') : null,
-          S.publicDemo ? null : h('button', { class: 'btn btn-plain', type: 'button', onClick: () => toggleUrlBar() }, 'Load from URL'),
-          h('button', {
-            class: 'btn btn-plain',
-            type: 'button',
-            onClick: () => {
-              draft.text = '';
-              draft.touched = true;
-              editor.value = '';
-              paintStats();
-              paintPreview();
-              editor.focus();
-            },
-          }, 'Clear'))),
-      urlBar(draft, editor),
-      editor,
-      h('div', { class: 'card-foot' }, stats, h('div', { class: 'foot-actions' }, h('span', { class: 'kbd', text: navigator.platform.includes('Mac') ? '⌘ Return' : 'Ctrl Enter' }), testBtn)),
-    );
-
-    const previewCard = h('section', { class: 'card preview-card', 'aria-label': 'Preview' });
-    const resultHost = h('div', { class: 'result', id: 'result', tabindex: '-1' });
-
-    const wrap = h('div', { class: 'wrap screen' },
-      h('section', { class: 'hero' },
-        h('h1', { text: 'Test your next edit.' }),
-        h('p', { class: 'lede', text: 'Edit a page, preview it, and see where it would rank before you publish.' }),
-        h('div', { class: 'query-row' },
-          h('label', { class: 'query-pill' }, icon('search', 'lead'), select, icon('chevron', 'chev')),
-          standing(row))),
-      h('div', { class: 'bench' }, editorCard, previewCard),
-      resultHost,
-    );
-    clear(main).append(wrap, footer());
-    studio = { editor, stats, testBtn, previewCard, resultHost, frame: null, observer: null };
-    paintStats();
-    paintPreviewCard();
-    const saved = S.results.get(S.q);
-    if (saved) renderResult(saved, false);
-    getCompare(S.q).catch(() => {});
-  }
-
-  function urlBar(draft, editor) {
-    const input = h('input', { class: 'field', type: 'url', placeholder: 'https://staging.example.com/new-page/', 'aria-label': 'Page URL to load', spellcheck: 'false' });
-    const go = h('button', { class: 'btn btn-primary', type: 'submit' }, 'Load');
-    const form = h('form', { class: 'url-bar', hidden: true }, input, go);
+  function renderLogin() {
+    S.slug = null;
+    S.report = null;
+    renderBar();
+    const field = h('input', { class: 'field', type: 'password', id: 'pw', autocomplete: 'current-password', 'aria-label': 'Password', placeholder: 'Password' });
+    const error = h('p', { class: 'form-error', role: 'alert', hidden: true });
+    const button = h('button', { class: 'btn btn-dark btn-large btn-block', type: 'submit' }, 'Continue');
+    const form = h('form', { class: 'form', novalidate: true }, field, error, button);
     form.addEventListener('submit', async (event) => {
       event.preventDefault();
-      if (!input.value.trim()) return;
-      go.disabled = true;
-      clear(go).append(h('span', { class: 'spinner', 'aria-hidden': 'true' }));
+      if (!field.value) {
+        field.focus();
+        return;
+      }
+      error.hidden = true;
+      button.disabled = true;
+      clear(button).append(h('span', { class: 'spinner', 'aria-hidden': 'true' }));
       try {
-        const page = await api.post(`/api/v1/projects/${enc(S.slug)}/fetch`, { url: input.value.trim() });
-        draft.text = tidyHtml(page.html);
-        draft.touched = true;
-        draft.base = null;
-        editor.value = draft.text;
-        form.hidden = true;
-        paintStats();
-        paintPreviewCard();
-        toast(`Loaded ${hostOf(page.url)}. It is tested as a new page at the address in the preview.`);
+        await api.post('/api/v1/login', { password: field.value });
+        await boot();
       } catch (err) {
-        toast(err.message);
-      } finally {
-        go.disabled = false;
-        clear(go).append('Load');
+        error.textContent = err.message;
+        error.hidden = false;
+        button.disabled = false;
+        clear(button).append('Continue');
+        field.select();
       }
     });
-    return form;
+    clear(main).append(h('div', { class: 'wrap screen' }, h('div', { class: 'tile white login' },
+      h('span', { class: 'logo', 'aria-hidden': 'true' }, h('i'), h('i'), h('i')),
+      h('h1', { text: 'Welcome back' }),
+      h('p', { text: 'Sign in to Ranksim.' }),
+      form)));
+    setTimeout(() => field.focus(), 50);
   }
 
-  function toggleUrlBar() {
-    const form = main.querySelector('.url-bar');
-    if (!form) return;
-    form.hidden = !form.hidden;
-    if (!form.hidden) form.querySelector('input').focus();
-  }
-
-  function refreshStudio(fromLoad) {
-    if (!studio || S.screen !== 'studio') return;
-    const draft = draftFor(S.q);
-    if (fromLoad && studio.editor.value !== draft.text) studio.editor.value = draft.text;
-    studio.editor.disabled = draft.loading;
-    studio.editor.placeholder = draft.loading ? 'Loading your current page' : 'Paste the page HTML, or just start writing. The first line becomes the title.';
-    paintStats();
-    paintPreviewCard();
-  }
-
-  function standing(row) {
-    const box = h('div', { class: 'standing' });
-    if (!row) return box;
-    if (row.observed == null) {
-      box.append(h('span', { text: "You don't rank for this query yet. Write a new page and test it." }));
-      return box;
+  async function signOut() {
+    try {
+      await api.post('/api/v1/logout', {});
+    } catch (_err) {
+      /* signing out never fails visibly */
     }
-    box.append(h('span', null, 'Your page: observed ', h('b', { text: `#${row.observed}` })));
-    box.append(h('span', { class: 'sep', 'aria-hidden': 'true' }));
-    if (row.predicted != null) box.append(h('span', null, 'predicted ', h('b', { text: `#${row.predicted}` }), ` of ${row.of}`));
-    else box.append(h('span', { text: 'not analyzed' }));
-    return box;
+    S.session.signed_in = false;
+    history.pushState({}, '', '/');
+    renderLogin();
   }
 
-  function parseDoc(text) {
-    return new DOMParser().parseFromString(asHtml(text || ''), 'text/html');
-  }
+  /* ------------------------------------------------------------------ home: one box, type a site */
 
-  function docFacts(text) {
-    const doc = parseDoc(text);
-    const body = doc.body ? doc.body.cloneNode(true) : null;
-    if (body) body.querySelectorAll('script,style,noscript,template').forEach((node) => node.remove());
-    const words = body ? (body.textContent.match(/[A-Za-z0-9À-ɏ'’]+/g) || []).length : 0;
-    const title = ((doc.querySelector('title') || {}).textContent || '').trim();
-    const h1 = ((doc.querySelector('h1') || {}).textContent || '').trim();
-    const metaDesc = doc.querySelector('meta[name="description" i]');
-    let description = metaDesc ? (metaDesc.getAttribute('content') || '').trim() : '';
-    let descSource = 'meta';
-    if (!description) {
-      const para = Array.from(doc.querySelectorAll('p')).map((p) => p.textContent.trim()).find((t) => t.split(/\s+/).length > 6);
-      description = para || '';
-      descSource = 'text';
+  function renderHome() {
+    document.title = 'Ranksim';
+    const input = h('input', { type: 'text', inputmode: 'url', autocomplete: 'off', spellcheck: 'false', placeholder: 'yoursite.com', 'aria-label': 'Your site' });
+    const submit = h('button', { class: 'btn btn-primary', type: 'submit' }, 'Analyze', icon('arrow'));
+    const form = h('form', { class: 'composer' }, icon('globe', 'lead'), input, submit);
+    form.addEventListener('submit', (event) => {
+      event.preventDefault();
+      const site = input.value.trim();
+      if (!site) {
+        input.focus();
+        return;
+      }
+      analyze(site);
+    });
+    const hero = h('section', { class: 'hero' },
+      h('h1', { text: 'Which site should we look at?' }),
+      h('p', { class: 'sub', text: 'Type your address. Ranksim finds the searches you show up for, who you compete with, and what to fix. Then you can test changes before you publish.' }),
+      S.publicDemo ? h('p', { class: 'hints', text: 'This demo is read only.' }) : form,
+      S.publicDemo ? null : h('div', { class: 'hints' }, h('span', { text: 'Reads your site and the pages that rank against you' }), h('span', { text: 'About a minute' })));
+    const body = [hero];
+    if (S.projects.length) {
+      const grid = h('div', { class: 'sites-grid' });
+      for (const p of S.projects) {
+        grid.append(h('a', {
+          class: 'site-card',
+          href: `/app/${enc(p.slug)}`,
+          onClick: (event) => {
+            if (event.metaKey || event.ctrlKey) return;
+            event.preventDefault();
+            navigate(`/app/${enc(p.slug)}`);
+          },
+        },
+        h('div', { class: 'top' }, h('span', { class: 'fav dark', text: initial(p.site) }), h('div', { class: 'who' }, h('div', { class: 'name', text: p.name }), h('div', { class: 'host', text: p.site }))),
+        h('div', { class: 'meta' }, h('span', { text: plural(p.queries, 'search', 'searches') }), p.built ? h('span', { class: 'label label-ok', text: 'Report ready' }) : h('span', { class: 'label label-medium', text: 'Rankings pending' }), p.dataset === 'synthetic' ? h('span', { class: 'label label-demo', text: 'Demo' }) : null)));
+      }
+      body.push(h('section', { class: 'sites' }, h('div', { class: 'tile-head' }, h('h2', { text: 'Your sites' })), grid));
+    } else if (!S.publicDemo) {
+      body.push(h('div', { class: 'hints' }, h('button', { class: 'btn btn-plain', type: 'button', onClick: loadDemo }, 'Or open the demo')));
     }
-    return {
-      doc,
-      words,
-      title,
-      h1,
-      description,
-      descSource,
-      headings: doc.querySelectorAll('h2,h3,h4,h5,h6').length,
-      tables: doc.querySelectorAll('table').length,
+    clear(main).append(h('div', { class: 'wrap screen' }, body), footer());
+    if (!S.publicDemo) setTimeout(() => input.focus(), 50);
+  }
+
+  async function loadDemo() {
+    clear(main).append(h('div', { class: 'boot' }, h('span', { class: 'spinner', 'aria-hidden': 'true' })));
+    try {
+      await api.post('/api/v1/demo', {});
+      await loadProjects();
+      navigate(`/app/${enc(S.demoSlug)}`);
+    } catch (err) {
+      toast(err.message);
+      renderHome();
+    }
+  }
+
+  /* ------------------------------------------------------------------ analysis: live steps */
+
+  const STEPS = [
+    ['site', 'Reading your site'],
+    ['searches', 'Finding your searches'],
+    ['google', 'Checking Google'],
+    ['pages', 'Reading the pages that rank'],
+    ['model', 'Training your model'],
+    ['competitors', 'Finding competitors'],
+    ['report', 'Writing your report'],
+  ];
+
+  async function analyze(site) {
+    document.title = 'Analyzing · Ranksim';
+    S.slug = null;
+    S.report = null;
+    renderBar();
+    const rows = new Map();
+    const list = h('div', { class: 'steps' });
+    for (const [key, label] of STEPS) {
+      const row = h('div', { class: 'step pending', dataset: { step: key } },
+        h('span', { class: 'box' }),
+        h('div', { class: 'body' }, h('div', { class: 't', text: label }), h('div', { class: 'c' }), h('div', { class: 'extra' })));
+      rows.set(key, row);
+      list.append(row);
+    }
+    const started = Date.now();
+    const timer = h('span', { class: 'aside num' });
+    const after = h('div', { class: 'form-actions after-steps' });
+    clear(main).append(h('div', { class: 'wrap screen' },
+      h('section', { class: 'hero' }, h('h1', { text: `Analyzing ${site.replace(/^https?:\/\//, '').replace(/\/.*$/, '')}` }), h('p', { class: 'sub', text: 'This takes about a minute. Keep this page open.' })),
+      h('div', { class: 'tile steps-tile' }, h('div', { class: 'tile-head' }, h('h2', { text: 'Progress' }), timer), list, after)));
+    const tick = setInterval(() => {
+      timer.textContent = `${Math.round((Date.now() - started) / 1000)} s`;
+    }, 500);
+    let current = null;
+    const mark = (row, state) => {
+      row.classList.remove('pending', 'active', 'done', 'failed', 'skipped');
+      row.classList.add(state || 'pending');
+      const box = clear(row.querySelector('.box'));
+      if (state === 'active') box.append(h('span', { class: 'spinner', 'aria-hidden': 'true' }));
+      else if (state === 'done') box.append(icon('check'));
+      else if (state === 'failed') box.append(icon('x'));
     };
-  }
-
-  function paintStats() {
-    if (!studio) return;
-    const draft = draftFor(S.q);
-    const facts = docFacts(draft.text);
-    clear(studio.stats);
-    if (!draft.text.trim()) {
-      studio.stats.append(h('span', { text: draft.loading ? 'Loading your current page' : 'Empty draft' }));
-    } else {
-      studio.stats.append(
-        h('span', null, h('b', { text: facts.words.toLocaleString() }), ' words'),
-        h('span', null, h('b', { text: String(facts.headings) }), ' sections'),
-        facts.title ? h('span', null, 'title ', h('b', { text: String(facts.title.length) }), ' characters') : h('span', { text: 'no title' }),
-      );
+    const set = (key, state, message, done, total, extra) => {
+      const row = rows.get(key);
+      if (!row) return;
+      if (current && current !== key) {
+        const prev = rows.get(current);
+        if (prev && prev.classList.contains('active')) mark(prev, 'done');
+      }
+      if (state === 'active') current = key;
+      mark(row, state);
+      if (message) row.querySelector('.c').textContent = message;
+      const slot = clear(row.querySelector('.extra'));
+      if (state === 'active' && total) slot.append(bar(done / total));
+      if (extra) slot.append(extra);
+    };
+    let result = null;
+    let failed = '';
+    try {
+      await stream('/api/v1/sites', { site }, (event) => {
+        if (event.type === 'step') {
+          const key = event.step === 'save' ? 'model' : event.step;
+          let extra = null;
+          if (event.searches) extra = h('div', { class: 'found' }, event.searches.slice(0, 15).map((q) => h('span', { class: 'chip chip-gray', text: q })));
+          if (event.competitors) extra = h('div', { class: 'found' }, event.competitors.map((d) => h('span', { class: 'chip', text: d })));
+          set(key, event.state, event.message, event.done, event.total, extra);
+          if (event.state === 'skipped' && key === 'google') {
+            for (const name of ['pages', 'model', 'competitors']) set(name, 'skipped', 'Needs search data on the server.');
+          }
+        } else if (event.type === 'done') {
+          result = event;
+        } else if (event.type === 'error') {
+          failed = event.error;
+        }
+      });
+    } catch (err) {
+      failed = err.message;
     }
-    studio.testBtn.disabled = !draft.text.trim() || draft.loading;
+    clearInterval(tick);
+    if (!result) {
+      if (current) set(current, 'failed', failed);
+      else set('site', 'failed', failed);
+      toast(failed || 'The analysis stopped.');
+      after.append(h('button', { class: 'btn btn-dark', type: 'button', onClick: () => navigate('/') }, 'Try another address'));
+      return;
+    }
+    for (const [key] of STEPS) {
+      const row = rows.get(key);
+      if (row.classList.contains('active')) mark(row, 'done');
+      else if (row.classList.contains('pending')) mark(row, key === 'report' ? 'done' : 'skipped');
+    }
+    await loadProjects();
+    setTimeout(() => navigate(`/app/${enc(result.slug)}`), 700);
   }
 
-  /* ------------------------------------------------------------------ preview */
+  /* ------------------------------------------------------------------ render dispatch */
+
+  function render() {
+    closeSheet(true);
+    if (!S.report) return;
+    const titles = { overview: 'Overview', issues: 'Issues', searches: 'Searches', competitors: 'Competitors', editor: 'Editor', settings: 'Settings' };
+    document.title = `${titles[S.screen]} · ${S.report.name} · Ranksim`;
+    if (S.screen === 'issues') renderIssues();
+    else if (S.screen === 'searches') renderSearches();
+    else if (S.screen === 'competitors') renderCompetitors();
+    else if (S.screen === 'editor') renderEditor();
+    else if (S.screen === 'settings') renderSettings();
+    else renderOverview();
+  }
+
+  function noSearchData() {
+    const R = S.report;
+    if (R.search_data) return null;
+    return h('div', { class: 'callout span-4' }, icon('warn'), h('span', null,
+      h('b', { text: 'Rankings need search data. ' }),
+      R.google_ready ? 'Refresh this site in Settings to pull Google results.' : 'Search data isn\'t connected on this server yet, so this report covers your pages only. Add SERPER_API_KEY to the server once and every site gets rankings and competitors.'));
+  }
+
+  /* ------------------------------------------------------------------ overview */
+
+  function renderOverview() {
+    const R = S.report;
+    const P = S.project || {};
+    const K = R.kpis;
+    const grid = h('div', { class: 'bento' });
+    const callout = noSearchData();
+    if (callout) grid.append(callout);
+
+    const squares = h('div', { class: 'squares', 'aria-hidden': 'true' }, R.rankings.map((row) => h('i', { class: row.position ? (row.position <= 3 ? 'top' : 'on') : null, title: `${row.q}: ${row.position ? `#${row.position}` : 'not in top 10'}` })));
+    grid.append(h('section', { class: 'tile white span-2' },
+      h('div', { class: 'tile-k', text: 'On the first page of Google' }),
+      h('div', { class: 'tile-big' }, R.search_data ? String(K.top10) : '?', h('small', { text: `of ${plural(K.searches, 'search', 'searches')}` })),
+      squares,
+      h('div', { class: 'legend' }, h('span', { class: 'l-top', text: 'Top 3' }), h('span', { class: 'l-on', text: 'Top 10' }), h('span', { text: 'Not in top 10' }))));
+
+    grid.append(h('section', { class: 'tile black' },
+      h('div', { class: 'tile-k', text: 'Average position' }),
+      h('div', { class: 'tile-big' }, K.average != null ? `#${K.average}` : 'None'),
+      h('div', { class: 'tile-sub', text: K.top10 ? `Across the ${plural(K.top10, 'search', 'searches')} you rank for` : 'You are not in the top 10 yet' })));
+
+    const acc = P.model && P.model.pairwise != null ? P.model.pairwise : null;
+    grid.append(h('section', { class: 'tile' },
+      h('div', { class: 'tile-k', text: 'Model accuracy' }),
+      ring(acc, acc != null ? pct(acc) : 'n/a', 'held out'),
+      h('div', { class: 'tile-sub', text: acc != null ? 'Page pairs ordered right on searches it never saw.' : 'Appears once rankings are pulled.' })));
+
+    const issues = h('div', { class: 'rows' });
+    for (const issue of R.issues.slice(0, 6)) issues.append(issueRow(issue, true));
+    if (!R.issues.length) issues.append(h('div', { class: 'empty-note', text: 'No issues found on the pages we read.' }));
+    grid.append(h('section', { class: 'tile span-2 row-2' },
+      h('div', { class: 'tile-head' }, h('h2', { text: 'Top issues' }), link('issues', `All ${R.issues.length}`, { class: 'btn btn-plain' })),
+      issues));
+
+    const ranks = h('div', { class: 'bars' });
+    const sorted = R.rankings.slice().sort((a, b) => (a.position || 99) - (b.position || 99));
+    for (const row of sorted.slice(0, 8)) {
+      ranks.append(h('div', { class: `barrow${row.position ? ' you' : ''}` },
+        h('div', { class: 'top-line' }, h('span', { class: 'name', text: row.q }), h('span', { class: 'val', text: row.position ? `#${row.position}` : row.checked ? 'Not in top 10' : 'Not checked' })),
+        bar(row.position ? (11 - row.position) / 10 : 0.02, row.position && row.position <= 3 ? 'dark' : null)));
+    }
+    grid.append(h('section', { class: 'tile span-2' },
+      h('div', { class: 'tile-head' }, h('h2', { text: 'Where you rank' }), link('searches', 'All searches', { class: 'btn btn-plain' })),
+      ranks));
+
+    const comp = h('div', { class: 'bars' });
+    const rivals = R.share.filter((row) => !row.you).slice(0, 6);
+    const most = Math.max(1, ...R.share.map((row) => row.slots));
+    const mine = R.share.find((row) => row.you);
+    if (mine) comp.append(h('div', { class: 'barrow you' }, h('div', { class: 'top-line' }, h('span', { class: 'name', text: `${mine.domain} (you)` }), h('span', { class: 'val', text: `${mine.slots} spots, avg #${mine.average}` })), bar(mine.slots / most)));
+    for (const row of rivals) {
+      comp.append(h('div', { class: 'barrow' },
+        h('div', { class: 'top-line' }, h('span', { class: 'name', text: row.domain }), h('span', { class: 'val', text: `${row.slots} spots, avg #${row.average}` })),
+        bar(row.slots / most, row.competitor ? 'dark' : 'gray')));
+    }
+    grid.append(h('section', { class: 'tile span-2' },
+      h('div', { class: 'tile-head' }, h('h2', { text: 'Who takes the top 10' }), link('competitors', 'Competitors', { class: 'btn btn-plain' })),
+      rivals.length || mine ? comp : h('div', { class: 'empty-note', text: 'Competitors appear once rankings are pulled.' })));
+
+    const sev = { high: 0, medium: 0, low: 0 };
+    for (const issue of R.issues) sev[issue.severity] += 1;
+    const worst = Math.max(1, sev.high, sev.medium, sev.low);
+    grid.append(h('section', { class: 'tile' },
+      h('div', { class: 'tile-k', text: 'Issues by priority' }),
+      h('div', { class: 'bars', style: null },
+        [['high', 'High', 'dark'], ['medium', 'Medium', null], ['low', 'Low', 'gray']].map(([key, label, cls]) => h('div', { class: 'barrow' },
+          h('div', { class: 'top-line' }, h('span', { class: 'name', text: label }), h('span', { class: 'val', text: String(sev[key]) })),
+          bar(sev[key] / worst, cls))))));
+    const tracked = (R.competitors || []).length;
+    grid.append(h('section', { class: 'tile' },
+      h('div', { class: 'tile-k', text: 'Competitors tracked' }),
+      h('div', { class: 'tile-big' }, String(tracked)),
+      h('div', { class: 'tile-sub', text: tracked ? R.competitors.slice(0, 3).join(', ') : 'Found automatically once rankings are pulled' })));
+    grid.append(h('section', { class: 'tile white' },
+      h('div', { class: 'tile-k', text: 'Pages read' }),
+      h('div', { class: 'tile-big' }, String(R.pages_read)),
+      h('div', { class: 'tile-sub', text: R.pages_failed ? `${R.pages_failed} couldn't be read` : 'All readable' })));
+    grid.append(h('section', { class: 'tile black' },
+      h('div', { class: 'tile-k', text: 'Try a change' }),
+      h('div', { class: 'tile-sub', text: 'Edit any page right in the preview and see where it would land before you publish.' }),
+      h('div', { class: 'result-actions' }, link('editor', ['Open editor', icon('arrow')], { class: 'btn btn-primary' }))));
+
+    clear(main).append(page(R.name, `${R.site} · ${plural(K.searches, 'search', 'searches')} tracked${pulledText(' · Google results from ')}`, null, grid), footer());
+  }
+
+  function ring(value, big, small) {
+    const r = 56;
+    const c = 2 * Math.PI * r;
+    const make = (cls) => {
+      const circle = document.createElementNS(SVGNS, 'circle');
+      circle.setAttribute('class', cls);
+      circle.setAttribute('cx', '66');
+      circle.setAttribute('cy', '66');
+      circle.setAttribute('r', String(r));
+      return circle;
+    };
+    const track = make('track');
+    const fill = make('fill');
+    fill.setAttribute('stroke-dasharray', String(c));
+    fill.setAttribute('stroke-dashoffset', String(c));
+    const svg = document.createElementNS(SVGNS, 'svg');
+    svg.setAttribute('viewBox', '0 0 132 132');
+    svg.append(track, fill);
+    requestAnimationFrame(() => fill.setAttribute('stroke-dashoffset', String(c * (1 - (value || 0)))));
+    return h('div', { class: 'ring' }, svg, h('div', { class: 'mid' }, h('b', { text: big }), h('span', { text: small })));
+  }
+
+  /* ------------------------------------------------------------------ issues */
+
+  const SEVERITY = { high: 'High', medium: 'Medium', low: 'Low' };
+
+  function issueRow(issue, compact) {
+    const meta = compact ? null : h('div', { class: 'm' },
+      h('span', { class: `label label-${issue.severity}`, text: SEVERITY[issue.severity] }),
+      issue.search ? h('span', { text: `"${issue.search}"` }) : null);
+    return h('button', { class: 'rowcard', type: 'button', onClick: () => openIssue(issue) },
+      h('span', { class: `dot ${issue.severity}` }),
+      h('div', { class: 'body' }, h('div', { class: 't', text: issue.title }), h('div', { class: `c${compact ? ' one-line' : ''}`, text: issue.comment }), meta),
+      icon('next', 'go'));
+  }
+
+  function renderIssues() {
+    const R = S.report;
+    const filters = h('div', { class: 'seg', role: 'group', 'aria-label': 'Filter issues' });
+    const counts = { all: R.issues.length, high: 0, medium: 0, low: 0 };
+    for (const issue of R.issues) counts[issue.severity] += 1;
+    for (const [key, label] of [['all', 'All'], ['high', 'High'], ['medium', 'Medium'], ['low', 'Low']]) {
+      filters.append(h('button', {
+        type: 'button',
+        'aria-pressed': String(S.issueFilter === key),
+        onClick: () => {
+          S.issueFilter = key;
+          renderIssues();
+        },
+      }, `${label} ${counts[key]}`));
+    }
+    const shown = R.issues.filter((issue) => S.issueFilter === 'all' || issue.severity === S.issueFilter);
+    const groups = new Map();
+    for (const issue of shown) {
+      const key = issue.page ? pathOf(issue.page) : 'Searches without a page';
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(issue);
+    }
+    const body = h('div', { class: 'bento' });
+    const callout = noSearchData();
+    if (callout) body.append(callout);
+    if (!shown.length) body.append(h('div', { class: 'empty-note span-4', text: 'Nothing here.' }));
+    for (const [where, list] of groups) {
+      body.append(h('section', { class: 'tile span-2' },
+        h('div', { class: 'tile-head' }, h('h2', { class: 'one-line', text: where }), h('span', { class: 'aside', text: plural(list.length, 'issue') })),
+        h('div', { class: 'rows' }, list.map((issue) => issueRow(issue, false)))));
+    }
+    clear(main).append(page('Issues', `${counts.high} high, ${counts.medium} medium and ${counts.low} low on ${R.site}`, filters, body), footer());
+  }
+
+  function openIssue(issue) {
+    openSheet((sheet, closeBtn) => {
+      sheet.append(h('div', { class: 'sheet-head' }, h('div', null, h('h2', { text: issue.title }), h('div', { class: 'sub', text: [issue.page ? pathOf(issue.page) : null, issue.search ? `"${issue.search}"` : null].filter(Boolean).join(' · ') })), closeBtn));
+      const body = h('div', { class: 'sheet-body' });
+      body.append(h('div', { class: 'tile white' }, h('span', { class: `label label-${issue.severity}`, text: `${SEVERITY[issue.severity]} priority` }), h('p', { class: 'reason', text: issue.comment })));
+      if (issue.fix) body.append(h('div', { class: 'tile' }, h('div', { class: 'tile-k', text: 'What to do' }), h('p', { class: 'reason', text: issue.fix })));
+      if (issue.search) {
+        const row = S.report.rankings.find((item) => item.q === issue.search);
+        if (row && row.top.length) body.append(h('div', { class: 'tile' }, h('div', { class: 'tile-head' }, h('h2', { text: `Top results for "${issue.search}"` })), serpList(row.top.slice(0, 5))));
+      }
+      if (issue.page || issue.search) {
+        body.append(h('div', { class: 'form-actions' }, h('button', {
+          class: 'btn btn-primary btn-large',
+          type: 'button',
+          onClick: () => {
+            closeSheet(true);
+            const params = {};
+            if (issue.search) params.q = issue.search;
+            if (issue.page) params.page = issue.page;
+            go('editor', params);
+          },
+        }, icon('pencil'), issue.page ? 'Fix it in the editor' : 'Write this page in the editor')));
+      }
+      sheet.append(body);
+    });
+  }
+
+  function serpList(items) {
+    return h('div', { class: 'serp' }, items.map((item) => h('div', { class: `rowcard${item.you ? ' you' : ''}` },
+      h('span', { class: `pos${item.you ? ' you' : ''}`, text: String(item.position) }),
+      h('span', { class: `fav${item.you ? ' you' : ''}`, text: initial(item.domain) }),
+      h('div', { class: 'body' }, h('div', { class: 't', text: item.title || item.domain }),
+        h('div', { class: 'm' }, h('span', { text: item.domain }), item.you ? h('span', { class: 'label label-you', text: 'You' }) : item.competitor ? h('span', { class: 'label label-low', text: 'Competitor' }) : null)))));
+  }
+
+  /* ------------------------------------------------------------------ searches */
+
+  function renderSearches() {
+    const R = S.report;
+    const want = S.params.get('q');
+    const selected = R.rankings.find((row) => row.q === want) || R.rankings.slice().sort((a, b) => (a.position || 99) - (b.position || 99))[0];
+    const list = h('div', { class: 'qlist' });
+    for (const row of R.rankings) {
+      list.append(h('button', {
+        class: 'qrow',
+        type: 'button',
+        'aria-pressed': String(!!selected && row.q === selected.q),
+        onClick: () => {
+          history.replaceState({}, '', pathFor('searches', { q: row.q }));
+          S.params = new URLSearchParams({ q: row.q });
+          renderSearches();
+        },
+      },
+      h('span', { class: 'q', text: row.q }),
+      h('span', { class: `p${row.position ? '' : ' none'}`, text: row.position ? `#${row.position}` : row.checked ? 'Not in top 10' : 'Not checked' }),
+      bar(row.position ? (11 - row.position) / 10 : 0.02, row.position && row.position <= 3 ? 'dark' : null)));
+    }
+    const detail = h('section', { class: 'tile' });
+    if (selected) {
+      const predicted = selected.predicted && selected.predicted.position != null ? `Model puts you #${selected.predicted.position} of ${selected.predicted.of}` : '';
+      detail.append(h('div', { class: 'tile-head' }, h('h2', { class: 'one-line', text: selected.q }), h('span', { class: 'aside', text: predicted })));
+      if (!selected.checked) detail.append(h('div', { class: 'empty-note', text: 'No Google results for this search yet.' }));
+      else {
+        if (!selected.position) detail.append(h('div', { class: 'callout gap-bottom' }, icon('warn'), h('span', { text: selected.url ? `${pathOf(selected.url)} is about this search but isn't in the top 10.` : 'No page on your site targets this search.' })));
+        detail.append(serpList(selected.top));
+      }
+      detail.append(h('div', { class: 'result-actions' },
+        h('button', { class: 'btn btn-dark', type: 'button', onClick: () => go('editor', selected.url ? { q: selected.q, page: selected.url } : { q: selected.q }) }, icon('pencil'), selected.position ? 'Improve your page' : 'Write a page for it')));
+    }
+    const callout = noSearchData();
+    const body = h('div', { class: 'split' }, h('div', { class: 'tile' }, h('div', { class: 'tile-head' }, h('h2', { text: 'Your searches' }), h('span', { class: 'aside', text: `${R.kpis.top10} in top 10` })), list), detail);
+    clear(main).append(page('Searches', 'The searches your pages are written for, and who holds the first page for each.', null, callout ? h('div', { class: 'bento gap-bottom' }, callout) : null, body), footer());
+  }
+
+  /* ------------------------------------------------------------------ competitors */
+
+  function renderCompetitors() {
+    const R = S.report;
+    const most = Math.max(1, ...R.share.map((row) => row.slots));
+    const rows = h('div', { class: 'rows' });
+    for (const row of R.share) {
+      const toggle = row.you || row.platform || S.publicDemo ? null : h('button', {
+        class: 'btn',
+        type: 'button',
+        onClick: async (event) => {
+          const button = event.currentTarget;
+          button.disabled = true;
+          const list = row.competitor ? R.competitors.filter((d) => d !== row.domain) : R.competitors.concat([row.domain]);
+          try {
+            await api.post(`/api/v1/projects/${enc(S.slug)}/settings`, { competitors: list });
+            await reloadSite();
+            renderCompetitors();
+          } catch (err) {
+            toast(err.message);
+            button.disabled = false;
+          }
+        },
+      }, row.competitor ? 'Untrack' : 'Track');
+      rows.append(h('div', { class: 'rowcard' },
+        h('span', { class: `fav${row.you ? ' you' : row.competitor ? ' dark' : ''}`, text: initial(row.domain) }),
+        h('div', { class: 'body' },
+          h('div', { class: 't', text: row.you ? `${row.domain} (you)` : row.domain }),
+          h('div', { class: 'm' }, h('span', { text: `${row.slots} top 10 spots` }), h('span', { text: plural(row.searches, 'search', 'searches') }), h('span', { text: `best #${row.best}` }), h('span', { text: `avg #${row.average}` }),
+            row.platform ? h('span', { class: 'label label-low', text: 'Platform' }) : row.competitor ? h('span', { class: 'label label-you', text: 'Tracked' }) : null),
+          h('div', { class: 'barwrap' }, bar(row.slots / most, row.you ? null : row.competitor ? 'dark' : 'gray'))),
+        toggle ? h('div', { class: 'right' }, toggle) : null));
+    }
+    if (!R.share.length) rows.append(h('div', { class: 'empty-note', text: 'Competitors appear once rankings are pulled.' }));
+    const callout = noSearchData();
+    clear(main).append(page('Competitors', 'Every site in the top 10 across your searches. Ranksim tracks the ones that compete with you; platforms like YouTube are listed but not tracked.', null,
+      callout ? h('div', { class: 'bento gap-bottom' }, callout) : null,
+      h('section', { class: 'tile' }, rows)), footer());
+  }
+
+  /* ------------------------------------------------------------------ editor */
 
   const READER_CSS = `
 :root{color-scheme:light}
 html{background:#fff}
-body{margin:0 auto;max-width:760px;padding:56px 36px 72px;font:18px/1.62 -apple-system,BlinkMacSystemFont,"Helvetica Neue",Helvetica,Arial,sans-serif;color:#1d1d1f;letter-spacing:-.01em;-webkit-font-smoothing:antialiased}
-h1{font-size:42px;line-height:1.1;letter-spacing:-.03em;margin:0 0 14px;font-weight:700}
-h2{font-size:27px;line-height:1.2;letter-spacing:-.02em;margin:44px 0 10px;font-weight:700}
-h3{font-size:20px;margin:30px 0 6px;font-weight:600}
-p{margin:0 0 18px;color:#333336}
-time{display:inline-block;color:#86868b;font-size:15px;margin-bottom:8px}
-a{color:#0066cc;text-decoration:none}
-ul,ol{padding-left:24px;margin:0 0 18px}
-li{margin:4px 0}
-table{width:100%;border-collapse:collapse;margin:28px 0;font-size:16px}
-th,td{text-align:left;padding:11px 14px;border-bottom:1px solid #e5e5ea}
-th{font-weight:600;background:#f5f5f7}
-nav{margin-top:44px;padding-top:22px;border-top:1px solid #e5e5ea;font-size:15px}
-nav a{display:inline-block;margin:0 16px 8px 0}
-img,video{max-width:100%;height:auto;border-radius:12px}
-blockquote{margin:24px 0;padding:4px 20px;border-left:3px solid #d2d2d7;color:#515154}
-code,pre{font-family:ui-monospace,Menlo,monospace;font-size:15px}
+body{margin:0 auto;max-width:760px;padding:48px 32px 64px;font:17px/1.62 -apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif;color:#1b1b19;-webkit-font-smoothing:antialiased}
+h1{font-size:38px;line-height:1.12;letter-spacing:-.025em;margin:0 0 14px;font-weight:700}
+h2{font-size:25px;line-height:1.25;letter-spacing:-.015em;margin:40px 0 10px;font-weight:700}
+h3{font-size:19px;margin:28px 0 6px;font-weight:650}
+p{margin:0 0 16px;color:#333330}
+time{display:inline-block;color:#8a8a84;font-size:14px;margin-bottom:6px}
+a{color:#3358eb;text-decoration:none}
+ul,ol{padding-left:24px;margin:0 0 16px}
+table{width:100%;border-collapse:collapse;margin:24px 0;font-size:15px}
+th,td{text-align:left;padding:10px 12px;border-bottom:1px solid #e6e6e0}
+th{font-weight:600;background:#f6f6f3}
+nav{margin-top:40px;padding-top:20px;border-top:1px solid #e6e6e0;font-size:14px}
+nav a{display:inline-block;margin:0 14px 8px 0}
+img,video{max-width:100%;height:auto;border-radius:10px}
 `;
-  const GUARD_CSS = 'a,button,input,select,textarea,label{pointer-events:none!important}html{scrollbar-width:thin}';
+  const EDIT_CSS = 'body{outline:none;caret-color:#3358eb}h1:hover,h2:hover,h3:hover,p:hover,li:hover,td:hover,th:hover{outline:1px dashed rgba(51,88,235,.4);outline-offset:3px;border-radius:3px}html{scrollbar-width:thin}';
 
   function asHtml(text) {
     if (/<\s*(html|body|p|h1|h2|div|title|article|section)\b/i.test(text)) return text;
@@ -801,245 +968,403 @@ code,pre{font-family:ui-monospace,Menlo,monospace;font-size:15px}
     return `<html><head><title>${esc(first)}</title></head><body><h1>${esc(first)}</h1>${paras.join('')}</body></html>`;
   }
 
-  /* One block element per line, so a stored page is readable in the editor. Only whitespace between block tags
-     changes, which a browser does not render. */
-  function tidyHtml(html) {
-    if (!html || /\n.*\n.*\n/.test(html.slice(0, 4000))) return html;
-    const block = '(?:html|head|body|title|meta|link|style|header|footer|main|article|section|nav|aside|div|h[1-6]|p|ul|ol|li|table|thead|tbody|tr|figure|blockquote|time|form)';
-    return html
-      .replace(new RegExp(`>\\s*<(${block}\\b)`, 'gi'), '>\n<$1')
-      .replace(new RegExp(`(</${block}>)\\s*<`, 'gi'), '$1\n<')
-      .replace(/\n{2,}/g, '\n')
-      .trim();
-  }
-
-  function previewSource(text) {
-    const doc = parseDoc(text);
-    doc.querySelectorAll('script,noscript,iframe,frame,frameset,object,embed,base,meta[http-equiv],link:not([rel~="stylesheet"])').forEach((node) => node.remove());
+  /* A page as the editor holds it: parsed once, unsafe parts removed, serialized the same way every time, so an
+     unchanged page tests exactly like the original. */
+  function cleanDoc(text) {
+    const doc = new DOMParser().parseFromString(asHtml(text || ''), 'text/html');
+    doc.querySelectorAll('script,noscript,iframe,frame,frameset,object,embed,base,meta[http-equiv]').forEach((node) => node.remove());
     for (const el of doc.querySelectorAll('*')) {
       for (const attr of Array.from(el.attributes)) {
         const name = attr.name.toLowerCase();
-        if (name.startsWith('on') || (/^(href|src|action|formaction|xlink:href|srcdoc)$/.test(name) && /^\s*(javascript|data:text\/html)/i.test(attr.value))) {
-          el.removeAttribute(attr.name);
-        }
+        if (name.startsWith('on') || name === 'contenteditable' || (/^(href|src|action|formaction|xlink:href|srcdoc)$/.test(name) && /^\s*(javascript|data:text\/html)/i.test(attr.value))) el.removeAttribute(attr.name);
       }
     }
-    const styled = doc.querySelector('style, link[rel~="stylesheet"]');
-    const style = doc.createElement('style');
-    style.textContent = (styled ? '' : READER_CSS) + GUARD_CSS;
-    (doc.head || doc.documentElement).append(style);
-    return '<!doctype html>' + doc.documentElement.outerHTML;
+    return doc;
   }
 
-  function paintPreviewCard() {
-    if (!studio) return;
-    const card = studio.previewCard;
-    const draft = draftFor(S.q);
-    if (studio.observer) studio.observer.disconnect();
-    studio.frame = null;
-    clear(card);
+  function serialize(doc) {
+    const root = doc.documentElement.cloneNode(true);
+    root.querySelectorAll('[data-rs]').forEach((node) => node.remove());
+    return `<!doctype html>\n${root.outerHTML}`;
+  }
 
-    const modeSeg = h('div', { class: 'seg seg-sm', role: 'group', 'aria-label': 'Preview type' });
-    for (const [key, label] of [['page', 'Page'], ['search', 'In search']]) {
-      modeSeg.append(h('button', {
-        type: 'button',
-        'aria-pressed': String(S.previewMode === key),
-        onClick: () => {
-          S.previewMode = key;
-          paintPreviewCard();
-        },
-      }, label));
+  const normalize = (text) => serialize(cleanDoc(text));
+
+  function frameSource(text) {
+    const doc = cleanDoc(text);
+    const styled = doc.querySelector('style, link[rel~="stylesheet"]');
+    const style = doc.createElement('style');
+    style.setAttribute('data-rs', '1');
+    style.textContent = (styled ? '' : READER_CSS) + EDIT_CSS;
+    (doc.head || doc.documentElement).append(style);
+    return `<!doctype html>${doc.documentElement.outerHTML}`;
+  }
+
+  function facts(text) {
+    const doc = cleanDoc(text);
+    const body = doc.body ? doc.body.cloneNode(true) : null;
+    if (body) body.querySelectorAll('style,template').forEach((node) => node.remove());
+    const words = body ? (body.textContent.match(/[A-Za-z0-9À-ɏ'’]+/g) || []).length : 0;
+    const meta = doc.querySelector('meta[name="description" i]');
+    return {
+      title: ((doc.querySelector('title') || {}).textContent || '').trim(),
+      h1: ((doc.querySelector('h1') || {}).textContent || '').trim(),
+      meta: meta ? (meta.getAttribute('content') || '').trim() : '',
+      words,
+      headings: doc.querySelectorAll('h2,h3,h4').length,
+    };
+  }
+
+  function draftFor(q) {
+    if (!S.drafts.has(q)) S.drafts.set(q, { text: '', url: '', base: null, loaded: '', touched: false, loading: false });
+    return S.drafts.get(q);
+  }
+
+  async function getPage(url) {
+    if (!S.pages.has(url)) {
+      S.pages.set(url, api.get(`/api/v1/projects/${enc(S.slug)}/page?url=${enc(url)}`).catch((err) => {
+        S.pages.delete(url);
+        throw err;
+      }));
     }
-    const tools = h('div', { class: 'tools' }, modeSeg);
-    if (S.previewMode === 'page') {
-      const deviceSeg = h('div', { class: 'seg seg-sm seg-icon', role: 'group', 'aria-label': 'Device' });
-      for (const [key, label] of [['desktop', 'Desktop'], ['mobile', 'Phone']]) {
-        deviceSeg.append(h('button', {
-          type: 'button',
-          title: label,
-          'aria-label': label,
-          'aria-pressed': String(S.device === key),
-          onClick: () => {
-            S.device = key;
-            paintPreviewCard();
-          },
-        }, icon(key)));
+    return S.pages.get(url);
+  }
+
+  async function getCompare(q) {
+    if (!S.compare.has(q)) {
+      S.compare.set(q, api.get(`/api/v1/projects/${enc(S.slug)}/compare?q=${enc(q)}`).catch((err) => {
+        S.compare.delete(q);
+        throw err;
+      }));
+    }
+    return S.compare.get(q);
+  }
+
+  const ED = { mode: 'visual', device: 'desktop', frame: null, code: null, refs: null };
+
+  function editorQuery() {
+    const R = S.report;
+    const want = S.params.get('q');
+    if (want && R.rankings.some((row) => row.q === want)) return want;
+    const ranked = R.rankings.find((row) => row.position) || R.rankings[0];
+    return ranked ? ranked.q : '';
+  }
+
+  function renderEditor() {
+    const R = S.report;
+    const q = editorQuery();
+    const row = R.rankings.find((item) => item.q === q) || {};
+    const draft = draftFor(q);
+    const wantPage = S.params.get('page') || row.url || '';
+    if (!draft.text && !draft.loading && !draft.touched) {
+      draft.url = wantPage || `https://${R.site}/new-page/`;
+      if (wantPage) loadIntoDraft(q, wantPage);
+    }
+
+    const qSelect = h('select', { 'aria-label': 'Search to test' }, R.rankings.map((item) => h('option', { value: item.q, selected: item.q === q, text: item.q })));
+    qSelect.addEventListener('change', () => {
+      syncFromFrame();
+      history.replaceState({}, '', pathFor('editor', { q: qSelect.value }));
+      S.params = new URLSearchParams({ q: qSelect.value });
+      renderEditor();
+    });
+    const pageOptions = [h('option', { value: '', text: 'Choose a page' })].concat(
+      R.pages.filter((item) => item.status === 'fetched').map((item) => h('option', { value: item.url, selected: item.url === draft.loaded, text: item.path })),
+      [h('option', { value: '__new', text: 'Start a new page' }), S.publicDemo ? null : h('option', { value: '__url', text: 'Load from a URL' })].filter(Boolean));
+    const pSelect = h('select', { 'aria-label': 'Page to edit' }, pageOptions);
+    pSelect.addEventListener('change', () => {
+      const value = pSelect.value;
+      if (value === '__new') {
+        Object.assign(draft, { text: normalize(`${q.charAt(0).toUpperCase()}${q.slice(1)}\n\nWrite the page here. Click any line to change it.`), url: `https://${R.site}/new-page/`, base: null, loaded: '', touched: true });
+        ED.refs.address.value = draft.url;
+        paintFrame();
+        paintSide();
+      } else if (value === '__url') {
+        const url = window.prompt('Page address to load');
+        if (url) loadFromUrl(q, url.trim());
+      } else if (value) {
+        loadIntoDraft(q, value);
       }
-      tools.append(deviceSeg);
-    }
-    card.append(h('div', { class: 'card-head' }, h('h2', { text: 'Preview' }), tools));
+    });
 
-    const body = h('div', { class: 'preview-body' });
-    card.append(body);
-    if (S.previewMode === 'search') {
-      body.append(serpView(draft));
-      return;
+    const modeSeg = h('div', { class: 'seg seg-sm', role: 'group', 'aria-label': 'Edit mode' });
+    for (const [key, label, ic] of [['visual', 'Visual', 'eye'], ['html', 'HTML', 'code']]) {
+      modeSeg.append(h('button', { type: 'button', 'aria-pressed': String(ED.mode === key), onClick: () => { syncFromFrame(); ED.mode = key; renderEditor(); } }, icon(ic), label));
     }
-    const address = h('input', { type: 'text', value: draft.url, 'aria-label': 'Page URL', spellcheck: 'false', autocomplete: 'off' });
+    const deviceSeg = h('div', { class: 'seg seg-sm', role: 'group', 'aria-label': 'Device' });
+    for (const [key, label] of [['desktop', 'Desktop'], ['mobile', 'Phone']]) {
+      deviceSeg.append(h('button', { type: 'button', title: label, 'aria-label': label, 'aria-pressed': String(ED.device === key), onClick: () => { syncFromFrame(); ED.device = key; renderEditor(); } }, icon(key)));
+    }
+    const toolbar = h('div', { class: 'toolbar' },
+      h('div', { class: 'left' }, h('label', { class: 'select' }, qSelect, icon('chevron', 'chev')), h('label', { class: 'select' }, pSelect, icon('chevron', 'chev'))),
+      h('div', { class: 'right' }, modeSeg, deviceSeg));
+
+    const address = h('input', { type: 'text', value: draft.url, 'aria-label': 'Page address', spellcheck: 'false' });
     address.addEventListener('change', () => {
       let value = address.value.trim();
       if (value && !/^https?:\/\//i.test(value)) value = `https://${value}`;
-      draft.url = value || `https://${S.project.site}/new-page/`;
+      draft.url = value || `https://${R.site}/new-page/`;
       address.value = draft.url;
     });
-    address.addEventListener('keydown', (event) => {
-      if (event.key === 'Enter') address.blur();
-    });
-    body.append(h('div', { class: 'chrome' },
-      h('span', { class: 'lights', 'aria-hidden': 'true' }, h('i'), h('i'), h('i')),
-      h('label', { class: 'address' }, icon('lock'), address),
-      h('span', { 'aria-hidden': 'true', style: null })));
-    const viewport = h('div', { class: `viewport${S.device === 'mobile' ? ' mobile' : ''}` });
-    body.append(viewport);
-    studio.viewport = viewport;
-    paintPreview();
+    const viewport = h('div', { class: `viewport${ED.device === 'mobile' ? ' phone' : ''}` });
+    const browser = h('section', { class: 'browser' },
+      h('div', { class: 'chrome' }, h('span', { class: 'lights', 'aria-hidden': 'true' }, h('i'), h('i'), h('i')), h('label', { class: 'address' }, icon('lock'), address), h('span', { class: 'edit-hint', text: ED.mode === 'visual' ? 'Click any text to edit it' : 'Editing HTML' })),
+      viewport);
+
+    const side = h('div', { class: 'side-col' });
+    const result = h('div', { class: 'result', id: 'result', tabindex: '-1' });
+    clear(main).append(page('Editor', 'Change the page, then test where it would land among the pages that rank today.', null,
+      toolbar, h('div', { class: 'editor-grid' }, browser, side), result), footer());
+    ED.refs = { viewport, side, result, address, q };
+    paintFrame();
+    paintSide();
+    const saved = S.results.get(q);
+    if (saved) renderResult(saved, false);
+    getCompare(q).catch(() => {});
   }
 
-  function frameFor(viewport, srcdoc, device) {
-    const frame = h('iframe', { sandbox: '', referrerpolicy: 'no-referrer', title: 'Page preview', tabindex: '-1' });
-    frame.srcdoc = srcdoc;
-    if (device === 'mobile') {
-      const screen = h('div', { class: 'phone-screen' }, frame);
-      viewport.append(h('div', { class: 'phone' }, screen));
-      const fit = () => {
-        const width = screen.clientWidth;
-        const scale = width / PHONE_WIDTH;
-        frame.style.width = `${PHONE_WIDTH}px`;
-        frame.style.height = `${screen.clientHeight / scale}px`;
-        frame.style.transform = `scale(${scale})`;
-      };
-      fit();
-      return { frame, fit, target: screen };
+  async function loadIntoDraft(q, url) {
+    const draft = draftFor(q);
+    draft.loading = true;
+    if (ED.refs && ED.refs.q === q) paintFrame();
+    try {
+      const got = await getPage(url);
+      draft.text = normalize(got.html);
+      draft.base = draft.text;
+      draft.url = got.url;
+      draft.loaded = url;
+      draft.touched = false;
+    } catch (err) {
+      toast(err.message);
+    } finally {
+      draft.loading = false;
+      if (ED.refs && ED.refs.q === q && S.screen === 'editor') {
+        ED.refs.address.value = draft.url;
+        paintFrame();
+        paintSide();
+      }
     }
-    viewport.append(frame);
-    const fit = () => {
-      const width = viewport.clientWidth || 1;
-      const scale = Math.min(1, width / DESKTOP_WIDTH);
-      const virtual = Math.max(width, DESKTOP_WIDTH);
-      frame.style.width = `${scale < 1 ? DESKTOP_WIDTH : virtual}px`;
-      frame.style.height = `${viewport.clientHeight / scale}px`;
-      frame.style.transform = scale < 1 ? `scale(${scale})` : 'none';
-      if (scale >= 1) frame.style.width = `${width}px`;
-    };
-    fit();
-    return { frame, fit, target: viewport };
   }
 
-  function paintPreview() {
-    if (!studio || !studio.viewport || S.previewMode !== 'page') return;
-    const draft = draftFor(S.q);
-    const viewport = studio.viewport;
-    if (studio.observer) studio.observer.disconnect();
+  async function loadFromUrl(q, url) {
+    const draft = draftFor(q);
+    draft.loading = true;
+    paintFrame();
+    try {
+      const got = await api.post(`/api/v1/projects/${enc(S.slug)}/fetch`, { url });
+      draft.text = normalize(got.html);
+      draft.base = null;
+      draft.loaded = '';
+      draft.touched = true;
+      toast(`Loaded ${hostOf(got.url)}. It is tested as a new page at the address above.`);
+    } catch (err) {
+      toast(err.message);
+    } finally {
+      draft.loading = false;
+      if (ED.refs && ED.refs.q === q) {
+        paintFrame();
+        paintSide();
+      }
+    }
+  }
+
+  function syncFromFrame() {
+    if (!ED.refs) return;
+    const draft = draftFor(ED.refs.q);
+    if (ED.mode === 'visual' && ED.frame && ED.frame.contentDocument && ED.frame.contentDocument.body && draft.touched) {
+      draft.text = serialize(ED.frame.contentDocument);
+    } else if (ED.mode === 'html' && ED.code) {
+      draft.text = ED.code.value;
+    }
+  }
+
+  function paintFrame() {
+    if (!ED.refs) return;
+    const { viewport, q } = ED.refs;
+    const draft = draftFor(q);
     clear(viewport);
-    if (!draft.text.trim()) {
-      viewport.append(h('div', { class: 'empty' },
-        icon('doc'),
-        h('strong', { text: draft.loading ? 'Loading your current page' : 'Your page appears here' }),
-        h('span', { text: draft.loading ? 'One moment.' : 'Paste HTML or start writing on the left.' })));
+    ED.frame = null;
+    ED.code = null;
+    if (!draft.text) {
+      viewport.append(h('div', { class: 'empty' }, icon('doc'), h('strong', { text: draft.loading ? 'Loading the page' : 'Pick a page to edit' }), h('span', { text: draft.loading ? 'One moment.' : 'Choose one of your pages above, or start a new one.' })));
       return;
     }
-    const made = frameFor(viewport, previewSource(draft.text), S.device);
-    studio.frame = made.frame;
-    if ('ResizeObserver' in window) {
-      studio.observer = new ResizeObserver(() => made.fit());
-      studio.observer.observe(made.target);
+    if (ED.mode === 'html') {
+      const code = h('textarea', { class: 'code', spellcheck: 'false', 'aria-label': 'Page HTML', value: tidy(draft.text) });
+      code.addEventListener('input', () => {
+        draft.text = code.value;
+        draft.touched = true;
+        debouncedSide();
+      });
+      viewport.append(code);
+      ED.code = code;
+      return;
     }
+    const frame = h('iframe', { sandbox: 'allow-same-origin', title: 'Editable page', referrerpolicy: 'no-referrer' });
+    frame.srcdoc = frameSource(draft.text);
+    frame.addEventListener('load', () => {
+      const doc = frame.contentDocument;
+      if (!doc || !doc.body) return;
+      doc.designMode = 'on';
+      doc.addEventListener('input', debounce(() => {
+        draft.text = serialize(doc);
+        draft.touched = true;
+        paintSide();
+      }, 250));
+      doc.addEventListener('keydown', (event) => {
+        if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
+          event.preventDefault();
+          runTest();
+        }
+      });
+    });
+    if (ED.device === 'mobile') viewport.append(h('div', { class: 'device' }, frame));
+    else viewport.append(frame);
+    ED.frame = frame;
   }
 
-  function serpView(draft) {
-    const facts = docFacts(draft.text);
-    const P = S.project;
-    const ours = looseKey(draft.url).startsWith(P.domain.replace(/^www\./, ''));
-    let path = '';
+  function tidy(html) {
+    if (!html || /\n.*\n.*\n/.test(html.slice(0, 4000))) return html;
+    const block = '(?:html|head|body|title|meta|link|style|header|footer|main|article|section|nav|aside|div|h[1-6]|p|ul|ol|li|table|thead|tbody|tr|figure|blockquote|form)';
+    return html.replace(new RegExp(`>\\s*<(${block}\\b)`, 'gi'), '>\n<$1').replace(new RegExp(`(</${block}>)\\s*<`, 'gi'), '$1\n<').replace(/\n{2,}/g, '\n').trim();
+  }
+
+  const debouncedSide = debounce(() => paintSide(), 300);
+
+  function setHead(field, value) {
+    const draft = draftFor(ED.refs.q);
+    if (draft.touched) syncFromFrame();
+    const live = ED.mode === 'visual' && ED.frame && ED.frame.contentDocument && ED.frame.contentDocument.head;
+    const target = live ? ED.frame.contentDocument : cleanDoc(draft.text);
+    if (field === 'title') {
+      let el = target.querySelector('title');
+      if (!el) {
+        el = target.createElement('title');
+        target.head.prepend(el);
+      }
+      el.textContent = value;
+    } else {
+      let el = target.querySelector('meta[name="description" i]');
+      if (!el) {
+        el = target.createElement('meta');
+        el.setAttribute('name', 'description');
+        target.head.append(el);
+      }
+      el.setAttribute('content', value);
+    }
+    draft.text = serialize(target);
+    draft.touched = true;
+    if (ED.mode === 'html' && ED.code) ED.code.value = tidy(draft.text);
+  }
+
+  function paintSide() {
+    if (!ED.refs) return;
+    const R = S.report;
+    const { side, q } = ED.refs;
+    const draft = draftFor(q);
+    const f = facts(draft.text);
+    const row = R.rankings.find((item) => item.q === q) || {};
+    if (document.activeElement && side.contains(document.activeElement) && document.activeElement.dataset.field) {
+      const snippet = side.querySelector('.snippet');
+      if (snippet) snippet.replaceWith(snippetCard(f, draft));
+      const stats = side.querySelector('.stats-card');
+      if (stats) stats.replaceWith(statsCard(f));
+      return;
+    }
+    clear(side);
+    const titleCount = h('span', { class: `counter${f.title.length > 60 ? ' over' : ''}`, text: `${f.title.length}/60` });
+    const titleField = h('input', { class: 'field', value: f.title, 'aria-label': 'Title', dataset: { field: 'title' } });
+    titleField.addEventListener('input', () => {
+      setHead('title', titleField.value);
+      titleCount.textContent = `${titleField.value.length}/60`;
+      titleCount.classList.toggle('over', titleField.value.length > 60);
+      debouncedSide();
+    });
+    const metaCount = h('span', { class: `counter${f.meta.length > 160 ? ' over' : ''}`, text: `${f.meta.length}/160` });
+    const metaField = h('textarea', { class: 'field', rows: '3', value: f.meta, 'aria-label': 'Meta description', dataset: { field: 'meta' } });
+    metaField.addEventListener('input', () => {
+      setHead('meta', metaField.value);
+      metaCount.textContent = `${metaField.value.length}/160`;
+      metaCount.classList.toggle('over', metaField.value.length > 160);
+      debouncedSide();
+    });
+    const testBtn = h('button', { class: 'btn btn-primary btn-large btn-block', type: 'button', id: 'test-btn', disabled: !draft.text || draft.loading, onClick: runTest }, 'Test changes');
+    const standing = row.position
+      ? `Google has you at #${row.position}${row.predicted && row.predicted.position ? `. The model puts you #${row.predicted.position} of ${row.predicted.of}.` : '.'}`
+      : row.checked ? 'You are not in the top 10 for this search yet.' : 'No Google results for this search yet.';
+    side.append(
+      h('section', { class: 'tile' }, h('div', { class: 'tile-k', text: `"${q}"` }), h('div', { class: 'tile-sub', text: standing }), h('div', { class: 'result-actions' }, testBtn)),
+      snippetCard(f, draft),
+      h('section', { class: 'tile' },
+        h('div', { class: 'form' },
+          h('div', { class: 'form-row' }, h('label', { class: 'row-label' }, h('span', { text: 'Title' }), titleCount), titleField),
+          h('div', { class: 'form-row' }, h('label', { class: 'row-label' }, h('span', { text: 'Description' }), metaCount), metaField))),
+      statsCard(f));
+  }
+
+  function snippetCard(f, draft) {
+    let crumbs = draft.url;
     try {
       const u = new URL(draft.url);
-      path = u.pathname.split('/').filter(Boolean).map((part) => ` › ${decodeURIComponent(part)}`).join('');
-      path = `${u.protocol}//${u.hostname}${path}`;
+      crumbs = `${u.hostname}${u.pathname.split('/').filter(Boolean).map((part) => ` › ${decodeURIComponent(part)}`).join('')}`;
     } catch (_err) {
-      path = draft.url;
+      crumbs = draft.url;
     }
-    const siteName = ours ? P.name.replace(/\s*\(.*\)\s*$/, '') : hostOf(draft.url);
-    const title = facts.title || facts.h1 || 'Untitled page';
-    let desc = facts.description || 'No description yet. Search engines pick text from the page when there is no meta description.';
-    if (desc.length > 160) desc = `${desc.slice(0, 157).replace(/\s+\S*$/, '')} ...`;
-    const view = h('div', { class: 'serp-view' },
-      h('div', { class: 'snippet' },
-        h('div', { class: 'snippet-site' },
-          h('span', { class: 'fav', text: initial(siteName) }),
-          h('div', null, h('div', { class: 'snippet-name', text: siteName }), h('div', { class: 'snippet-url', text: path }))),
-        h('span', { class: 'snippet-title', text: title.length > 62 ? `${title.slice(0, 59).replace(/\s+\S*$/, '')} ...` : title }),
-        h('div', { class: 'snippet-desc', text: desc })),
-    );
-    if (!draft.text.trim()) return view;
-    const words = S.q.toLowerCase().split(/\s+/).filter((w) => w.length > 2);
-    const inTitle = words.filter((w) => title.toLowerCase().includes(w)).length;
-    const checks = [
-      check('Title length', `${facts.title.length} characters`, !facts.title ? 'bad' : facts.title.length > 70 ? 'bad' : facts.title.length > 60 || facts.title.length < 20 ? 'warn' : 'ok'),
-      check('Query words in title', `${inTitle} of ${words.length}`, inTitle === words.length ? 'ok' : inTitle ? 'warn' : 'bad'),
-      check('Meta description', facts.descSource === 'meta' ? `${facts.description.length} characters` : 'missing', facts.descSource !== 'meta' ? 'warn' : facts.description.length > 160 || facts.description.length < 70 ? 'warn' : 'ok'),
-      check('Main heading (H1)', facts.h1 ? 'present' : 'missing', facts.h1 ? 'ok' : 'bad'),
-    ];
-    view.append(h('div', { class: 'checks' }, checks));
-    return view;
+    const title = f.title || f.h1 || 'Untitled page';
+    const desc = f.meta || 'No description. Google will pick a line from the page.';
+    return h('section', { class: 'snippet' },
+      h('div', { class: 's-site' }, h('span', { class: 'fav', text: initial(hostOf(draft.url)) }), h('div', null, h('div', { class: 's-name', text: S.report.name }), h('div', { class: 's-url', text: crumbs }))),
+      h('div', { class: 's-title', text: title.length > 62 ? `${title.slice(0, 59).replace(/\s+\S*$/, '')} ...` : title }),
+      h('div', { class: 's-desc', text: desc.length > 160 ? `${desc.slice(0, 157).replace(/\s+\S*$/, '')} ...` : desc }));
   }
 
-  function check(label, value, level) {
-    return h('div', { class: `check ${level === 'ok' ? '' : level}` },
-      h('span', { class: 'dot', 'aria-hidden': 'true' }),
-      h('span', { class: 'label', text: label }),
-      h('span', { class: 'value', text: value + (level === 'ok' ? '' : level === 'warn' ? ', check' : ', fix') }));
+  function statsCard(f) {
+    return h('section', { class: 'tile stats-card' },
+      h('div', { class: 'stat-line' }, h('span', { class: 'k', text: 'Words' }), h('span', { class: 'v', text: f.words.toLocaleString() })),
+      h('div', { class: 'stat-line' }, h('span', { class: 'k', text: 'Sections' }), h('span', { class: 'v', text: String(f.headings) })),
+      h('div', { class: 'stat-line' }, h('span', { class: 'k', text: 'Main heading' }), h('span', { class: 'v one-line', text: f.h1 || 'missing' })));
   }
 
-  /* ------------------------------------------------------------------ test */
+  /* ------------------------------------------------------------------ test and result */
 
   let testing = false;
 
   async function runTest() {
-    if (testing || !studio) return;
-    const q = S.q;
+    if (testing || !ED.refs) return;
+    syncFromFrame();
+    const q = ED.refs.q;
     const draft = draftFor(q);
-    if (!draft.text.trim()) {
-      toast('Write or paste a draft first.');
-      studio.editor.focus();
+    if (!draft.text) {
+      toast('Choose or write a page first.');
       return;
     }
-    const row = queryRow(q);
-    const sameAsCurrent = !!(row && row.your_url && draft.base != null && looseKey(draft.url) === looseKey(row.your_url));
+    const sameAsLoaded = draft.base != null && !!draft.loaded && looseKey(draft.url) === looseKey(draft.loaded);
     testing = true;
-    const btn = studio.testBtn;
-    clear(btn).append(h('span', { class: 'spinner', 'aria-hidden': 'true' }), 'Testing');
-    btn.disabled = true;
+    const btn = $('#test-btn');
+    if (btn) {
+      btn.disabled = true;
+      clear(btn).append(h('span', { class: 'spinner', 'aria-hidden': 'true' }), 'Testing');
+    }
     try {
       const [run] = await Promise.all([
-        api.post(`/api/v1/projects/${enc(S.slug)}/test`, {
-          q,
-          draft: draft.text,
-          url: draft.url,
-          original: sameAsCurrent ? 'current' : 'none',
-          original_html: sameAsCurrent ? draft.base : '',
-        }),
+        api.post(`/api/v1/projects/${enc(S.slug)}/test`, { q, draft: draft.text, url: draft.url, original: sameAsLoaded ? 'current' : 'none', original_html: sameAsLoaded ? draft.base : '' }),
         getCompare(q).catch(() => null),
       ]);
       S.results.set(q, run);
-      if (S.q === q && S.screen === 'studio') {
+      if (ED.refs && ED.refs.q === q && S.screen === 'editor') {
         renderResult(run, true);
-        studio.resultHost.scrollIntoView({ behavior: reduceMotion.matches ? 'auto' : 'smooth', block: 'start' });
+        ED.refs.result.scrollIntoView({ behavior: reduceMotion.matches ? 'auto' : 'smooth', block: 'start' });
       }
     } catch (err) {
       toast(err.message);
     } finally {
       testing = false;
-      if (studio && studio.testBtn === btn) {
-        clear(btn).append('Test draft');
-        paintStats();
+      const again = $('#test-btn');
+      if (again) {
+        again.disabled = false;
+        clear(again).append('Test changes');
       }
     }
-  }
-
-  function confidenceTag(label) {
-    if (!label || label === 'n/a') return null;
-    if (label === 'CLEARER') return h('span', { class: 'tag tag-clear tag-dot', text: 'Clearer call' });
-    return h('span', { class: 'tag tag-unsure tag-dot', text: 'Uncertain' });
   }
 
   function verdictOf(run) {
@@ -1057,7 +1382,7 @@ code,pre{font-family:ui-monospace,Menlo,monospace;font-size:15px}
 
   function reasonOf(run) {
     const after = run.after || {};
-    if (after.position == null) return after.unplaced || 'The draft did not pass the on-topic check, so it was not placed.';
+    if (after.position == null) return after.unplaced || 'The page did not pass the on-topic check for this search, so it was not placed.';
     const fa = run.facts_after || {};
     const fb = run.facts_before;
     const parts = [];
@@ -1067,109 +1392,76 @@ code,pre{font-family:ui-monospace,Menlo,monospace;font-size:15px}
       const hd = fa.headings - fb.headings;
       if (hd > 0) parts.push(`adds ${plural(hd, 'section')}`);
       else if (hd < 0) parts.push(`drops ${plural(-hd, 'section')}`);
-      if (fa.table_count > fb.table_count) parts.push(fb.table_count ? 'adds a table' : 'adds a table');
+      if (fa.table_count > fb.table_count) parts.push('adds a table');
       else if (fa.table_count < fb.table_count) parts.push('drops a table');
       if (fa.has_faq !== fb.has_faq) parts.push(fa.has_faq === 'yes' ? 'adds an FAQ' : 'drops the FAQ');
-      if (fa.updated !== fb.updated && fa.updated && fa.updated !== 'none') parts.push('shows a different date');
       if (fa.title !== fb.title) parts.push('changes the title');
-      if (!parts.length) return 'Your draft reads much like the current page.';
+      if (!parts.length) return 'Your edit reads much like the current page.';
     } else {
       parts.push(`is scored as a new page against ${plural(run.candidates, 'page')}`);
       if (fa.word_count != null) parts.push(`has ${plural(fa.word_count, 'word')}`);
     }
     const shown = parts.slice(0, 3);
-    const sentence = shown.length > 1 ? `${shown.slice(0, -1).join(', ')} and ${shown[shown.length - 1]}` : shown[0];
-    return `Your draft ${sentence}.`;
+    return `Your page ${shown.length > 1 ? `${shown.slice(0, -1).join(', ')} and ${shown[shown.length - 1]}` : shown[0]}.`;
+  }
+
+  function moveChip(change) {
+    if (!change) return h('span', { class: 'move same', text: 'same' });
+    return h('span', { class: `move ${change > 0 ? 'up' : 'down'}` }, icon(change > 0 ? 'up' : 'down'), String(Math.abs(change)));
   }
 
   function renderResult(run, animate) {
-    const host = studio.resultHost;
-    clear(host);
+    const host = clear(ED.refs.result);
     const verdict = verdictOf(run);
     const after = run.after || {};
     const before = run.before;
-    const card = h('section', { class: 'card result-card', 'aria-live': 'polite' },
-      confidenceTag(after.confidence),
+    const head = h('section', { class: 'tile white span-2' },
+      after.confidence && after.confidence !== 'n/a' ? h('span', { class: `label ${after.confidence === 'CLEARER' ? 'label-ok' : 'label-medium'}`, text: after.confidence === 'CLEARER' ? 'Clearer call' : 'Uncertain' }) : null,
       h('h2', { class: `verdict ${verdict.cls}`, text: verdict.text }));
     if (after.position != null) {
       const ranks = h('div', { class: 'ranks' });
-      if (before && before.position != null) {
-        ranks.append(
-          h('div', { class: 'rank-box before' }, h('span', { class: 'k', text: 'Current page' }), h('span', { class: 'n', text: `#${before.position}` }), h('span', { class: 'of', text: `of ${before.of}` })),
-          icon('arrow', 'arrow'),
-        );
-      }
-      ranks.append(h('div', { class: 'rank-box after' }, h('span', { class: 'k', text: 'Draft' }), h('span', { class: 'n', text: `#${after.position}` }), h('span', { class: 'of', text: `of ${after.of}` })));
-      card.append(ranks);
+      if (before && before.position != null) ranks.append(h('div', { class: 'rank-box before' }, h('span', { class: 'k', text: 'Now' }), h('span', { class: 'n', text: `#${before.position}` }), h('span', { class: 'of', text: `of ${before.of}` })), icon('arrow', 'arrow'));
+      ranks.append(h('div', { class: 'rank-box after' }, h('span', { class: 'k', text: 'With your edit' }), h('span', { class: 'n', text: `#${after.position}` }), h('span', { class: 'of', text: `of ${after.of}` })));
+      head.append(ranks);
     }
-    card.append(
-      h('p', { class: 'reason', text: reasonOf(run) }),
-      h('p', { class: 'caveat', text: 'Among these candidate pages, not a Google ranking.' }),
-      h('div', { class: 'result-actions' },
-        h('button', {
-          class: 'btn btn-gray',
-          type: 'button',
-          onClick: () => {
-            studio.editor.scrollIntoView({ behavior: reduceMotion.matches ? 'auto' : 'smooth', block: 'center' });
-            setTimeout(() => studio.editor.focus({ preventScroll: true }), 350);
-          },
-        }, icon('pencil'), 'Edit draft'),
-        link('rankings', S.q, [icon('list'), 'See rankings'], { class: 'btn btn-gray' })),
-    );
-    host.append(card);
-    if (after.order && after.order.length) host.append(orderCard(run, animate));
-    host.append(detailsBlock(run));
+    head.append(h('p', { class: 'reason', text: reasonOf(run) }), h('p', { class: 'caveat', text: 'Among the pages that rank for this search today. A prediction, not a Google ranking.' }));
+    const grid = h('div', { class: 'bento' }, head);
+    if (after.order && after.order.length) grid.append(orderTile(run, animate));
+    grid.append(detailsTile(run));
+    host.append(grid);
   }
 
-  function orderCard(run, animate) {
+  function orderTile(run, animate) {
     const after = run.after;
     const before = run.before && run.before.order && run.before.order.length ? run.before : null;
-    const draft = draftFor(run.search);
-    const facts = docFacts(draft.text);
+    const f = facts(draftFor(run.search).text);
     const keyOf = (item) => (item.page ? '__page__' : item.url);
     const titles = new Map();
-    const list = h('ol', { class: 'order-list', 'aria-label': 'Predicted order' });
     const rows = new Map();
-
-    function makeRow(item) {
+    const list = h('ol', { class: 'order', 'aria-label': 'Predicted order' });
+    const make = (item) => {
       const isPage = !!item.page;
-      const title = isPage ? facts.title || facts.h1 || 'Your draft' : item.domain;
-      const li = h('li', { class: `order-row${isPage ? ' is-draft' : ''}` },
-        h('span', { class: 'pos', text: String(item.predicted) }),
-        h('span', { class: 'fav', text: isPage ? '' : initial(item.domain) }),
-        h('div', { class: 'main' },
-          h('div', { class: 't', text: title }),
-          h('div', { class: 'd', text: isPage ? `Your draft · ${hostOf(run.url)}` : item.domain })),
-        h('div', { class: 'side' }));
+      const li = h('li', { class: isPage ? 'is-draft' : null },
+        h('span', { class: `pos${isPage ? ' you' : ''}`, text: String(item.predicted) }),
+        h('span', { class: `fav${isPage ? ' you' : ''}`, text: isPage ? '' : initial(item.domain) }),
+        h('div', { class: 'main' }, h('div', { class: 't', text: isPage ? f.title || 'Your page' : item.domain }), h('div', { class: 'd', text: isPage ? `Your page · ${hostOf(run.url)}` : item.domain })),
+        h('span', { class: 'side' }));
       if (isPage) li.querySelector('.fav').append(icon('pencil'));
       rows.set(keyOf(item), li);
       if (!isPage) titles.set(item.url, li.querySelector('.t'));
       return li;
-    }
-
-    function side(li, item) {
+    };
+    const side = (li, item) => {
       const box = clear(li.querySelector('.side'));
       if (item.page) {
-        const verdict = verdictOf(run);
-        if (before && verdict.change != null) {
-          box.append(moveChip(verdict.change), ' ', h('span', { text: ` was #${run.before.position}` }));
-        } else box.append(h('span', { text: 'New page' }));
-      } else {
-        box.append(h('span', { text: `Observed #${item.observed}` }));
-      }
-    }
-
+        const v = verdictOf(run);
+        if (before && v.change != null) box.append(moveChip(v.change), ` was #${run.before.position}`);
+        else box.append('New page');
+      } else box.append(`Google #${item.observed}`);
+    };
     const start = before || after;
-    for (const item of start.order) list.append(makeRow(item));
-    for (const item of after.order) if (!rows.has(keyOf(item))) list.append(makeRow(item));
-
-    const card = h('section', { class: 'card order-card' },
-      h('div', { class: 'card-head' },
-        h('div', null,
-          h('h2', { text: 'Predicted order' }),
-          h('div', { class: 'table-head-meta', text: `${plural(after.of, 'page')} for "${run.search}"${run.which === 'competitors' ? ', named competitors only' : ''}` }))),
-      list);
-
+    for (const item of start.order) list.append(make(item));
+    for (const item of after.order) if (!rows.has(keyOf(item))) list.append(make(item));
     const settle = () => {
       const first = new Map();
       for (const [key, li] of rows) first.set(key, li.getBoundingClientRect().top);
@@ -1190,208 +1482,166 @@ code,pre{font-family:ui-monospace,Menlo,monospace;font-size:15px}
         li.style.transform = '';
       }
     };
-
     if (before && animate && !reduceMotion.matches) {
       for (const item of before.order) {
         const li = rows.get(keyOf(item));
         if (!li) continue;
-        if (item.page) clear(li.querySelector('.side')).append(h('span', { text: 'Current page' }));
+        if (item.page) clear(li.querySelector('.side')).append('Now');
         else side(li, item);
       }
       setTimeout(settle, 900);
-    } else {
-      settle();
-    }
-
+    } else settle();
     getCompare(run.search).then((view) => {
       for (const cand of view.candidates || []) {
         const el = titles.get(cand.url);
         if (el && cand.title) el.textContent = cand.title;
       }
     }).catch(() => {});
-    return card;
+    return h('section', { class: 'tile span-2' }, h('div', { class: 'tile-head' }, h('h2', { text: 'Predicted order' }), h('span', { class: 'aside', text: plural(after.of, 'page') })), list);
   }
 
-  /* A pull label is a date when one was recorded, or a phrase such as "pull date not recorded". Show dates only. */
-  function seenText(pulled, prefix = '', suffix = '') {
-    return pulled && /\d{4}/.test(pulled) ? `${prefix}${pulled}${suffix}` : '';
-  }
-
-  function moveChip(change) {
-    if (!change) return h('span', { class: 'move same', text: 'same' });
-    return h('span', { class: `move ${change > 0 ? 'up' : 'down'}` }, icon(change > 0 ? 'up' : 'down'), String(Math.abs(change)));
-  }
-
-  function detailsBlock(run) {
+  function detailsTile(run) {
     const fa = run.facts_after || {};
     const fb = run.facts_before;
-    const factRows = [
-      ['Words', 'word_count'],
-      ['Sections', 'headings'],
-      ['Tables', 'table_count'],
-      ['FAQ', 'has_faq'],
-      ['Visible date', 'updated'],
-      ['Links', 'link_count'],
-      ['Title', 'title'],
-    ];
-    const table = h('table', { class: 'kv' });
-    if (fb) table.append(h('thead', null, h('tr', null, h('th', { text: '' }), h('th', { text: 'Current' }), h('th', { text: 'Draft' }))));
-    const tbody = h('tbody');
-    for (const [label, key] of factRows) {
-      const a = fa[key];
-      const b = fb ? fb[key] : undefined;
-      const fmt = (v) => (v == null || v === '' ? 'none' : typeof v === 'number' ? v.toLocaleString() : String(v));
-      tbody.append(h('tr', null,
-        h('th', { text: label }),
-        fb ? h('td', { text: fmt(b) }) : null,
-        h('td', { class: fb && fmt(a) !== fmt(b) ? 'changed' : null, text: fmt(a) })));
-    }
-    table.append(tbody);
+    const rows = [['Words', 'word_count'], ['Sections', 'headings'], ['Tables', 'table_count'], ['FAQ', 'has_faq'], ['Visible date', 'updated'], ['Title', 'title']];
+    const fmt = (v) => (v == null || v === '' ? 'none' : typeof v === 'number' ? v.toLocaleString() : String(v));
+    const table = h('table', { class: 'kv' },
+      fb ? h('thead', null, h('tr', null, h('th', { text: '' }), h('th', { text: 'Now' }), h('th', { text: 'Edit' }))) : null,
+      h('tbody', null, rows.map(([label, key]) => h('tr', null, h('th', { text: label }), fb ? h('td', { text: fmt(fb[key]) }) : null, h('td', { class: fb && fmt(fa[key]) !== fmt(fb[key]) ? 'changed' : null, text: fmt(fa[key]) })))));
+    const notes = h('div', { class: 'note-list' });
+    if (run.query_pairwise != null) notes.append(h('p', { text: `On this search the model ordered ${pct(run.query_pairwise)} of ${plural(run.query_pairs || 0, 'page pair')} right when held out. 50% is a coin flip.` }));
+    if (run.topic_after && run.topic_after.missing && run.topic_after.missing.length) notes.append(h('p', { text: `Words the ranking pages use that yours doesn't: ${run.topic_after.missing.join(', ')}.` }));
+    for (const note of run.notes || []) notes.append(h('p', { text: note }));
+    notes.append(h('p', { text: run.saved ? 'Saved to this site\'s test history.' : 'Not saved.' }));
+    return h('section', { class: 'tile span-4' }, h('div', { class: 'bento' },
+      h('div', { class: 'span-2' }, h('div', { class: 'tile-head' }, h('h2', { text: fb ? 'What changed' : 'Your page' })), table),
+      h('div', { class: 'span-2' }, h('div', { class: 'tile-head' }, h('h2', { text: 'How sure is this' })), notes)));
+  }
 
-    const panels = [h('section', { class: 'card panel' }, h('h3', { text: fb ? 'What changed' : 'The draft' }), table)];
+  /* ------------------------------------------------------------------ settings */
 
-    const topic = run.topic_after;
-    if (topic && topic.text) {
-      const panel = h('section', { class: 'card panel' }, h('h3', { text: 'On topic' }), h('p', { text: topic.text }));
-      if (topic.missing && topic.missing.length) {
-        panel.append(h('p', { text: 'Words the ranking pages use that the draft does not:' }), h('div', { class: 'words' }, topic.missing.map((w) => h('span', { text: w }))));
+  function renderSettings() {
+    const R = S.report;
+    const grid = h('div', { class: 'bento' });
+
+    const steps = h('div', { class: 'steps' });
+    const refreshBtn = h('button', { class: 'btn btn-dark', type: 'button' }, icon('refresh'), 'Refresh now');
+    refreshBtn.addEventListener('click', () => refresh(refreshBtn, steps));
+    grid.append(h('section', { class: 'tile span-2' },
+      h('div', { class: 'tile-head' }, h('h2', { text: 'Refresh data' }), h('span', { class: 'aside', text: pulledText('Last pull ') || (R.search_data ? '' : 'Not pulled yet') })),
+      h('p', { class: 'tile-sub', text: R.google_ready ? 'Pulls the live top 10 for every search, reads new or changed pages, and retrains the model.' : 'Search data isn\'t connected on this server yet. Add SERPER_API_KEY once and this pulls the live top 10 for every search.' }),
+      h('div', { class: 'result-actions' }, refreshBtn), steps));
+
+    grid.append(h('section', { class: 'tile span-2' },
+      h('div', { class: 'tile-head' }, h('h2', { text: 'Google Search Console' }), h('button', { class: 'toggle', type: 'button', role: 'switch', 'aria-checked': 'false', disabled: true, 'aria-label': 'Connect Google Search Console' })),
+      h('p', { class: 'tile-sub', text: 'Adds your real clicks, impressions and positions. Coming next.' })));
+
+    const qArea = h('textarea', { class: 'field', rows: '8', value: R.rankings.map((row) => row.q).join('\n') });
+    const qSave = h('button', { class: 'btn', type: 'button' }, 'Save searches');
+    qSave.addEventListener('click', async () => {
+      qSave.disabled = true;
+      try {
+        await api.post(`/api/v1/projects/${enc(S.slug)}/settings`, { queries: qArea.value });
+        await reloadSite();
+        toast('Saved. Refresh to get rankings for new searches.');
+      } catch (err) {
+        toast(err.message);
       }
-      panels.push(panel);
-    }
+      qSave.disabled = false;
+    });
+    grid.append(h('section', { class: 'tile span-2' }, h('div', { class: 'tile-head' }, h('h2', { text: 'Searches' }), h('span', { class: 'aside', text: 'Found automatically' })), h('div', { class: 'form' }, qArea, h('span', { class: 'form-help', text: 'One per line. Ranksim found these from your pages; add or remove any.' }), h('div', { class: 'form-actions' }, qSave))));
 
-    const after = run.after || {};
-    const sure = h('section', { class: 'card panel' }, h('h3', { text: 'How sure is this' }));
-    if (run.query_pairwise != null) sure.append(h('p', { text: `On this query, the model ordered ${pct(run.query_pairwise)} of ${plural(run.query_pairs || 0, 'page pair')} correctly when it was held out. 50% is a coin flip.` }));
-    if (run.overall_pairwise != null) sure.append(h('p', { text: `Across all queries: ${pct(run.overall_pairwise)}.` }));
-    if (after.confidence_note) sure.append(h('p', { text: after.confidence_note }));
-    panels.push(sure);
+    const cArea = h('textarea', { class: 'field', rows: '8', spellcheck: 'false', value: (R.competitors || []).join('\n'), placeholder: 'competitor.com' });
+    const cSave = h('button', { class: 'btn', type: 'button' }, 'Save competitors');
+    cSave.addEventListener('click', async () => {
+      cSave.disabled = true;
+      try {
+        await api.post(`/api/v1/projects/${enc(S.slug)}/settings`, { competitors: cArea.value });
+        await reloadSite();
+        toast('Competitors saved.');
+      } catch (err) {
+        toast(err.message);
+      }
+      cSave.disabled = false;
+    });
+    grid.append(h('section', { class: 'tile span-2' }, h('div', { class: 'tile-head' }, h('h2', { text: 'Competitors' }), h('span', { class: 'aside', text: 'Found automatically' })), h('div', { class: 'form' }, cArea, h('span', { class: 'form-help', text: 'Picked from who takes the most top 10 spots. Edit if we got one wrong.' }), h('div', { class: 'form-actions' }, cSave))));
 
-    const data = h('section', { class: 'card panel' }, h('h3', { text: 'Data' }));
-    const ds = S.project.data || {};
-    data.append(h('p', { text: ds.long || '' }));
-    data.append(h('p', { text: `Compared against ${plural(run.candidates, 'stored candidate page')} (${run.set_label}).${seenText(run.pulled, ' Positions seen ', '.')}` }));
-    if (run.has_original) data.append(h('p', { text: `Current page: ${run.original_label}.` }));
-    for (const note of run.notes || []) data.append(h('p', { text: note }));
-    data.append(h('p', { text: run.saved ? 'This test is saved in the project.' : "This test isn't saved. Nothing you paste is stored." }));
-    panels.push(data);
+    const confirmField = h('input', { class: 'field', placeholder: S.slug, autocomplete: 'off', spellcheck: 'false', 'aria-label': 'Type the site name to confirm' });
+    const del = h('button', { class: 'btn btn-danger', type: 'button', disabled: true }, 'Delete this site');
+    confirmField.addEventListener('input', () => {
+      del.disabled = confirmField.value.trim() !== S.slug;
+    });
+    del.addEventListener('click', async () => {
+      del.disabled = true;
+      try {
+        await api.post(`/api/v1/projects/${enc(S.slug)}/delete`, { confirm: confirmField.value.trim() });
+        await loadProjects();
+        toast('Site deleted.');
+        navigate('/');
+      } catch (err) {
+        toast(err.message);
+        del.disabled = false;
+      }
+    });
+    grid.append(h('section', { class: 'tile span-4' }, h('div', { class: 'tile-head' }, h('h2', { text: 'Delete' })), h('div', { class: 'form' }, h('span', { class: 'form-help', text: `Type ${S.slug} to delete this site and its tests.` }), confirmField, h('div', { class: 'form-actions' }, del))));
 
-    if (run.ai && run.ai.status && run.ai.status !== 'off' && run.ai.status !== 'unavailable') {
-      panels.push(h('section', { class: 'card panel' }, h('h3', { text: 'AI notes' }), h('div', { class: 'ai-text', text: run.ai.text || '' })));
-    }
-
-    return h('details', { class: 'more' },
-      h('summary', null, 'Details', icon('chevron')),
-      h('div', { class: 'more-grid' }, panels));
+    clear(main).append(page('Settings', R.site, null, grid), footer());
   }
 
-  /* ------------------------------------------------------------------ rankings */
-
-  function renderRankings() {
-    const P = S.project;
-    const grid = h('section', { class: 'qgrid', 'aria-label': 'Queries' });
-    for (const row of P.queries) {
-      grid.append(h('button', {
-        class: 'qcard',
-        type: 'button',
-        'aria-pressed': String(row.q === S.q),
-        onClick: () => {
-          if (row.q === S.q) return;
-          S.q = row.q;
-          history.replaceState({}, '', pathFor('rankings', row.q));
-          for (const el of grid.querySelectorAll('.qcard')) el.setAttribute('aria-pressed', String(el.dataset.q === row.q));
-          paintTable(tableHost);
-          document.title = `Rankings · ${S.q} · Ranksim`;
-        },
-        dataset: { q: row.q },
-      },
-      h('span', { class: 'q', text: row.q }),
-      h('span', { class: 'nums' },
-        h('span', { class: 'num' }, h('span', { class: `v${row.observed == null ? ' none' : ''}`, text: row.observed == null ? 'Not listed' : `#${row.observed}` }), h('span', { class: 'k', text: 'Observed' })),
-        h('span', { class: 'num pred' },
-          row.predicted == null
-            ? h('span', { class: 'v none', text: 'n/a' })
-            : h('span', { class: 'v' }, `#${row.predicted}`, h('small', { text: `of ${row.of}` })),
-          h('span', { class: 'k', text: 'Predicted' })))));
-    }
-    const tableHost = h('section', { class: 'card table-card', 'aria-live': 'polite' });
-    clear(main).append(
-      h('div', { class: 'wrap screen' },
-        h('section', { class: 'hero hero-compact' },
-          h('h1', { text: 'Rankings' }),
-          h('p', { class: 'lede', text: 'Every page that ranks for your queries, next to the order the model predicts.' })),
-        grid,
-        tableHost),
-      footer(),
-    );
-    paintTable(tableHost);
-  }
-
-  async function paintTable(host) {
-    const q = S.q;
-    clear(host).append(
-      h('div', { class: 'card-head' }, h('h2', { text: q })),
-      h('div', null, [1, 2, 3, 4, 5].map(() => h('div', { class: 'skeleton sk-row' }))));
-    let view;
+  async function refresh(button, steps) {
+    button.disabled = true;
+    clear(button).append(h('span', { class: 'spinner', 'aria-hidden': 'true' }), 'Refreshing');
+    clear(steps);
+    const rows = new Map();
+    const labels = { google: 'Checking Google', crawl: 'Reading the pages that rank', train: 'Training your model', store: 'Saving' };
+    let current = null;
+    let report = null;
+    let failed = '';
+    const show = (key, message, done, total) => {
+      if (!labels[key]) return;
+      if (current && current !== key) {
+        const prev = rows.get(current);
+        if (prev) {
+          prev.className = 'step done';
+          clear(prev.querySelector('.box')).append(icon('check'));
+        }
+      }
+      current = key;
+      if (!rows.has(key)) {
+        const row = h('div', { class: 'step active' }, h('span', { class: 'box' }, h('span', { class: 'spinner', 'aria-hidden': 'true' })), h('div', { class: 'body' }, h('div', { class: 't', text: labels[key] }), h('div', { class: 'c' }), h('div', { class: 'extra' })));
+        rows.set(key, row);
+        steps.append(row);
+      }
+      const row = rows.get(key);
+      row.querySelector('.c').textContent = message || '';
+      const extra = clear(row.querySelector('.extra'));
+      if (total) extra.append(bar(done / total));
+    };
     try {
-      view = await getCompare(q);
+      await stream(`/api/v1/projects/${enc(S.slug)}/pull`, { google: true }, (event) => {
+        if (event.type === 'progress') show(event.step === 'save' ? 'store' : event.step, event.message, event.done, event.total);
+        else if (event.type === 'done') report = event.report;
+        else if (event.type === 'error') failed = event.error;
+      });
     } catch (err) {
-      clear(host).append(h('div', { class: 'card-head' }, h('h2', { text: q })), h('div', { class: 'notes' }, h('p', { text: err.message })));
+      failed = err.message;
+    }
+    for (const row of rows.values()) {
+      row.className = `step ${report ? 'done' : 'failed'}`;
+      clear(row.querySelector('.box')).append(icon(report ? 'check' : 'x'));
+    }
+    button.disabled = false;
+    clear(button).append(icon('refresh'), 'Refresh now');
+    if (!report) {
+      toast(failed || 'The refresh stopped.');
       return;
     }
-    if (S.q !== q) return;
-    const sortSeg = h('div', { class: 'seg seg-sm', role: 'group', 'aria-label': 'Order by' });
-    for (const [key, label] of [['observed', 'Observed'], ['predicted', 'Predicted']]) {
-      sortSeg.append(h('button', {
-        type: 'button',
-        'aria-pressed': String(S.sort === key),
-        onClick: () => {
-          S.sort = key;
-          paintTable(host);
-        },
-      }, label));
-    }
-    const meta = h('div', { class: 'table-head-meta' },
-      h('span', { text: `${plural(view.total, 'page')} · ${view.scored} analyzed` }),
-      view.query_pairwise != null ? h('span', { text: `Held out accuracy ${pct(view.query_pairwise)} on this query` }) : null,
-      seenText(view.pulled) ? h('span', { text: seenText(view.pulled, 'Seen ') }) : null);
-    clear(host).append(h('div', { class: 'card-head' }, h('div', null, h('h2', { text: q }), meta), h('div', { class: 'tools' }, sortSeg)));
-    if (view.error) {
-      host.append(h('div', { class: 'notes' }, h('p', { text: view.error })));
-    }
-    const cands = view.candidates.slice();
-    if (S.sort === 'predicted') cands.sort((a, b) => (a.predicted == null) - (b.predicted == null) || (a.predicted || 0) - (b.predicted || 0) || a.observed - b.observed);
-    const list = h('div', { class: 'rows', role: 'list' });
-    host.append(h('div', { class: 'rows-head', 'aria-hidden': 'true' },
-      h('span', { text: 'Observed' }), h('span', { text: 'Predicted' }), h('span', { text: 'Page' }), h('span', { text: 'Shift' }), h('span')));
-    for (const cand of cands) {
-      const you = cand.role === 'you';
-      const tags = [];
-      if (you) tags.push(h('span', { class: 'tag tag-you', text: 'You' }));
-      else if (cand.role === 'competitor') tags.push(h('span', { class: 'tag tag-comp', text: 'Competitor' }));
-      list.append(h('button', {
-        class: `rank-row${you ? ' you' : ''}${cand.stored ? '' : ' missing'}`,
-        type: 'button',
-        role: 'listitem',
-        onClick: (event) => openPageSheet(cand, view, event.currentTarget),
-      },
-      h('span', { class: 'cell-n', text: String(cand.observed) }),
-      cand.predicted != null ? h('span', { class: 'cell-n pred', text: String(cand.predicted) }) : h('span', { class: 'cell-n na', text: 'n/a' }),
-      h('span', { class: 'page' },
-        h('span', { class: 'fav', text: initial(cand.domain) }),
-        h('span', { class: 'txt' },
-          h('span', { class: 't', text: cand.title || cand.domain }),
-          h('span', { class: 'd' }, h('span', { class: 'host', text: cand.stored ? cand.domain : `${cand.domain} · no stored copy` }), tags))),
-      h('span', { class: 'cell-move' }, cand.shift == null ? '' : moveChip(cand.shift)),
-      icon('next', 'go')));
-    }
-    host.append(list);
-    const notes = (view.notes || []).filter(Boolean);
-    host.append(h('div', { class: 'notes' },
-      h('p', { text: 'Observed is the position in the stored results. Predicted is the order the model gives the analyzed pages. Shift compares the two.' }),
-      notes.map((note) => h('p', { text: note }))));
+    toast(`Refreshed in ${Math.round(report.seconds || 0)} s.`);
+    await reloadSite();
+    renderBar();
   }
 
-  /* ------------------------------------------------------------------ sheets */
+  /* ------------------------------------------------------------------ sheet */
 
   let lastFocus = null;
 
@@ -1403,20 +1653,18 @@ code,pre{font-family:ui-monospace,Menlo,monospace;font-size:15px}
     const sheet = h('aside', { class: 'sheet', role: 'dialog', 'aria-modal': 'true' });
     build(sheet, closeBtn);
     document.body.append(scrim, sheet);
-    S.sheet = { scrim, sheet, observer: null };
+    S.sheet = { scrim, sheet };
     requestAnimationFrame(() => {
       scrim.classList.add('open');
       sheet.classList.add('open');
     });
     closeBtn.focus({ preventScroll: true });
-    return S.sheet;
   }
 
   function closeSheet(instant) {
     const current = S.sheet;
     if (!current) return;
     S.sheet = null;
-    if (current.observer) current.observer.disconnect();
     const done = () => {
       current.scrim.remove();
       current.sheet.remove();
@@ -1425,713 +1673,18 @@ code,pre{font-family:ui-monospace,Menlo,monospace;font-size:15px}
     else {
       current.scrim.classList.remove('open');
       current.sheet.classList.remove('open');
-      setTimeout(done, 420);
+      setTimeout(done, 400);
     }
     if (!instant && lastFocus && document.contains(lastFocus)) lastFocus.focus({ preventScroll: true });
   }
 
   document.addEventListener('keydown', (event) => {
     if (event.key === 'Escape' && S.sheet) closeSheet();
-    if (event.key === 'Tab' && S.sheet) {
-      const focusable = Array.from(S.sheet.sheet.querySelectorAll('button,a[href],input,select,textarea,summary')).filter((el) => !el.disabled && el.offsetParent !== null);
-      if (!focusable.length) return;
-      const first = focusable[0];
-      const last = focusable[focusable.length - 1];
-      if (event.shiftKey && document.activeElement === first) {
-        event.preventDefault();
-        last.focus();
-      } else if (!event.shiftKey && document.activeElement === last) {
-        event.preventDefault();
-        first.focus();
-      }
+    if ((event.metaKey || event.ctrlKey) && event.key === 'Enter' && S.screen === 'editor' && S.slug) {
+      event.preventDefault();
+      runTest();
     }
   });
-
-  function openPageSheet(cand, view) {
-    const you = cand.role === 'you';
-    const sheetState = openSheet((sheet, closeBtn) => {
-      const titleId = 'sheet-title';
-      sheet.setAttribute('aria-labelledby', titleId);
-      sheet.append(h('div', { class: 'sheet-head' },
-        h('div', { style: null }, h('h2', { id: titleId, text: cand.title || cand.domain }), h('div', { class: 'sub', text: cand.url })),
-        closeBtn));
-      const body = h('div', { class: 'sheet-body' });
-      sheet.append(body);
-
-      const pair = h('div', { class: 'bigpair' },
-        h('div', { class: 'rank-box' }, h('span', { class: 'k', text: 'Observed' }), h('span', { class: 'n', text: `#${cand.observed}` }), h('span', { class: 'of', text: `of ${view.total}` })),
-        h('div', { class: 'rank-box pred' }, h('span', { class: 'k', text: 'Predicted' }), h('span', { class: 'n', text: cand.predicted == null ? 'n/a' : `#${cand.predicted}` }), h('span', { class: 'of', text: cand.predicted == null ? 'not analyzed' : `of ${view.scored}` })));
-      body.append(pair);
-      if (you && view.confidence && view.confidence !== 'n/a') body.append(h('div', { class: 'sheet-section' }, confidenceTag(view.confidence)));
-
-      const previewSection = h('div', { class: 'sheet-section' }, h('h3', { text: 'Preview' }));
-      const viewport = h('div', { class: 'viewport' });
-      previewSection.append(h('div', { class: 'mini-browser' },
-        h('div', { class: 'chrome' },
-          h('span', { class: 'lights', 'aria-hidden': 'true' }, h('i'), h('i'), h('i')),
-          h('span', { class: 'address' }, icon('lock'), h('input', { type: 'text', value: cand.url, readonly: true, 'aria-label': 'Page URL', tabindex: '-1' })),
-          h('span')),
-        viewport));
-      body.append(previewSection);
-      if (cand.stored) {
-        viewport.append(h('div', { class: 'empty' }, h('span', { class: 'spinner', 'aria-hidden': 'true' })));
-        getPage(cand.url).then((page) => {
-          if (!S.sheet || S.sheet.sheet !== sheet) return;
-          clear(viewport);
-          const made = frameFor(viewport, previewSource(page.html), 'desktop');
-          if ('ResizeObserver' in window) {
-            S.sheet.observer = new ResizeObserver(() => made.fit());
-            S.sheet.observer.observe(viewport);
-          }
-        }).catch(() => {
-          clear(viewport).append(h('div', { class: 'empty' }, icon('doc'), h('strong', { text: 'No preview' }), h('span', { text: 'This page has no stored copy.' })));
-        });
-      } else {
-        viewport.append(h('div', { class: 'empty' }, icon('doc'), h('strong', { text: 'No stored copy' }), h('span', { text: "It keeps its observed position, but the model can't read it, so it isn't placed." })));
-      }
-
-      if (cand.stored) {
-        const chips = h('div', { class: 'chips' },
-          cand.word_count != null ? h('span', null, h('b', { text: cand.word_count.toLocaleString() }), ' words') : null,
-          h('span', { text: cand.has_table ? 'Has a table' : 'No table' }),
-          h('span', { text: cand.has_faq ? 'Has an FAQ' : 'No FAQ' }),
-          h('span', { text: cand.updated ? `Updated ${cand.updated}` : 'No visible date' }),
-          cand.stored_at ? h('span', { text: `Stored ${cand.stored_at}` }) : null);
-        body.append(h('div', { class: 'sheet-section' }, h('h3', { text: 'Page' }), chips));
-      }
-
-      if (cand.evidence && cand.evidence.length) {
-        const ev = h('div', { class: 'evidence' });
-        for (const item of cand.evidence) {
-          const width = item.of > 1 ? Math.max(8, Math.round(((item.of - item.rank + 1) / item.of) * 100)) : 100;
-          const meter = h('span', { class: `meter${item.rank === 1 ? ' top' : item.rank === item.of && item.of > 2 ? ' low' : ''}`, title: `${item.rank} of ${item.of}` }, h('i'));
-          meter.firstChild.style.width = `${width}%`;
-          ev.append(h('div', { class: 'ev' }, h('span', { class: 'l', text: item.label }), h('span', { class: 'v', text: item.value }), meter));
-        }
-        body.append(h('div', { class: 'sheet-section' },
-          h('h3', { text: 'What the model reads' }),
-          ev,
-          h('p', { class: 'ev-legend', text: `Bars show where this page stands among the ${view.scored} analyzed pages. A full bar is the best of them.` })));
-      }
-
-      const actions = h('div', { class: 'sheet-actions' });
-      if (you) {
-        actions.append(h('button', {
-          class: 'btn btn-primary',
-          type: 'button',
-          onClick: () => {
-            closeSheet(true);
-            const draft = draftFor(view.search);
-            if (!draft.text.trim() || !draft.touched) {
-              draft.url = cand.url;
-              loadCurrent(view.search, false);
-            }
-            go('studio', view.search);
-          },
-        }, icon('pencil'), 'Edit in Studio'));
-      } else {
-        actions.append(h('button', {
-          class: 'btn btn-primary',
-          type: 'button',
-          onClick: () => {
-            closeSheet(true);
-            go('studio', view.search);
-          },
-        }, 'Test a draft for this query'));
-      }
-      body.append(actions);
-    });
-    return sheetState;
-  }
-
-  function openAbout() {
-    const P = S.project;
-    openSheet((sheet, closeBtn) => {
-      sheet.setAttribute('aria-labelledby', 'about-title');
-      sheet.append(h('div', { class: 'sheet-head' },
-        h('div', null, h('h2', { id: 'about-title', text: 'About Ranksim' }), h('div', { class: 'sub', text: P ? `${P.name} · ${P.site}` : '' })),
-        closeBtn));
-      const body = h('div', { class: 'sheet-body' });
-      sheet.append(body);
-      body.append(h('p', { class: 'sheet-lede', text: 'Ranksim builds a small search engine for your queries and predicts where a page would land among the pages that rank today, so you can test an edit before you publish it.' }));
-      body.append(h('div', { class: 'sheet-section' },
-        h('h3', { text: 'How it works' }),
-        h('ol', { class: 'steps' },
-          h('li', { text: 'Collect the pages that rank for each query.' }),
-          h('li', { text: 'Train a ranking model on them. Each query is tested on a model that never saw it.' }),
-          h('li', { text: 'Score your draft against the same pages, with the same model.' }))));
-      if (P && P.model && P.model.pairwise != null) {
-        const acc = h('div', { class: 'sheet-section' },
-          h('h3', { text: 'Accuracy' }),
-          h('div', { class: 'big-stat' }, pct(P.model.pairwise), h('small', { text: 'of page pairs in the right order' })),
-          h('p', { class: 'sheet-text', text: `Held out across ${plural(P.model.queries, 'query', 'queries')} and ${plural(P.model.pairs, 'pair')}. 50% is a coin flip.` }));
-        if (P.data && P.data.kind === 'synthetic') acc.append(h('p', { class: 'sheet-text', text: 'This is demo data, so the number only shows the pipeline runs. It says nothing about accuracy on real Google results.' }));
-        body.append(acc);
-      }
-      if (P && P.data) body.append(h('div', { class: 'sheet-section' }, h('h3', { text: 'Data' }), h('p', { class: 'sheet-text', text: P.data.long })));
-      if (S.session && S.session.mode === 'private') {
-        body.append(h('div', { class: 'sheet-section' },
-          h('h3', { text: 'This server' }),
-          h('p', { class: 'sheet-text' }, googleLine()),
-          h('p', { class: 'sheet-text' }, storageLine()),
-          h('div', { class: 'sheet-actions' }, h('button', { class: 'btn', type: 'button', onClick: () => { closeSheet(true); signOut(); } }, icon('out'), 'Sign out'))));
-      } else if (S.publicDemo) {
-        body.append(h('div', { class: 'sheet-section' },
-          h('h3', { text: 'Use your own pages' }),
-          h('p', { class: 'sheet-text', text: 'This public demo runs on invented sites and keeps nothing you paste. Run Ranksim on your own computer to use real queries and pages:' }),
-          h('pre', { class: 'cmd', text: 'pip install -e .\npython -m aeo.ranksim serve' })));
-      } else {
-        body.append(h('div', { class: 'sheet-section' },
-          h('h3', { text: 'Manage' }),
-          h('div', { class: 'sheet-actions' },
-            P ? h('a', { class: 'btn btn-gray', href: `/p/${enc(P.slug)}` }, 'Project setup') : null,
-            h('a', { class: 'btn btn-gray', href: '/projects' }, 'All projects'))));
-      }
-    });
-  }
-
-  /* ------------------------------------------------------------------ sign in */
-
-  function renderLogin() {
-    S.project = null;
-    S.slug = null;
-    renderBar();
-    const field = h('input', { class: 'field', type: 'password', id: 'pw', autocomplete: 'current-password', required: true, 'aria-label': 'Password' });
-    const error = h('p', { class: 'form-error', role: 'alert', hidden: true });
-    const button = h('button', { class: 'btn btn-primary btn-large', type: 'submit' }, 'Sign in');
-    const form = h('form', { class: 'form', novalidate: true },
-      h('div', { class: 'form-row' }, h('label', { for: 'pw', text: 'Password' }), field),
-      error,
-      button);
-    form.addEventListener('submit', async (event) => {
-      event.preventDefault();
-      if (!field.value) {
-        field.focus();
-        return;
-      }
-      error.hidden = true;
-      button.disabled = true;
-      clear(button).append(h('span', { class: 'spinner', 'aria-hidden': 'true' }), 'Signing in');
-      try {
-        await api.post('/api/v1/login', { password: field.value });
-        await boot();
-      } catch (err) {
-        error.textContent = err.message;
-        error.hidden = false;
-        button.disabled = false;
-        clear(button).append('Sign in');
-        field.select();
-      }
-    });
-    clear(main).append(
-      h('div', { class: 'wrap screen' },
-        h('section', { class: 'hero' }),
-        h('div', { class: 'card login-card' },
-          h('span', { class: 'logo', 'aria-hidden': 'true' }, h('i'), h('i'), h('i')),
-          h('h1', { text: 'Ranksim' }),
-          h('p', { text: 'Sign in to test pages against the searches you want to win.' }),
-          form)));
-    setTimeout(() => field.focus(), 60);
-  }
-
-  async function signOut() {
-    try {
-      await api.post('/api/v1/logout', {});
-    } catch (_err) {
-      /* signing out never fails visibly */
-    }
-    S.session.signed_in = false;
-    history.pushState({}, '', '/');
-    renderLogin();
-  }
-
-  /* ------------------------------------------------------------------ projects home */
-
-  function googleLine() {
-    const google = (S.session && S.session.google) || {};
-    if (google.ready) return h('span', null, 'Google results: ', h('b', { text: `${google.provider} connected` }));
-    return h('span', null, 'Google results: ', h('b', { text: 'no key yet' }), ' (import positions instead, or add SERPER_API_KEY)');
-  }
-
-  function storageLine() {
-    const kind = S.session && S.session.storage;
-    const text = kind === 'cloud' ? 'Private cloud storage' : kind === 'disk' ? 'This computer' : 'Temporary, not saved';
-    return h('span', null, 'Storage: ', h('b', { text }));
-  }
-
-  function renderHome() {
-    document.title = 'Projects · Ranksim';
-    const grid = h('section', { class: 'pgrid', 'aria-label': 'Projects' });
-    for (const p of S.projects) {
-      const target = `/app/${enc(p.slug)}/${p.built ? 'studio' : 'data'}`;
-      grid.append(h('a', {
-        class: 'card pcard',
-        href: target,
-        onClick: (event) => {
-          if (event.metaKey || event.ctrlKey) return;
-          event.preventDefault();
-          navigate(target);
-        },
-      },
-      h('div', null, h('h2', { text: p.name }), h('div', { class: 'site', text: p.site })),
-      h('div', { class: 'meta' },
-        h('span', { text: plural(p.queries, 'query', 'queries') }),
-        p.built ? h('span', { class: 'tag tag-ok', text: 'Ready' }) : h('span', { class: 'tag tag-warn', text: 'Needs a pull' }),
-        p.dataset === 'synthetic' ? h('span', { class: 'tag tag-demo', text: 'Demo data' }) : null)));
-    }
-    grid.append(h('a', {
-      class: 'card pcard pcard-new',
-      href: '/start',
-      onClick: (event) => {
-        event.preventDefault();
-        navigate('/start');
-      },
-    }, h('span', { class: 'plus' }, icon('plus')), h('span', { text: 'New project' })));
-
-    const head = h('section', { class: 'hero-left' },
-      h('div', null,
-        h('h1', { text: 'Projects' }),
-        h('p', { class: 'lede', text: 'Each project is a site and the searches it wants to win.' })),
-      h('a', { class: 'btn btn-primary', href: '/start', onClick: (event) => { event.preventDefault(); navigate('/start'); } }, icon('plus'), 'New project'));
-    const status = h('div', { class: 'status-row' }, googleLine(), storageLine());
-    const body = [head, h('div', { class: 'card status-card' }, h('div', { class: 'card-body' }, status)), grid];
-    if (!S.projects.length) {
-      body.push(h('div', { class: 'card center-card stack-gap' },
-        h('h2', { text: 'Start with the demo' }),
-        h('p', { text: 'The demo is a made up fencing company with six queries. It takes a few seconds and needs no keys.' }),
-        h('button', { class: 'btn', type: 'button', onClick: () => buildDemo(false) }, 'Load the demo')));
-    }
-    clear(main).append(h('div', { class: 'wrap screen' }, body), footer());
-  }
-
-  /* ------------------------------------------------------------------ new project */
-
-  function renderNewProject() {
-    document.title = 'New project · Ranksim';
-    const name = h('input', { class: 'field', id: 'np-name', placeholder: 'SmartCrew', autocomplete: 'off' });
-    const site = h('input', { class: 'field', id: 'np-site', placeholder: 'www.example.com', autocomplete: 'off', spellcheck: 'false' });
-    const queries = h('textarea', { class: 'field', id: 'np-queries', rows: '7', placeholder: 'all in one dirt work software\nhcss heavyjob alternative\nexcavation estimating software' });
-    const rivals = h('textarea', { class: 'field', id: 'np-rivals', rows: '3', placeholder: 'competitor.com\nanother-rival.com', spellcheck: 'false' });
-    const error = h('div', { class: 'form-error', role: 'alert', hidden: true });
-    const google = (S.session && S.session.google) || {};
-    const submit = h('button', { class: 'btn btn-primary btn-large', type: 'submit' }, google.ready ? 'Create and pull from Google' : 'Create project');
-    const count = h('span', { class: 'form-help' });
-    const recount = () => {
-      const n = queries.value.split('\n').map((line) => line.trim()).filter(Boolean).length;
-      count.textContent = n ? `${plural(n, 'query', 'queries')}${google.ready ? `, about ${n} Google credits per pull` : ''}` : 'One per line.';
-    };
-    queries.addEventListener('input', recount);
-    recount();
-    const form = h('form', { class: 'form', novalidate: true },
-      h('div', { class: 'form-row' }, h('label', { for: 'np-name', text: 'Project name' }), name),
-      h('div', { class: 'form-row' }, h('label', { for: 'np-site', text: 'Your site' }), site, h('span', { class: 'form-help', text: 'The domain your pages live on. Pages on it are marked as yours.' })),
-      h('div', { class: 'form-row' }, h('label', { for: 'np-queries', text: 'Searches you want to win' }), queries, count),
-      h('div', { class: 'form-row' }, h('label', { for: 'np-rivals', text: 'Competitors (optional)' }), rivals, h('span', { class: 'form-help', text: 'Domains, one per line. They are highlighted in rankings.' })),
-      error,
-      h('div', { class: 'form-actions' }, submit, h('a', { class: 'btn btn-plain', href: '/', onClick: (event) => { event.preventDefault(); navigate('/'); } }, 'Cancel')));
-    form.addEventListener('submit', async (event) => {
-      event.preventDefault();
-      error.hidden = true;
-      submit.disabled = true;
-      const label = submit.textContent;
-      clear(submit).append(h('span', { class: 'spinner', 'aria-hidden': 'true' }), 'Creating');
-      try {
-        const made = await api.post('/api/v1/projects', { name: name.value, site: site.value, queries: queries.value, competitors: rivals.value });
-        await loadProjects();
-        history.pushState({}, '', `/app/${enc(made.slug)}/data`);
-        await openProject(made.slug, { slug: made.slug, screen: 'data', q: '' });
-        if (google.ready) startPull(true);
-      } catch (err) {
-        error.textContent = err.message;
-        error.hidden = false;
-        submit.disabled = false;
-        clear(submit).append(label);
-      }
-    });
-    clear(main).append(
-      h('div', { class: 'wrap narrow screen' },
-        h('section', { class: 'hero-left' },
-          h('div', null,
-            h('h1', { text: 'New project' }),
-            h('p', { class: 'lede', text: 'Ranksim pulls the live top 10 for each search, stores every ranking page, and trains a model on them.' }))),
-        h('section', { class: 'card form-card' }, h('div', { class: 'card-body' }, form))),
-      footer());
-    setTimeout(() => name.focus(), 60);
-  }
-
-  /* ------------------------------------------------------------------ data */
-
-  const PULL_STEPS = [
-    ['google', 'Google results', 'The live top 10 for each search'],
-    ['crawl', 'Pages', 'Every ranking page, robots.txt respected'],
-    ['train', 'Model', 'One held out model per search'],
-    ['store', 'Save', 'Project, pages and model'],
-  ];
-  let pulling = null;
-
-  async function renderData() {
-    const P = S.project;
-    const wrap = h('div', { class: 'wrap screen' },
-      h('section', { class: 'hero-left' },
-        h('div', null,
-          h('p', { class: 'eyebrow', text: 'Data' }),
-          h('h1', { text: P.name }),
-          h('p', { class: 'lede', text: P.site })),
-        h('div', { class: 'status-row' }, googleLine(), storageLine())),
-      h('div', { class: 'boot' }, h('span', { class: 'spinner', 'aria-hidden': 'true' })));
-    clear(main).append(wrap, footer());
-    try {
-      S.setup = await api.get(`/api/v1/projects/${enc(S.slug)}/setup`);
-    } catch (err) {
-      wrap.lastChild.replaceWith(h('div', { class: 'callout bad' }, icon('warn'), h('span', { text: err.message })));
-      return;
-    }
-    if (S.screen !== 'data') return;
-    wrap.lastChild.replaceWith(dataGrid(S.setup));
-    if (pulling && pulling.slug === S.slug) paintPull();
-  }
-
-  function dataGrid(setup) {
-    const left = h('div', { class: 'col' }, pullCard(setup), queriesCard(setup));
-    const right = h('div', { class: 'col' }, importCard(setup), competitorsCard(setup), dangerCard(setup));
-    return h('div', { class: 'data-grid' }, left, right);
-  }
-
-  function pullCard(setup) {
-    const google = setup.google || {};
-    const imported = setup.queries.some((row) => row.candidates > 0);
-    const canPull = google.ready || imported;
-    const button = h('button', { class: 'btn btn-primary btn-large', type: 'button', id: 'pull-btn', disabled: !canPull || !!pulling, onClick: () => startPull(false) },
-      google.ready ? 'Pull from Google' : 'Build from imported positions');
-    const intro = google.ready
-      ? `Gets the live top 10 for ${plural(setup.queries.length, 'search', 'searches')} with ${google.provider}, fetches every page that is missing or older than a week, and trains the model.`
-      : 'No Google key on this server, so Ranksim builds from the positions you import. Add SERPER_API_KEY to the server to pull live results.';
-    const body = h('div', { class: 'card-body' },
-      h('p', { class: 'sheet-text', text: intro }),
-      !canPull ? h('div', { class: 'callout' }, icon('warn'), h('span', { text: 'Import a CSV of positions first (on the right), or add a Google key.' })) : null,
-      h('ol', { class: 'pull-steps', id: 'pull-steps' }, PULL_STEPS.map(([key, label, help]) => h('li', { class: 'pull-step', dataset: { step: key } },
-        h('span', { class: 'ico' }, icon('check')),
-        h('span', { class: 'what' }, h('b', { text: label }), h('span', { class: 'msg', text: help }), h('span', { class: 'bar-track', hidden: true }, h('i'))),
-        h('span', { class: 'when' })))),
-      h('div', { class: 'form-actions' }, button, h('span', { class: 'form-help', id: 'pull-note', text: lastPullText(setup) })));
-    const card = h('section', { class: 'card pull-card' },
-      h('div', { class: 'card-head' }, h('h2', null, 'Pull', h('span', { class: 'hint', text: setup.engine.ready ? 'Model ready' : 'Not built yet' }))),
-      body);
-    if (setup.last_pull && !pulling) {
-      const lp = setup.last_pull;
-      for (const step of lp.steps || []) {
-        const key = step.step === 'save' ? 'store' : step.step;
-        markStep(card, key, 'done', stepText(key, lp), step.seconds);
-      }
-    }
-    return card;
-  }
-
-  /* Plain sentences for each finished step, from the pull's counts. The engine's own log stays on the server. */
-  function stepText(key, report) {
-    const c = report.counts || {};
-    if (key === 'google') {
-      return report.google_kind === 'api'
-        ? `Asked Google for ${plural(report.searches, 'search', 'searches')}. ${report.searches_with_results} came back with results.`
-        : 'Used the positions already saved. Google was not asked.';
-    }
-    if (key === 'crawl') {
-      const failed = (c.http_error || 0) + (c.error || 0) + (c.unsafe || 0);
-      const parts = [`${c.fetched_now || 0} fetched`, `${(c.stored || 0) + (c.kept_stored || 0)} already stored`];
-      if (c.blocked_robots) parts.push(`${c.blocked_robots} blocked by robots.txt`);
-      if (failed) parts.push(`${failed} could not be fetched`);
-      return `${parts.join(', ')}.`;
-    }
-    if (key === 'train') {
-      const detail = ((report.steps || []).find((step) => step.step === 'train') || {}).detail || '';
-      if (/^Reused/.test(detail)) return 'Nothing it learns from changed, so the last model was kept.';
-      return report.pairwise != null
-        ? `Held out accuracy ${pct(report.pairwise)} on ${plural(report.pairs || 0, 'page pair')} across ${plural(report.queries_scored || 0, 'search', 'searches')}.`
-        : 'Trained.';
-    }
-    return S.session && S.session.storage === 'cloud' ? 'Saved to private cloud storage.' : 'Saved.';
-  }
-
-  function lastPullText(setup) {
-    const lp = setup.last_pull;
-    if (!lp) return 'Nothing pulled yet.';
-    const acc = lp.pairwise != null ? `, held out accuracy ${pct(lp.pairwise)}` : '';
-    return `Last pull ${shortWhen((setup.pulls[0] || {}).when)} in ${Math.round(lp.seconds || 0)} s${acc}.`;
-  }
-
-  function shortWhen(stamp) {
-    if (!stamp) return '';
-    const d = new Date(stamp);
-    if (Number.isNaN(d.getTime())) return stamp;
-    return d.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
-  }
-
-  function markStep(root, key, state, message, seconds, done, total) {
-    const li = (root || document).querySelector(`.pull-step[data-step="${key}"]`);
-    if (!li) return;
-    li.classList.remove('active', 'done', 'failed');
-    if (state) li.classList.add(state);
-    const ico = clear(li.querySelector('.ico'));
-    if (state === 'active') ico.append(h('span', { class: 'spinner', 'aria-hidden': 'true' }));
-    else ico.append(icon(state === 'failed' ? 'x' : 'check'));
-    if (message) li.querySelector('.msg').textContent = message;
-    const track = li.querySelector('.bar-track');
-    if (state === 'active' && total) {
-      track.hidden = false;
-      track.firstChild.style.width = `${Math.min(100, Math.round((done / total) * 100))}%`;
-    } else track.hidden = true;
-    if (seconds != null && state === 'done') li.querySelector('.when').textContent = `${Number(seconds).toFixed(1)} s`;
-  }
-
-  function paintPull() {
-    if (!pulling || S.screen !== 'data' || pulling.slug !== S.slug) return;
-    const btn = document.getElementById('pull-btn');
-    if (btn) {
-      btn.disabled = true;
-      clear(btn).append(h('span', { class: 'spinner', 'aria-hidden': 'true' }), 'Pulling');
-    }
-    for (const [key, info] of Object.entries(pulling.steps)) markStep(document, key, info.state, info.message, info.seconds, info.done, info.total);
-    const note = document.getElementById('pull-note');
-    if (note) note.textContent = `Running for ${Math.round((Date.now() - pulling.started) / 1000)} s. You can leave this page; the pull keeps going.`;
-  }
-
-  async function startPull(auto) {
-    if (pulling) return;
-    const slug = S.slug;
-    pulling = { slug, started: Date.now(), steps: {}, current: null };
-    const advance = (step, info) => {
-      if (pulling.current && pulling.current !== step && pulling.steps[pulling.current] && pulling.steps[pulling.current].state === 'active') {
-        pulling.steps[pulling.current].state = 'done';
-      }
-      pulling.current = step;
-      pulling.steps[step] = { ...(pulling.steps[step] || {}), ...info };
-      paintPull();
-    };
-    for (const [key] of PULL_STEPS) pulling.steps[key] = { state: '', message: '' };
-    paintPull();
-    const timer = setInterval(paintPull, 1000);
-    let failed = '';
-    let report = null;
-    try {
-      const response = await fetch(`/api/v1/projects/${enc(slug)}/pull`, {
-        method: 'POST',
-        credentials: 'same-origin',
-        headers: { 'content-type': 'application/json', 'x-ranksim-csrf': CSRF, accept: 'application/x-ndjson' },
-        body: JSON.stringify({ google: true }),
-      });
-      if (!response.ok) {
-        let data = null;
-        try {
-          data = await response.json();
-        } catch (_err) {
-          data = null;
-        }
-        throw new Error((data && data.error) || `Ranksim answered ${response.status}.`);
-      }
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = '';
-      for (;;) {
-        const { value, done } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-        let cut;
-        while ((cut = buffer.indexOf('\n')) >= 0) {
-          const line = buffer.slice(0, cut).trim();
-          buffer = buffer.slice(cut + 1);
-          if (!line) continue;
-          const event = JSON.parse(line);
-          if (event.type === 'start' && !event.google) {
-            pulling.steps.google = { state: 'done', message: 'Using the positions you imported. Google was not asked.' };
-          } else if (event.type === 'progress') {
-            const step = event.step === 'save' ? 'store' : event.step;
-            if (!PULL_STEPS.some(([key]) => key === step)) continue;
-            advance(step, { state: 'active', message: event.message, done: event.done, total: event.total });
-          } else if (event.type === 'done') {
-            report = event.report;
-          } else if (event.type === 'error') {
-            failed = event.error;
-          }
-        }
-      }
-    } catch (err) {
-      failed = err.message;
-    }
-    clearInterval(timer);
-    if (report) {
-      for (const step of report.steps || []) {
-        const key = step.step === 'save' ? 'store' : step.step;
-        if (pulling.steps[key]) pulling.steps[key] = { state: 'done', message: stepText(key, report), seconds: step.seconds };
-      }
-      pulling.steps.store = { state: 'done', message: stepText('store', report), seconds: (pulling.steps.store || {}).seconds };
-    } else if (pulling.current) {
-      pulling.steps[pulling.current].state = 'failed';
-      pulling.steps[pulling.current].message = failed || 'Stopped.';
-    }
-    paintPull();
-    const finishedSlug = pulling.slug;
-    pulling = null;
-    if (failed && !report) {
-      toast(failed);
-      if (S.slug === finishedSlug && S.screen === 'data') {
-        const btn = document.getElementById('pull-btn');
-        if (btn) {
-          btn.disabled = false;
-          clear(btn).append('Try again');
-        }
-        const note = document.getElementById('pull-note');
-        if (note) note.textContent = failed;
-      }
-      return;
-    }
-    toast(`Pull finished in ${Math.round(report.seconds || 0)} s. ${report.pairwise != null ? `Held out accuracy ${pct(report.pairwise)}.` : ''}`);
-    if (S.slug === finishedSlug) {
-      await reloadProject();
-      renderBar();
-      if (S.screen === 'data') renderData();
-    }
-  }
-
-  function queriesCard(setup) {
-    const card = h('section', { class: 'card' });
-    const paint = (editing) => {
-      clear(card);
-      const head = h('div', { class: 'card-head' },
-        h('h2', null, 'Searches', h('span', { class: 'hint', text: String(setup.queries.length) })),
-        h('div', { class: 'tools' }, editing ? null : h('button', { class: 'btn btn-plain', type: 'button', onClick: () => paint(true) }, 'Edit')));
-      card.append(head);
-      if (editing) {
-        const area = h('textarea', { class: 'field', rows: String(Math.min(16, setup.queries.length + 3)), value: setup.queries.map((row) => row.q).join('\n') });
-        const err = h('div', { class: 'form-error', hidden: true });
-        const save = h('button', { class: 'btn btn-primary', type: 'button' }, 'Save searches');
-        save.addEventListener('click', async () => {
-          save.disabled = true;
-          try {
-            await api.post(`/api/v1/projects/${enc(S.slug)}/settings`, { queries: area.value });
-            await reloadProject();
-            toast('Searches saved. Pull again to get results for new ones.');
-            renderData();
-          } catch (e) {
-            err.textContent = e.message;
-            err.hidden = false;
-            save.disabled = false;
-          }
-        });
-        card.append(h('div', { class: 'card-body form' }, area, h('span', { class: 'form-help', text: 'One per line. New searches have no results until the next pull.' }), err,
-          h('div', { class: 'form-actions' }, save, h('button', { class: 'btn btn-plain', type: 'button', onClick: () => paint(false) }, 'Cancel'))));
-        area.focus();
-        return;
-      }
-      const table = h('table', { class: 'qtable' },
-        h('thead', null, h('tr', null, h('th', { text: 'Search' }), h('th', { class: 'num', text: 'Pages stored' }), h('th', { class: 'num hide-sm', text: 'You' }))),
-        h('tbody', null, setup.queries.map((row) => {
-          const share = row.candidates ? row.stored / row.candidates : 0;
-          const meter = h('span', { class: 'meter-inline' }, h('i'));
-          meter.firstChild.style.width = `${Math.round(share * 100)}%`;
-          return h('tr', null,
-            h('td', { class: 'q' }, row.q, row.error ? h('span', { class: 'sub', text: row.error }) : null),
-            h('td', { class: 'num' }, row.candidates ? `${row.stored} of ${row.candidates}` : 'none', row.candidates ? meter : null),
-            h('td', { class: 'num hide-sm', text: row.yours ? `#${row.yours}` : 'not listed' }));
-        })));
-      card.append(h('div', { class: 'card-body' }, table));
-    };
-    paint(false);
-    return card;
-  }
-
-  function importCard(setup) {
-    const file = h('input', { type: 'file', accept: '.csv,text/csv', hidden: true });
-    const date = h('input', { class: 'field', type: 'date', 'aria-label': 'Date the positions were seen' });
-    const label = h('span', { text: 'Choose a CSV' });
-    const drop = h('label', { class: 'drop' }, icon('upload'), h('b', null, label), h('span', { text: 'query, url, position. Search Console exports work too.' }), file);
-    const err = h('div', { class: 'form-error', hidden: true });
-    const go = h('button', { class: 'btn', type: 'button', disabled: true }, 'Import');
-    let text = '';
-    const take = async (picked) => {
-      if (!picked) return;
-      if (picked.size > 5 * 1024 * 1024) {
-        err.textContent = 'That CSV is over 5 MB.';
-        err.hidden = false;
-        return;
-      }
-      text = await picked.text();
-      label.textContent = picked.name;
-      go.disabled = false;
-      err.hidden = true;
-    };
-    file.addEventListener('change', () => take(file.files[0]));
-    drop.addEventListener('dragover', (event) => {
-      event.preventDefault();
-      drop.classList.add('over');
-    });
-    drop.addEventListener('dragleave', () => drop.classList.remove('over'));
-    drop.addEventListener('drop', (event) => {
-      event.preventDefault();
-      drop.classList.remove('over');
-      take(event.dataTransfer.files[0]);
-    });
-    go.addEventListener('click', async () => {
-      go.disabled = true;
-      err.hidden = true;
-      try {
-        const done = await api.post(`/api/v1/projects/${enc(S.slug)}/import`, { csv: text, date: date.value });
-        toast(`Imported ${done.rows} positions. Now pull to fetch the pages and build the model.`);
-        await reloadProject();
-        renderData();
-      } catch (e) {
-        err.textContent = [e.message].concat(e.problems || []).join(' ');
-        err.hidden = false;
-        go.disabled = false;
-      }
-    });
-    return h('section', { class: 'card' },
-      h('div', { class: 'card-head' }, h('h2', { text: 'Import positions' })),
-      h('div', { class: 'card-body form' }, drop,
-        h('div', { class: 'form-row' }, h('label', { text: 'Seen on (optional)' }), date),
-        err, h('div', { class: 'form-actions' }, go)));
-  }
-
-  function competitorsCard(setup) {
-    const area = h('textarea', { class: 'field', rows: '4', spellcheck: 'false', value: (setup.competitors || []).join('\n'), placeholder: 'competitor.com' });
-    const save = h('button', { class: 'btn', type: 'button' }, 'Save');
-    save.addEventListener('click', async () => {
-      save.disabled = true;
-      try {
-        const done = await api.post(`/api/v1/projects/${enc(S.slug)}/settings`, { competitors: area.value });
-        toast(done.problems && done.problems.length ? `Saved. Skipped: ${done.problems.join(' ')}` : 'Competitors saved.');
-        S.compare.clear();
-      } catch (e) {
-        toast(e.message);
-      }
-      save.disabled = false;
-    });
-    return h('section', { class: 'card' },
-      h('div', { class: 'card-head' }, h('h2', { text: 'Competitors' })),
-      h('div', { class: 'card-body form' }, area, h('div', { class: 'form-actions' }, save)));
-  }
-
-  function dangerCard(setup) {
-    const field = h('input', { class: 'field', placeholder: setup.slug, autocomplete: 'off', spellcheck: 'false', 'aria-label': 'Type the project name to confirm' });
-    const del = h('button', { class: 'btn btn-danger', type: 'button', disabled: true }, 'Delete project');
-    field.addEventListener('input', () => {
-      del.disabled = field.value.trim() !== setup.slug;
-    });
-    del.addEventListener('click', async () => {
-      del.disabled = true;
-      try {
-        await api.post(`/api/v1/projects/${enc(S.slug)}/delete`, { confirm: field.value.trim() });
-        await loadProjects();
-        toast('Project deleted.');
-        navigate('/');
-      } catch (e) {
-        toast(e.message);
-        del.disabled = false;
-      }
-    });
-    return h('section', { class: 'card' },
-      h('div', { class: 'card-head' }, h('h2', { text: 'Delete' })),
-      h('div', { class: 'card-body form' }, h('span', { class: 'form-help', text: `Type ${setup.slug} to delete this project and its tests. Stored pages stay for other projects.` }), field, h('div', { class: 'form-actions' }, del)));
-  }
 
   boot();
 })();

@@ -16,6 +16,7 @@ dependencies = [
   "lxml>=5.3",
   "psycopg[binary]>=3.2",
   "lightgbm>=4.0",
+  "vercel-blob>=0.5",
 ]
 
 [project.optional-dependencies]

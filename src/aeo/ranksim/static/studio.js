@@ -28,6 +28,14 @@
     warn: '<path d="M10.3 3.9 2.4 18a2 2 0 0 0 1.7 3h15.8a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4M12 17h.01"/>',
     pencil: '<path d="M4 20h4L18.5 9.5a2.1 2.1 0 0 0-4-4L4 16z"/><path d="m13.5 6.5 4 4"/>',
     list: '<path d="M9 6h11M9 12h11M9 18h11"/><circle cx="4.5" cy="6" r="1"/><circle cx="4.5" cy="12" r="1"/><circle cx="4.5" cy="18" r="1"/>',
+    plus: '<path d="M12 5v14M5 12h14"/>',
+    check: '<path d="m5 12.5 4.5 4.5L19 7.5"/>',
+    x: '<path d="M7 7l10 10M17 7 7 17"/>',
+    globe: '<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.5 2.6 3.8 5.6 3.8 9s-1.3 6.4-3.8 9c-2.5-2.6-3.8-5.6-3.8-9S9.5 5.6 12 3z"/>',
+    upload: '<path d="M12 16V4M7 9l5-5 5 5"/><path d="M4 16v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/>',
+    db: '<ellipse cx="12" cy="6" rx="7" ry="3"/><path d="M5 6v12c0 1.7 3.1 3 7 3s7-1.3 7-3V6"/><path d="M5 12c0 1.7 3.1 3 7 3s7-1.3 7-3"/>',
+    out: '<path d="M15 4h3a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-3"/><path d="M10 16l-4-4 4-4M6 12h10"/>',
+    link: '<path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1"/><path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/>',
   };
 
   function icon(name, cls) {
@@ -142,7 +150,16 @@
     } catch (_err) {
       data = null;
     }
-    if (!response.ok) throw new Error((data && data.error) || `Ranksim answered ${response.status}. Try again.`);
+    if (response.status === 401 && data && data.login) {
+      if (S.session) S.session.signed_in = false;
+      renderLogin();
+      throw new Error('Sign in to continue.');
+    }
+    if (!response.ok) {
+      const error = new Error((data && data.error) || `Ranksim answered ${response.status}. Try again.`);
+      error.problems = (data && data.problems) || [];
+      throw error;
+    }
     return data;
   }
 
@@ -154,6 +171,8 @@
   /* ------------------------------------------------------------------ state */
 
   const S = {
+    session: null,
+    setup: null,
     projects: [],
     publicDemo: MODE === 'public',
     demoSlug: 'synthetic-demo',
@@ -200,13 +219,23 @@
 
   /* ------------------------------------------------------------------ routing */
 
+  const SCREENS = ['studio', 'rankings', 'data'];
+
   function parseLocation() {
     const parts = location.pathname.split('/').filter(Boolean);
     const params = new URLSearchParams(location.search);
+    if (parts[0] === 'start') return { slug: null, screen: 'new', q: '' };
     if (parts[0] === 'app' && parts[1]) {
-      return { slug: decodeURIComponent(parts[1]), screen: parts[2] === 'rankings' ? 'rankings' : 'studio', q: params.get('q') || '' };
+      return { slug: decodeURIComponent(parts[1]), screen: SCREENS.includes(parts[2]) ? parts[2] : 'studio', q: params.get('q') || '' };
     }
-    return { slug: null, screen: 'studio', q: params.get('q') || '' };
+    return { slug: null, screen: 'home', q: params.get('q') || '' };
+  }
+
+  function navigate(path) {
+    if (path !== location.pathname + location.search) history.pushState({}, '', path);
+    closeSheet(true);
+    window.scrollTo(0, 0);
+    route();
   }
 
   function pathFor(screen, q) {
@@ -235,17 +264,17 @@
     }, label);
   }
 
-  window.addEventListener('popstate', async () => {
-    const route = parseLocation();
+  window.addEventListener('popstate', () => {
     closeSheet(true);
-    if (route.slug && route.slug !== S.slug) {
-      await openProject(route.slug, route);
+    const where = parseLocation();
+    if (where.slug && where.slug === S.slug && S.project) {
+      S.screen = where.screen;
+      if (where.q && queryRow(where.q)) S.q = where.q;
+      renderBar();
+      render();
       return;
     }
-    S.screen = route.screen;
-    if (route.q && queryRow(route.q)) S.q = route.q;
-    renderBar();
-    render();
+    route();
   });
 
   /* ------------------------------------------------------------------ toast */
@@ -269,30 +298,59 @@
   async function boot() {
     renderBar();
     try {
-      const list = await api.get('/api/v1/projects');
-      S.projects = list.projects || [];
-      S.publicDemo = !!list.public_demo;
-      S.demoSlug = list.demo_slug || S.demoSlug;
-      const route = parseLocation();
-      let slug = route.slug && S.projects.some((p) => p.slug === route.slug) ? route.slug : null;
-      if (!slug) {
-        const pick = S.projects.find((p) => p.slug === S.demoSlug && S.publicDemo) || S.projects.find((p) => p.built) || S.projects[0];
-        slug = pick ? pick.slug : null;
-      }
-      if (!slug) {
-        if (S.publicDemo) {
-          await buildDemo(true);
-          return;
-        }
-        renderBar();
-        renderEmpty();
+      S.session = await api.get('/api/v1/session');
+      S.publicDemo = S.session.mode === 'public';
+      if (S.session.login_required && !S.session.signed_in) {
+        renderLogin();
         return;
       }
-      await openProject(slug, route.slug === slug ? route : { slug, screen: route.screen, q: route.q });
+      await loadProjects();
+      await route();
     } catch (err) {
+      if (S.session && S.session.login_required && !S.session.signed_in) return;
       renderBar();
       renderProblem('Ranksim could not load', err.message);
     }
+  }
+
+  async function loadProjects() {
+    const list = await api.get('/api/v1/projects');
+    S.projects = list.projects || [];
+    S.demoSlug = list.demo_slug || S.demoSlug;
+  }
+
+  async function route() {
+    const where = parseLocation();
+    if (where.screen === 'new' && !S.publicDemo) {
+      S.project = null;
+      S.slug = null;
+      renderBar();
+      renderNewProject();
+      return;
+    }
+    if (where.slug && S.projects.some((p) => p.slug === where.slug)) {
+      if (where.slug === S.slug && S.project) {
+        S.screen = where.screen;
+        if (where.q && queryRow(where.q)) S.q = where.q;
+        renderBar();
+        render();
+        return;
+      }
+      await openProject(where.slug, where);
+      return;
+    }
+    if (S.publicDemo) {
+      if (!S.projects.length) {
+        await buildDemo(true);
+        return;
+      }
+      await openProject(S.demoSlug, { slug: S.demoSlug, screen: where.screen === 'home' ? 'studio' : where.screen, q: where.q });
+      return;
+    }
+    S.project = null;
+    S.slug = null;
+    renderBar();
+    renderHome();
   }
 
   async function openProject(slug, route) {
@@ -312,9 +370,20 @@
     }
     const qs = S.project.queries.map((row) => row.q);
     S.q = qs.includes(route.q) ? route.q : qs[0] || '';
-    S.screen = route.screen || 'studio';
+    S.screen = SCREENS.includes(route.screen) ? route.screen : 'studio';
+    if (!S.project.engine.ready && S.screen !== 'data' && !S.publicDemo) S.screen = 'data';
     renderBar();
     render();
+  }
+
+  async function reloadProject() {
+    S.compare.clear();
+    S.pages.clear();
+    S.project = await api.get(`/api/v1/projects/${enc(S.slug)}`);
+    const qs = S.project.queries.map((row) => row.q);
+    if (!qs.includes(S.q)) S.q = qs[0] || '';
+    const list = await api.get('/api/v1/projects');
+    S.projects = list.projects || [];
   }
 
   async function buildDemo(auto) {
@@ -325,10 +394,9 @@
           h('p', { class: 'lede', text: 'Building the demo engine. This takes a few seconds.' }))));
     try {
       await api.post('/api/v1/demo', {});
-      const list = await api.get('/api/v1/projects');
-      S.projects = list.projects || [];
-      const route = auto ? parseLocation() : { screen: 'studio', q: '' };
-      await openProject(S.demoSlug, { slug: S.demoSlug, screen: route.screen, q: route.q });
+      await loadProjects();
+      const where = auto ? parseLocation() : { screen: 'studio', q: '' };
+      await openProject(S.demoSlug, { slug: S.demoSlug, screen: SCREENS.includes(where.screen) ? where.screen : 'studio', q: where.q });
       if (!auto) history.pushState({}, '', pathFor('studio', S.q));
     } catch (err) {
       renderProblem('The demo could not be built', err.message);
@@ -340,15 +408,24 @@
   function renderBar() {
     clear(bar);
     bar.append(
-      h('a', { class: 'brand', href: '/', 'aria-label': 'Ranksim home' },
-        h('span', { class: 'logo', 'aria-hidden': 'true' }, h('i'), h('i'), h('i')),
-        h('span', { class: 'brand-name', text: 'Ranksim' })),
+      h('a', {
+        class: 'brand',
+        href: '/',
+        'aria-label': 'Ranksim home',
+        onClick: (event) => {
+          if (event.metaKey || event.ctrlKey || S.publicDemo) return;
+          event.preventDefault();
+          navigate('/');
+        },
+      },
+      h('span', { class: 'logo', 'aria-hidden': 'true' }, h('i'), h('i'), h('i')),
+      h('span', { class: 'brand-name', text: 'Ranksim' })),
     );
-    if (S.project && S.project.engine && S.project.engine.ready) {
+    if (S.project) {
       const nav = h('nav', { class: 'seg nav-seg', 'aria-label': 'Screens' });
-      for (const [key, label] of [['studio', 'Studio'], ['rankings', 'Rankings']]) {
-        nav.append(link(key, S.q, label, { 'aria-current': S.screen === key ? 'page' : null }));
-      }
+      const screens = [['studio', 'Studio'], ['rankings', 'Rankings']];
+      if (!S.publicDemo) screens.push(['data', 'Data']);
+      for (const [key, label] of screens) nav.append(link(key, S.q, label, { 'aria-current': S.screen === key ? 'page' : null }));
       bar.append(nav);
     } else {
       bar.append(h('span'));
@@ -357,19 +434,19 @@
     if (S.project) {
       if (S.project.data && S.project.data.kind === 'synthetic') right.append(h('span', { class: 'tag tag-demo', text: 'Demo data' }));
       if (S.projects.length > 1) {
-        const select = h('select', { 'aria-label': 'Project' },
-          S.projects.map((p) => h('option', { value: p.slug, selected: p.slug === S.slug, text: p.name })));
-        select.addEventListener('change', async () => {
-          const slug = select.value;
-          history.pushState({}, '', `/app/${enc(slug)}/studio`);
-          await openProject(slug, { slug, screen: 'studio', q: '' });
-        });
+        const select = h('select', { 'aria-label': 'Project' }, S.projects.map((p) => h('option', { value: p.slug, selected: p.slug === S.slug, text: p.name })));
+        select.addEventListener('change', () => navigate(`/app/${enc(select.value)}/studio`));
         right.append(h('label', { class: 'select-pill' }, select, icon('chevron', 'chev')));
       } else {
-        right.append(h('span', { class: 'tag', text: S.project.name }));
+        right.append(h('span', { class: 'bar-note', text: S.project.name }));
       }
     }
-    right.append(h('button', { class: 'icon-btn', type: 'button', 'aria-label': 'About Ranksim', title: 'About', onClick: openAbout }, icon('info')));
+    if (S.session && S.session.login_required && S.session.signed_in) {
+      right.append(h('button', { class: 'icon-btn', type: 'button', 'aria-label': 'Sign out', title: 'Sign out', onClick: signOut }, icon('out')));
+    }
+    if (!(S.session && S.session.login_required && !S.session.signed_in)) {
+      right.append(h('button', { class: 'icon-btn', type: 'button', 'aria-label': 'About Ranksim', title: 'About', onClick: openAbout }, icon('info')));
+    }
     bar.append(right);
   }
 
@@ -378,6 +455,11 @@
   function render() {
     closeSheet(true);
     if (!S.project) return;
+    if (S.screen === 'data' && !S.publicDemo) {
+      renderData();
+      document.title = `Data · ${S.project.name} · Ranksim`;
+      return;
+    }
     if (!S.project.engine.ready || S.project.error) {
       renderNotBuilt();
       return;
@@ -397,11 +479,11 @@
     if (S.publicDemo) {
       left.append(h('span', { text: 'Demo data · Not Google results' }), h('span', { text: "Drafts aren't saved" }));
     } else {
-      left.append(h('span', { text: data.kind === 'synthetic' ? 'Demo data · Not Google results' : data.short }));
-      left.append(h('span', { text: 'Draft tests are saved in this project' }));
+      if (S.project) left.append(h('span', { text: data.kind === 'synthetic' ? 'Demo data · Not Google results' : data.short }));
+      left.append(h('span', { text: S.session && S.session.storage === 'cloud' ? 'Saved to your private cloud storage' : 'Draft tests are saved in this project' }));
     }
     const right = h('div', { class: 'fl' }, h('span', { text: 'Predicted positions are model estimates among the pages shown, never a Google rank.' }));
-    if (!S.publicDemo) right.append(h('a', { href: S.slug ? `/p/${enc(S.slug)}` : '/projects', text: 'Classic screens' }));
+    if (S.session && S.session.mode === 'local') right.append(h('a', { href: S.slug ? `/p/${enc(S.slug)}` : '/projects', text: 'Classic screens' }));
     return h('footer', { class: 'foot' }, left, right);
   }
 
@@ -427,7 +509,7 @@
           h('p', { text: 'Load the demo to try it, or create a project with your own queries.' }),
           h('div', { class: 'result-actions' },
             h('button', { class: 'btn btn-primary btn-large', type: 'button', onClick: () => buildDemo(false) }, 'Load the demo'),
-            h('a', { class: 'btn btn-gray btn-large', href: '/projects' }, 'Create a project')))),
+            h('a', { class: 'btn btn-large', href: '/start', onClick: (event) => { event.preventDefault(); navigate('/start'); } }, 'Create a project')))),
       footer(),
     );
   }
@@ -440,9 +522,9 @@
           h('h1', { text: P.name }),
           h('p', { class: 'lede', text: P.site })),
         h('div', { class: 'card center-card' },
-          h('h2', { text: "This project isn't built yet" }),
-          h('p', { text: P.error || `The engine is ${P.engine.reason}. Fetch the pages and build it on the Setup screen, then come back.` }),
-          h('a', { class: 'btn btn-primary btn-large', href: `/p/${enc(P.slug)}` }, 'Open setup'))),
+          h('h2', { text: 'Pull data first' }),
+          h('p', { text: P.error || 'Ranksim needs the pages that rank for your queries before it can predict anything. Pull them on the Data screen.' }),
+          S.publicDemo ? null : link('data', S.q, 'Open Data', { class: 'btn btn-primary btn-large' }))),
       footer(),
     );
   }
@@ -534,6 +616,7 @@
         h('h2', null, 'Draft', h('span', { class: 'hint', text: 'HTML or plain text' })),
         h('div', { class: 'tools' },
           row && row.your_url ? h('button', { class: 'btn btn-plain', type: 'button', onClick: () => loadCurrent(S.q, false) }, 'Load current page') : null,
+          S.publicDemo ? null : h('button', { class: 'btn btn-plain', type: 'button', onClick: () => toggleUrlBar() }, 'Load from URL'),
           h('button', {
             class: 'btn btn-plain',
             type: 'button',
@@ -546,6 +629,7 @@
               editor.focus();
             },
           }, 'Clear'))),
+      urlBar(draft, editor),
       editor,
       h('div', { class: 'card-foot' }, stats, h('div', { class: 'foot-actions' }, h('span', { class: 'kbd', text: navigator.platform.includes('Mac') ? '⌘ Return' : 'Ctrl Enter' }), testBtn)),
     );
@@ -570,6 +654,42 @@
     const saved = S.results.get(S.q);
     if (saved) renderResult(saved, false);
     getCompare(S.q).catch(() => {});
+  }
+
+  function urlBar(draft, editor) {
+    const input = h('input', { class: 'field', type: 'url', placeholder: 'https://staging.example.com/new-page/', 'aria-label': 'Page URL to load', spellcheck: 'false' });
+    const go = h('button', { class: 'btn btn-primary', type: 'submit' }, 'Load');
+    const form = h('form', { class: 'url-bar', hidden: true }, input, go);
+    form.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      if (!input.value.trim()) return;
+      go.disabled = true;
+      clear(go).append(h('span', { class: 'spinner', 'aria-hidden': 'true' }));
+      try {
+        const page = await api.post(`/api/v1/projects/${enc(S.slug)}/fetch`, { url: input.value.trim() });
+        draft.text = tidyHtml(page.html);
+        draft.touched = true;
+        draft.base = null;
+        editor.value = draft.text;
+        form.hidden = true;
+        paintStats();
+        paintPreviewCard();
+        toast(`Loaded ${hostOf(page.url)}. It is tested as a new page at the address in the preview.`);
+      } catch (err) {
+        toast(err.message);
+      } finally {
+        go.disabled = false;
+        clear(go).append('Load');
+      }
+    });
+    return form;
+  }
+
+  function toggleUrlBar() {
+    const form = main.querySelector('.url-bar');
+    if (!form) return;
+    form.hidden = !form.hidden;
+    if (!form.hidden) form.querySelector('input').focus();
   }
 
   function refreshStudio(fromLoad) {
@@ -1449,7 +1569,13 @@ code,pre{font-family:ui-monospace,Menlo,monospace;font-size:15px}
         body.append(acc);
       }
       if (P && P.data) body.append(h('div', { class: 'sheet-section' }, h('h3', { text: 'Data' }), h('p', { class: 'sheet-text', text: P.data.long })));
-      if (S.publicDemo) {
+      if (S.session && S.session.mode === 'private') {
+        body.append(h('div', { class: 'sheet-section' },
+          h('h3', { text: 'This server' }),
+          h('p', { class: 'sheet-text' }, googleLine()),
+          h('p', { class: 'sheet-text' }, storageLine()),
+          h('div', { class: 'sheet-actions' }, h('button', { class: 'btn', type: 'button', onClick: () => { closeSheet(true); signOut(); } }, icon('out'), 'Sign out'))));
+      } else if (S.publicDemo) {
         body.append(h('div', { class: 'sheet-section' },
           h('h3', { text: 'Use your own pages' }),
           h('p', { class: 'sheet-text', text: 'This public demo runs on invented sites and keeps nothing you paste. Run Ranksim on your own computer to use real queries and pages:' }),
@@ -1462,6 +1588,549 @@ code,pre{font-family:ui-monospace,Menlo,monospace;font-size:15px}
             h('a', { class: 'btn btn-gray', href: '/projects' }, 'All projects'))));
       }
     });
+  }
+
+  /* ------------------------------------------------------------------ sign in */
+
+  function renderLogin() {
+    S.project = null;
+    S.slug = null;
+    renderBar();
+    const field = h('input', { class: 'field', type: 'password', id: 'pw', autocomplete: 'current-password', required: true, 'aria-label': 'Password' });
+    const error = h('p', { class: 'form-error', role: 'alert', hidden: true });
+    const button = h('button', { class: 'btn btn-primary btn-large', type: 'submit' }, 'Sign in');
+    const form = h('form', { class: 'form', novalidate: true },
+      h('div', { class: 'form-row' }, h('label', { for: 'pw', text: 'Password' }), field),
+      error,
+      button);
+    form.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      if (!field.value) {
+        field.focus();
+        return;
+      }
+      error.hidden = true;
+      button.disabled = true;
+      clear(button).append(h('span', { class: 'spinner', 'aria-hidden': 'true' }), 'Signing in');
+      try {
+        await api.post('/api/v1/login', { password: field.value });
+        await boot();
+      } catch (err) {
+        error.textContent = err.message;
+        error.hidden = false;
+        button.disabled = false;
+        clear(button).append('Sign in');
+        field.select();
+      }
+    });
+    clear(main).append(
+      h('div', { class: 'wrap screen' },
+        h('section', { class: 'hero' }),
+        h('div', { class: 'card login-card' },
+          h('span', { class: 'logo', 'aria-hidden': 'true' }, h('i'), h('i'), h('i')),
+          h('h1', { text: 'Ranksim' }),
+          h('p', { text: 'Sign in to test pages against the searches you want to win.' }),
+          form)));
+    setTimeout(() => field.focus(), 60);
+  }
+
+  async function signOut() {
+    try {
+      await api.post('/api/v1/logout', {});
+    } catch (_err) {
+      /* signing out never fails visibly */
+    }
+    S.session.signed_in = false;
+    history.pushState({}, '', '/');
+    renderLogin();
+  }
+
+  /* ------------------------------------------------------------------ projects home */
+
+  function googleLine() {
+    const google = (S.session && S.session.google) || {};
+    if (google.ready) return h('span', null, 'Google results: ', h('b', { text: `${google.provider} connected` }));
+    return h('span', null, 'Google results: ', h('b', { text: 'no key yet' }), ' (import positions instead, or add SERPER_API_KEY)');
+  }
+
+  function storageLine() {
+    const kind = S.session && S.session.storage;
+    const text = kind === 'cloud' ? 'Private cloud storage' : kind === 'disk' ? 'This computer' : 'Temporary, not saved';
+    return h('span', null, 'Storage: ', h('b', { text }));
+  }
+
+  function renderHome() {
+    document.title = 'Projects · Ranksim';
+    const grid = h('section', { class: 'pgrid', 'aria-label': 'Projects' });
+    for (const p of S.projects) {
+      const target = `/app/${enc(p.slug)}/${p.built ? 'studio' : 'data'}`;
+      grid.append(h('a', {
+        class: 'card pcard',
+        href: target,
+        onClick: (event) => {
+          if (event.metaKey || event.ctrlKey) return;
+          event.preventDefault();
+          navigate(target);
+        },
+      },
+      h('div', null, h('h2', { text: p.name }), h('div', { class: 'site', text: p.site })),
+      h('div', { class: 'meta' },
+        h('span', { text: plural(p.queries, 'query', 'queries') }),
+        p.built ? h('span', { class: 'tag tag-ok', text: 'Ready' }) : h('span', { class: 'tag tag-warn', text: 'Needs a pull' }),
+        p.dataset === 'synthetic' ? h('span', { class: 'tag tag-demo', text: 'Demo data' }) : null)));
+    }
+    grid.append(h('a', {
+      class: 'card pcard pcard-new',
+      href: '/start',
+      onClick: (event) => {
+        event.preventDefault();
+        navigate('/start');
+      },
+    }, h('span', { class: 'plus' }, icon('plus')), h('span', { text: 'New project' })));
+
+    const head = h('section', { class: 'hero-left' },
+      h('div', null,
+        h('h1', { text: 'Projects' }),
+        h('p', { class: 'lede', text: 'Each project is a site and the searches it wants to win.' })),
+      h('a', { class: 'btn btn-primary', href: '/start', onClick: (event) => { event.preventDefault(); navigate('/start'); } }, icon('plus'), 'New project'));
+    const status = h('div', { class: 'status-row' }, googleLine(), storageLine());
+    const body = [head, h('div', { class: 'card status-card' }, h('div', { class: 'card-body' }, status)), grid];
+    if (!S.projects.length) {
+      body.push(h('div', { class: 'card center-card stack-gap' },
+        h('h2', { text: 'Start with the demo' }),
+        h('p', { text: 'The demo is a made up fencing company with six queries. It takes a few seconds and needs no keys.' }),
+        h('button', { class: 'btn', type: 'button', onClick: () => buildDemo(false) }, 'Load the demo')));
+    }
+    clear(main).append(h('div', { class: 'wrap screen' }, body), footer());
+  }
+
+  /* ------------------------------------------------------------------ new project */
+
+  function renderNewProject() {
+    document.title = 'New project · Ranksim';
+    const name = h('input', { class: 'field', id: 'np-name', placeholder: 'SmartCrew', autocomplete: 'off' });
+    const site = h('input', { class: 'field', id: 'np-site', placeholder: 'www.example.com', autocomplete: 'off', spellcheck: 'false' });
+    const queries = h('textarea', { class: 'field', id: 'np-queries', rows: '7', placeholder: 'all in one dirt work software\nhcss heavyjob alternative\nexcavation estimating software' });
+    const rivals = h('textarea', { class: 'field', id: 'np-rivals', rows: '3', placeholder: 'competitor.com\nanother-rival.com', spellcheck: 'false' });
+    const error = h('div', { class: 'form-error', role: 'alert', hidden: true });
+    const google = (S.session && S.session.google) || {};
+    const submit = h('button', { class: 'btn btn-primary btn-large', type: 'submit' }, google.ready ? 'Create and pull from Google' : 'Create project');
+    const count = h('span', { class: 'form-help' });
+    const recount = () => {
+      const n = queries.value.split('\n').map((line) => line.trim()).filter(Boolean).length;
+      count.textContent = n ? `${plural(n, 'query', 'queries')}${google.ready ? `, about ${n} Google credits per pull` : ''}` : 'One per line.';
+    };
+    queries.addEventListener('input', recount);
+    recount();
+    const form = h('form', { class: 'form', novalidate: true },
+      h('div', { class: 'form-row' }, h('label', { for: 'np-name', text: 'Project name' }), name),
+      h('div', { class: 'form-row' }, h('label', { for: 'np-site', text: 'Your site' }), site, h('span', { class: 'form-help', text: 'The domain your pages live on. Pages on it are marked as yours.' })),
+      h('div', { class: 'form-row' }, h('label', { for: 'np-queries', text: 'Searches you want to win' }), queries, count),
+      h('div', { class: 'form-row' }, h('label', { for: 'np-rivals', text: 'Competitors (optional)' }), rivals, h('span', { class: 'form-help', text: 'Domains, one per line. They are highlighted in rankings.' })),
+      error,
+      h('div', { class: 'form-actions' }, submit, h('a', { class: 'btn btn-plain', href: '/', onClick: (event) => { event.preventDefault(); navigate('/'); } }, 'Cancel')));
+    form.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      error.hidden = true;
+      submit.disabled = true;
+      const label = submit.textContent;
+      clear(submit).append(h('span', { class: 'spinner', 'aria-hidden': 'true' }), 'Creating');
+      try {
+        const made = await api.post('/api/v1/projects', { name: name.value, site: site.value, queries: queries.value, competitors: rivals.value });
+        await loadProjects();
+        history.pushState({}, '', `/app/${enc(made.slug)}/data`);
+        await openProject(made.slug, { slug: made.slug, screen: 'data', q: '' });
+        if (google.ready) startPull(true);
+      } catch (err) {
+        error.textContent = err.message;
+        error.hidden = false;
+        submit.disabled = false;
+        clear(submit).append(label);
+      }
+    });
+    clear(main).append(
+      h('div', { class: 'wrap narrow screen' },
+        h('section', { class: 'hero-left' },
+          h('div', null,
+            h('h1', { text: 'New project' }),
+            h('p', { class: 'lede', text: 'Ranksim pulls the live top 10 for each search, stores every ranking page, and trains a model on them.' }))),
+        h('section', { class: 'card form-card' }, h('div', { class: 'card-body' }, form))),
+      footer());
+    setTimeout(() => name.focus(), 60);
+  }
+
+  /* ------------------------------------------------------------------ data */
+
+  const PULL_STEPS = [
+    ['google', 'Google results', 'The live top 10 for each search'],
+    ['crawl', 'Pages', 'Every ranking page, robots.txt respected'],
+    ['train', 'Model', 'One held out model per search'],
+    ['store', 'Save', 'Project, pages and model'],
+  ];
+  let pulling = null;
+
+  async function renderData() {
+    const P = S.project;
+    const wrap = h('div', { class: 'wrap screen' },
+      h('section', { class: 'hero-left' },
+        h('div', null,
+          h('p', { class: 'eyebrow', text: 'Data' }),
+          h('h1', { text: P.name }),
+          h('p', { class: 'lede', text: P.site })),
+        h('div', { class: 'status-row' }, googleLine(), storageLine())),
+      h('div', { class: 'boot' }, h('span', { class: 'spinner', 'aria-hidden': 'true' })));
+    clear(main).append(wrap, footer());
+    try {
+      S.setup = await api.get(`/api/v1/projects/${enc(S.slug)}/setup`);
+    } catch (err) {
+      wrap.lastChild.replaceWith(h('div', { class: 'callout bad' }, icon('warn'), h('span', { text: err.message })));
+      return;
+    }
+    if (S.screen !== 'data') return;
+    wrap.lastChild.replaceWith(dataGrid(S.setup));
+    if (pulling && pulling.slug === S.slug) paintPull();
+  }
+
+  function dataGrid(setup) {
+    const left = h('div', { class: 'col' }, pullCard(setup), queriesCard(setup));
+    const right = h('div', { class: 'col' }, importCard(setup), competitorsCard(setup), dangerCard(setup));
+    return h('div', { class: 'data-grid' }, left, right);
+  }
+
+  function pullCard(setup) {
+    const google = setup.google || {};
+    const imported = setup.queries.some((row) => row.candidates > 0);
+    const canPull = google.ready || imported;
+    const button = h('button', { class: 'btn btn-primary btn-large', type: 'button', id: 'pull-btn', disabled: !canPull || !!pulling, onClick: () => startPull(false) },
+      google.ready ? 'Pull from Google' : 'Build from imported positions');
+    const intro = google.ready
+      ? `Gets the live top 10 for ${plural(setup.queries.length, 'search', 'searches')} with ${google.provider}, fetches every page that is missing or older than a week, and trains the model.`
+      : 'No Google key on this server, so Ranksim builds from the positions you import. Add SERPER_API_KEY to the server to pull live results.';
+    const body = h('div', { class: 'card-body' },
+      h('p', { class: 'sheet-text', text: intro }),
+      !canPull ? h('div', { class: 'callout' }, icon('warn'), h('span', { text: 'Import a CSV of positions first (on the right), or add a Google key.' })) : null,
+      h('ol', { class: 'pull-steps', id: 'pull-steps' }, PULL_STEPS.map(([key, label, help]) => h('li', { class: 'pull-step', dataset: { step: key } },
+        h('span', { class: 'ico' }, icon('check')),
+        h('span', { class: 'what' }, h('b', { text: label }), h('span', { class: 'msg', text: help }), h('span', { class: 'bar-track', hidden: true }, h('i'))),
+        h('span', { class: 'when' })))),
+      h('div', { class: 'form-actions' }, button, h('span', { class: 'form-help', id: 'pull-note', text: lastPullText(setup) })));
+    const card = h('section', { class: 'card pull-card' },
+      h('div', { class: 'card-head' }, h('h2', null, 'Pull', h('span', { class: 'hint', text: setup.engine.ready ? 'Model ready' : 'Not built yet' }))),
+      body);
+    if (setup.last_pull && !pulling) {
+      const lp = setup.last_pull;
+      for (const step of lp.steps || []) {
+        const key = step.step === 'save' ? 'store' : step.step;
+        markStep(card, key, 'done', stepText(key, lp), step.seconds);
+      }
+    }
+    return card;
+  }
+
+  /* Plain sentences for each finished step, from the pull's counts. The engine's own log stays on the server. */
+  function stepText(key, report) {
+    const c = report.counts || {};
+    if (key === 'google') {
+      return report.google_kind === 'api'
+        ? `Asked Google for ${plural(report.searches, 'search', 'searches')}. ${report.searches_with_results} came back with results.`
+        : 'Used the positions already saved. Google was not asked.';
+    }
+    if (key === 'crawl') {
+      const failed = (c.http_error || 0) + (c.error || 0) + (c.unsafe || 0);
+      const parts = [`${c.fetched_now || 0} fetched`, `${(c.stored || 0) + (c.kept_stored || 0)} already stored`];
+      if (c.blocked_robots) parts.push(`${c.blocked_robots} blocked by robots.txt`);
+      if (failed) parts.push(`${failed} could not be fetched`);
+      return `${parts.join(', ')}.`;
+    }
+    if (key === 'train') {
+      const detail = ((report.steps || []).find((step) => step.step === 'train') || {}).detail || '';
+      if (/^Reused/.test(detail)) return 'Nothing it learns from changed, so the last model was kept.';
+      return report.pairwise != null
+        ? `Held out accuracy ${pct(report.pairwise)} on ${plural(report.pairs || 0, 'page pair')} across ${plural(report.queries_scored || 0, 'search', 'searches')}.`
+        : 'Trained.';
+    }
+    return S.session && S.session.storage === 'cloud' ? 'Saved to private cloud storage.' : 'Saved.';
+  }
+
+  function lastPullText(setup) {
+    const lp = setup.last_pull;
+    if (!lp) return 'Nothing pulled yet.';
+    const acc = lp.pairwise != null ? `, held out accuracy ${pct(lp.pairwise)}` : '';
+    return `Last pull ${shortWhen((setup.pulls[0] || {}).when)} in ${Math.round(lp.seconds || 0)} s${acc}.`;
+  }
+
+  function shortWhen(stamp) {
+    if (!stamp) return '';
+    const d = new Date(stamp);
+    if (Number.isNaN(d.getTime())) return stamp;
+    return d.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+  }
+
+  function markStep(root, key, state, message, seconds, done, total) {
+    const li = (root || document).querySelector(`.pull-step[data-step="${key}"]`);
+    if (!li) return;
+    li.classList.remove('active', 'done', 'failed');
+    if (state) li.classList.add(state);
+    const ico = clear(li.querySelector('.ico'));
+    if (state === 'active') ico.append(h('span', { class: 'spinner', 'aria-hidden': 'true' }));
+    else ico.append(icon(state === 'failed' ? 'x' : 'check'));
+    if (message) li.querySelector('.msg').textContent = message;
+    const track = li.querySelector('.bar-track');
+    if (state === 'active' && total) {
+      track.hidden = false;
+      track.firstChild.style.width = `${Math.min(100, Math.round((done / total) * 100))}%`;
+    } else track.hidden = true;
+    if (seconds != null && state === 'done') li.querySelector('.when').textContent = `${Number(seconds).toFixed(1)} s`;
+  }
+
+  function paintPull() {
+    if (!pulling || S.screen !== 'data' || pulling.slug !== S.slug) return;
+    const btn = document.getElementById('pull-btn');
+    if (btn) {
+      btn.disabled = true;
+      clear(btn).append(h('span', { class: 'spinner', 'aria-hidden': 'true' }), 'Pulling');
+    }
+    for (const [key, info] of Object.entries(pulling.steps)) markStep(document, key, info.state, info.message, info.seconds, info.done, info.total);
+    const note = document.getElementById('pull-note');
+    if (note) note.textContent = `Running for ${Math.round((Date.now() - pulling.started) / 1000)} s. You can leave this page; the pull keeps going.`;
+  }
+
+  async function startPull(auto) {
+    if (pulling) return;
+    const slug = S.slug;
+    pulling = { slug, started: Date.now(), steps: {}, current: null };
+    const advance = (step, info) => {
+      if (pulling.current && pulling.current !== step && pulling.steps[pulling.current] && pulling.steps[pulling.current].state === 'active') {
+        pulling.steps[pulling.current].state = 'done';
+      }
+      pulling.current = step;
+      pulling.steps[step] = { ...(pulling.steps[step] || {}), ...info };
+      paintPull();
+    };
+    for (const [key] of PULL_STEPS) pulling.steps[key] = { state: '', message: '' };
+    paintPull();
+    const timer = setInterval(paintPull, 1000);
+    let failed = '';
+    let report = null;
+    try {
+      const response = await fetch(`/api/v1/projects/${enc(slug)}/pull`, {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'content-type': 'application/json', 'x-ranksim-csrf': CSRF, accept: 'application/x-ndjson' },
+        body: JSON.stringify({ google: true }),
+      });
+      if (!response.ok) {
+        let data = null;
+        try {
+          data = await response.json();
+        } catch (_err) {
+          data = null;
+        }
+        throw new Error((data && data.error) || `Ranksim answered ${response.status}.`);
+      }
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        let cut;
+        while ((cut = buffer.indexOf('\n')) >= 0) {
+          const line = buffer.slice(0, cut).trim();
+          buffer = buffer.slice(cut + 1);
+          if (!line) continue;
+          const event = JSON.parse(line);
+          if (event.type === 'start' && !event.google) {
+            pulling.steps.google = { state: 'done', message: 'Using the positions you imported. Google was not asked.' };
+          } else if (event.type === 'progress') {
+            const step = event.step === 'save' ? 'store' : event.step;
+            if (!PULL_STEPS.some(([key]) => key === step)) continue;
+            advance(step, { state: 'active', message: event.message, done: event.done, total: event.total });
+          } else if (event.type === 'done') {
+            report = event.report;
+          } else if (event.type === 'error') {
+            failed = event.error;
+          }
+        }
+      }
+    } catch (err) {
+      failed = err.message;
+    }
+    clearInterval(timer);
+    if (report) {
+      for (const step of report.steps || []) {
+        const key = step.step === 'save' ? 'store' : step.step;
+        if (pulling.steps[key]) pulling.steps[key] = { state: 'done', message: stepText(key, report), seconds: step.seconds };
+      }
+      pulling.steps.store = { state: 'done', message: stepText('store', report), seconds: (pulling.steps.store || {}).seconds };
+    } else if (pulling.current) {
+      pulling.steps[pulling.current].state = 'failed';
+      pulling.steps[pulling.current].message = failed || 'Stopped.';
+    }
+    paintPull();
+    const finishedSlug = pulling.slug;
+    pulling = null;
+    if (failed && !report) {
+      toast(failed);
+      if (S.slug === finishedSlug && S.screen === 'data') {
+        const btn = document.getElementById('pull-btn');
+        if (btn) {
+          btn.disabled = false;
+          clear(btn).append('Try again');
+        }
+        const note = document.getElementById('pull-note');
+        if (note) note.textContent = failed;
+      }
+      return;
+    }
+    toast(`Pull finished in ${Math.round(report.seconds || 0)} s. ${report.pairwise != null ? `Held out accuracy ${pct(report.pairwise)}.` : ''}`);
+    if (S.slug === finishedSlug) {
+      await reloadProject();
+      renderBar();
+      if (S.screen === 'data') renderData();
+    }
+  }
+
+  function queriesCard(setup) {
+    const card = h('section', { class: 'card' });
+    const paint = (editing) => {
+      clear(card);
+      const head = h('div', { class: 'card-head' },
+        h('h2', null, 'Searches', h('span', { class: 'hint', text: String(setup.queries.length) })),
+        h('div', { class: 'tools' }, editing ? null : h('button', { class: 'btn btn-plain', type: 'button', onClick: () => paint(true) }, 'Edit')));
+      card.append(head);
+      if (editing) {
+        const area = h('textarea', { class: 'field', rows: String(Math.min(16, setup.queries.length + 3)), value: setup.queries.map((row) => row.q).join('\n') });
+        const err = h('div', { class: 'form-error', hidden: true });
+        const save = h('button', { class: 'btn btn-primary', type: 'button' }, 'Save searches');
+        save.addEventListener('click', async () => {
+          save.disabled = true;
+          try {
+            await api.post(`/api/v1/projects/${enc(S.slug)}/settings`, { queries: area.value });
+            await reloadProject();
+            toast('Searches saved. Pull again to get results for new ones.');
+            renderData();
+          } catch (e) {
+            err.textContent = e.message;
+            err.hidden = false;
+            save.disabled = false;
+          }
+        });
+        card.append(h('div', { class: 'card-body form' }, area, h('span', { class: 'form-help', text: 'One per line. New searches have no results until the next pull.' }), err,
+          h('div', { class: 'form-actions' }, save, h('button', { class: 'btn btn-plain', type: 'button', onClick: () => paint(false) }, 'Cancel'))));
+        area.focus();
+        return;
+      }
+      const table = h('table', { class: 'qtable' },
+        h('thead', null, h('tr', null, h('th', { text: 'Search' }), h('th', { class: 'num', text: 'Pages stored' }), h('th', { class: 'num hide-sm', text: 'You' }))),
+        h('tbody', null, setup.queries.map((row) => {
+          const share = row.candidates ? row.stored / row.candidates : 0;
+          const meter = h('span', { class: 'meter-inline' }, h('i'));
+          meter.firstChild.style.width = `${Math.round(share * 100)}%`;
+          return h('tr', null,
+            h('td', { class: 'q' }, row.q, row.error ? h('span', { class: 'sub', text: row.error }) : null),
+            h('td', { class: 'num' }, row.candidates ? `${row.stored} of ${row.candidates}` : 'none', row.candidates ? meter : null),
+            h('td', { class: 'num hide-sm', text: row.yours ? `#${row.yours}` : 'not listed' }));
+        })));
+      card.append(h('div', { class: 'card-body' }, table));
+    };
+    paint(false);
+    return card;
+  }
+
+  function importCard(setup) {
+    const file = h('input', { type: 'file', accept: '.csv,text/csv', hidden: true });
+    const date = h('input', { class: 'field', type: 'date', 'aria-label': 'Date the positions were seen' });
+    const label = h('span', { text: 'Choose a CSV' });
+    const drop = h('label', { class: 'drop' }, icon('upload'), h('b', null, label), h('span', { text: 'query, url, position. Search Console exports work too.' }), file);
+    const err = h('div', { class: 'form-error', hidden: true });
+    const go = h('button', { class: 'btn', type: 'button', disabled: true }, 'Import');
+    let text = '';
+    const take = async (picked) => {
+      if (!picked) return;
+      if (picked.size > 5 * 1024 * 1024) {
+        err.textContent = 'That CSV is over 5 MB.';
+        err.hidden = false;
+        return;
+      }
+      text = await picked.text();
+      label.textContent = picked.name;
+      go.disabled = false;
+      err.hidden = true;
+    };
+    file.addEventListener('change', () => take(file.files[0]));
+    drop.addEventListener('dragover', (event) => {
+      event.preventDefault();
+      drop.classList.add('over');
+    });
+    drop.addEventListener('dragleave', () => drop.classList.remove('over'));
+    drop.addEventListener('drop', (event) => {
+      event.preventDefault();
+      drop.classList.remove('over');
+      take(event.dataTransfer.files[0]);
+    });
+    go.addEventListener('click', async () => {
+      go.disabled = true;
+      err.hidden = true;
+      try {
+        const done = await api.post(`/api/v1/projects/${enc(S.slug)}/import`, { csv: text, date: date.value });
+        toast(`Imported ${done.rows} positions. Now pull to fetch the pages and build the model.`);
+        await reloadProject();
+        renderData();
+      } catch (e) {
+        err.textContent = [e.message].concat(e.problems || []).join(' ');
+        err.hidden = false;
+        go.disabled = false;
+      }
+    });
+    return h('section', { class: 'card' },
+      h('div', { class: 'card-head' }, h('h2', { text: 'Import positions' })),
+      h('div', { class: 'card-body form' }, drop,
+        h('div', { class: 'form-row' }, h('label', { text: 'Seen on (optional)' }), date),
+        err, h('div', { class: 'form-actions' }, go)));
+  }
+
+  function competitorsCard(setup) {
+    const area = h('textarea', { class: 'field', rows: '4', spellcheck: 'false', value: (setup.competitors || []).join('\n'), placeholder: 'competitor.com' });
+    const save = h('button', { class: 'btn', type: 'button' }, 'Save');
+    save.addEventListener('click', async () => {
+      save.disabled = true;
+      try {
+        const done = await api.post(`/api/v1/projects/${enc(S.slug)}/settings`, { competitors: area.value });
+        toast(done.problems && done.problems.length ? `Saved. Skipped: ${done.problems.join(' ')}` : 'Competitors saved.');
+        S.compare.clear();
+      } catch (e) {
+        toast(e.message);
+      }
+      save.disabled = false;
+    });
+    return h('section', { class: 'card' },
+      h('div', { class: 'card-head' }, h('h2', { text: 'Competitors' })),
+      h('div', { class: 'card-body form' }, area, h('div', { class: 'form-actions' }, save)));
+  }
+
+  function dangerCard(setup) {
+    const field = h('input', { class: 'field', placeholder: setup.slug, autocomplete: 'off', spellcheck: 'false', 'aria-label': 'Type the project name to confirm' });
+    const del = h('button', { class: 'btn btn-danger', type: 'button', disabled: true }, 'Delete project');
+    field.addEventListener('input', () => {
+      del.disabled = field.value.trim() !== setup.slug;
+    });
+    del.addEventListener('click', async () => {
+      del.disabled = true;
+      try {
+        await api.post(`/api/v1/projects/${enc(S.slug)}/delete`, { confirm: field.value.trim() });
+        await loadProjects();
+        toast('Project deleted.');
+        navigate('/');
+      } catch (e) {
+        toast(e.message);
+        del.disabled = false;
+      }
+    });
+    return h('section', { class: 'card' },
+      h('div', { class: 'card-head' }, h('h2', { text: 'Delete' })),
+      h('div', { class: 'card-body form' }, h('span', { class: 'form-help', text: `Type ${setup.slug} to delete this project and its tests. Stored pages stay for other projects.` }), field, h('div', { class: 'form-actions' }, del)));
   }
 
   boot();

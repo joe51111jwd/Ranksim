@@ -1,14 +1,20 @@
-"""Vercel entry point for the PUBLIC SYNTHETIC DEMO of the Ranksim web UI. Not used for local runs.
+"""Vercel entry point for a hosted Ranksim. Not used for local runs (run `python -m aeo.ranksim serve` instead).
 
-Run locally instead with:  python -m aeo.ranksim serve
+Two modes, chosen by the environment:
 
-What this entry guarantees, whatever environment variables the host sets:
-- public_demo=True: only the synthetic demo (.example sites, labeled SYNTHETIC). No project creation,
-  no imports, no page fetching, no competitor edits, no historical SmartCrew data, no old /demo pages.
-- Every provider key is forced off, so nothing here can call a paid SERP or LLM API.
-- Data lives under /tmp (the only writable folder on Vercel). It is per server instance and is not
-  durable: a saved draft test can disappear when the instance is recycled. The page says so.
-- smartcrew/ is excluded from the deployment by .vercelignore, so no private corpus is uploaded.
+PRIVATE (RANKSIM_PASSWORD is set): the full tool behind one owner password.
+- Create projects, set queries and competitors, import positions, pull live Google results (with SERPER_API_KEY,
+  SERPAPI_KEY or the DataForSEO pair), fetch the ranking pages, train the engine, and test drafts.
+- Every page and API call needs the password. The session cookie is signed with RANKSIM_SECRET.
+- Projects, stored pages and engines persist in a private Vercel Blob store (BLOB_READ_WRITE_TOKEN, set when the
+  store is connected to the project). Without that token the data lives only in this instance's /tmp.
+- The AI answer engines are not run on a pull, so a pull only spends the Google key.
+
+PUBLIC (no password): the anonymous synthetic demo, exactly as before.
+- Only the synthetic demo (.example sites, labeled SYNTHETIC). No project creation, imports, fetching or competitor
+  edits. Every provider key is forced off, so nothing can call a paid API. Drafts are never saved.
+
+smartcrew/ is excluded from every deployment by .vercelignore, so no private corpus is uploaded.
 """
 
 from __future__ import annotations
@@ -34,32 +40,50 @@ def _load_openmp() -> None:
 
 _load_openmp()
 
-DATA = Path(os.environ.get("RANKSIM_PUBLIC_DATA", "/tmp/ranksim"))
+PASSWORD = os.environ.get("RANKSIM_PASSWORD", "").strip()
+PRIVATE = bool(PASSWORD)
+DATA = Path(os.environ.get("RANKSIM_DATA_DIR") or os.environ.get("RANKSIM_PUBLIC_DATA") or "/tmp/ranksim")
 DATA.mkdir(parents=True, exist_ok=True)
-os.environ["RANKSIM_PUBLIC_DEMO"] = "1"
+if not PRIVATE:
+    os.environ["RANKSIM_PUBLIC_DEMO"] = "1"
 
 from aeo.config import Settings  # noqa: E402
 from aeo.ranksim.serve import create_app  # noqa: E402
 
-KEYS_OFF = {
-    name: None
-    for name in (
-        "serpapi_key",
-        "serper_api_key",
-        "dataforseo_login",
-        "dataforseo_password",
-        "brave_api_key",
-        "openai_api_key",
-        "anthropic_api_key",
-        "openrouter_api_key",
-        "perplexity_api_key",
-        "gemini_api_key",
-    )
-}
+KEYS = (
+    "serpapi_key",
+    "serper_api_key",
+    "dataforseo_login",
+    "dataforseo_password",
+    "brave_api_key",
+    "openai_api_key",
+    "anthropic_api_key",
+    "openrouter_api_key",
+    "perplexity_api_key",
+    "gemini_api_key",
+)
 DATABASE = f"sqlite:///{DATA / 'rank.db'}"
-settings = Settings(_env_file=None, ranksim_database_url=DATABASE, **KEYS_OFF)
-# Serverless instances of one deployment must accept each other's forms. The public demo has no accounts or
-# sessions, so a token shared per deployment loses nothing; it still stops blind cross-site posts.
-_deployment = os.environ.get("VERCEL_DEPLOYMENT_ID") or os.environ.get("VERCEL_GIT_COMMIT_SHA") or "ranksim-public-demo"
-CSRF = hashlib.sha256(f"ranksim-csrf:{_deployment}".encode()).hexdigest()[:43]
-app = create_app(settings=settings, database=DATABASE, projects_root=DATA / "projects", public_demo=True, csrf_token=CSRF)
+# Serverless instances of one deployment must accept each other's forms, so the CSRF token is shared per deployment.
+# The JSON API also needs a custom header, which a cross-site page cannot send.
+_deployment = os.environ.get("VERCEL_DEPLOYMENT_ID") or os.environ.get("VERCEL_GIT_COMMIT_SHA") or "ranksim-hosted"
+CSRF = hashlib.sha256(f"ranksim-csrf:{_deployment}:{os.environ.get('RANKSIM_SECRET', '')}".encode()).hexdigest()[:43]
+
+if PRIVATE:
+    from aeo.ranksim.cloud import CloudState
+
+    settings = Settings(_env_file=None, ranksim_database_url=DATABASE)  # provider keys come from the environment
+    cloud = CloudState.from_env(DATA, DATA / "rank.db")
+    app = create_app(
+        settings=settings,
+        database=DATABASE,
+        projects_root=DATA / "projects",
+        public_demo=False,
+        csrf_token=CSRF,
+        access_password=PASSWORD,
+        access_secret=os.environ.get("RANKSIM_SECRET") or None,
+        cloud=cloud,
+        pull_options={"engines": [], "workers": 8, "delay_seconds": 0.25},
+    )
+else:
+    settings = Settings(_env_file=None, ranksim_database_url=DATABASE, **{name: None for name in KEYS})
+    app = create_app(settings=settings, database=DATABASE, projects_root=DATA / "projects", public_demo=True, csrf_token=CSRF)

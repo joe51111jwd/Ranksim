@@ -110,7 +110,7 @@ STUDIO_CSP = (
 def csp_for(path: str) -> str:
     if path.startswith(LEGACY_PATHS):
         return LEGACY_CSP
-    if path == "/" or path == "/app" or path.startswith("/app/"):
+    if path in {"/", "/app", "/start"} or path.startswith("/app/"):
         return STUDIO_CSP
     return STRICT_CSP
 STEP_LABELS = {
@@ -662,6 +662,9 @@ def create_app(
     max_upload_bytes: int = MAX_UPLOAD_BYTES,
     public_demo: bool | None = None,
     csrf_token: str | None = None,
+    access_password: str | None = None,
+    access_secret: str | None = None,
+    cloud=None,
 ) -> FastAPI:
     """The web UI. Passing a DemoState positionally (the old API) serves the old demo at /demo and /check.
 
@@ -691,6 +694,13 @@ def create_app(
         ui._legacy = None
         ui._legacy_factory = None
         ui.llm_factory = lambda: None
+    from aeo.ranksim.access import Access
+
+    # A password turns on login for every page and API call (a hosted, private Ranksim). The public demo has none.
+    ui.access = Access(None if public_demo else access_password, access_secret)
+    ui.cloud = cloud
+    if cloud is not None:
+        cloud.on_change.append(lambda: ui._contexts.clear())
     app = FastAPI(title="Ranksim", docs_url=None, redoc_url=None, openapi_url=None)
     app.state.ui = ui
     app.add_middleware(GuardMiddleware, max_body=max_upload_bytes + FORM_OVERHEAD_BYTES, allowed_hosts=allowed_hosts)

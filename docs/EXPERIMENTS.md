@@ -266,8 +266,9 @@ benchmark counts a tie as half (what random tie-breaking scores), so the figures
 - Limits: one 2.5-day interval on one site's 30 queries; no intervals can be computed from the
   committed file (it has no per-query counts); the page HTML behind the content scores is private,
   so only persistence and overlap can be recomputed from git. The forward ledger rows carry a stated
-  time of 2026-11-07 although they were written after the Nov 9 results existed; I2 makes this
-  branch's ledger date such rows by when they were written.
+  time of 2026-11-07 although they were written after the Nov 9 results existed. They carry no
+  write time, so this branch's ledger counts them as undated and does not score them (I7); rows this
+  ledger writes are dated by when they were written (I2).
 
 ## 2026-11-10 E15. One client-rendered shell, and how much one row moves the numbers
 

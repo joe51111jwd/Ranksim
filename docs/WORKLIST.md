@@ -40,7 +40,10 @@ Legend: `[x]` done (commit noted), `[ ]` open, `[-]` blocked (reason given).
 - [ ] A3. When `main` moves: merge it here, resolve, run the full suite on 3.11 and 3.13, push,
   confirm CI. Repeat each time `main` moves. Resolution guide if PR #5 lands first: take `main`
   for UI files (serve.py, demo.py, workspace*, project.py); keep this branch's crawl/*, benchmark.py
-  and snapshot.py; ledger.py and confidence.py should already be supersets after I1 to I3.
+  and snapshot.py. ledger.py and confidence.py carry PR #5's API (hash version 2, project slugs,
+  `product_label`, `held_out`) but not all of its behaviour: PR #5 tests that expect CLEARER from a
+  head-to-head threshold on a neighbour gap, scoring of blank-slug rows, or scoring of rows without
+  a write time (its forward ledger) will fail and must be updated with the merge.
 
 ## I. Interoperability with PR #5 and PR #6 (added 2026-11-10)
 
@@ -73,7 +76,10 @@ sentences with no em or en dashes.
 - [x] I6. Docs: `--final` is a same-snapshot holdout, not accuracy; README numbers labeled as
   same-snapshot agreement; E14 recomputes PR #5's committed forward figures with ties as half
   (analysis of f76f7f1, not a new claim).
-- [ ] I7. Adversarial review of I1 to I6 (workflow); fix confirmed defects with regression tests.
+- [x] I7. Adversarial review of I1 to I6 (workflow); fix confirmed defects with regression tests.
+  Done: 5 lenses over 2088b15..e883b45, 18 findings each given an independent reproducer; 11
+  confirmed (3 medium, 8 low) and fixed in cf4369c (ledger) and 7ce2dd1 (benchmark, snapshot);
+  7 refuted; 3 low ones not verified (one duplicate, one doc line fixed here, one in serve.py below).
 
 Requests for other roles, drafted here and not posted (posting on another role's PR needs James):
 - PR #5 / SEO Tool Builder: the thin-draft CLEARER bug fixed in B2 (`product_label` on gated
@@ -84,6 +90,10 @@ Requests for other roles, drafted here and not posted (posting on another role's
   `test_in_sample_clearer_is_not_a_product_label` must set the predicted-rank threshold, because
   `product_label(2)` on a head-to-head threshold alone is the B2 bug; PR #5's benchmark.py `labeled_coverage` imports
   `EVALUATION_EXCLUDED_SOURCES`, which its store.py lacks.
+- PR #2 (UI owner): the demo banner shows `fit.calibration.note` (the head-to-head note) while the
+  predicted rank is labeled from `adjacent_note`; show the note that matches each label.
+- PR #5: its forward ledger rows have no write time; this branch's ledger counts them as undated and
+  does not score them (I7). `forward_eval` can stamp `payload.recorded_at` with the real write time.
 - PR #4: after a union `conftest.py`, `test_later_snapshot_replaces_the_same_url_and_mock_scores_
   stay_on_that_cohort` fails against this branch's one-cluster guard; pr8_v3 drafts stored under
   live URLs are counted as covered.

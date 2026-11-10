@@ -210,8 +210,10 @@ def _add_missing_columns(engine) -> None:
     """Additive migration: add columns that newer code declares to tables an older version made.
 
     create_all creates missing tables but never alters existing ones, so a database from an
-    earlier checkout would fail on the new provenance columns. Only nullable columns are added.
-    Existing rows get NULL, which the code reads as source "unknown".
+    earlier checkout would fail on the new provenance columns. Nullable columns are added as
+    NULL, which the code reads as source "unknown". A NOT NULL column is added only when it has a
+    server default (the ledger's project and file columns, added as ``DEFAULT ''`` exactly as the
+    integration branch does), and older rows get that default.
     """
     from sqlalchemy import inspect, text
 
@@ -221,9 +223,15 @@ def _add_missing_columns(engine) -> None:
             continue
         present = {column["name"] for column in inspector.get_columns(table.name)}
         for column in table.columns:
-            if column.name in present or not column.nullable:
+            if column.name in present:
+                continue
+            default = column.server_default
+            if not column.nullable and default is None:
                 continue
             ddl = column.type.compile(dialect=engine.dialect)
+            if default is not None:
+                arg = getattr(default, "arg", "")
+                ddl += " DEFAULT '" + arg.replace("'", "''") + "'" if isinstance(arg, str) else f" DEFAULT {arg}"
             with engine.begin() as connection:
                 connection.execute(text(f'ALTER TABLE {table.name} ADD COLUMN "{column.name}" {ddl}'))
 

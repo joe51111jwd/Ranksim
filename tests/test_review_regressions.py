@@ -95,33 +95,46 @@ def test_concurrent_ledger_appends_keep_one_chain(tmp_path):
     assert not errors and count == 8 and ok, message
 
 
-def test_placeholder_subjects_are_not_recorded_and_absent_subjects_stay_unresolved(tmp_path):
+def _ledger_clock(monkeypatch, moment):
+    import aeo.ranksim.ledger as ledger
+
+    monkeypatch.setattr(ledger, "_now", lambda: moment)
+
+
+def test_placeholder_subjects_are_not_recorded_and_absent_subjects_stay_unresolved(tmp_path, monkeypatch):
     from aeo.ranksim.check import CheckResult, CompetitorRow
     from aeo.ranksim.confidence import Calibration
 
+    _ledger_clock(monkeypatch, datetime(2026, 11, 5, tzinfo=timezone.utc))
     session = open_session(f"sqlite:///{tmp_path / 'l.db'}")
     pasted = CheckResult(query="q", url="https://draft.local/page", predicted_rank=1, predicted_of=2, confidence="UNSURE",
                          confidence_note="", competitors=[CompetitorRow("https://r.example/", "R", 1, 2, "beats", 0.4)])
     assert record_check(session, pasted, html="<html></html>", calibration=Calibration(None, None, None, ""), provenance={}) is None
     record_prediction(session, kind="draft_check", query="q", subject_url="https://ours.example/new", subject_html="x",
                       predicted_rank=1, predicted_of=2, candidates=[], calls=[Call("https://r.example/", "above", 1.0, "UNSURE")],
-                      confidence="UNSURE", calibration_note="", provenance={}, created_at=datetime(2026, 11, 5, tzinfo=timezone.utc))
-    record_outcome(session, query="q", observed_on="2026-11-20", provider="t", positions={"https://r.example/": 3}, depth=10)
+                      confidence="UNSURE", calibration_note="", provenance={}, created_at=datetime(2026, 11, 5, tzinfo=timezone.utc),
+                      project_slug="default")
+    _ledger_clock(monkeypatch, datetime(2026, 11, 30, tzinfo=timezone.utc))
+    record_outcome(session, query="q", observed_on="2026-11-20", provider="t", positions={"https://r.example/": 3}, depth=10,
+                   project_slug="default")
     score = score_ledger(session)
     session.close()
     assert (score.resolved, score.unresolved) == (0, 1)
 
 
-def test_outcomes_must_postdate_the_prediction_in_any_timezone(tmp_path):
+def test_outcomes_must_postdate_the_prediction_in_any_timezone(tmp_path, monkeypatch):
+    _ledger_clock(monkeypatch, datetime(2026, 11, 5, 16, tzinfo=timezone.utc))
     session = open_session(f"sqlite:///{tmp_path / 'l.db'}")
     # 16:00 UTC on 11-05 is already 11-06 in Tokyo; an observation dated 11-06 may predate it.
     record_prediction(session, kind="draft_check", query="q", subject_url="https://ours.example/p", subject_html="x",
                       predicted_rank=1, predicted_of=2, candidates=[], calls=[Call("https://r.example/", "above", 1.0, "UNSURE")],
-                      confidence="UNSURE", calibration_note="", provenance={}, created_at=datetime(2026, 11, 5, 16, tzinfo=timezone.utc))
+                      confidence="UNSURE", calibration_note="", provenance={}, created_at=datetime(2026, 11, 5, 16, tzinfo=timezone.utc),
+                      project_slug="default")
+    _ledger_clock(monkeypatch, datetime(2026, 11, 8, tzinfo=timezone.utc))
     positions = {"https://ours.example/p": 1, "https://r.example/": 2}
-    record_outcome(session, query="q", observed_on="2026-11-06", provider="t", positions=positions, depth=10)
+    record_outcome(session, query="q", observed_on="2026-11-06", provider="t", positions=positions, depth=10, project_slug="default")
     assert score_ledger(session).resolved == 0
-    record_outcome(session, query="q", observed_on="2026-11-07", provider="t", positions=positions, depth=10)
+    record_outcome(session, query="q", observed_on="2026-11-07", provider="t", positions=positions, depth=10, project_slug="default")
     assert score_ledger(session).resolved == 1
     session.close()
 

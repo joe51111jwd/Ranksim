@@ -182,6 +182,7 @@ def main(argv: list[str] | None = None) -> None:
     ledger_sub.add_parser("verify", help="Check that no recorded prediction was changed, removed, or reordered")
     ledger_list = ledger_sub.add_parser("list", help="Show recorded predictions")
     ledger_list.add_argument("--limit", type=int, default=20)
+    ledger_list.add_argument("--project", default=None, help="Only this project slug")
     observe = ledger_sub.add_parser("observe", help="Append observed Google positions (query,url,position CSV)")
     observe.add_argument("serp_file")
     observe.add_argument("--observed-on", required=True, help="Date the results were collected, YYYY-MM-DD")
@@ -192,7 +193,13 @@ def main(argv: list[str] | None = None) -> None:
         default=None,
         help="How many organic results were collected per query. Without it, a page missing from the file is unresolved, not 'below'.",
     )
-    ledger_sub.add_parser("score", help="Score predictions against the first later observation")
+    observe.add_argument(
+        "--project",
+        default="default",
+        help="Project slug the observations belong to. Predictions match outcomes of the same project only. Default: default",
+    )
+    ledger_score = ledger_sub.add_parser("score", help="Score predictions against the first later observation")
+    ledger_score.add_argument("--project", default=None, help="Score only this project slug")
 
     ai_eval = sub.add_parser("ai-eval", help="LLM relevance CV delta and one AI fix loop. Needs an LLM key.")
     ai_eval.add_argument("--serp", default="smartcrew/serp.csv")
@@ -868,7 +875,10 @@ def _ledger(database: str, args) -> None:
     from collections import defaultdict
 
     from aeo.ranksim.groundtruth import load_serp_file
-    from aeo.ranksim.ledger import RsPrediction, record_outcome, render_score, score_ledger, verify_ledger
+    from datetime import datetime, timezone
+
+    from aeo.ranksim.benchmark import file_sha256
+    from aeo.ranksim.ledger import LedgerError, RsPrediction, record_outcome, render_score, score_ledger, verify_ledger
 
     session = open_session(database)
     try:
@@ -878,13 +888,16 @@ def _ledger(database: str, args) -> None:
             if not ok:
                 raise SystemExit(1)
         elif args.ledger_command == "list":
-            rows = session.query(RsPrediction).order_by(RsPrediction.id.desc()).limit(args.limit).all()
+            query = session.query(RsPrediction)
+            if args.project is not None:
+                query = query.filter(RsPrediction.project_slug == args.project.strip())
+            rows = query.order_by(RsPrediction.id.desc()).limit(args.limit).all()
             if not rows:
                 print("No predictions recorded yet.")
             for row in rows:
                 payload = row.payload
                 print(
-                    f"#{row.id} {row.created_at} {row.query!r} {row.subject_url} PREDICTED "
+                    f"#{row.id} {row.created_at} [{row.project_slug or 'no project'}] {row.query!r} {row.subject_url} PREDICTED "
                     f"{payload['predicted_rank']} of {payload['predicted_of']} supplied pages, {payload['confidence']}"
                 )
         elif args.ledger_command == "observe":
@@ -898,18 +911,30 @@ def _ledger(database: str, args) -> None:
             grouped: dict[str, dict[str, int]] = defaultdict(dict)
             for label in labels:
                 grouped[label.query][label.url] = int(round(label.position))
-            for query, positions in grouped.items():
-                record_outcome(
-                    session,
-                    query=query,
-                    observed_on=observed_on,
-                    provider=args.provider,
-                    positions=positions,
-                    depth=args.depth,
-                )
-            print(f"Recorded observations for {len(grouped)} queries on {observed_on} from {args.provider}.")
+            uploaded_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
+            source_sha = file_sha256(args.serp_file) or ""
+            try:
+                for query, positions in grouped.items():
+                    record_outcome(
+                        session,
+                        query=query,
+                        observed_on=observed_on,
+                        provider=args.provider,
+                        positions=positions,
+                        depth=args.depth,
+                        project_slug=args.project,
+                        source_file=Path(args.serp_file).name,
+                        source_sha256=source_sha,
+                        uploaded_at=uploaded_at,
+                    )
+            except LedgerError as exc:
+                raise SystemExit(str(exc)) from None
+            print(
+                f"Recorded observations for {len(grouped)} queries on {observed_on} from {args.provider} "
+                f"for project {args.project.strip() or '(none)'}."
+            )
         elif args.ledger_command == "score":
-            print(render_score(score_ledger(session)), end="")
+            print(render_score(score_ledger(session, project_slug=args.project)), end="")
     finally:
         session.close()
 

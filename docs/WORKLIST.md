@@ -49,14 +49,17 @@ same-snapshot or test-tuned score as accuracy; select on training data only and 
 forward data once; no merge to `main` or deploy without James; no purchases; reports in short plain
 sentences with no em or en dashes.
 
-- [ ] I1. Ledger interoperability: `project_slug` on predictions and outcome provenance columns
+- [x] I1. Ledger interoperability: `project_slug` on predictions and outcome provenance columns
   (project_slug, source_file, source_sha256, uploaded_at) with server defaults; hash version 2
   exactly as PR #5 ad8020f, version-aware `verify_ledger`; writers pass an explicit slug; scoring
   matches outcomes to the same project; keep `record_check`; a NOT NULL failure is not retried as a
-  fork race.
-- [ ] I2. Ledger wall clock: store `recorded_at` from the clock next to the caller's `created_at`;
+  fork race. Done: hash checked against PR #5's own `_row_hash`; `default` project for the CLI and
+  local demo; migration adds the columns as `DEFAULT ''` like PR #5.
+- [x] I2. Ledger wall clock: store `recorded_at` from the clock next to the caller's `created_at`;
   scoring counts an outcome only if it was observed after the row was actually recorded, and
-  reports backdated rows as protocol-time replays, not forward evidence.
+  reports backdated rows as protocol-time replays, not forward evidence. Done: `recorded_at` sits
+  inside the hashed payload, so PR #5's version 2 verify still passes and the time cannot be moved
+  unnoticed; an outcome dated in the future is refused.
 - [ ] I3. Confidence API: `Calibration.held_out`, `product_label(gap, synthetic=..., kind=...)`
   routed to the predicted-rank or head-to-head threshold, synthetic data always UNSURE, a
   too-few-clusters note, and one helper that labels a predicted rank from ungated scores so UI

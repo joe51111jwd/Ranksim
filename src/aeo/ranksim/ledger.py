@@ -22,9 +22,19 @@ position. Scoring against an outcome:
   from "never published at that URL";
 - outcomes count only if observed on a calendar date after the latest local date the
   prediction could have been made on (UTC date plus 14 hours), so an earlier observation
-  recorded with a local date cannot score a later prediction.
+  recorded with a local date cannot score a later prediction;
+- a prediction is dated by the later of its stated time (``created_at``, which a caller may set
+  to a protocol time) and the wall clock when it was written (``payload.recorded_at``, set here
+  and covered by the hash). A row written after its stated time is "backdated": only outcomes
+  observed after it was really written can resolve it;
+- predictions and outcomes match only within one named project (``project_slug``). A blank slug
+  is legacy and matches nothing. Single-project use passes ``DEFAULT_PROJECT_SLUG``.
 Unresolved calls are counted, never dropped silently. Checks of pasted HTML with no real URL
 are not recorded at all: they can never be observed.
+
+Hash versions (``payload.ledger_hash_version``): 1 = the original formula; 2 = also binds the
+stored ``project_slug`` (the same formula as the integration branch, PR #5 ad8020f). Version 1
+rows keep verifying with their original formula and are reported as legacy.
 """
 
 from __future__ import annotations
@@ -44,7 +54,18 @@ from aeo.ranksim.store import Base
 
 GENESIS = "0" * 64
 PLACEHOLDER_SUBJECTS = frozenset({"https://draft.local/page"})
+LEDGER_HASH_VERSION = 2
+# The project of the single-project database used by the CLI and the local demo.
+DEFAULT_PROJECT_SLUG = "default"
+# A row whose stated time is this much earlier than when it was written is reported as backdated.
+BACKDATE_TOLERANCE = timedelta(hours=1)
+# Predictions recorded for these datasets are not scored as a track record.
+UNSCORED_DATASETS = frozenset({"synthetic", "historical", "none"})
 _APPEND_LOCK = threading.Lock()
+
+
+class LedgerError(RuntimeError):
+    pass
 
 
 def _now() -> datetime:
@@ -59,6 +80,8 @@ class RsPrediction(Base):
     kind: Mapped[str] = mapped_column(String(32))
     query: Mapped[str] = mapped_column(String(500), index=True)
     subject_url: Mapped[str] = mapped_column(String(2000))
+    # Empty on rows written before this column existed. Never filled in after the fact.
+    project_slug: Mapped[str] = mapped_column(String(200), default="", server_default="")
     payload: Mapped[dict] = mapped_column(JSON)
     prev_hash: Mapped[str] = mapped_column(String(64), unique=True)  # one successor per row: no forks
     row_hash: Mapped[str] = mapped_column(String(64), unique=True)
@@ -75,6 +98,12 @@ class RsOutcome(Base):
     depth: Mapped[int | None] = mapped_column(Integer, nullable=True)
     positions: Mapped[dict] = mapped_column(JSON)
     notes: Mapped[str] = mapped_column(Text, default="")
+    # Provenance of an imported observation file. Empty on older rows. Describes the file, not a
+    # claim that it is a live Google pull.
+    project_slug: Mapped[str] = mapped_column(String(200), default="", server_default="")
+    source_file: Mapped[str] = mapped_column(String(500), default="", server_default="")
+    source_sha256: Mapped[str] = mapped_column(String(64), default="", server_default="")
+    uploaded_at: Mapped[str] = mapped_column(String(40), default="", server_default="")
 
 
 @dataclass
@@ -83,6 +112,7 @@ class Call:
     predicted: str  # "above" or "below": where the subject page is predicted relative to the competitor
     score_gap: float | None
     confidence: str
+    note: str = ""
 
 
 @dataclass
@@ -94,6 +124,8 @@ class LedgerScore:
     unresolved: int
     by_confidence: dict[str, dict[str, int]] = field(default_factory=dict)
     no_outcome_yet: int = 0
+    backdated: int = 0  # predictions written later than their stated time
+    unscored: int = 0  # predictions on synthetic, historical or no data
 
     @property
     def accuracy(self) -> float | None:
@@ -115,9 +147,16 @@ def record_prediction(
     calibration_note: str,
     provenance: dict,
     created_at: datetime | None = None,
+    project_slug: str = "",
 ) -> RsPrediction:
-    """Append one prediction. ``candidates`` rows: {url, html_sha256, labeled_position}."""
-    stamp = (created_at or _now()).isoformat(timespec="seconds")
+    """Append one prediction. ``candidates`` rows: {url, html_sha256, labeled_position}.
+
+    ``created_at`` may be a protocol time; the wall clock at write time is always stored as
+    ``payload.recorded_at`` and scoring uses the later of the two.
+    """
+    written = _now()
+    stamp = (created_at or written).isoformat(timespec="seconds")
+    slug = _project_slug(project_slug)
     payload = {
         "subject_html_sha256": _sha(subject_html) if subject_html is not None else None,
         "predicted_rank": predicted_rank,
@@ -128,6 +167,8 @@ def record_prediction(
         "confidence": confidence,
         "calibration_note": calibration_note,
         "provenance": provenance,
+        "recorded_at": written.isoformat(timespec="seconds"),
+        "ledger_hash_version": LEDGER_HASH_VERSION,
     }
     from sqlalchemy.exc import IntegrityError
 
@@ -143,17 +184,20 @@ def record_prediction(
                 kind=kind,
                 query=query,
                 subject_url=subject_url,
+                project_slug=slug,
                 payload=payload,
                 prev_hash=prev_hash,
-                row_hash=_row_hash(prev_hash, stamp, kind, query, subject_url, payload),
+                row_hash=_row_hash(prev_hash, stamp, kind, query, subject_url, payload, slug),
             )
             session.add(row)
             try:
                 session.commit()
                 return row
-            except IntegrityError:
+            except IntegrityError as exc:
                 session.rollback()
-        raise RuntimeError("Could not append to the prediction ledger after 5 attempts.")
+                if not _is_fork_race(exc):
+                    raise LedgerError(f"Could not append to the prediction ledger: {exc.orig}") from exc
+        raise LedgerError("Could not append to the prediction ledger: another writer won the same slot 5 times.")
 
 
 def record_outcome(
@@ -165,8 +209,18 @@ def record_outcome(
     positions: dict[str, int],
     depth: int | None,
     notes: str = "",
+    project_slug: str = "",
+    source_file: str = "",
+    source_sha256: str = "",
+    uploaded_at: str = "",
 ) -> RsOutcome:
-    """Append an observed result list. ``positions`` maps URL to organic position."""
+    """Append an observed result list. ``positions`` maps URL to organic position.
+
+    ``observed_on`` is the date the caller supplied; a date after today (UTC, plus one day for
+    time zones) is refused. The file fields describe an imported file, not a live Google pull.
+    """
+    if observed_on > (_now() + timedelta(days=1)).date().isoformat():
+        raise LedgerError(f"observed_on {observed_on} is in the future; an outcome cannot be observed before it happens.")
     row = RsOutcome(
         observed_on=observed_on,
         query=" ".join(query.split()),
@@ -174,6 +228,10 @@ def record_outcome(
         depth=depth,
         positions={_key(url): int(position) for url, position in positions.items()},
         notes=notes,
+        project_slug=_project_slug(project_slug),
+        source_file=source_file,
+        source_sha256=source_sha256,
+        uploaded_at=uploaded_at,
     )
     session.add(row)
     session.commit()
@@ -183,29 +241,73 @@ def record_outcome(
 def verify_ledger(session: Session) -> tuple[bool, str]:
     rows = session.query(RsPrediction).order_by(RsPrediction.id).all()
     prev = GENESIS
+    legacy = 0
     for row in rows:
         if row.prev_hash != prev:
             return False, f"Prediction {row.id}: prev_hash does not match prediction before it. A row was removed or reordered."
-        expected = _row_hash(row.prev_hash, row.created_at, row.kind, row.query, row.subject_url, row.payload)
+        if _hash_version(row.payload) < 2:
+            legacy += 1
+        expected = _row_hash(row.prev_hash, row.created_at, row.kind, row.query, row.subject_url, row.payload, row.project_slug)
         if expected != row.row_hash:
             return False, f"Prediction {row.id}: contents changed after it was recorded."
         prev = row.row_hash
     head = prev if rows else "none"
-    return True, f"{len(rows)} predictions, chain intact. Latest hash {head}."
+    note = f"{len(rows)} predictions, chain intact. Latest hash {head}."
+    if legacy:
+        note += f" {legacy} legacy rows use the original hash and do not bind project_slug."
+    return True, note
 
 
-def score_ledger(session: Session) -> LedgerScore:
-    """Score every call against the first outcome observed after the prediction was made."""
+def _same_project(prediction: RsPrediction, outcome: RsOutcome) -> bool:
+    """Both rows name the same project. A blank slug is legacy and matches nothing."""
+    left = _project_slug(prediction.project_slug)
+    right = _project_slug(outcome.project_slug)
+    return bool(left) and left == right
+
+
+def prediction_time(prediction: RsPrediction) -> tuple[datetime, bool]:
+    """(the time the prediction is dated by, whether it was backdated).
+
+    The later of the stated ``created_at`` and the wall-clock ``payload.recorded_at``: a row
+    cannot be resolved by an outcome that existed before the row did.
+    """
+    stated = _aware(datetime.fromisoformat(prediction.created_at))
+    written_text = (prediction.payload or {}).get("recorded_at")
+    if not written_text:
+        return stated, False  # rows from before recorded_at existed: only the stated time is known
+    written = _aware(datetime.fromisoformat(written_text))
+    return max(stated, written), written - stated > BACKDATE_TOLERANCE
+
+
+def score_ledger(session: Session, *, project_slug: str | None = None) -> LedgerScore:
+    """Score every call against the first later outcome for the same project and query.
+
+    ``project_slug`` limits the score to one project. Predictions on synthetic, historical or no
+    data are counted as unscored, not scored.
+    """
     predictions = session.query(RsPrediction).order_by(RsPrediction.id).all()
     outcomes = session.query(RsOutcome).order_by(RsOutcome.observed_on, RsOutcome.id).all()
+    if project_slug is not None:
+        wanted = _project_slug(project_slug)
+        predictions = [row for row in predictions if _project_slug(row.project_slug) == wanted]
+        outcomes = [row for row in outcomes if _project_slug(row.project_slug) == wanted]
     by_query: dict[str, list[RsOutcome]] = {}
     for outcome in outcomes:
         by_query.setdefault(outcome.query, []).append(outcome)
     score = LedgerScore(predictions=len(predictions), calls=0, resolved=0, correct=0, unresolved=0)
     for prediction in predictions:
-        made = datetime.fromisoformat(prediction.created_at)
+        dataset = str(((prediction.payload or {}).get("provenance") or {}).get("dataset") or "")
+        if dataset in UNSCORED_DATASETS:
+            score.unscored += 1
+            continue
+        made, backdated = prediction_time(prediction)
+        score.backdated += int(backdated)
         latest_local_day = (made + timedelta(hours=14)).date().isoformat()
-        later = [row for row in by_query.get(" ".join(prediction.query.split()), []) if row.observed_on > latest_local_day]
+        later = [
+            row
+            for row in by_query.get(" ".join(prediction.query.split()), [])
+            if row.observed_on > latest_local_day and _same_project(prediction, row)
+        ]
         calls = prediction.payload.get("calls", [])
         score.calls += len(calls)
         if not later:
@@ -235,6 +337,13 @@ def render_score(score: LedgerScore) -> str:
         f"Predictions {score.predictions}. Calls {score.calls}. Waiting for a later observation: {score.no_outcome_yet}.",
         f"Resolved {score.resolved}, unresolved {score.unresolved} (one or both pages not in the observed results).",
     ]
+    if score.backdated:
+        lines.append(
+            f"{score.backdated} predictions were written more than an hour after their stated time. They are dated "
+            "from when they were written, so observations made before that cannot resolve them."
+        )
+    if score.unscored:
+        lines.append(f"{score.unscored} predictions on synthetic, historical or no data are not scored.")
     if score.resolved:
         lines.append(f"Right {score.correct} of {score.resolved} resolved calls ({score.accuracy:.3f}).")
     else:
@@ -253,14 +362,49 @@ def _relative(subject: int | None, rival: int | None, depth: int | None) -> str 
     return None  # subject not observed: published-and-not-ranking and never-published look the same
 
 
-def _row_hash(prev_hash: str, created_at: str, kind: str, query: str, subject_url: str, payload: dict) -> str:
-    body = json.dumps(
-        {"prev": prev_hash, "created_at": created_at, "kind": kind, "query": query, "subject_url": subject_url, "payload": payload},
-        sort_keys=True,
-        separators=(",", ":"),
-        ensure_ascii=True,
-    )
-    return hashlib.sha256(body.encode()).hexdigest()
+def _project_slug(value: str | None) -> str:
+    """The slug as stored: stripped, or empty. Never a guessed project."""
+    return (value or "").strip()
+
+
+def _hash_version(payload: dict | None) -> int:
+    return int((payload or {}).get("ledger_hash_version") or 1)
+
+
+def _row_hash(
+    prev_hash: str,
+    created_at: str,
+    kind: str,
+    query: str,
+    subject_url: str,
+    payload: dict,
+    project_slug: str | None = None,
+) -> str:
+    """Version 1 (no ``ledger_hash_version``): the original formula, without the slug. Version 2:
+    also binds the stored slug, including an empty one."""
+    body = {
+        "prev": prev_hash,
+        "created_at": created_at,
+        "kind": kind,
+        "query": query,
+        "subject_url": subject_url,
+        "payload": payload,
+    }
+    if _hash_version(payload) >= 2:
+        body["project_slug"] = _project_slug(project_slug)
+    encoded = json.dumps(body, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+    return hashlib.sha256(encoded.encode()).hexdigest()
+
+
+def _is_fork_race(exc) -> bool:
+    """True when another writer took the same prev_hash slot (unique constraint), the one
+    IntegrityError worth retrying. A NOT NULL or other failure is reported, not retried."""
+    message = str(getattr(exc, "orig", exc)).lower()
+    return "unique" in message or "duplicate" in message
+
+
+def _aware(moment: datetime) -> datetime:
+    return moment if moment.tzinfo else moment.replace(tzinfo=timezone.utc)
 
 
 def _sha(text: str) -> str:
@@ -274,7 +418,15 @@ def _key(url: str) -> str:
         return url.strip()
 
 
-def record_check(session: Session, result, *, html: str, calibration, provenance: dict) -> RsPrediction | None:
+def record_check(
+    session: Session,
+    result,
+    *,
+    html: str,
+    calibration,
+    provenance: dict,
+    project_slug: str = DEFAULT_PROJECT_SLUG,
+) -> RsPrediction | None:
     """Append a draft check (check.CheckResult). Errors and empty checks are not predictions."""
     if result.error or result.predicted_rank is None or not result.competitors:
         return None
@@ -311,4 +463,5 @@ def record_check(session: Session, result, *, html: str, calibration, provenance
         confidence=result.confidence,
         calibration_note=result.confidence_note,
         provenance=provenance,
+        project_slug=project_slug,
     )

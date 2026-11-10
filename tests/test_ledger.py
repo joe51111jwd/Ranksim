@@ -10,7 +10,29 @@ from aeo.ranksim.ledger import Call, RsPrediction, record_outcome, record_predic
 from aeo.ranksim.store import open_session
 
 
+LATER = datetime(2026, 11, 30, 12, tzinfo=timezone.utc)
+CLOCK = {"now": LATER}
+
+
+@pytest.fixture(autouse=True)
+def _clock(monkeypatch):
+    """The ledger stamps the wall clock. Tests move it: a prediction is written at its stated time,
+    and outcomes are recorded later, as they would be in use."""
+    import aeo.ranksim.ledger as ledger
+
+    CLOCK["now"] = LATER
+    monkeypatch.setattr(ledger, "_now", lambda: CLOCK["now"])
+
+
 def _predict(session, when, calls, query="dirt work software", subject="https://ours.example/draft"):
+    CLOCK["now"] = datetime(*when, tzinfo=timezone.utc)
+    try:
+        return _record(session, when, calls, query, subject)
+    finally:
+        CLOCK["now"] = LATER
+
+
+def _record(session, when, calls, query, subject):
     return record_prediction(
         session,
         kind="draft_check",
@@ -25,6 +47,7 @@ def _predict(session, when, calls, query="dirt work software", subject="https://
         calibration_note="test",
         provenance={"model": "test"},
         created_at=datetime(*when, tzinfo=timezone.utc),
+        project_slug="default",
     )
 
 
@@ -65,11 +88,11 @@ def test_scoring_uses_only_later_observations_and_counts_unresolved(tmp_path):
         ],
     )
     # Same-day observation must not count: it is not after the prediction.
-    record_outcome(session, query="dirt work software", observed_on="2026-11-05", provider="t",
+    record_outcome(session, query="dirt work software", observed_on="2026-11-05", provider="t", project_slug="default",
                    positions={"https://ours.example/draft": 9, "https://a.example/": 1}, depth=10)
     score = score_ledger(session)
     assert score.resolved == 0 and score.no_outcome_yet == 3
-    record_outcome(session, query="dirt work software", observed_on="2026-11-12", provider="t",
+    record_outcome(session, query="dirt work software", observed_on="2026-11-12", provider="t", project_slug="default",
                    positions={"https://ours.example/draft": 3, "https://a.example/": 5, "https://b.example/": 2}, depth=None)
     score = score_ledger(session)
     assert (score.calls, score.resolved, score.correct, score.unresolved) == (3, 2, 1, 1)
@@ -80,7 +103,7 @@ def test_scoring_uses_only_later_observations_and_counts_unresolved(tmp_path):
 def test_depth_resolves_a_page_outside_the_collected_results(tmp_path):
     session = open_session(f"sqlite:///{tmp_path / 'l.db'}")
     _predict(session, (2026, 11, 5), [Call("https://c.example/", "above", 0.3, "UNSURE")])
-    record_outcome(session, query="dirt work software", observed_on="2026-11-12", provider="t",
+    record_outcome(session, query="dirt work software", observed_on="2026-11-12", provider="t", project_slug="default",
                    positions={"https://ours.example/draft": 4}, depth=10)
     score = score_ledger(session)
     assert (score.resolved, score.correct) == (1, 1)

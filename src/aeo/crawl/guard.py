@@ -1,7 +1,8 @@
 """Connection-level guards for the crawler's own httpx client.
 
 - Pinning: the direct connection pool resolves a host itself, refuses the connection if any
-  address is not globally routable, and connects to a vetted address. The request URL keeps the
+  address is not globally routable, and connects to the vetted addresses in resolver order until
+  one answers (as socket.create_connection does for a name). The request URL keeps the
   hostname, so the Host header, TLS SNI and certificate checks are unchanged. A name that
   resolved to a public address during the URL check and to a private one at connect time
   (DNS rebinding) is refused here.
@@ -46,10 +47,19 @@ class GuardedBackend(httpcore.NetworkBackend):
         return left if timeout is None else min(timeout, left)
 
     def connect_tcp(self, host, port, timeout=None, local_address=None, socket_options=None):
-        timeout = self.remaining(timeout, httpcore.ConnectTimeout)
-        target = vetted_address(host, port) if self.check_ip else host
-        stream = self._inner.connect_tcp(target, port, timeout=timeout, local_address=local_address, socket_options=socket_options)
-        return DeadlineStream(stream, self)
+        self.remaining(timeout, httpcore.ConnectTimeout)
+        targets = vetted_addresses(host, port) if self.check_ip else [host]
+        failure: Exception | None = None
+        for target in targets:
+            # Each attempt gets only the time left, so trying more addresses never passes the deadline.
+            left = self.remaining(timeout, httpcore.ConnectTimeout)
+            try:
+                stream = self._inner.connect_tcp(target, port, timeout=left, local_address=local_address, socket_options=socket_options)
+            except (httpcore.ConnectError, httpcore.ConnectTimeout) as exc:
+                failure = exc  # a dead address or an unusable address family: try the next one
+                continue
+            return DeadlineStream(stream, self)
+        raise failure
 
     def connect_unix_socket(self, path, timeout=None, socket_options=None):
         raise httpcore.ConnectError("The crawler does not connect to unix sockets")
@@ -82,8 +92,8 @@ class DeadlineStream(httpcore.NetworkStream):
         return self._inner.get_extra_info(info)
 
 
-def vetted_address(host: str, port: int) -> str:
-    """A globally routable address for ``host``; refuses if any resolved address is not one."""
+def vetted_addresses(host: str, port: int) -> list[str]:
+    """The addresses of ``host`` in resolver order, all globally routable; refuses if any is not."""
     name = host.decode() if isinstance(host, bytes) else str(host)
     name = name.strip("[]")
     try:
@@ -93,18 +103,18 @@ def vetted_address(host: str, port: int) -> str:
     if literal is not None:
         if not _is_public_ip(literal):
             raise UnsafeConnect(f"Refusing to connect to non-public address {name}")
-        return name
+        return [name]
     try:
         infos = socket.getaddrinfo(name, port, type=socket.SOCK_STREAM)
     except socket.gaierror as exc:
         raise httpcore.ConnectError(f"Could not resolve host {name}") from exc
-    addresses = [info[4][0] for info in infos]
+    addresses = list(dict.fromkeys(info[4][0] for info in infos))
     if not addresses:
         raise httpcore.ConnectError(f"Could not resolve host {name}")
     for address in addresses:
         if not _is_public_ip(ipaddress.ip_address(address)):
             raise UnsafeConnect(f"Host {name} resolves to a non-public address at connect time")
-    return addresses[0]
+    return addresses
 
 
 def install(client, *, pin: bool) -> list[GuardedBackend]:

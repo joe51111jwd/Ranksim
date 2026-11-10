@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import codecs
+import ipaddress
+import re
 import time
 from dataclasses import dataclass, field
 from email.utils import parsedate_to_datetime
@@ -60,8 +63,40 @@ class HostBackoff(Exception):
     """The host asked crawlers to wait longer than this crawl will wait."""
 
 
-PLACEHOLDER_DOMAINS = frozenset({"example.com", "example.org", "example.net", "localhost"})
-PLACEHOLDER_SUFFIXES = (".example", ".test", ".invalid", ".localhost", ".example.com", ".example.org", ".example.net")
+# yourdomain.com is the example in the refusal message below, so pasting it verbatim is refused too.
+PLACEHOLDER_DOMAINS = frozenset({"example.com", "example.org", "example.net", "localhost", "yourdomain.com"})
+PLACEHOLDER_SUFFIXES = (
+    ".example",
+    ".test",
+    ".invalid",
+    ".localhost",
+    ".example.com",
+    ".example.org",
+    ".example.net",
+    ".yourdomain.com",
+)
+# The authority of a contact URL. Punctuation after it ("https://example.com; bot@...") is not part
+# of the host, but a bracketed IPv6 literal ("https://[2606:4700::1]/bot") is kept whole.
+_CONTACT_URL = re.compile(r"https?://((?:\[[^\]\s]*\]|[^\s)\]<>\"',;\[/?#])+)", re.IGNORECASE)
+_CONTACT_EMAIL = re.compile(r"[\w.+-]+@([\w-]+(?:\.[\w-]+)+)")
+_DOMAIN_NAME = re.compile(r"[\w-]+(?:\.[\w-]+)+")
+
+
+def _contact_host(authority: str) -> str:
+    try:
+        return urlsplit("//" + authority).hostname or ""
+    except ValueError:
+        return authority  # a malformed bracketed host: kept as written, so it is named and refused
+
+
+def _real_contact_host(host: str) -> bool:
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError:
+        return bool(_DOMAIN_NAME.fullmatch(host)) and host not in PLACEHOLDER_DOMAINS and not host.endswith(PLACEHOLDER_SUFFIXES)
+    # Loopback, private and documentation addresses (192.0.2.0/24, 2001:db8::/32) are the address
+    # form of localhost and example.com: no site owner can reach them.
+    return address.is_global
 
 
 def user_agent_problem(user_agent: str) -> str | None:
@@ -70,15 +105,13 @@ def user_agent_problem(user_agent: str) -> str | None:
     Site owners need to know who is crawling and how to reach them, so the user agent must name the
     crawler and give a contact URL or email that is not a placeholder (example.com and the like).
     """
-    import re
-
     text = (user_agent or "").strip()
     if not text:
         return "the crawler user agent is empty"
-    hosts = [urlsplit(url).hostname or "" for url in re.findall(r"https?://[^\s)]+", text)]
-    hosts += [domain for domain in re.findall(r"[\w.+-]+@([\w-]+(?:\.[\w-]+)+)", text)]
-    real = [host.lower() for host in hosts if host and host.lower() not in PLACEHOLDER_DOMAINS and not host.lower().endswith(PLACEHOLDER_SUFFIXES)]
-    if real:
+    hosts = [_contact_host(authority) for authority in _CONTACT_URL.findall(text)]
+    hosts += _CONTACT_EMAIL.findall(text)
+    hosts = [host.lower().rstrip(".") for host in hosts if host]
+    if any(_real_contact_host(host) for host in hosts):
         return None
     if hosts:
         return f"the crawler user agent's contact is a placeholder ({hosts[0]})"
@@ -172,9 +205,11 @@ class Crawler:
         except HostBackoff as exc:
             return Fetched(url=current, final_url=current, error=str(exc), robots_status=robots_status)
         try:
-            response, final_url = self._get_following_redirects(current)
+            response, final_url = self._get_following_redirects(current, polite=True)
         except UnsafeURL:
             raise
+        except HostBackoff as exc:
+            return Fetched(url=current, final_url=current, error=str(exc), robots_status=robots_status)
         except httpx.ConnectError as exc:
             if isinstance(exc.__cause__, guard.UnsafeConnect):
                 raise UnsafeURL(str(exc.__cause__)) from None
@@ -329,7 +364,8 @@ class Crawler:
 
     def _robots_for(self, origin: str):
         """RFC 9309: 4xx (unavailable) allows everything; 5xx, 429 or a network failure
-        (unreachable) means assume complete disallow. The result is cached for this crawler."""
+        (unreachable) means assume complete disallow. A file not read in full before the deadline
+        counts as unreachable. The result is cached for this crawler."""
         if origin in self._robots:
             return self._robots[origin]
         robots_url = origin + "/robots.txt"
@@ -339,17 +375,21 @@ class Crawler:
         except RedirectProblem:
             self._robots[origin] = None  # redirect loop: treat as unavailable
             return None
-        except (httpx.HTTPError, UnsafeURL, ValueError):
+        except (httpx.HTTPError, UnsafeURL, ValueError, DeadlineExceeded):
             self._robots[origin] = ROBOTS_UNREACHABLE
             return ROBOTS_UNREACHABLE
         if response.status_code == 429 or response.status_code >= 500:
+            self._robots[origin] = ROBOTS_UNREACHABLE
+            return ROBOTS_UNREACHABLE
+        if response.extensions.get("truncated") == "deadline":
+            # Rules after the cut are unknown, so a partial file is a network failure, not a file.
             self._robots[origin] = ROBOTS_UNREACHABLE
             return ROBOTS_UNREACHABLE
         if response.status_code >= 400:
             parser = parse_robots("")
             self._robots[origin] = parser
             return parser
-        parser = parse_robots(self._read_capped(response))
+        parser = parse_robots(self._read_robots(response))
         self._robots[origin] = parser
         return parser
 
@@ -382,10 +422,18 @@ class Crawler:
         self._backoff[origin] = (time.monotonic() + wait, count)
         return wait
 
-    def _get_following_redirects(self, url: str, *, any_type: bool = False) -> tuple[httpx.Response, str]:
+    def _get_following_redirects(
+        self, url: str, *, any_type: bool = False, polite: bool = False
+    ) -> tuple[httpx.Response, str]:
+        """``polite``: the caller waited for the first URL's origin; a hop to another origin waits
+        for that origin too, so a host in 429/503 backoff gets no request through a redirect."""
         current = url
+        previous = self._origin(url)
         for _ in range(MAX_REDIRECTS + 1):
             current = assert_safe_url(current, allow_private=self.allow_private, keep_trailing_slash=True)
+            if polite and self._origin(current) != previous:
+                self._polite_wait(current)
+                previous = self._origin(current)
             response = self._get_capped(current, any_type=any_type)
             if response.status_code not in {301, 302, 303, 307, 308}:
                 return response, current
@@ -484,6 +532,15 @@ class Crawler:
         raw = response.content[:MAX_BYTES]
         encoding = response.encoding or "utf-8"
         return raw.decode(encoding, errors="replace")
+
+    def _read_robots(self, response: httpx.Response) -> str:
+        """robots.txt text. RFC 9309 says the file is UTF-8, so a UTF-8 byte order mark wins over a
+        declared charset such as ISO-8859-1. Decoded with that charset, the mark would become
+        stray characters that hide the first user-agent line."""
+        raw = response.content[:MAX_BYTES]
+        if raw.startswith(codecs.BOM_UTF8):
+            return raw[len(codecs.BOM_UTF8) :].decode("utf-8", errors="replace")
+        return self._read_capped(response)
 
     @staticmethod
     def _origin(url: str) -> str:

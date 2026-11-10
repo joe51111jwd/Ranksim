@@ -44,6 +44,8 @@ Jobs live in the `jobs` table. Postgres workers claim with `FOR UPDATE SKIP LOCK
 
 The crawler allows only `http` and `https`, refuses credentials, and blocks private, loopback, and link-local addresses unless `CRAWL_ALLOW_PRIVATE=true`. It also checks resolved addresses before connecting.
 
+Before the crawler fetches any public site, including the site you submit and live competitors, set `CRAWL_USER_AGENT` to your crawler's name and a contact site owners can reach. The example.com default is refused: the crawl job fails with an error that names `CRAWL_USER_AGENT`. `CRAWL_ALLOW_PRIVATE=true` turns this check off for local labs, so set a real contact before you use it with public sites.
+
 ## Setup
 
 ```bash
@@ -229,7 +231,7 @@ python -m aeo.ranksim gaps
 | `RANKSIM_LLM_MAX_CALLS`, `RANKSIM_LLM_MAX_USD` | Per-process caps on LLM requests sent (retries included) and estimated spend (default 200, $1.00). The dollar cap needs a known rate for the model; for an unpriced model it stops after the first call unless set to 0. |
 | `RANKSIM_AUTHORITY=dataforseo` | Optional backlink rank on the same DataForSEO account. Off by default. |
 
-Crawling third-party sites needs `CRAWL_USER_AGENT` set to your crawler's name and a contact site owners can reach (a URL or email that is not example.com or similar); the placeholder default is refused at the first real fetch. robots.txt is read per RFC 9309 (longest match, `*` and `$` patterns), the same on every Python version.
+Crawling third-party sites needs `CRAWL_USER_AGENT` set to your crawler's name and a contact site owners can reach (a URL or email that is not example.com or similar); the placeholder default is refused at the first real fetch. The check is off when `CRAWL_ALLOW_PRIVATE=true`. robots.txt is read per RFC 9309 (longest match, `*` and `$` patterns), the same on every Python version.
 
 If none of the SERP keys are set, `collect` and `track` exit with an error. They do not invent a Google top 10. `--mock` is explicit and every row is marked synthetic.
 

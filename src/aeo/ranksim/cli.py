@@ -697,7 +697,8 @@ def _observe_conflicts(labels, report, observed_on: str, provider: str, name: st
 
     Every query is recorded as observed on --observed-on from --provider. A row the file dates on
     another day, a date that is not YYYY-MM-DD, a blank date in a file that has dates (an undated
-    label file from export-serp), or a row from another provider would be recorded with a date or
+    label file, or a list that may be Search Console averages, from export-serp; see
+    store.legacy_unclassified), or a row from another provider would be recorded with a date or
     provider it does not have.
     """
     lists = _file_lists(labels, report)
@@ -726,6 +727,9 @@ def _observe_conflicts(labels, report, observed_on: str, provider: str, name: st
         lines.append(
             f"No observation date in a file that has dates: {len(undated)} of {total} queries, for example {undated[0]!r}. "
             "export-serp leaves the date blank for a label file with no date. "
+            "It also leaves it blank for a list an older version stored from a dated file, because that file may "
+            "have been a Search Console export of average positions. Run index-serp again on that original file "
+            "to classify it, then export again. "
             "In a file you wrote, fill in the dates, or remove the date column if it is empty."
         )
     if other_provider:

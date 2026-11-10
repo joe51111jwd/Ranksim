@@ -38,17 +38,18 @@ def _midnight(month, day):
     return datetime(2026, month, day, tzinfo=timezone.utc)
 
 
-def _legacy(session, query, pairs, collected_at, recorded_at=IMPORTED, is_google=True):
+def _legacy(session, query, pairs, collected_at, recorded_at=IMPORTED, is_google=True, dated=None):
     """A list exactly as 87511c0's index-serp stored it, from (position, url) pairs sorted by
     position. A dated file (a label file, or a Search Console file with a date column) was stored at
     UTC midnight of its date and recorded at the import time; a file with no date at its import time.
     That version had no dated column, so the migration adds NULL. is_google=False is a list that
-    bc813d6's index-serp marked as Search Console averages."""
+    bc813d6's index-serp marked as Search Console averages. dated=True is such a row after bc813d6's
+    index-serp read its dated file again: that sets the flag and keeps the signature."""
     body = "|".join(f"{position}:{url}" for position, url in pairs)
     collection_id = uuid.uuid4().hex
     session.add(RsSerpCollection(
         id=collection_id, query=query, provider="browser_export", synthetic=False, is_google=is_google,
-        source="label_file", collected_at=collected_at, recorded_at=recorded_at, hits=len(pairs), dated=None,
+        source="label_file", collected_at=collected_at, recorded_at=recorded_at, hits=len(pairs), dated=dated,
         signature=hashlib.sha256(f"label_file|browser_export|{collected_at.date().isoformat()}|{body}".encode()).hexdigest(),
     ))
     for position, url in pairs:
@@ -129,9 +130,15 @@ def test_g0_search_console_averages_stored_with_a_date_are_never_a_dated_google_
         "export of average positions, so their observed_on is blank. Run index-serp again on each original file to classify it."
     ) in printed
     for day in ("2026-10-15", "2026-11-10"):
-        with pytest.raises(SystemExit):
+        with pytest.raises(SystemExit) as refused:
             main(["--database", db, "ledger", "observe", str(out), "--observed-on", day, "--provider", "browser_export"])
         assert "Recorded observations" not in capsys.readouterr().out
+        # The refusal says why the date is blank and how to classify the list.
+        assert (
+            "It also leaves it blank for a list an older version stored from a dated file, because that file may "
+            "have been a Search Console export of average positions. Run index-serp again on that original file "
+            "to classify it, then export again."
+        ) in str(refused.value)
     # A live collect on 2026-10-10 beats both lists, though one is stored at a later date.
     session = open_session(db)
     live_urls = ["https://rival.example/x", A, "https://other.example/y"]
@@ -295,3 +302,99 @@ def test_g3_importing_the_dated_file_again_takes_off_a_mark_an_earlier_index_ser
     _export(db, out, capsys)
     assert [(row.url, row.observed_on) for row in load_serp_file(out)] == [(B, "2026-10-15")]
     assert ",no\n" not in out.read_text()
+
+
+def test_g3_importing_the_dated_files_again_takes_off_a_mark_even_after_an_earlier_reimport_dated_the_row(
+    tmp_path, monkeypatch, capsys
+):
+    db = f"sqlite:///{tmp_path / 's.db'}"
+    session = open_session(db)
+    # As bc813d6 left a database from 87511c0 with two dated files of own-page positions. Its
+    # index-serp marked three lists as Search Console averages, because an undated Search Console
+    # file had the same rounded lists. Its index-serp of both dated files then set the dated flag
+    # and kept the marks. dirt work software on 2026-10-29 did not match, so it was not marked.
+    marked = [
+        _legacy(session, "dirt work software", [(1, A)], _midnight(10, 15), is_google=False, dated=True),
+        _legacy(session, QUERY, [(3, B)], _midnight(10, 15), is_google=False, dated=True),
+        _legacy(session, QUERY, [(3, B)], _midnight(10, 29), IMPORTED + timedelta(days=1), is_google=False, dated=True),
+    ]
+    _legacy(session, "dirt work software", [(2, A)], _midnight(10, 29), IMPORTED + timedelta(days=1), dated=True)
+    assert _hits(session, QUERY) == []
+    session.close()
+    for day, dirt, crew in (("2026-10-15", 1, 3), ("2026-10-29", 2, 3)):
+        tracked = tmp_path / f"tracked-{day}.csv"
+        tracked.write_text(f"query,url,position,observed_on\ndirt work software,{A},{dirt},{day}\n{QUERY},{B},{crew},{day}\n")
+        _index(tracked, db, tmp_path, monkeypatch)
+    session = open_session(db)
+    for cid in marked:
+        row = session.get(RsSerpCollection, cid)
+        assert (row.dated, row.is_google) == (True, True)
+        assert [hit.is_google for hit in collection_hits(session, cid)] == [True]
+    assert len(serp_collections(session)) == 4  # nothing added, nothing deleted
+    assert _hits(session, QUERY) == [(3, B)] and _hits(session, "dirt work software") == [(2, A)]
+    session.close()
+    out = tmp_path / "export.csv"
+    printed = _export(db, out, capsys)
+    assert {(row.query, row.position, row.observed_on) for row in load_serp_file(out)} == {
+        ("dirt work software", 2.0, "2026-10-29"), (QUERY, 3.0, "2026-10-29"),
+    }
+    assert ",no\n" not in out.read_text() and "not Google results" not in printed
+    assert "Comparing one pair of collections for each of 2 queries" in _noise(db, capsys)
+
+
+def test_an_undated_import_of_the_same_list_never_flips_a_legacy_dated_row_on_one_site(tmp_path, monkeypatch):
+    db = f"sqlite:///{tmp_path / 's.db'}"
+    session = open_session(db)
+    # 87511c0 stored a dated file that tracks one own page. A list on one site is not read as dated,
+    # because it may be Search Console averages, but it may still be a dated observation.
+    row = _legacy(session, QUERY, [(3, A)], _midnight(10, 15))
+    session.close()
+    undated = tmp_path / "undated.csv"
+    undated.write_text(f"query,url,position\n{QUERY},{A},3\n")
+    _index(undated, db, tmp_path, monkeypatch)
+    session = open_session(db)
+    kept = session.get(RsSerpCollection, row)
+    assert kept.dated is None and kept.collected_at.replace(tzinfo=timezone.utc) == _midnight(10, 15)
+    assert [c.dated for c in serp_collections(session, QUERY)] == [None, False]  # the undated list is its own row
+    session.close()
+    # The original dated file still finds the older row and dates it. No third list is added.
+    dated = tmp_path / "tracked-2026-10-15.csv"
+    dated.write_text(f"query,url,position,observed_on\n{QUERY},{A},3,2026-10-15\n")
+    _index(dated, db, tmp_path, monkeypatch)
+    session = open_session(db)
+    assert session.get(RsSerpCollection, row).dated is True
+    assert len(serp_collections(session, QUERY)) == 2
+    assert latest_collection(session, QUERY).id == row
+    session.close()
+
+
+def test_g3_a_search_console_file_with_dates_never_marks_a_list_stored_at_import_time(tmp_path, monkeypatch, capsys):
+    db = f"sqlite:///{tmp_path / 's.db'}"
+    same = [(2, B), (6, A), (9, C)]
+    session = open_session(db)
+    # 87511c0 stored an undated label file at its import time. It stored a Search Console file with
+    # a date column at UTC midnight of each date, never at the import time, so a file with dates
+    # did not store this list, even on the same day.
+    row = _legacy(session, QUERY, same, IMPORTED, IMPORTED + timedelta(milliseconds=8))
+    session.close()
+    gsc = tmp_path / "gsc-2026-11-02.csv"
+    gsc.write_text(GSC_HEADER + "".join(f"2026-11-02,{QUERY},{url},2,50,4%,{p}\n" for url, p in ((A, 6.2), (B, 1.8), (C, 8.9))))
+    capsys.readouterr()
+    _cli_index(gsc, db, tmp_path, monkeypatch)
+    assert "now marked as not Google results" not in capsys.readouterr().out
+    session = open_session(db)
+    assert session.get(RsSerpCollection, row).is_google is True
+    assert _hits(session, QUERY) == same
+    session.close()
+    # A Search Console file with no dates could have stored it, so that file marks it. Nothing is deleted.
+    undated = tmp_path / "gsc.csv"
+    undated.write_text(
+        "Query,Page,Clicks,Impressions,CTR,Position\n"
+        + "".join(f"{QUERY},{url},2,50,4%,{p}\n" for url, p in ((A, 6.2), (B, 1.8), (C, 8.9)))
+    )
+    _cli_index(undated, db, tmp_path, monkeypatch)
+    assert "1 results lists an older version stored from these averages are now marked as not Google results" in capsys.readouterr().out
+    session = open_session(db)
+    assert session.get(RsSerpCollection, row).is_google is False
+    assert len(serp_collections(session, QUERY)) == 1 and _hits(session, QUERY) == []
+    session.close()

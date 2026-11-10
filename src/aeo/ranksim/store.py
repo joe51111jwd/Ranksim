@@ -306,12 +306,15 @@ def append_serp(
         if source != "live":
             if seen.dated is None:
                 seen.dated = dated  # a re-import now says whether that older row carried a date
-                if dated and is_google and search_console_list(seen):
-                    # Its dated label file is a results list, not Search Console averages, so a
-                    # mark an earlier index-serp put on this older row is taken off.
-                    seen.is_google = True
-                    for row in collection_hits(session, seen.id):
-                        row.is_google = True
+            if dated and seen.dated and is_google and search_console_list(seen):
+                # Its dated label file is a results list, not Search Console averages, so a mark
+                # an earlier index-serp put on this older row is taken off. That index-serp marked
+                # only rows with no dated flag, and an earlier re-import may have set the flag
+                # since, so a row already dated is restored too. index-serp stores every label
+                # list as Google, so no other dated label row is marked.
+                seen.is_google = True
+                for row in collection_hits(session, seen.id):
+                    row.is_google = True
             if not dated:
                 # An undated list is ordered by its import time. Importing an earlier version of
                 # the file again makes its list the latest undated one again, without a second row.

@@ -144,7 +144,9 @@ fixed in advance.
 - [x] B11. SERP history append-only with locale/device/collected_at; `export-serp`; `--keywords`
   file input (P1-7). Done: `rs_serp_collections`; identical re-imports skipped; `noise --from-db`.
   Raw provider payloads are not stored.
-- [ ] B12. Attribution scores before and after separately against the same peers (P1-8).
+- [x] B12. Attribution scores before and after separately against the same peers (P1-8). Done:
+  before, the old version was scored against its own edited copy (originality 0.000 -> 0.105 for a
+  one-sentence edit of an original page); now 0.948 -> 0.953.
 - [ ] B13. `test --bundle` inserts only matching pages; report renders bundle runs and computes
   accuracy from the label file (P1-10).
 - [ ] B14. LLM explanation numbers checked against the brief; provider selector and model-format

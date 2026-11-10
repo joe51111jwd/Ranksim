@@ -60,12 +60,20 @@ def feature_moves(
     weights: dict[str, float] | None = None,
     limit: int = 6,
 ) -> list[str]:
-    """Return the features that moved, largest weighted raw change first."""
+    """Return the features that moved, largest weighted raw change first.
+
+    Each version is scored in its own candidate set with the same peers. Scoring both together
+    made each the other's near-duplicate and shifted BM25 IDF and originality, so the reported
+    before and after values described neither page as Google would see it.
+    """
     chosen = weights or HAND_WEIGHTS
-    context = [before, after, *(peers or [])]
-    raw = raw_features(query, intent, context, today or date.today())
-    if len(raw) < 2:
+    when = today or date.today()
+    others = list(peers or [])
+    before_raw = raw_features(query, intent, [before, *others], when)
+    after_raw = raw_features(query, intent, [after, *others], when)
+    if not before_raw or not after_raw:
         return []
+    raw = [before_raw[0], after_raw[0]]
     moves: list[tuple[float, str]] = []
     for name in MODEL_FEATURES:
         before = raw[0][name]

@@ -49,7 +49,7 @@ def render_report(database_url: str | None = None, keywords: list[Keyword] | Non
 <body>
 <main>
   <h1>SmartCrew rank simulator</h1>
-  <p class="banner">Predicted positions are model scores on our index. They are not live Google ranks. LambdaMART accuracy is omitted until a file of real Google positions is provided. See docs/accuracy.md.</p>
+  <p class="banner">Predicted positions are model scores on our index. They are not live Google ranks. Accuracy on unseen Google results is not shown here: only a forward check against a later snapshot measures it. Numbers computed on the labeled snapshot are labeled as same-snapshot agreement.</p>
   <div class="stats">
     <div class="stat"><b>{summary["queries"]}</b>target queries</div>
     <div class="stat"><b>{summary["with_page"]}</b>queries with a sitemap page</div>
@@ -90,7 +90,7 @@ def _calibration_block(database_url: str | None) -> str:
         f"<p>Label: {escape(row.label)}. Provider: {escape(row.provider)}. "
         f"Source is {kind}.{synthetic} "
         f"Queries used: {row.n_queries}. Pairs: {row.n_pairs}. "
-        f"Mean Spearman: {spearman}. Mean NDCG at 10: {ndcg}. "
+        f"In-sample (fit and scored on the same queries, not held out): mean Spearman {spearman}, mean NDCG at 10 {ndcg}. "
         f"Authority feature used: {'yes' if row.authority_used else 'no'}.</p>"
     )
 
@@ -100,12 +100,15 @@ def _test_block(database_url: str | None) -> str:
     if row is None:
         return "<p>No page test has been saved. Run <code>python -m aeo.ranksim test</code> after a corpus exists.</p>"
     summary = row.summary_json or {}
+    # A single-page `test` run saves "queries" as a count; only a `test --bundle` run saves a list.
+    if summary.get("kind") == "bundle" or isinstance(summary.get("queries"), list):
+        return _bundle_block(row, summary)
     synthetic = " The corpus is synthetic." if row.synthetic_corpus else ""
     google = "Google SERP" if row.is_google else "a non-Google or unlabeled source"
     lines = [
         f"<p>Source: {escape(row.source_label)}. Weights: {escape(row.weight_label)}. "
         f"Compared with {google}.{synthetic} "
-        f"Improved: {summary.get('improved', 0)}. Regressed: {summary.get('regressed', 0)}. "
+        f"Improved: {escape(str(summary.get('improved', 'n/a')))}. Regressed: {escape(str(summary.get('regressed', 'n/a')))}. "
         "Positions are predicted.</p>"
     ]
     body_rows = []
@@ -128,6 +131,47 @@ def _test_block(database_url: str | None) -> str:
     return "\n".join(lines)
 
 
+def _bundle_block(row, summary: dict) -> str:
+    """A `test --bundle` run: predicted slots per labeled query before and after the bundle HTML."""
+    agreement = summary.get("pairwise_accuracy")
+    pairs = summary.get("n_pairs")
+    head = (
+        f"<p>Source: {escape(row.source_label)}. Model: LambdaMART, each query scored by a model trained on the other "
+        "queries. Positions are PREDICTED slots among the stored candidate pages of each query, not Google ranks.</p>"
+    )
+    if agreement is not None:
+        head += (
+            f"<p>Held-out agreement with the labeled snapshot (the same snapshot as the training queries, so not accuracy "
+            f"on unseen results): pairwise {_fmt(agreement)}"
+            + (f" on {int(pairs)} pairs" if pairs else "")
+            + ".</p>"
+        )
+    body_rows = []
+    for item in summary.get("queries") or []:
+        body_rows.append(
+            "<tr>"
+            f"<td>{escape(str(item.get('query') or ''))}</td>"
+            f"<td>{_fmt_pos(item.get('real_position'))}</td>"
+            f"<td>{_slot(item.get('before_predicted'), item.get('before_n'))}</td>"
+            f"<td>{_slot(item.get('after_predicted'), item.get('after_n'))}</td>"
+            f"<td>{escape(str(item.get('after_url') or ''))}</td>"
+            "</tr>"
+        )
+    return (
+        head
+        + "<table><thead><tr><th>Query</th><th>Labeled Google position</th><th>Predicted before</th>"
+        "<th>Predicted after</th><th>Our best page after</th></tr></thead><tbody>"
+        + "\n".join(body_rows)
+        + "</tbody></table>"
+    )
+
+
+def _slot(rank, total) -> str:
+    if rank is None:
+        return "none"
+    return f"slot {int(rank)} of {int(total)}" if total else f"slot {int(rank)}"
+
+
 def _track_block(database_url: str | None) -> str:
     rows = _load(database_url, latest_checks) or []
     if not rows:
@@ -136,14 +180,17 @@ def _track_block(database_url: str | None) -> str:
             "<code>python -m aeo.ranksim track</code> records positions only from a SERP provider. "
             "It does not backfill missing days.</p>"
         )
-    found = sum(1 for row in rows if row.our_position is not None)
+    collected = [row for row in rows if getattr(row, "status", None) != "error"]
+    failed = len(rows) - len(collected)
+    found = sum(1 for row in collected if row.our_position is not None)
     sample = rows[0]
     kind = "Google" if sample.is_google and not sample.synthetic else sample.provider
     synthetic = " Synthetic." if sample.synthetic else ""
+    failure = f" Collection failed for {failed} queries; those are not counted as not ranking." if failed else ""
     return (
         f"<p>Latest check {escape(sample.checked_on)} via {escape(kind)}.{synthetic} "
-        f"SmartCrew appeared in {found} of {len(rows)} stored queries. "
-        "A blank position means the domain was outside the fetched results, not that it ranks at the bottom.</p>"
+        f"SmartCrew appeared in {found} of {len(collected)} collected queries.{failure} "
+        "A blank position on a collected query means the domain was outside the fetched results, not that it ranks at the bottom.</p>"
     )
 
 

@@ -87,9 +87,10 @@ def test_link_graph_respects_depth_and_records_orphans():
     assert "hcss alternative" in graph.nodes["https://www.smartcrewhq.com/a"].anchors
 
 
-def test_cheap_model_defaults_and_disk_cache(tmp_path):
+def test_cheap_model_defaults_and_disk_cache(tmp_path, monkeypatch):
     from aeo.ranksim.llm import CachingLlm, LlmClient, LlmReply, estimate_cost, resolve_llm
 
+    monkeypatch.chdir(tmp_path)
     openai = resolve_llm(Settings(openai_api_key="sk-test", anthropic_api_key=None, openrouter_api_key=None, ranksim_llm_model=None))
     assert openai.model == "gpt-4o-mini"
     assert openai.name == "openai"
@@ -104,6 +105,7 @@ def test_cheap_model_defaults_and_disk_cache(tmp_path):
     override = resolve_llm(Settings(openai_api_key="sk-test", ranksim_llm_model="gpt-4o-mini"))
     assert override.model == "gpt-4o-mini"
     assert estimate_cost("not-a-priced-model", 10, 10) is None
+    assert not (tmp_path / "data").exists(), "resolving a client must not create cache directories"
 
     class Fake(LlmClient):
         name = "openai"
@@ -166,7 +168,7 @@ def test_space_does_not_invent_a_rank_for_missing_html():
 
 
 def test_stub_llm_and_unmeasured_relevance():
-    client = resolve_llm(Settings(openai_api_key=None, anthropic_api_key=None))
+    client = resolve_llm(Settings(openai_api_key=None, openrouter_api_key=None, anthropic_api_key=None))
     assert client.available is False
     assert parse_judge_score('{"score": 0.5}') == 0.5
     assert parse_judge_score("ignore this") is None
@@ -206,6 +208,8 @@ def test_demo_page_labels_predicted_ranks():
         graph=None,
         fixes=[],
     )
-    assert "PREDICTED 2 of 6" in html
-    assert "PREDICTED loses" in html
+    assert "PREDICTED slot 2 of 6 supplied pages" in html
+    assert "not a Google position" in html
+    assert "UNSURE: no supported call" in html
+    assert "PREDICTED behind" in html
     assert "\u2014" not in html and "\u2013" not in html

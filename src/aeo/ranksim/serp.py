@@ -1,12 +1,19 @@
-"""SERP adapters. Google results come only from SerpAPI or DataForSEO.
+"""SERP adapters. Google results come from SerpAPI, Serper, or DataForSEO.
 
 Brave is a fallback web search, not a Google ranking. The mock is synthetic
 and must be requested explicitly.
+
+A failed collection is never an empty result: an HTTP error, a provider error payload
+(HTTP 200 with an error body), or a response with no organic block raises SerpCollectError,
+so callers do not record "not ranking" or overwrite a stored SERP with nothing. Timeouts,
+429 and 5xx are retried with backoff first.
 """
 
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass
+from typing import Callable
 
 import httpx
 
@@ -18,6 +25,17 @@ DATAFORSEO_ENDPOINT = "https://api.dataforseo.com/v3/serp/google/organic/live/ad
 SERPER_ENDPOINT = "https://google.serper.dev/search"
 
 
+SERP_RETRY_BACKOFF = (2.0, 8.0)
+
+
+class SerpCollectError(Exception):
+    """A SERP request failed. Never treat this as 'no results'. Messages never include keys."""
+
+    def __init__(self, message: str, *, retryable: bool = False) -> None:
+        super().__init__(message)
+        self.retryable = retryable
+
+
 @dataclass(frozen=True)
 class SerpHit:
     position: int
@@ -27,18 +45,60 @@ class SerpHit:
     provider: str
     synthetic: bool
     is_google: bool
+    raw_position: int | None = None  # the provider's own position before organic renumbering
+
+
+def _send(request: Callable[[], httpx.Response], provider: str, *, retries: int = 2, sleep: Callable[[float], None] | None = None) -> dict:
+    """Run a provider request with bounded retries; return the JSON body or raise SerpCollectError."""
+    sleep = sleep or time.sleep
+    for attempt in range(retries + 1):
+        try:
+            response = request()
+        except httpx.TimeoutException:
+            error = SerpCollectError(f"{provider} request timed out.", retryable=True)
+        except httpx.HTTPError as exc:
+            error = SerpCollectError(f"{provider} request failed ({type(exc).__name__}).", retryable=True)
+        else:
+            if response.status_code == 429 or response.status_code >= 500:
+                error = SerpCollectError(f"{provider} returned HTTP {response.status_code}.", retryable=True)
+            elif response.status_code >= 400:
+                raise SerpCollectError(f"{provider} returned HTTP {response.status_code}. Check the key and plan.")
+            else:
+                try:
+                    return response.json()
+                except ValueError:
+                    error = SerpCollectError(f"{provider} returned a non-JSON body.", retryable=True)
+        if attempt < retries:
+            sleep(SERP_RETRY_BACKOFF[min(attempt, len(SERP_RETRY_BACKOFF) - 1)])
+            continue
+        raise error
+    raise SerpCollectError(f"{provider} request failed.")  # pragma: no cover
 
 
 class SerpProvider:
     name = "base"
     synthetic = False
     is_google = False
+    # What the request asks for. None: not sent, so the provider's default applied (not recorded as US).
+    country: str | None = None
+    language: str | None = None
+    device: str | None = None
 
     def search(self, query: str, count: int = 10) -> list[SerpHit]:
         raise NotImplementedError
 
 
+SERPAPI_EMPTY = "hasn't returned any results"
+
+
 def parse_serpapi(payload: dict, count: int) -> list[SerpHit]:
+    error = payload.get("error")
+    if error:
+        if SERPAPI_EMPTY in str(error):
+            return []
+        raise SerpCollectError(f"serpapi error: {str(error)[:200]}")
+    if "organic_results" not in payload:
+        raise SerpCollectError("serpapi response has no organic_results block.")
     hits: list[SerpHit] = []
     for item in payload.get("organic_results") or []:
         url = item.get("link") or item.get("url")
@@ -63,9 +123,17 @@ def parse_serpapi(payload: dict, count: int) -> list[SerpHit]:
 
 
 def parse_dataforseo(payload: dict, count: int) -> list[SerpHit]:
+    status = payload.get("status_code")
+    if status is not None and status != 20000:
+        raise SerpCollectError(f"dataforseo status {status}: {str(payload.get('status_message') or '')[:200]}")
     hits: list[SerpHit] = []
     tasks = payload.get("tasks") or []
+    if not tasks:
+        raise SerpCollectError("dataforseo response has no tasks.")
     for task in tasks:
+        task_status = task.get("status_code")
+        if task_status is not None and task_status != 20000:
+            raise SerpCollectError(f"dataforseo task status {task_status}: {str(task.get('status_message') or '')[:200]}")
         for result in task.get("result") or []:
             for item in result.get("items") or []:
                 if item.get("type") != "organic":
@@ -99,6 +167,7 @@ def _reposition(hit: SerpHit, position: int) -> SerpHit:
         provider=hit.provider,
         synthetic=hit.synthetic,
         is_google=hit.is_google,
+        raw_position=hit.raw_position if hit.raw_position is not None else hit.position,
     )
 
 
@@ -117,15 +186,19 @@ class SerpApiProvider(SerpProvider):
             self.client.close()
 
     def search(self, query: str, count: int = 10) -> list[SerpHit]:
-        response = self.client.get(
-            SERPAPI_ENDPOINT,
-            params={"engine": "google", "q": query, "num": min(max(count, 1), 20), "api_key": self.api_key},
+        payload = _send(
+            lambda: self.client.get(
+                SERPAPI_ENDPOINT,
+                params={"engine": "google", "q": query, "num": min(max(count, 1), 20), "api_key": self.api_key},
+            ),
+            self.name,
         )
-        response.raise_for_status()
-        return parse_serpapi(response.json(), count)
+        return parse_serpapi(payload, count)
 
 
 class DataForSeoProvider(SerpProvider):
+    country = "us"
+    language = "en"
     name = "dataforseo"
     synthetic = False
     is_google = True
@@ -142,16 +215,21 @@ class DataForSeoProvider(SerpProvider):
 
     def search(self, query: str, count: int = 10) -> list[SerpHit]:
         depth = min(max(count, 1), 20)
-        response = self.client.post(
-            DATAFORSEO_ENDPOINT,
-            auth=(self.login, self.password),
-            json=[{"keyword": query, "location_code": 2840, "language_code": "en", "depth": depth}],
+        payload = _send(
+            lambda: self.client.post(
+                DATAFORSEO_ENDPOINT,
+                auth=(self.login, self.password),
+                json=[{"keyword": query, "location_code": 2840, "language_code": "en", "depth": depth}],
+            ),
+            self.name,
         )
-        response.raise_for_status()
-        return parse_dataforseo(response.json(), count)
+        return parse_dataforseo(payload, count)
 
 
 def parse_serper(payload: dict, count: int) -> list[SerpHit]:
+    if "organic" not in payload:
+        message = payload.get("message") or payload.get("error") or "no organic block"
+        raise SerpCollectError(f"serper response has no organic results: {str(message)[:200]}")
     hits: list[SerpHit] = []
     for item in payload.get("organic") or []:
         url = item.get("link") or item.get("url")
@@ -177,6 +255,8 @@ def parse_serper(payload: dict, count: int) -> list[SerpHit]:
 
 class SerperProvider(SerpProvider):
     """Google organic results via Serper. Requires SERPER_API_KEY."""
+    country = "us"
+    language = "en"
 
     name = "serper"
     synthetic = False
@@ -192,13 +272,15 @@ class SerperProvider(SerpProvider):
             self.client.close()
 
     def search(self, query: str, count: int = 10) -> list[SerpHit]:
-        response = self.client.post(
-            SERPER_ENDPOINT,
-            headers={"X-API-KEY": self.api_key, "Content-Type": "application/json"},
-            json={"q": query, "num": min(max(count, 1), 20), "gl": "us", "hl": "en"},
+        payload = _send(
+            lambda: self.client.post(
+                SERPER_ENDPOINT,
+                headers={"X-API-KEY": self.api_key, "Content-Type": "application/json"},
+                json={"q": query, "num": min(max(count, 1), 20), "gl": "us", "hl": "en"},
+            ),
+            self.name,
         )
-        response.raise_for_status()
-        return parse_serper(response.json(), count)
+        return parse_serper(payload, count)
 
 
 class BraveFallbackProvider(SerpProvider):
@@ -218,13 +300,17 @@ class BraveFallbackProvider(SerpProvider):
             self.client.close()
 
     def search(self, query: str, count: int = 10) -> list[SerpHit]:
-        response = self.client.get(
-            "https://api.search.brave.com/res/v1/web/search",
-            params={"q": query, "count": min(max(count, 1), 20)},
-            headers={"X-Subscription-Token": self.api_key, "Accept": "application/json"},
+        payload = _send(
+            lambda: self.client.get(
+                "https://api.search.brave.com/res/v1/web/search",
+                params={"q": query, "count": min(max(count, 1), 20)},
+                headers={"X-Subscription-Token": self.api_key, "Accept": "application/json"},
+            ),
+            self.name,
         )
-        response.raise_for_status()
-        results = ((response.json().get("web") or {}).get("results")) or []
+        if payload.get("type") == "ErrorResponse" or "web" not in payload:
+            raise SerpCollectError(f"brave response has no web results: {str(payload.get('error') or payload.get('type') or '')[:200]}")
+        results = (payload.get("web") or {}).get("results") or []
         hits: list[SerpHit] = []
         for item in results:
             url = item.get("url")

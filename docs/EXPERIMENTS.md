@@ -1,0 +1,542 @@
+# Experiment log
+
+One entry per experiment, newest last. Record what was run, on which data, what came out,
+and what it cost, including failures, so the next session does not repeat them. Numbers are
+predicted agreement with labeled Google results, never live Google ranks.
+
+Conventions for every entry:
+
+- **Data**: label file and its sha256, corpus fingerprint from `benchmark` (sha256 over every
+  stored page's URL and HTML hash), crawl date, `as_of` date used for date features.
+- **Protocol**: `loqo`, `cluster` or `cluster-url` (see `src/aeo/ranksim/benchmark.py`).
+- **Denominators**: pairs, queries, query clusters, covered and uncovered rows.
+- **Uncertainty**: 95% percentile bootstrap over query clusters; a "luck" band from random
+  scores on the same pairs.
+- **Cost**: SERP calls, LLM calls and estimated dollars, crawl fetches and wall time.
+
+---
+
+## 2026-11-05 E1. Test suite depends on the developer's environment
+
+- Clean venv, `pip install -e ".[dev]"`, Python 3.13: 63 passed with no provider keys.
+- With `OPENROUTER_API_KEY` exported (any value) `test_stub_llm_and_unmeasured_relevance`
+  failed; with `SERPER_API_KEY` exported `test_auto_serp_refuses_to_invent_results_without_keys`
+  failed. A filled-in `.env` (README setup step) has the same effect, because `Settings` reads
+  `./.env`. One test also created `data/llm-cache/` inside the checkout.
+- Fix: autouse fixtures in `tests/conftest.py` (strip every Settings env var, disable `.env`,
+  refuse non-loopback sockets), lazy cache directories, CI matrix with and without fake keys.
+- After: same pass count with no keys, each key alone, all keys, and a populated `.env`.
+- Cost: $0.
+
+## 2026-11-05 E2. Where the AI-eval sample (35 rows, 12 queries, 33 pairs) came from
+
+- `ai-eval` calls `bootstrap.seed_corpus_if_empty`. On a fresh clone that stores 25 pages:
+  19 third-party pages from `smartcrew/saved_html/` and 6 pages from `smartcrew/pr8_v3/`,
+  which are unpublished drafts stored under the live SmartCrew URLs.
+- Joined to `smartcrew/serp.csv` (135 rows, sha256 `4bcc6715f997...`): 35 covered rows, 100
+  uncovered, LOQO over 12 queries, 33 pairs, pairwise 0.485, NDCG 0.814, Spearman 0.032. This
+  matches the historical AI-eval baseline exactly, so that run used the seed corpus, not a
+  crawl. 6 of the 35 rows score draft HTML against Google's positions for the live pages.
+- On these 33 pairs random scores land between 0.303 and 0.697 for 95% of seeds. The reported
+  AI delta (0.485 to 0.394) is 3 pairs. It is not distinguishable from luck in either direction.
+
+## 2026-11-05 E3. Fresh crawl of the 16-query file
+
+- Command (from a copy of the repo, scratch DB):
+  `python -m aeo.ranksim index-serp smartcrew/serp.csv` then `evaluate`, then
+  `graph --serp smartcrew/serp.csv --out <scratch>`, then `evaluate` and `graph-eval` again.
+- index-serp: 121 URLs attempted, 116 fetched, 19 from saved HTML, 1 robots block, 4 errors;
+  31 seconds wall time. Graph crawl: 50 fetches, 63 graph pages, 4,662 edges, 58 pages stored;
+  44 seconds. No SERP or LLM calls. Cost $0 (bandwidth only).
+- Labeled coverage: 128 of 135 rows. Uncovered: G2 HCSS alternatives (403, 3 rows, including
+  position 1 for "hcss alternative"), G2 B2W Track alternatives (403), thedigitalprojectmanager
+  (403), Capterra BluVue alternatives (404, page removed), a Facebook answers page (robots).
+  The pages that block crawlers are some of the strongest results, so coverage is biased.
+- `evaluate` (LOQO) before the graph crawl: pairwise 0.548 on 458 pairs. After the graph crawl
+  stored 58 more unlabeled pages: 0.579 on the same 458 pairs. In-corpus PageRank and anchor
+  text depend on every stored page, so the metric moves with unlabeled corpus contents.
+  The benchmark now prints a corpus fingerprint for that reason.
+- Historical figures (0.604 on 245 pairs, 0.534 on 414 pairs, 83 pages and 14,068 edges) came
+  from databases that are not in the repo. They cannot be reproduced and should not be quoted.
+
+## 2026-11-05 E4. Baselines and held-out protocols (`benchmark`)
+
+- `python -m aeo.ranksim benchmark --as-of 2026-10-29` on the E3 corpus (fingerprint
+  `f7603b465308...`, 163 stored pages), 128 covered rows, 16 queries, 11 query clusters,
+  458 pairs, 2,000 cluster bootstrap resamples.
+
+  | protocol | lambdamart | bm25f only | linear prior | domain prior | random 95% band |
+  | --- | --- | --- | --- | --- | --- |
+  | loqo | 0.579 (0.490-0.649) | 0.487 | 0.485 | 0.566 | 0.424-0.572 |
+  | cluster | 0.568 (0.495-0.632) | 0.487 | 0.485 | 0.504 | 0.424-0.572 |
+  | cluster-url | 0.566 (0.466-0.657) | 0.487 | 0.485 | 0.410 | 0.424-0.572 |
+
+- LambdaMART minus BM25F: +0.092 (-0.009 to +0.176), +0.081 (-0.002 to +0.141), +0.079
+  (-0.031 to +0.160). Every interval includes 0. BM25F alone and the hand-weighted prior are
+  at chance. A domain prior with no page content matches the model under LOQO, which is a sign
+  LOQO rewards recognizing pages and domains seen in near-duplicate queries.
+- NDCG@10 for random scores on this query mix is 0.640; LambdaMART is 0.70-0.74.
+- 29 of 86 labeled URLs appear in more than one query (78 of 135 rows); the cluster protocols
+  exist because of that.
+
+## 2026-11-05 E5. The score-gap confidence threshold out of sample
+
+- `calibrate` picks a threshold on all LOQO pairs and reports accuracy on the same pairs.
+  On the pre-graph corpus it picks gap >= 2.00 with 0.698 on 23% of pairs, close to the
+  historical "2.00 -> 0.716 on 33%". Held out by query cluster and URL, with each fold's
+  threshold chosen on other folds, those confident calls were right 20 of 41 times. On the
+  post-graph corpus: in-sample gap >= 1.00 (0.668 on 53%), held out 16 of 47.
+- The 150-word gate rewrites thin pages' scores to floor-1, floor-2, ..., which creates score
+  gaps of exactly 1.0 and 2.0. Part of any historical high-gap slice may be those rewritten
+  pairs.
+- Product change: `loo_fit` keeps a threshold only if held-out confident calls are right at
+  least 0.65 of the time on at least 30 calls. On current data every call is UNSURE.
+
+## 2026-11-05 E6. Metric and feature plumbing bugs
+
+- NDCG and top-3 broke score ties by input order, which is label order: a constant scorer got
+  NDCG 1.000. Now the exact expectation over tied orders. LambdaMART numbers did not change
+  (no ties); tied baselines lost 0.01-0.02 NDCG.
+- `orphan`, `link_depth` and `crawl_inlinks` were NaN on every training example; `authority`
+  was a copy of in-corpus PageRank. With the graph features actually in the model: LOQO 0.574
+  vs 0.579 without, cluster-url 0.522 vs 0.566. No evidence the link-graph features help.
+
+## 2026-11-05 E7. Why AI relevance "hurt" (no LLM calls made)
+
+- No LLM key exists here, so the real judge was not re-run; its historical scores are not in the
+  repo. Instead `judge.relevance_experiment` was run on the E2 seed corpus (33 pairs) with
+  synthetic judges, 200 seeds each, `llm_relevance` unconstrained as shipped:
+
+  | judge | mean delta | 5th / 95th percentile | share of runs <= -0.091 |
+  | --- | --- | --- | --- |
+  | uniform random | +0.040 | -0.091 / +0.152 | 8.0% |
+  | true label + noise, sigma 0.1 | +0.222 | +0.061 / +0.364 | 0% |
+  | true label + noise, sigma 0.25 | +0.104 | -0.061 / +0.274 | 2.5% |
+  | true label + noise, sigma 0.5 | +0.048 | -0.092 / +0.212 | 10% |
+
+- Exact binomial intervals: 16/33 (0.485) is 0.308-0.665, 13/33 (0.394) is 0.229-0.579. A paired
+  sign test on at most 3 discordant pairs gives p = 0.25 at best.
+- Conclusion: the -9.1 point result is what chance produces routinely on 33 pairs, and even a
+  moderately useful judge is not reliably detectable at this size. It is not evidence that AI
+  relevance hurts or helps. Six of the 35 judged rows were unpublished drafts.
+- One `ai-eval` run makes 35 judge calls, 1 explanation and 1 rewrite call (37), matching the
+  historical count. The rewrite prompt sent only the first 6,000 characters of raw HTML, which for
+  the default draft is entirely `<head>`; the rewrite never saw the body.
+- Changes: the experiment now reports the paired interval and the random band, the judge feature is
+  monotone, `ai-eval` refuses the paid run below 100 pairs, and the rewrite loop sends extracted
+  text and rejects keyword stuffing. AI relevance stays out of the default score.
+- Cost: $0.
+
+## 2026-11-05 E8. Crawl-to-crawl variation and an accidental fast crawl
+
+- The test and audit sandboxes set a lowercase `https_proxy`, which overrides `HTTPS_PROXY=` in
+  httpx, so "network blocked" runs were not blocked. One audit run re-crawled the ~121 labeled URLs
+  with no delay (robots.txt still respected). That was not intended; the delay default (0.4 s per
+  host) should be used. A second audit run (the branch inventory) pulled about 137 third-party URLs
+  through the other branch's project command for the same reason, with the 0.4 s delay and robots
+  respected. Its LOQO result on its own same-day crawl was 0.544 on 458 pairs against
+  0.548 on mine before the graph crawl, so two same-day crawls differ by about 0.004 here.
+- A probe test reached openrouter.ai through the loopback proxy, past the socket guard. Tests now
+  drop proxy variables, and a regression test checks that httpx cannot reach the internet.
+
+## 2026-11-05 E9. Same-day crawl variation, feature artifacts and extraction
+
+- Three independent crawls of the same 135 labels on the same day (mine, and two by audit agents)
+  gave LOQO pairwise 0.548, 0.544 and 0.576 straight after `index-serp` (458 pairs each). Part of
+  that was the `speed` feature, which recorded our crawler's own timing (politeness sleep, the
+  first robots.txt fetch, the proxy) and so differed between crawls.
+- Removing `speed`, `orphan`, `link_depth` and `crawl_inlinks` from the model (they measure the
+  crawl, not the page) moved results by less than 0.02 under every protocol. The change was made
+  because of what the features measure, not because of the score.
+- The extractor took the first `<main>`/`<article>`; on this crawl 4 stored pages had their word
+  count corrected by `reextract`. That alone moved clusters-and-URLs-held-out pairwise from 0.559
+  to 0.498 and LOQO from 0.587 to 0.581.
+- Current code on the re-extracted corpus (fingerprint changes with re-extraction only through the
+  derived fields; HTML unchanged): LOQO 0.581 (0.499-0.648), cluster 0.559 (0.503-0.609),
+  cluster-url 0.498 (0.404-0.584); BM25F 0.478; random 0.424-0.572; LambdaMART minus BM25F
+  +0.103 (+0.012 to +0.185), +0.081 (+0.017 to +0.128), +0.020 (-0.076 to +0.099). Held-out
+  confident calls: 114 of 183, 62 of 88, 7 of 28 right.
+- Reading: with 11 independent query clusters, any single number here moves by several points
+  with small, legitimate data changes. Only a larger, frozen, dated benchmark (BACKLOG P0-1, P0-2)
+  can settle whether the model beats BM25F on unseen pages.
+
+## 2026-11-05 E10. Fair tie handling and the domain prior
+
+- An independent review found that benchmark pairwise counted score ties as wrong while the random
+  band has no ties, which penalized tie-heavy baselines. With ties at half credit (their expected
+  value under random tie-breaking), on the E9 corpus:
+
+  | protocol | LambdaMART | domain prior | BM25F | linear prior |
+  | --- | --- | --- | --- | --- |
+  | loqo | 0.581 | 0.602 | 0.478 | 0.474 |
+  | cluster | 0.559 | 0.571 | 0.478 | 0.474 |
+  | cluster-url | 0.498 | 0.548 | 0.478 | 0.474 |
+
+- The domain prior reads no page content: each domain's mean labeled relevance in the training
+  queries. It matches or beats the content model under every protocol. On this data, the model's
+  page features add nothing measurable over "which domains rank".
+- The same review found the confidence gate checked per-fold thresholds but shipped a different
+  one. Scored directly, the shipped gap of 1.00 was right on 122 of 232 held-out pairs (0.526).
+- Next measurement that matters: the same comparison on a frozen, dated, multi-site benchmark
+  (BACKLOG P0-1, P0-2), where a domain prior cannot memorize one niche's winners.
+
+## 2026-11-05 E11. Independent cross-check of the baselines
+
+- A separate agent recomputed baselines with its own scripts on its own same-day crawl (pre-branch
+  model code, 458 pairs, 16 queries, query bootstrap; numbers below are its, not `benchmark`'s):
+  LambdaMART LOQO 0.585 (0.519-0.644); BM25F 0.487; hand-weighted linear prior 0.489; domain prior
+  0.566 ties-as-wrong / 0.602 ties-as-half; URL prior (same URL's mean position in training
+  queries) 0.618 ties-as-half; random 0.499 (5th-95th 0.437-0.559).
+- Training without queries that share a labeled URL with the held-out query: 0.502 (0.438-0.568),
+  against 0.558 for dropping the same number of training queries at random. URL identity is what
+  carries between near-duplicate queries.
+- Feature-group ablations (paired against the full model): dropping all text-match features 0.592,
+  dropping quality/length features 0.605, dropping link features 0.546, dropping freshness 0.557.
+  None differs from the full model; after a Bonferroni correction over its 32 comparisons, no
+  difference against the model or against BM25F excludes 0.
+- It agrees with E4, E5, E9 and E10. It also found that confidence is calibrated on all pairs while
+  the product labels a check from the gap to the adjacent page (median adjacent gap 0.345; 17% at or
+  above 1.0), that 9 of the 16 labeled queries have no intent and default to "commercial", and that
+  the thin-page gate's synthetic score offsets count as confident gaps. These are in the backlog.
+
+## 2026-11-05 E12. Frozen snapshot and the first final-split run
+
+- `benchmark-freeze` on the fresh crawl (`reextract.db`, 168 stored rows, link graph of 2026-11-05)
+  with `--as-of 2026-11-05`, seed 0, final share 0.3: 11 query clusters; final split = 5 queries in
+  3 clusters (`best heavy civil construction software`, `hcss alternative`, `hcss heavybid
+  alternative`, `hcss heavyjob alternative`, `heavy civil field management software`); dev = 11
+  queries in 8 clusters. Labels sha256 4bcc6715f997, corpus sha256 f7603b465308. The snapshot holds
+  third-party HTML, so it is not in git and lives only in this session's scratch space.
+- Two dev runs from the snapshot gave byte-identical JSON (apart from `created_at`). Dev, 344 pairs:
+  LambdaMART cluster-url 0.532; BM25F 0.480; domain prior 0.562; random 0.413-0.584. (A cluster
+  bootstrap interval from these 8 clusters was printed here; it is withheld now, like the report
+  does below 10 clusters. The random band is from random scores, not the bootstrap, and stays.)
+- One `--final` run for the current configuration, model id `lgbm-98ceb518acedd909` (MODEL_FEATURES,
+  default monotone set, 40 rounds, 15 leaves), recorded in the snapshot's `results.jsonl`. 114 pairs:
+
+  | protocol  | LambdaMART | BM25F | linear prior | domain prior | random (95% of seeds) |
+  |-----------|-----------:|------:|-------------:|-------------:|----------------------:|
+  | final     | 0.561      | 0.474 | 0.439        | 0.583        | 0.351-0.632           |
+  | final-url | 0.579      | 0.474 | 0.439        | 0.575        | 0.351-0.632           |
+
+  No confidence threshold met the bar on held-out dev pairs, so every final pair stays UNSURE.
+- Reading: every number sits inside the random band, and only 3 clusters were scored. The first
+  render of this run printed "lambdamart beats bm25f_only" from a bootstrap over 3 clusters; that
+  interval is not trustworthy, so the report now gives no verdict below 10 scored clusters
+  (`MIN_VERDICT_CLUSTERS`). The final split is there so that later model changes (B16) are judged
+  on queries nobody tuned on; with 16 labeled queries it cannot show an effect of this size either way.
+  It becomes useful when the label set grows (C1).
+
+## 2026-11-05 E13. Calibrating the statistic the check labels
+
+- Before: the threshold was chosen on every labeled pair, but the check labeled the predicted rank
+  from the gap to the adjacent page, and gaps came after the 150-word rule, which places a thin page
+  exactly 1.0 below the last full page (then 2.0, ...). With a 0.5 threshold a 100-word draft was
+  CLEARER against every competitor (reproduced on the previous commit with a fixed-score model).
+- Now: two statistics, each with its own threshold and both held-out checks (deployed threshold and
+  cross-fitted): head-to-head gaps label competitor rows; each page's smallest gap to its predicted
+  neighbours, counted right only if both neighbour orders are right, labels the predicted rank. Gaps
+  come from the model's own scores, and pages the rule placed are left out of calibration and are
+  always UNSURE in the check, with a note that a rule placed them.
+- On the fresh crawl (`freeze-src.db`, 16 queries): 443 head-to-head pairs and 126 adjacent cases
+  in leave-one-query-out. Head-to-head: a 1.00 gap looked accurate in-sample (0.665 on 53%) but was
+  right on 114 of 217 held-out cases, and cross-fitted 7 of 28. Adjacent: no threshold reaches 0.65
+  on 30 cases even in-sample. Dev split of the snapshot, all protocols: no cross-fitted adjacent
+  call. Every call stays UNSURE, as before; the change matters once the data supports a threshold.
+
+## 2026-11-10 E14. The integration branch's forward check, with ties counted as half
+
+Analysis of committed files only, not a new run and not a new claim. Source:
+`evals/forward-2026-11-09/report.json` on PR #5 (`cursor/integration-review-175f`, commit f76f7f1):
+models frozen on a Nov 6 Serper snapshot of 30 queries, scored once against the Nov 9 snapshot of
+the same queries, 1,341 pairs over the Nov 9 candidate lists. That report counts a tie as wrong. This
+benchmark counts a tie as half (what random tie-breaking scores), so the figures below are
+(correct + ties / 2) / pairs from the same counts.
+
+| scorer | ties | published (ties wrong) | ties as half | draft vs draft (116 pairs) | draft vs ranking page (281 pairs) |
+|---|---:|---:|---:|---:|---:|
+| LambdaMART (content) | 104 | 0.507 | 0.546 | 0.414 | 0.528 |
+| BM25 | 105 | 0.444 | 0.484 | 0.444 | 0.472 |
+| persistence (keep Nov 6 order) | 195 | 0.694 | 0.767 | 0.500 (all ties) | 0.712 |
+| equal-weight blend | 29 | 0.702 | 0.713 | 0.591 | 0.705 |
+| history-aware rule | 29 | 0.751 | 0.762 | 0.591 | 0.712 |
+
+- With ties counted as half, persistence is at least as good as the history-aware rule; counting
+  ties as wrong is what put the rule ahead, because persistence ties every pair of new pages.
+- Content models are near chance overall and below it on draft vs draft (16 queries). This matches
+  E4 to E12: the core use case, placing a page Google has not ranked, is not supported yet.
+- Limits: one 2.5-day interval on one site's 30 queries; no intervals can be computed from the
+  committed file (it has no per-query counts); the page HTML behind the content scores is private,
+  so only persistence and overlap can be recomputed from git. The forward ledger rows carry a stated
+  time of 2026-11-07 although they were written after the Nov 9 results existed. They carry no
+  write time, so this branch's ledger counts them as undated and does not score them (I7); rows this
+  ledger writes are dated by when they were written (I2).
+
+## 2026-11-10 E15. One client-rendered shell, and how much one row moves the numbers
+
+- B6 marks pages whose stored HTML is an empty app shell (an empty `#root`/`#__next` mount point,
+  a noscript asking for JavaScript, or almost no visible text, with scripts). On the fresh crawl
+  (`freeze-src.db`, 163 fetched pages) exactly one page qualifies: `https://www.dirtworksoftware.com/`
+  (0 words, empty `#root`). It is a labeled result on a dev-split query. The low-text SmartCrew
+  pages (58 to 172 words) are card lists with their text in the HTML and are not flagged.
+- Frozen dev split, before and after leaving that one row out (344 to 337 pairs, 200 resamples):
+
+  | protocol | LambdaMART before | after | BM25F before | after | domain prior before | after |
+  |---|---:|---:|---:|---:|---:|---:|
+  | loqo | 0.605 | 0.632 | 0.480 | 0.487 | 0.634 | 0.642 |
+  | cluster | 0.520 | 0.543 | 0.480 | 0.487 | 0.564 | 0.571 |
+  | cluster-url | 0.532 | 0.528 | 0.480 | 0.487 | 0.562 | 0.568 |
+
+- Reading: one row out of 92 moves a headline number by up to 2.7 points. Every interval is wider
+  than any of these changes and only 8 clusters are scored, so no verdict changes. This is a data
+  cleaning decision made from inspecting the crawl, not from any result; the model configuration
+  and its id are unchanged, so the recorded final-split run (E12) is not repeated.
+
+## 2026-11-10 E16. A content-blind site prior on the frozen dev split
+
+- `site_prior` scores a page by how many training queries list its site (registrable domain) among
+  their labeled results. It is the web-UI branch's "site history" signal (PR #2 `site_history.py`)
+  without its fitted scale, with the direction fixed in advance. Held-out queries never count, and
+  under cluster-url the held-out URLs are dropped from training first, so only other pages of the
+  same site vote. Specified before this run; not tuned.
+- Frozen dev split (11 queries, 8 clusters, 337 pairs, 1000 resamples), same folds for every row:
+
+  | protocol | LambdaMART | BM25F | domain prior | site prior | random 95% band |
+  |---|---:|---:|---:|---:|---:|
+  | loqo | 0.632 | 0.487 | 0.642 | 0.656 | 0.418 to 0.582 |
+  | cluster | 0.543 | 0.487 | 0.571 | 0.602 | 0.418 to 0.582 |
+  | cluster-url | 0.528 | 0.487 | 0.568 | 0.614 | 0.418 to 0.582 |
+
+  Point values only. The cluster bootstrap intervals of this run are not given: over 8 clusters
+  they look tight and are not, and the report withholds them below 10 scored clusters. The random
+  band comes from random scores on the same pairs, not from that bootstrap.
+
+- Reading: a signal that reads no page text is the best row under every protocol here, including
+  the one closest to scoring an unseen draft. With 8 clusters no verdict is given, and these are
+  same-snapshot numbers, not accuracy. It agrees with two independent results: PR #2's lab (site
+  history beat the content model) and PR #5's forward check (keeping the previous order beat the
+  content models, E14). For the product question "does my page beat these competitors", the site
+  a page is on may matter more than its text on this kind of query; a page edit cannot move this
+  signal, and the check must not suggest otherwise.
+- No persistence row: `smartcrew/serp.csv` has no `prior_position` column.
+
+## 2026-11-10 E17. A regularized LambdaMART, fixed in advance, against the current one
+
+- Candidate written into `lambdamart.REGULARIZED_PARAMS` before any run: 7 leaves (was 15),
+  `min_data_in_leaf` 5 (was 1), `lambda_l2` 1.0, learning rate 0.05 for 60 rounds (was 0.08 for
+  40), linear label gain 0..10 (was the exponential default). Model id `lgbm-ec2fb7a6ab11c05e`;
+  the current configuration keeps `lgbm-98ceb518acedd909`.
+- Adoption rule written into `benchmark.adoption_decision` before the run: under cluster-url the
+  candidate must beat the current model by at least 0.05, with the paired 95% interval above 0,
+  and at least 10 clusters scored.
+- Frozen dev split, same folds and 337 pairs, 1000 resamples:
+
+  | protocol | current | regularized |
+  |---|---:|---:|
+  | loqo | 0.632 | 0.588 |
+  | cluster | 0.543 | 0.537 |
+  | cluster-url | 0.528 | 0.531 |
+
+  Paired difference under cluster-url: +0.003. Its interval is withheld: a bootstrap over 8 clusters
+  is not trustworthy, and the report gives none below 10 scored clusters. Not adopted: the gain is
+  under 0.05, and only 8 clusters were scored.
+- In-sample agreement (trained and scored on the same 11 queries): current 0.950, regularized 0.893.
+  Against held-out cluster-url (0.528, 0.531), both memorize most of what they fit; regularization
+  narrows the gap without improving held-out agreement. The final split was not used.
+
+## 2026-11-10 E18. Placing new top 10 entrants without page text (protocol, fixed before running)
+
+MISSION next work item 1 asks for a predictor for pages that newly enter the top 10, measured on
+real later results. The integration branch (PR #5) committed two dated Serper position lists for the
+same 30 queries (`evals/forward-2026-11-09/baseline_serp.csv`, Nov 6, 294 rows; `forward_serp.csv`,
+Nov 9, 299 rows; gl=us, hl=en, num=10). Page HTML is private, so only signals that need no page text
+can be tested. This protocol is committed before any number is computed; the analysis runs once.
+
+- Data are read from `origin/cursor/integration-review-175f` and not copied into this branch.
+  Queries are normalized with `intents.normalize_query`, URLs compared with `urlkey.match_key`, sites
+  with `benchmark.site_key`.
+- Signals use the Nov 6 list only:
+  - persistence: minus the Nov 6 position of the URL in that query; a URL absent on Nov 6 (an
+    entrant) ties with every other entrant, below every returning URL;
+  - site prior: the number of other queries whose Nov 6 list contains the URL's site (the query
+    itself is excluded);
+  - combined, fixed in advance: persistence first, and entrants ordered among themselves by the site
+    prior.
+- Target: Nov 9 positions. Pairs: every pair of URLs in a query's Nov 9 list. Subsets: returning
+  only (both on the query's Nov 6 list), entrant vs returning, entrant vs entrant.
+- Metric: pairwise agreement with ties counted as half; 95% interval from 2000 bootstrap resamples
+  of queries (seed 0); a random band from 1000 random scorings of the same pairs.
+- Decision rule: the site prior is said to order new entrants better than chance only if, on
+  entrant vs entrant pairs, the lower end of its interval is above the random band's upper edge.
+  Otherwise the result is "no evidence". The numbers are recorded whatever they are.
+
+E18 results (the single run of the protocol above; script and inputs kept outside the repo):
+
+| subset | pairs | persistence | site prior | combined | random 95% band |
+|---|---:|---:|---:|---:|---:|
+| all | 1341 | 0.767 (0.714 to 0.817) | 0.624 (0.592 to 0.656) | 0.783 (0.738 to 0.826) | 0.456 to 0.544 |
+| returning only | 667 | 0.891 (0.849 to 0.929) | 0.641 (0.599 to 0.679) | 0.891 | 0.439 to 0.561 |
+| entrant vs returning | 479 | 0.704 (0.629 to 0.779) | 0.605 (0.552 to 0.663) | 0.704 | 0.436 to 0.566 |
+| entrant vs entrant | 195 | 0.500 (all ties) | 0.613 (0.522 to 0.696) | 0.613 | 0.395 to 0.605 |
+
+- Decision under the rule: no evidence. On entrant vs entrant pairs (23 queries) the site prior's
+  interval starts at 0.522, inside the random band (0.395 to 0.605). Its point estimate (0.613) is
+  just above the band's upper edge: about 1.3% to 1.5% of random scorings reach it. The rule asks
+  for the interval's lower end to clear the band, and it does not.
+- Context, not part of the rule: PR #5's committed report gives the content models' right, tied
+  and wrong counts on the same 195 entrant pairs. With ties as half they come to LambdaMART 0.472
+  (78 right, 28 tied) and BM25 0.479 (79 right, 29 tied); the report's own figures, which count a
+  tie as wrong, are 0.400 and 0.405. Persistence alone reproduces
+  E14 (0.767 on 1341 pairs, 195 ties). The combined rule adds about 0.016 overall by ordering
+  entrants among themselves.
+- Correction, recorded rather than hidden: the first run computed the random band from independent
+  coin flips per pair (entrant vs entrant 0.426 to 0.574), not from random scores per URL as the
+  protocol says. That band is too narrow, because pairs in one query share URLs. The band above is
+  the protocol's; with either band the rule is not met, and the signals' numbers did not change.
+- Reading: on this one 2.5-day interval, nothing tested here places new entrants reliably. The
+  content-blind site prior points the right way (as E16 and PR #2's lab did) but 195 pairs in 23
+  queries are not enough to meet the rule fixed in advance. More snapshots of the same queries (C2)
+  are the cheapest way to grow the entrant set; each Serper snapshot of 30 queries costs about 30
+  credits.
+- Review (B19, 2026-11-10): an independent reimplementation from the protocol text alone matched
+  every pair count and point estimate, the inputs matched the files on PR #5's branch byte for
+  byte, and the protocol text did not change between its commit (13f7074) and the results
+  (ec70ad3). The review corrected two descriptions above: the decision line said the point estimate
+  was at the band's edge (it is just above it), and the context line said the report gives the
+  tie-as-half figures (they are computed from its counts). The decision is unchanged.
+
+## 2026-11-10 E19. The integration branch's new-page check, recomputed with ties as half
+
+Analysis of PR #5's committed files and a rerun of its code from git, not a new snapshot and not a
+new claim. Source: `cursor/integration-review-175f`, commit 000f2c4 (the protocol: `new_page.py`,
+the `new-page-eval` command and `tests/test_new_page.py`, 2026-11-10 14:22:48Z) and commit 96d4a25
+(the results: `evals/forward-2026-11-09/new_page.md`, `new_page_report.json` and
+`new_page_ledger.json`, 14:26:57Z). It uses the same two Serper lists as E14 and E18 (Nov 6 and
+Nov 9, 30 queries) and the same Nov 9 outcome, so nothing here is new forward evidence.
+
+- What it ran. A draft is a Nov 9 URL with no Nov 6 position on that query and no page stored on
+  Nov 6: 63 rows, 34 with Nov 9 page text and 29 with no HTML. They are a strict subset of E18's 97
+  entrants; the other 34 entrants have a stored page because they ranked on another Nov 6 query.
+  Queries form 4 families, and each family is scored from the other families' Nov 6 rows. Three
+  scorers: a domain prior (the host's mean Nov 6 relevance; an unseen host gets the training mean),
+  content and query match (within-query z-scores of URL-token overlap and of the frozen BM25;
+  missing text adds 0), and a blend whose domain weight was fit on Nov 6 (0.75, 0.5, 0.5, 0.75).
+  LambdaMART and BM25 are read back from the Nov 9 ledger's score gaps; their HTML is private.
+- Its gate, in the protocol commit: on both text slices (two drafts with text, 22 pairs; a draft
+  with text against a page that already ranked, 167 pairs), beat LambdaMART by 0.05, stay at least
+  at BM25, and keep the query bootstrap interval of the gain above 0 (2000 resamples, seed
+  20261110). A tie counts as wrong. Nothing passed, and the ranker is unchanged.
+- Reproduction from git alone. The AGENTS.md command plus `--ledger-json`, on Python 3.13, rebuilds
+  `new_page_report.json` and `new_page_ledger.json` byte for byte (chain head d6e51fed). It reads
+  three tracked files (the Nov 9 `ledger.json`, `baseline_serp.csv`, `forward_serp.csv`), no HTML,
+  and opens no network connection. 99 number checks against `new_page.md` and the ledger match, and
+  341 tests pass on 3.11 and 3.13. Limits: the documented command (AGENTS.md lines 38 to 42) has no
+  `--ledger-json`, so it does not rebuild the ledger, and its `--out` overwrites the committed
+  report. On Python 3.11 every shown number matches, but the chain head is bc3d2e31: `sum()` changed
+  in Python 3.12, and `population_z` (`new_page.py` lines 122 to 132) feeds the hashed score gaps.
+  No test checks the bootstrap seed or draw count, the BM25 clause of the gate on its own, or the
+  committed intervals.
+
+Ties as half, from the report's own counts and its own bootstrap stream (a replay with ties as
+wrong matches the report within 5e-7). Each cell: ties as half (published figure with ties as
+wrong; ties).
+
+| scorer | draft vs draft (116 pairs, 16 queries) | both drafts have text (22, 8) | draft vs ranking page (281, 23) | draft has text (167, 19) | all pairs (1341, 30) |
+|---|---:|---:|---:|---:|---:|
+| LambdaMART | 0.414 (0.293; 28) | 0.545 (0.545; 0) | 0.528 (0.477; 29) | 0.521 (0.521; 0) | 0.546 (0.507; 104) |
+| BM25 | 0.444 (0.319; 29) | 0.705 (0.682; 1) | 0.472 (0.420; 29) | 0.425 (0.425; 0) | 0.484 (0.444; 105) |
+| domain prior | 0.595 (0.397; 46) | 0.636 (0.409; 10) | 0.536 (0.441; 53) | 0.569 (0.473; 32) | 0.574 (0.500; 197) |
+| content and query match | 0.556 (0.517; 9) | 0.659 (0.636; 1) | 0.457 (0.431; 15) | 0.419 (0.419; 0) | 0.523 (0.501; 58) |
+| blend | 0.552 (0.534; 4) | 0.636 (0.636; 0) | 0.495 (0.480; 8) | 0.497 (0.497; 0) | 0.545 (0.536; 24) |
+
+- Decision: unchanged. PR #5's own `adopt_draft_path`, fed these figures, still rejects all three
+  scorers on both gates. The domain prior comes closest on the pasted-draft path: 0.569 against a
+  bar of 0.571 when the draft has text, but 0.636 is below BM25's 0.705 when both drafts have text,
+  and both of its text-slice gain intervals include 0. On the slices that keep pages with no HTML
+  it clears draft vs draft and fails draft vs ranking page (0.536 against a bar of 0.578).
+- One published statement depends on the tie rule. `new_page.md` line 58 and COORDINATION.md line
+  233 say the content rule's draft vs draft gain interval is above 0 (+0.224, 0.068 to 0.379; the
+  blend +0.241, 0.084 to 0.400). With ties as half the content gain is +0.142 (-0.021 to +0.325) and
+  the blend's +0.138 (-0.014 to +0.329). Over 300 bootstrap seeds the content interval's low end is
+  above 0 in all 300 with ties as wrong and in none with ties as half. The only draft vs draft gain
+  interval above 0 with ties as half is the domain prior's: +0.181 (+0.026 to +0.426). The tie rule
+  accounts for 0.082 of the content gain; with ties as half, +0.138 of the remaining +0.142 is on the
+  66 pairs where one draft has text and the other does not.
+- With ties as half the content-blind domain prior is the best point estimate on 4 of the 5 slices,
+  and BM25 on the 22 pairs. Counting ties as wrong made it look like the weakest new rule on draft
+  vs draft: 46 of its 116 pairs are ties between two hosts that are unseen in that family's
+  training rows. The report's Random row (0.500) compares only with tie-as-half figures.
+- The blend weight was also fit with ties counted as wrong. With ties as half, family 4 picks 1.0
+  instead of 0.75. That blend is still rejected (0.682 on the 22 pairs, 0.491 on the 167).
+
+Leakage and timeline:
+
+- No Nov 9 position reaches a new scorer. Shuffling the Nov 9 positions inside each query changes 0
+  of 299 scores for all three. The domain prior, the families and the blend weights come back from
+  Nov 6 rows alone, and mutation runs show the tests catch the leaks they target.
+- The Nov 9 list and Nov 9 page text do reach the content rule and the blend (and the BM25 and
+  LambdaMART rows): their z-scores and BM25 statistics are taken over each query's Nov 9 list. A
+  user would know only the current list. Taking overlap and domain z-scores over the Nov 6 list plus
+  the page, and BM25 z-scores over returning pages with text plus the page, moves the 22-pair rate
+  from 0.659 to 0.614 (content) and from 0.636 to 0.591 (blend). Most of that shift comes from
+  leaving the drafts' own BM25 out of the reference set. No decision changes. `new_page.md` line 31
+  says each family is scored from other families' Nov 6 rows only; that is true of the prior and the
+  weight, not of the content score.
+- A draft's text is the Nov 9 crawl, taken after the page ranked (the fetch time is not in git). It
+  holds no position. Whether a draft has text tracks its position: the 29 drafts with no HTML average
+  position 5.448, the 34 with text 7.441.
+- Missing text adds 0. With missing pages ranked last instead, content and query match is 44/116 on
+  draft vs draft, not 60/116, so 16 of its 26 extra right pairs over LambdaMART come from that
+  choice. The rule copies the z-scored blend of f76f7f1, but it was not fixed before the Nov 9 labels
+  existed.
+- The 167-pair slice ("draft has text") includes 51 pairs whose ranking page has no HTML. LambdaMART
+  is 9 of those 51 and 78/116 (0.672) when both pages have text. PR #5's MISSION.md line 57 gives
+  87/167 as the figure "on pages that have text". On the 116 pairs where both have text, every new
+  rule is below LambdaMART with ties as half: blend 0.491, domain prior 0.517, content 0.397.
+- Timeline. The Nov 9 outcomes entered git in f76f7f1 (2026-11-09 14:32:04Z), about 20 minutes after
+  the Nov 9 Serper pull, and 384c4a6 restated 34/116 in MISSION.md. `new_page.py` and its gates first
+  appear in 000f2c4. That commit's own test reads the Nov 9 labels and asserts the split behind 34/116
+  (28 ties, 22 right and 44 wrong on mixed pairs, 12 right and 10 wrong on text pairs;
+  `tests/test_new_page.py` lines 181 to 185 at 000f2c4). Its test fixture (lines 113 to 114) holds
+  the Nov 9 text-slice values of LambdaMART (0.545, 0.521) and BM25 (0.425). So the text-slice gate
+  was written with the Nov 9 breakdown known.
+- COORDINATION.md line 232 ("Protocol was committed before the Nov 9 look") does not hold on the git
+  record, and neither do the 000f2c4 docstrings (`new_page.py` line 3, the test file's line 3) or its
+  commit message. `new_page.md` line 29 ("fixed before these scores") is the narrower claim, and git
+  cannot check it: the two commits are 4 min 9 s apart and a full run takes a few seconds.
+- The late gate did not decide the outcome. No setting tried (margin 0 to 0.05, BM25 floor on or
+  off, interval rule on or off) adopts any rule on the pasted-draft path.
+
+Ledger timing:
+
+- All 897 rows of `new_page_ledger.json` carry created_at 2026-11-07T04:00:00Z (`new_page.py` line
+  905, `PREDICTION_CREATED_AT`). They could not exist then: every row's candidate list is that
+  query's Nov 9 list, and 105 rows use Nov 9 page text. The file holds no write time: the export
+  drops `uploaded_at`, no row has `recorded_at`, all 90 outcomes have an empty `source_sha256`, and
+  the `created_at_meaning` note that the Nov 9 ledger rows carry is missing.
+- That stamp is the only reason the rows resolve. PR #5's `score_ledger` counts an outcome observed
+  after created_at plus 14 hours; stamped at the 000f2c4 commit time, 0 of 3,744 calls resolve.
+  `new_page.md` line 60 reports 671/1144, 672/1283 and 719/1317 resolved calls, and the ledger's
+  `scores` block stores those tie-dropped rates under the key "accuracy".
+- This branch's ledger verifies the chain (897 rows, head d6e51fed) and scores none of it, because
+  the rows carry no write time (I2, I7). Written through this branch on Nov 10, the same rows would
+  be dated by that write and resolve 0 calls.
+- No page text, HTML, snippets or SmartCrew corpus content is in the added files. The longest string
+  in the ledger is 147 characters, and all 155 URLs were already in the Nov 9 `ledger.json`.
+
+Reading:
+
+- For "does my page beat the competitors for this search?" with a new page, this check adds no
+  support for a text-based answer. On the 22 pairs closest to a pasted draft (two new pages with
+  text, 8 queries) LambdaMART is 0.545 (0.286 to 0.778) and BM25 0.705 (0.500 to 0.917). Against
+  pages that already ranked (167 pairs, 19 queries) LambdaMART is 0.521 and both new text rules are
+  lower.
+- With ties as half, a content-blind host signal is again the best point estimate on most slices,
+  as in E10, E16 and E18. It also failed the gate, and a page edit cannot move it. On the 116 draft
+  pairs E18's site prior is 0.634 and this domain prior 0.595; on the 22 text pairs E18's site prior
+  is 0.500 (10 ties). These cross-checks reuse an outcome both analyses had already seen, so they are
+  diagnostics. E18's decision (no evidence) stands.
+- Limits: one 2.5-day interval on 30 queries in one site's niche, with 116 draft pairs in 16 queries
+  and 22 text pairs in 8. These are retrospective scores on an outcome that had already been looked
+  at: not accuracy and not forward evidence. The next Serper snapshot of the same 30 queries (C2) is
+  the first chance to score a gate fixed before its outcome exists.

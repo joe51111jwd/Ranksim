@@ -317,3 +317,169 @@ def gap_summary(rows: list[Keyword] | None = None) -> dict[str, int]:
         "with_page": sum(1 for row in body if row.page_exists),
         "gaps": len(gaps),
     }
+
+
+# Columns that keyword tools and Search Console put next to the query. In a plain list of
+# queries a whole comma-separated cell is almost never one of these.
+_EXPORT_COLUMNS = frozenset({
+    "intent", "volume", "search volume", "avg. monthly searches", "kd", "keyword difficulty", "difficulty", "cpc",
+    "competition", "competitive density", "clicks", "impressions", "ctr", "position", "traffic", "url",
+})
+# Other columns that Google Ads and Keyword Planner put next to the keyword. Below title rows, a
+# header with the query column counts only when it also names one of these or a metric column.
+_EXPORT_LABEL_COLUMNS = frozenset({
+    "match type", "campaign", "ad group", "currency", "keyword status", "status", "impr.", "avg. cpc", "cost",
+    "conversions", "max. cpc", "three month change", "yoy change", "competition (indexed value)",
+})
+_DELIMITERS = (",", "\t", ";")
+# Keyword Planner and Google Ads exports put a title and a date range above the header row.
+_HEADER_LINES = 10
+
+
+def load_keyword_file(path: str | Path) -> list[Keyword]:
+    """Queries to collect or track from a file: a CSV with a query column (optional ``intent``)
+    or one query per line. The query column may be named query, keyword, queries or top queries,
+    as keyword tool and Search Console exports name it, and the file may be separated by commas,
+    tabs or semicolons. The header may sit below title rows within the first 10 lines, as in
+    Keyword Planner and Google Ads exports; the rows above it are dropped. Below the first line,
+    a row counts as a header only when it has two or more cells, every row under it has as many,
+    and it names the query column next to an export column (volume, clicks, match type, campaign
+    and the like) or has a column of only numbers. So a later line that is just "keyword", or a
+    query with commas in a plain list, stays a query. In a table, a Google Ads totals row ('Total:
+    Keywords' or 'Total: Account' in the first cell or the query cell) and a query cell of only
+    punctuation, such as '--', are not queries. An emoji query stays. A plain list keeps every line.
+    A table whose header has none of those is refused rather than read as one query per line,
+    since each row would become a paid search. It counts as a table when every line has the
+    same number of cells and the header names a metric column (volume, clicks, CPC and the
+    like) or a column holds only numbers below a text header, or when a header below title rows
+    has a column of only numbers. A plain list whose queries contain commas is still read one
+    query per line. Intent falls back to the shared rule (aeo.ranksim.intents)."""
+    import csv as _csv
+
+    from aeo.ranksim.groundtruth import QUERY_COLUMNS
+    from aeo.ranksim.intents import KNOWN_INTENTS, intent_for, normalize_query
+
+    def cells(line: str, delimiter: str) -> list[str]:
+        return [cell.strip() for cell in next(_csv.reader([line], delimiter=delimiter))]
+
+    text = Path(path).read_text(encoding="utf-8-sig")
+    lines = [line for line in text.splitlines() if line.strip() and not line.lstrip().startswith("#")]
+    rows: list[tuple[str, str | None]] = []
+    found = None
+    for start in range(min(_HEADER_LINES, len(lines))):
+        for delimiter in _DELIMITERS:
+            if start:
+                header = _titled_table_header(lines, start, delimiter, cells) or []
+            else:
+                header = [cell.lower() for cell in cells(lines[0], delimiter)]
+            query_column = next((name for name in QUERY_COLUMNS if name in header), None)
+            if query_column:
+                found = (delimiter, header, query_column)
+                lines = lines[start:]  # title rows above the header are not queries
+                break
+        if found:
+            break
+    if found:
+        delimiter, header, query_column = found
+        position = header.index(query_column)
+        intent_position = header.index("intent") if "intent" in header else None
+        for line in lines[1:]:
+            row = cells(line, delimiter)
+            if any(_totals_cell(cell) for cell in (row[:1] + row[position:position + 1])):
+                continue  # a Google Ads totals row, such as 'Total: Keywords' or 'Total: Account'
+            if len(header) == 1:
+                # A one-column list keeps a query with an unquoted comma whole.
+                query = row[0] if len(row) == 1 else line.strip()
+            else:
+                query = row[position] if position < len(row) else ""
+            if _placeholder(query):
+                continue  # a placeholder such as '--' in a report row, not a query
+            intent = (row[intent_position] if intent_position is not None and intent_position < len(row) else "").lower()
+            rows.append((query, intent if intent in KNOWN_INTENTS else None))
+    else:
+        for delimiter in _DELIMITERS:
+            header = _metric_table_header(lines, delimiter, cells)
+            if header:
+                raise ValueError(
+                    f"{path} looks like a table with the columns {', '.join(header)}, but none is a query column. "
+                    f"Name the query column one of: {', '.join(QUERY_COLUMNS)}. "
+                    "If every line is one query, add a first line that says query."
+                )
+        rows = [(line.strip(), None) for line in lines]
+    seen: set[str] = set()
+    out: list[Keyword] = []
+    for query, intent in rows:
+        key = normalize_query(query)
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        out.append(Keyword(query=key, intent=intent or intent_for(key, {}), cluster="file", suggested_target_page="", page_exists=False, notes=f"from {Path(path).name}"))
+    return out
+
+
+def _placeholder(query: str) -> bool:
+    """Whether a query cell holds only punctuation and spaces, such as '--' in a report row. An
+    emoji query, which Search Console exports can hold, is a query."""
+    import unicodedata
+
+    return all(char.isspace() or unicodedata.category(char).startswith("P") for char in query)
+
+
+def _totals_cell(cell: str) -> bool:
+    """Whether a table cell is a Google Ads totals label, such as 'Total: Keywords' or 'Total: Account'.
+    A query such as 'total gym' has no colon after the word total, so it is not one."""
+    head, colon, _ = cell.partition(":")
+    return bool(colon) and head.strip().casefold() == "total"
+
+
+def _number(cell: str) -> bool:
+    import math
+
+    value = cell.strip().strip("$€£%<>~").replace(",", "").replace(" ", "")
+    try:
+        return math.isfinite(float(value))
+    except ValueError:
+        return False
+
+
+def _numeric_column(header: list[str], body: list[list[str]]) -> bool:
+    """Whether a column with a text name holds only numbers in the rows below it."""
+    for column, name in enumerate(header):
+        values = [row[column] for row in body if row[column]]
+        if name and not _number(name) and values and all(_number(value) for value in values):
+            return True
+    return False
+
+
+def _metric_table_header(lines: list[str], delimiter: str, cells) -> list[str] | None:
+    """The header of a keyword table with no query column, or None when the lines read as queries."""
+    table = [cells(line, delimiter) for line in lines[:21]]
+    if table and len(table[0]) >= 2 and all(len(row) == len(table[0]) for row in table):
+        header = [cell.lower() for cell in table[0]]
+        if any(cell in _EXPORT_COLUMNS for cell in header) or _numeric_column(header, table[1:]):
+            return header
+    for start in range(1, min(_HEADER_LINES, len(lines))):
+        header = _titled_table_header(lines, start, delimiter, cells)
+        if header:
+            return header
+    return None
+
+
+def _titled_table_header(lines: list[str], start: int, delimiter: str, cells) -> list[str] | None:
+    """The header of an export table that starts below title rows, at ``lines[start]``, or None.
+
+    It needs two or more filled cells and at least one row below it, and each of the next 20
+    rows must have as many cells. It must also name the query column next to an export column
+    (volume, clicks, match type, campaign and the like), or have a column of only numbers.
+    A line further down a plain list of queries, even one with commas, rarely looks like that."""
+    from aeo.ranksim.groundtruth import QUERY_COLUMNS
+
+    header = [cell.lower() for cell in cells(lines[start], delimiter)]
+    body = [cells(line, delimiter) for line in lines[start + 1 : start + 21]]
+    if sum(1 for cell in header if cell) < 2 or not body or any(len(row) != len(header) for row in body):
+        return None
+    named = any(cell in QUERY_COLUMNS for cell in header) and any(
+        cell in _EXPORT_COLUMNS or cell in _EXPORT_LABEL_COLUMNS for cell in header
+    )
+    return header if named or _numeric_column(header, body) else None
+

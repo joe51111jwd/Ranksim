@@ -27,31 +27,70 @@ def normalize_url(url: str, *, keep_trailing_slash: bool = False) -> str:
     if not host:
         raise ValueError("URL is missing a host")
     port = parts.port
+    if ":" in host:
+        host = f"[{host}]"  # IPv6 literals keep their brackets, or the URL is malformed
     if port and not (
         (parts.scheme == "http" and port == 80) or (parts.scheme == "https" and port == 443)
     ):
         netloc = f"{host}:{port}"
     else:
         netloc = host
-    path = parts.path or "/"
+    path = _remove_dot_segments(parts.path) or "/"
     if path != "/" and path.endswith("/") and not keep_trailing_slash:
         path = path[:-1]
     return urlunsplit((parts.scheme, netloc, path, parts.query, ""))
+
+
+def _remove_dot_segments(path: str) -> str:
+    """Drop '.' and '..' segments as httpx does before it sends a request, so robots.txt is checked
+    against the path the server receives. A segment spelled with %2E counts too: many servers
+    resolve /a/%2E%2E/b as /b. A path without such a segment is returned unchanged."""
+    if "." not in path and "%2e" not in path.lower():
+        return path
+    segments = path.split("/")
+    plain = [segment.replace("%2E", ".").replace("%2e", ".") for segment in segments]
+    if "." not in plain and ".." not in plain:
+        return path
+    output: list[str] = []
+    for segment, spelled in zip(segments, plain):
+        if spelled == ".":
+            continue
+        if spelled == "..":
+            if output and output != [""]:
+                output.pop()
+            continue
+        output.append(segment)
+    return "/".join(output)
 
 
 def same_site(left: str, right: str) -> bool:
     return domain_of(left) == domain_of(right) and domain_of(left) != ""
 
 
+_NAT64 = ipaddress.ip_network("64:ff9b::/96")
+
+
 def _is_public_ip(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
-    return not (
-        ip.is_private
-        or ip.is_loopback
-        or ip.is_link_local
-        or ip.is_reserved
-        or ip.is_multicast
-        or ip.is_unspecified
-    )
+    """Only globally routable unicast addresses are public.
+
+    is_global also excludes shared address space 100.64.0.0/10 (carrier-grade NAT, which
+    includes the 100.100.100.200 metadata address on some clouds), documentation and
+    benchmarking ranges. IPv4-mapped IPv6 addresses are checked as the IPv4 they wrap.
+    """
+    mapped = getattr(ip, "ipv4_mapped", None)
+    if mapped is not None:
+        ip = mapped
+    if ip.version == 6:
+        # NAT64 (64:ff9b::/96) and 6to4 (2002::/16) embed an IPv4 address that the network will
+        # actually reach; check that address too.
+        if ip in _NAT64:
+            embedded = ipaddress.IPv4Address(int(ip) & 0xFFFFFFFF)
+            if not (embedded.is_global and not embedded.is_multicast):
+                return False
+        sixtofour = ip.sixtofour
+        if sixtofour is not None and not (sixtofour.is_global and not sixtofour.is_multicast):
+            return False
+    return bool(ip.is_global) and not ip.is_multicast
 
 
 def assert_safe_url(

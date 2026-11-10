@@ -111,7 +111,9 @@ def test_backlink_rank_parser_scales_and_ignores_empty_payloads():
 
 
 def test_auto_serp_refuses_to_invent_results_without_keys():
-    settings = Settings(brave_api_key=None, serpapi_key=None, dataforseo_login=None, dataforseo_password=None)
+    settings = Settings(
+        brave_api_key=None, serpapi_key=None, serper_api_key=None, dataforseo_login=None, dataforseo_password=None
+    )
     with pytest.raises(ProviderConfigError, match="Refusing to invent"):
         resolve_serp(settings, "auto")
     mock = resolve_serp(settings, "mock")
@@ -143,7 +145,9 @@ def test_fast_loop_moves_predicted_position_when_the_page_gets_stronger(tmp_path
         html = {
             "https://rival.example/plants": "<html><title>Office plants</title><body><h1>Ferns</h1><p>Lobby ferns.</p></body></html>",
             our: "<html><title>Hello</title><body><p>Hello there.</p></body></html>",
-            "https://rival.example/tax": "<html><title>Tax notes</title><body><p>Quarterly tax filing.</p></body></html>",
+            # One rival matches a query word, so the weak page is strictly behind it before the edit.
+            # (Without it, all three pages tie and float rounding, which differs by Python version, set the order.)
+            "https://rival.example/tax": "<html><title>Tax notes</title><body><p>Quarterly tax filing software.</p></body></html>",
         }[page_url]
         return FetchResult(url=page_url, html=html, status="fetched", fetch_ms=100)
 

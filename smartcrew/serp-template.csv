@@ -1,1 +1,1 @@
-query,url,position,prior_position
+query,url,position,observed_on,country,language,device,provider,result_type,prior_position,prior_observed_on

@@ -44,7 +44,7 @@ The file is not generated here. Positions you have not recorded are left out. Th
 
 On each held-out query:
 
-- Pairwise accuracy: among labeled URL pairs, how often the model scores the better Google position higher. This is the number to watch first.
+- Pairwise agreement: among labeled URL pairs, how often the model scores the better Google position higher. This is the number to watch first. On the labeled file it is same-snapshot agreement, not accuracy on unseen results. A `--final` number is the same: the final queries are held out from the same frozen label file as the dev queries the model trains on. It is a same-snapshot holdout, not accuracy. Only a forward check against a later snapshot (the ledger) measures accuracy on unseen results.
 - NDCG at 10, with gain `max(0, 11 - position)` so a top-10 result has gain and a result past 10 has none.
 - Spearman correlation of predicted rank and labeled position. Constant scores make Spearman undefined, which is reported as n/a rather than zero.
 - Top-3 hit rate: the labeled position-1 URL appears in the model's top 3.
@@ -53,13 +53,13 @@ On each held-out query:
 
 Heading and body match scores are missing (LightGBM NaN) when the field is blank or the match is zero, so an empty heading is not stored as a numeric zero. Title match, heading match, body match, BM25F, and entity coverage are monotone increasing. A page with fewer than 150 words is placed behind every page that has a real body. That gate is applied to the predicted score before ranks and metrics.
 
-`test --bundle` scores a manifest of saved HTML the same way: each query uses the model trained on the other queries. Bundle URLs that are already in that query replace the stored HTML and keep the crawled link features. Bundle URLs that are not in that query are added only in the after set. A URL the crawl never saw gets crawl PageRank 0, and domain PageRank is copied from other pages on the same host. The printed rank is a predicted slot in that candidate set, not a Google position. Competitor pages that were not crawled are named and left blank.
+`test --bundle` scores a manifest of saved HTML the same way: each query uses the model trained on the other queries. Bundle URLs that are already in that query replace the stored HTML and keep the crawled link features. Bundle URLs that are not in that query are added only in the after set, and only to the queries they target. A URL the crawl never saw gets crawl PageRank 0, and domain PageRank is copied from other pages on the same host. The printed rank is a predicted slot in that candidate set, not a Google position. Competitor pages that were not crawled are named and left blank.
 
 Pages that refuse the crawler can be supplied later as files. Put HTML in `smartcrew/saved_html/` and list `url,file` in `manifest.csv`. A missing file is skipped. The index does not invent a page. The saved model is fit on all labeled queries after that, so the saved file is for scoring. Quote the cross-validated numbers, not an in-sample score.
 
 ## What would raise the numbers
 
-Accuracy stays unreported until the file has at least two queries with two stored pages each. To move pairwise accuracy in a way that means something for SmartCrew:
+Agreement stays unreported until the file has at least two queries with two stored pages each. To move pairwise agreement in a way that means something for SmartCrew:
 
 1. Real Google top 10s for as many of the 150 keywords as you can check, especially `hcss alternative` and `best all-in-one dirtworks software`. Ten URLs per query beats one URL.
 2. Those URLs have to be in the crawl. A labeled URL we never fetched is counted as uncovered and dropped.

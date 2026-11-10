@@ -42,14 +42,22 @@ def test_manual_csv_and_search_console_headers(tmp_path):
     rows = load_serp_file(manual)
     assert rows[0].position == 1
     assert rows[0].prior_position == 4
-    assert navboost_leaks(rows) is False
-    leaked = [SerpLabel("q", "https://example.com/a", 2, 2, "manual_csv")]
+    # An undated prior cannot be shown to predate the label, so it is withheld.
+    assert navboost_leaks(rows) is True
+    dated = tmp_path / "dated.csv"
+    dated.write_text(
+        "query,url,position,prior_position,observed_on,prior_observed_on\n"
+        "hcss alternative,https://example.com/a,1,4,2026-10-29,2026-09-29\n"
+    )
+    assert navboost_leaks(load_serp_file(dated)) is False
+    leaked = [SerpLabel("q", "https://example.com/a", 2, 2, "manual_csv", observed_on="2026-10-29", prior_observed_on="2026-10-29")]
     assert navboost_leaks(leaked) is True
 
     gsc = tmp_path / "gsc.csv"
     gsc.write_text("Query,Page,Position\nbest dirtwork software,https://example.com/b,3.5\n")
     parsed = load_serp_file(gsc)
     assert parsed[0].source == "search_console"
+    assert parsed[0].kind == "search_console_avg"
     assert parsed[0].position == 3.5
     assert parsed[0].prior_position is None
 

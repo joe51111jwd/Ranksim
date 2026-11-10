@@ -48,6 +48,13 @@ FEATURE_NAMES = (
 )
 
 # Higher values should raise the predicted score. Other features stay unconstrained.
+# Computed for every page but kept out of the default model. They measure our crawl, not the
+# page: `speed` is our crawler's wall time (politeness sleep, robots fetch, proxy) and is 0 for
+# saved HTML; orphan/link_depth/crawl_inlinks depend on which URLs were seeded and where the
+# crawl budget ran out, and on the committed graph they mostly encode "is this the client site".
+CRAWL_ARTIFACT_FEATURES = frozenset({"speed", "orphan", "link_depth", "crawl_inlinks"})
+MODEL_FEATURES = tuple(name for name in FEATURE_NAMES if name not in CRAWL_ARTIFACT_FEATURES)
+
 MONOTONE_UP = frozenset(
     {
         "bm25f",
@@ -86,6 +93,10 @@ class PageDoc:
     orphan: bool | None = None
     link_depth: int | None = None
     crawl_inlinks: int | None = None
+    source: str = "crawl"
+    html_sha256: str | None = None
+    js_shell: bool = False  # client-rendered shell: the stored text is not what Google rendered
+    graph_pagerank: float | None = None  # PageRank inside the link-graph crawl; not a model feature
 
 
 def url_text(url: str) -> str:
@@ -273,7 +284,7 @@ def raw_features(query: str, intent: str, pages: list[PageDoc], today: date) -> 
             similarity = cosine(query_vector, page_vector)
         except ValueError:
             similarity = 0.0
-        authority = 0.0 if page.authority is None else float(page.authority)
+        authority = float("nan") if page.authority is None else float(page.authority)
         url_terms = set(tokenize_for_search(url_text(page.url)))
         exact = 0.0 if not query_terms else sum(1 for term in query_terms if term in url_terms) / len(query_terms)
         rows.append(

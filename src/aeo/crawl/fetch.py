@@ -2,19 +2,35 @@
 
 from __future__ import annotations
 
+import codecs
+import ipaddress
+import re
 import time
 from dataclasses import dataclass, field
+from email.utils import parsedate_to_datetime
 from urllib.parse import urljoin, urlsplit
 
 import httpx
 
+from aeo.crawl import guard
+
 from aeo.crawl.robots import crawl_delay_seconds, parse_robots
 from aeo.crawl.sitemap import parse_sitemap
 from aeo.crawl.urls import assert_safe_url, normalize_url, same_site
-from aeo.errors import UnsafeURL
+from aeo.errors import ProviderConfigError, UnsafeURL
 
 MAX_BYTES = 2_000_000
 MAX_REDIRECTS = 5
+# Whole-response budget. httpx timeouts apply per read, so a server that drips one byte at a
+# time could otherwise hold a fetch open far longer than the configured timeout.
+TOTAL_DEADLINE_SECONDS = 30.0
+# A host that answers 429 or 503 gets no request until its Retry-After (or a doubling backoff from
+# BACKOFF_BASE_SECONDS when it gives none) has passed. A wait longer than MAX_BACKOFF_WAIT is not
+# slept through: the fetch is reported as deferred so a crawl stays bounded.
+BACKOFF_BASE_SECONDS = 2.0
+MAX_BACKOFF_WAIT = 120.0
+MAX_RETRY_AFTER = 3600.0
+READABLE_TYPES = ("html", "xml", "text/plain")
 
 
 @dataclass
@@ -35,6 +51,106 @@ class CrawlBatch:
     warnings: list[str] = field(default_factory=list)
 
 
+class RedirectProblem(Exception):
+    """A redirect chain that ends without a page: a loop, too many hops, or no Location."""
+
+
+class DeadlineExceeded(Exception):
+    """No complete response before the request deadline (for example, headers dripped slowly)."""
+
+
+class HostBackoff(Exception):
+    """The host asked crawlers to wait longer than this crawl will wait."""
+
+
+class RobotsBlocked(Exception):
+    """A redirect hop that robots.txt disallows, or whose robots.txt could not be read."""
+
+    def __init__(self, url: str, status: str) -> None:
+        super().__init__(url)
+        self.url = url
+        self.status = status
+
+
+# yourdomain.com is the example in the refusal message below, so pasting it verbatim is refused too.
+PLACEHOLDER_DOMAINS = frozenset({"example.com", "example.org", "example.net", "localhost", "yourdomain.com"})
+PLACEHOLDER_SUFFIXES = (
+    ".example",
+    ".test",
+    ".invalid",
+    ".localhost",
+    ".example.com",
+    ".example.org",
+    ".example.net",
+    ".yourdomain.com",
+)
+# The authority of a contact URL. Punctuation after it ("https://example.com; bot@...") is not part
+# of the host, but a bracketed IPv6 literal ("https://[2606:4700::1]/bot") is kept whole.
+_CONTACT_URL = re.compile(r"https?://((?:\[[^\]\s]*\]|[^\s)\]<>\"',;\[/?#])+)", re.IGNORECASE)
+_CONTACT_EMAIL = re.compile(r"[\w.+-]+@([\w-]+(?:\.[\w-]+)+)")
+_DOMAIN_NAME = re.compile(r"[\w-]+(?:\.[\w-]+)+")
+
+
+def _contact_host(authority: str) -> str:
+    try:
+        return urlsplit("//" + authority).hostname or ""
+    except ValueError:
+        return authority  # a malformed bracketed host: kept as written, so it is named and refused
+
+
+def _real_contact_host(host: str) -> bool:
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError:
+        return bool(_DOMAIN_NAME.fullmatch(host)) and host not in PLACEHOLDER_DOMAINS and not host.endswith(PLACEHOLDER_SUFFIXES)
+    # Loopback, private and documentation addresses (192.0.2.0/24, 2001:db8::/32) are the address
+    # form of localhost and example.com: no site owner can reach them.
+    return address.is_global
+
+
+def user_agent_problem(user_agent: str) -> str | None:
+    """Why this user agent may not crawl third-party sites, or None.
+
+    Site owners need to know who is crawling and how to reach them, so the user agent must name the
+    crawler and give a contact URL or email that is not a placeholder (example.com and the like).
+    """
+    text = (user_agent or "").strip()
+    if not text:
+        return "the crawler user agent is empty"
+    hosts = [_contact_host(authority) for authority in _CONTACT_URL.findall(text)]
+    hosts += _CONTACT_EMAIL.findall(text)
+    hosts = [host.lower().rstrip(".") for host in hosts if host]
+    if any(_real_contact_host(host) for host in hosts):
+        return None
+    if hosts:
+        return f"the crawler user agent's contact is a placeholder ({hosts[0]})"
+    return "the crawler user agent gives no contact URL or email"
+
+
+def retry_after_seconds(value: str | None, *, now: float | None = None) -> float | None:
+    """Seconds from a Retry-After header (delay-seconds or an HTTP date), or None."""
+    text = (value or "").strip()
+    if not text:
+        return None
+    if text.isdigit():
+        return min(float(text), MAX_RETRY_AFTER)
+    try:
+        moment = parsedate_to_datetime(text)
+    except (TypeError, ValueError, IndexError):
+        return None
+    if moment is None:
+        return None
+    from datetime import datetime, timezone
+
+    current = datetime.now(timezone.utc).timestamp() if now is None else now
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=timezone.utc)
+    return min(max(0.0, moment.timestamp() - current), MAX_RETRY_AFTER)
+
+
+ROBOTS_UNREACHABLE = object()
+
+
 class Crawler:
     def __init__(
         self,
@@ -45,6 +161,9 @@ class Crawler:
         timeout: float = 20.0,
         client: httpx.Client | None = None,
     ) -> None:
+        # Checked at the first fetch of a real host, so a crawler that only meets unresolvable or
+        # synthetic hosts (mock runs) still works.
+        self._user_agent_problem = None if allow_private else user_agent_problem(user_agent)
         self.user_agent = user_agent
         self.delay_seconds = delay_seconds
         self.allow_private = allow_private
@@ -56,6 +175,9 @@ class Crawler:
         )
         self._robots: dict[str, object] = {}
         self._last_fetch: dict[str, float] = {}
+        self._backoff: dict[str, tuple[float, int]] = {}  # origin -> (monotonic until, consecutive 429/503)
+        # A client passed in (tests, custom transports) is used as given.
+        self._guards = guard.install(self.client, pin=not allow_private) if self._owns_client else []
 
     def close(self) -> None:
         if self._owns_client:
@@ -70,27 +192,82 @@ class Crawler:
             raise
         except ValueError as exc:
             return Fetched(url=url, final_url=url, error=str(exc), robots_status="skipped")
+        self._require_contact()
 
-        allowed, robots_status = self._allowed(current)
+        try:
+            allowed, robots_status = self._allowed(current)
+        except HostBackoff as exc:
+            # robots.txt was not requested: the host (or a host its robots.txt redirects to) is in backoff.
+            return Fetched(url=current, final_url=current, error=str(exc), robots_status="deferred")
         if not allowed:
+            error = (
+                "robots.txt did not answer (5xx, 429 or network error), so the site was not crawled"
+                if robots_status == "unreachable"
+                else "Blocked by robots.txt"
+            )
             return Fetched(
                 url=current,
                 final_url=current,
                 blocked=True,
                 robots_status=robots_status,
-                error="Blocked by robots.txt",
+                error=error,
             )
 
-        self._polite_wait(current)
         try:
-            response, final_url = self._get_following_redirects(current)
+            self._polite_wait(current)
+        except HostBackoff as exc:
+            return Fetched(url=current, final_url=current, error=str(exc), robots_status=robots_status)
+        try:
+            response, final_url = self._get_following_redirects(current, polite=True)
         except UnsafeURL:
             raise
+        except HostBackoff as exc:
+            return Fetched(url=current, final_url=current, error=str(exc), robots_status=robots_status)
+        except RobotsBlocked as exc:
+            error = (
+                f"The redirect target {exc.url} is blocked by robots.txt"
+                if exc.status == "disallowed"
+                else f"robots.txt of the redirect target {exc.url} did not answer, so it was not fetched"
+            )
+            return Fetched(url=current, final_url=exc.url, blocked=True, robots_status=exc.status, error=error)
+        except httpx.ConnectError as exc:
+            if isinstance(exc.__cause__, guard.UnsafeConnect):
+                raise UnsafeURL(str(exc.__cause__)) from None
+            return Fetched(url=current, final_url=current, error=f"Fetch failed: {exc}", robots_status=robots_status)
+        except DeadlineExceeded as exc:
+            return Fetched(url=current, final_url=current, error=str(exc), robots_status=robots_status)
+        except RedirectProblem as exc:
+            return Fetched(url=current, final_url=current, error=str(exc), robots_status=robots_status)
+        except (ValueError, httpx.InvalidURL) as exc:
+            # A redirect to file:, mailto: or a malformed Location must not crash a whole crawl.
+            return Fetched(url=current, final_url=current, error=f"Unsupported redirect target: {exc}", robots_status=robots_status)
         except httpx.HTTPError as exc:
-            return Fetched(url=current, final_url=current, error=f"Fetch failed: {exc}", robots_status="allowed")
+            return Fetched(url=current, final_url=current, error=f"Fetch failed: {exc}", robots_status=robots_status)
 
         content_type = response.headers.get("content-type", "")
+        if response.extensions.get("truncated") == "deadline":
+            # A page cut off mid-download is a fragment; storing it would score part of a page.
+            return Fetched(
+                url=current,
+                final_url=final_url,
+                status_code=response.status_code,
+                error=f"Download took longer than {TOTAL_DEADLINE_SECONDS:.0f} s; the partial page was not used",
+                robots_status=robots_status,
+                content_type=content_type,
+            )
         body = self._read_capped(response)
+        if response.status_code in (429, 503):
+            wait = self._note_rate_limit(final_url, response.headers.get("retry-after"))
+            return Fetched(
+                url=current,
+                final_url=final_url,
+                status_code=response.status_code,
+                error=f"HTTP {response.status_code}: the host asked crawlers to slow down; no request goes to it for {wait:.0f} s",
+                robots_status=robots_status,
+                content_type=content_type,
+            )
+        if response.status_code < 400:
+            self._backoff.pop(self._origin(final_url), None)
         if response.status_code >= 400:
             return Fetched(
                 url=current,
@@ -98,16 +275,17 @@ class Crawler:
                 status_code=response.status_code,
                 html="",
                 error=f"HTTP {response.status_code}",
-                robots_status="allowed",
+                robots_status=robots_status,
                 content_type=content_type,
             )
-        if content_type and "html" not in content_type and "xml" not in content_type and "text/plain" not in content_type:
+        lowered = content_type.lower()
+        if content_type and "html" not in lowered and "xml" not in lowered and "text/plain" not in lowered:
             return Fetched(
                 url=current,
                 final_url=final_url,
                 status_code=response.status_code,
                 error=f"Unsupported content type {content_type.split(';')[0]}",
-                robots_status="allowed",
+                robots_status=robots_status,
                 content_type=content_type,
             )
         return Fetched(
@@ -115,13 +293,20 @@ class Crawler:
             final_url=final_url,
             status_code=response.status_code,
             html=body,
-            robots_status="allowed",
+            robots_status=robots_status,
             content_type=content_type,
         )
 
     def crawl(self, start_url: str, *, sitemap_url: str | None, max_pages: int) -> CrawlBatch:
         batch = CrawlBatch()
         start = normalize_url(start_url)
+        if self._user_agent_problem:
+            try:
+                assert_safe_url(start, allow_private=self.allow_private, resolve=True)
+            except (UnsafeURL, ValueError):
+                pass  # an unusable start URL fails below with its own message
+            else:
+                self._require_contact()
         seeds = self._seed_urls(start, sitemap_url, max_pages, batch.warnings)
         queue = list(seeds)
         seen: set[str] = set()
@@ -161,7 +346,7 @@ class Crawler:
         for target in sitemap_targets:
             try:
                 urls.extend(self._read_sitemap(target, max_pages, depth=0))
-            except Exception as exc:  # noqa: BLE001 — a bad sitemap should not abort the crawl
+            except Exception as exc:  # noqa: BLE001 - a bad sitemap should not abort the crawl
                 if sitemap_url:
                     warnings.append(f"Sitemap was not used: {exc}")
         if start not in urls:
@@ -190,29 +375,65 @@ class Crawler:
     def _allowed(self, url: str) -> tuple[bool, str]:
         origin = self._origin(url)
         parser = self._robots_for(origin)
+        if parser is ROBOTS_UNREACHABLE:
+            return False, "unreachable"
         if parser is None:
             return True, "unavailable"
         allowed = parser.can_fetch(self.user_agent, url)
         return allowed, "allowed" if allowed else "disallowed"
 
     def _robots_for(self, origin: str):
+        """RFC 9309: 4xx (unavailable) allows everything; 5xx, 429 or a network failure
+        (unreachable) means assume complete disallow. A file not read in full before the deadline
+        counts as unreachable. The result is cached for this crawler.
+
+        A host in 429/503 backoff, here or at a redirect hop, gets no robots.txt request either:
+        HostBackoff is raised and nothing is cached, so the URL is deferred, not blocked."""
         if origin in self._robots:
             return self._robots[origin]
         robots_url = origin + "/robots.txt"
         try:
             safe = assert_safe_url(robots_url, allow_private=self.allow_private)
-            response, _final = self._get_following_redirects(safe)
-        except (httpx.HTTPError, UnsafeURL, ValueError):
-            self._robots[origin] = None
+        except UnsafeURL as exc:
+            if "Could not resolve" not in str(exc):
+                # The host itself now resolves to a non-public address, though the caller's check
+                # passed it (DNS rebinding). This is an unsafe URL, and nothing is cached.
+                raise
+            self._robots[origin] = ROBOTS_UNREACHABLE
+            return ROBOTS_UNREACHABLE
+        except ValueError:
+            self._robots[origin] = ROBOTS_UNREACHABLE
+            return ROBOTS_UNREACHABLE
+        try:
+            self._backoff_wait(safe)
+            response, _final = self._get_following_redirects(safe, any_type=True, vetted=True)
+        except RedirectProblem:
+            self._robots[origin] = None  # redirect loop: treat as unavailable
             return None
-        if response.status_code == 404:
+        except httpx.ConnectError as exc:
+            if isinstance(exc.__cause__, guard.UnsafeConnect) and self._same_origin(exc.request.url, safe):
+                # The host itself resolved to a non-public address at connect time (DNS rebinding).
+                # robots.txt was never requested, so this is an unsafe URL, as in a page fetch, and
+                # nothing is cached. A robots.txt that redirects to such a host stays unreachable.
+                raise UnsafeURL(str(exc.__cause__)) from None
+            self._robots[origin] = ROBOTS_UNREACHABLE
+            return ROBOTS_UNREACHABLE
+        except (httpx.HTTPError, httpx.InvalidURL, UnsafeURL, ValueError, DeadlineExceeded):
+            # InvalidURL: a host httpx cannot encode (an emoji domain in Unicode form) never answers.
+            self._robots[origin] = ROBOTS_UNREACHABLE
+            return ROBOTS_UNREACHABLE
+        if response.status_code == 429 or response.status_code >= 500:
+            self._robots[origin] = ROBOTS_UNREACHABLE
+            return ROBOTS_UNREACHABLE
+        if response.extensions.get("truncated") == "deadline":
+            # Rules after the cut are unknown, so a partial file is a network failure, not a file.
+            self._robots[origin] = ROBOTS_UNREACHABLE
+            return ROBOTS_UNREACHABLE
+        if response.status_code >= 400:
             parser = parse_robots("")
             self._robots[origin] = parser
             return parser
-        if response.status_code >= 400:
-            self._robots[origin] = None
-            return None
-        parser = parse_robots(self._read_capped(response))
+        parser = parse_robots(self._read_robots(response))
         self._robots[origin] = parser
         return parser
 
@@ -220,40 +441,204 @@ class Crawler:
         origin = self._origin(url)
         delay = self.delay_seconds
         parser = self._robots.get(origin)
-        if parser is not None:
+        if parser is not None and parser is not ROBOTS_UNREACHABLE:
             robots_delay = crawl_delay_seconds(parser, self.user_agent)
             if robots_delay is not None:
                 delay = max(delay, robots_delay)
-        elapsed = time.monotonic() - self._last_fetch.get(origin, 0.0)
-        if elapsed < delay:
-            time.sleep(delay - elapsed)
+        now = time.monotonic()
+        wait = delay - (now - self._last_fetch.get(origin, 0.0))
+        until, _count = self._backoff.get(origin, (0.0, 0))
+        wait = max(wait, until - now)
+        if wait > MAX_BACKOFF_WAIT:
+            raise HostBackoff(f"The host asked crawlers to wait {wait:.0f} s (HTTP 429/503); not fetched now")
+        if wait > 0:
+            time.sleep(wait)
         self._last_fetch[origin] = time.monotonic()
 
-    def _get_following_redirects(self, url: str) -> tuple[httpx.Response, str]:
+    def _backoff_wait(self, url: str) -> None:
+        """Only the 429/503 backoff of the URL's origin, for robots.txt requests."""
+        until, _count = self._backoff.get(self._origin(url), (0.0, 0))
+        wait = until - time.monotonic()
+        if wait > MAX_BACKOFF_WAIT:
+            raise HostBackoff(f"The host asked crawlers to wait {wait:.0f} s (HTTP 429/503); not fetched now")
+        if wait > 0:
+            time.sleep(wait)
+
+    def _note_rate_limit(self, url: str, retry_after: str | None) -> float:
+        """Start or extend this host's backoff. Returns the wait in seconds."""
+        origin = self._origin(url)
+        _until, count = self._backoff.get(origin, (0.0, 0))
+        count += 1
+        wait = retry_after_seconds(retry_after)
+        if wait is None:
+            wait = min(MAX_RETRY_AFTER, BACKOFF_BASE_SECONDS * 2 ** (count - 1))
+        self._backoff[origin] = (time.monotonic() + wait, count)
+        return wait
+
+    def _get_following_redirects(
+        self, url: str, *, any_type: bool = False, polite: bool = False, vetted: bool = False
+    ) -> tuple[httpx.Response, str]:
+        """The caller waited for the first URL's origin. A hop to another origin waits for that
+        origin too, so a host in 429/503 backoff gets no request through a redirect.
+
+        ``polite`` (a page fetch): the caller checked robots.txt for the first URL, and every later
+        hop is checked against the robots.txt of its own origin before it gets a request; a hop it
+        does not allow raises RobotsBlocked. Without ``polite`` (robots.txt itself), a hop waits
+        only for its origin's 429/503 backoff.
+
+        ``vetted``: the caller ran the URL check on ``url`` just now, so the first hop is not
+        checked again. The connection guard still checks the address it connects to."""
         current = url
-        for _ in range(MAX_REDIRECTS + 1):
-            current = assert_safe_url(current, allow_private=self.allow_private, keep_trailing_slash=True)
-            response = self.client.get(
-                current,
-                headers={
-                    "User-Agent": self.user_agent,
-                    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-                },
-            )
+        previous = self._origin(url)
+        for hop in range(MAX_REDIRECTS + 1):
+            if hop or not vetted:
+                current = assert_safe_url(current, allow_private=self.allow_private, keep_trailing_slash=True)
+            if hop and polite:
+                allowed, status = self._allowed(current)
+                if not allowed:
+                    raise RobotsBlocked(current, status)
+            if self._origin(current) != previous:
+                if polite:
+                    self._polite_wait(current)
+                else:
+                    self._backoff_wait(current)
+                previous = self._origin(current)
+            response = self._get_capped(current, any_type=any_type)
             if response.status_code not in {301, 302, 303, 307, 308}:
                 return response, current
             location = response.headers.get("location")
             if not location:
-                return response, current
+                raise RedirectProblem(f"HTTP {response.status_code} redirect without a Location header")
             current = urljoin(current, location)
-        return response, current
+        raise RedirectProblem(f"Too many redirects (more than {MAX_REDIRECTS})")
+
+    def _get_capped(self, url: str, *, any_type: bool = False) -> httpx.Response:
+        """Stream a GET and stop at MAX_BYTES or the total deadline, whichever comes first.
+
+        Bodies of errors, redirects and types we never read (images, PDFs, video) are not
+        downloaded at all. Ported from the unmerged claude/bold-einstein-oi5qoj branch, plus the
+        overall deadline. Returns a fully read, capped response.
+        """
+        request = self.client.build_request(
+            "GET",
+            url,
+            headers={
+                "User-Agent": self.user_agent,
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            },
+        )
+        clock = getattr(self, "_clock", time.monotonic)
+        started = clock()
+        for item in self._guards:
+            item.clock = clock
+            item.deadline = started + TOTAL_DEADLINE_SECONDS
+        try:
+            response = self.client.send(request, stream=True)
+        except httpx.TimeoutException as exc:
+            self._clear_deadline()
+            if clock() - started >= TOTAL_DEADLINE_SECONDS:
+                raise DeadlineExceeded(
+                    f"No complete response headers within {TOTAL_DEADLINE_SECONDS:.0f} s; the page was not used"
+                ) from exc
+            raise
+        except BaseException:
+            self._clear_deadline()
+            raise
+        chunks: list[bytes] = []
+        truncated = ""
+        try:
+            content_type = response.headers.get("content-type", "").lower()
+            # robots.txt is read whatever its declared type: hosts often serve it as octet-stream.
+            readable = response.status_code < 300 and (
+                any_type or not content_type or any(kind in content_type for kind in READABLE_TYPES)
+            )
+            if readable:
+                size = 0
+                try:
+                    for chunk in response.iter_bytes():
+                        chunks.append(chunk)
+                        size += len(chunk)
+                        if size >= MAX_BYTES:
+                            truncated = "size"
+                            break
+                        if clock() - started > TOTAL_DEADLINE_SECONDS:
+                            truncated = "deadline"
+                            break
+                except httpx.TimeoutException:
+                    if clock() - started < TOTAL_DEADLINE_SECONDS:
+                        raise
+                    truncated = "deadline"
+        finally:
+            response.close()
+            self._clear_deadline()
+        headers = [
+            (name, value)
+            for name, value in response.headers.items()
+            if name.lower() not in {"content-encoding", "content-length", "transfer-encoding"}
+        ]
+        capped = httpx.Response(
+            status_code=response.status_code,
+            headers=headers,
+            content=b"".join(chunks)[:MAX_BYTES],
+            request=request,
+        )
+        capped.extensions["truncated"] = truncated
+        return capped
+
+    def _require_contact(self) -> None:
+        if self._user_agent_problem:
+            raise ProviderConfigError(
+                f"Refusing to crawl third-party sites: {self._user_agent_problem}. Set CRAWL_USER_AGENT to your crawler's "
+                "name and a contact site owners can reach, for example: "
+                "RanksimBot/0.1 (+https://yourdomain.com/bot; you@yourdomain.com)."
+            )
+
+    def _clear_deadline(self) -> None:
+        for item in self._guards:
+            item.deadline = None
 
     def _read_capped(self, response: httpx.Response) -> str:
         raw = response.content[:MAX_BYTES]
         encoding = response.encoding or "utf-8"
         return raw.decode(encoding, errors="replace")
 
+    def _read_robots(self, response: httpx.Response) -> str:
+        """robots.txt text. RFC 9309 (2.3) says the file is UTF-8 whatever the server declares, so
+        lines that are valid UTF-8 are read as UTF-8 even under a declared ISO-8859-1. Only a line
+        that is not UTF-8 falls back to the declared charset, so one stray latin-1 byte in a comment
+        does not change how the UTF-8 rules on other lines are read. A UTF-8 byte order mark always
+        wins: decoded with another charset, it would become stray characters that hide the first
+        user-agent line."""
+        raw = response.content[:MAX_BYTES]
+        if raw.startswith(codecs.BOM_UTF8):
+            return raw[len(codecs.BOM_UTF8) :].decode("utf-8", errors="replace")
+        cut = response.extensions.get("truncated") == "size"
+        try:
+            # A character cut in two by the size cap is dropped, not a reason to fall back.
+            return codecs.getincrementaldecoder("utf-8")().decode(raw, final=not cut)
+        except UnicodeDecodeError:
+            pass
+        fallback = response.encoding or "utf-8"
+        if codecs.lookup(fallback).name.startswith(("utf-16", "utf-32")):
+            return self._read_capped(response)  # a line break is not one byte here, so read it whole
+        lines = raw.splitlines(keepends=True)
+        text = []
+        for number, line in enumerate(lines, 1):
+            try:
+                # UTF-8 never uses CR or LF bytes inside a character, so each line decodes alone.
+                text.append(codecs.getincrementaldecoder("utf-8")().decode(line, final=not (cut and number == len(lines))))
+            except UnicodeDecodeError:
+                text.append(line.decode(fallback, errors="replace"))
+        return "".join(text)
+
     @staticmethod
     def _origin(url: str) -> str:
         parts = urlsplit(url)
         return f"{parts.scheme}://{parts.netloc}"
+
+    @staticmethod
+    def _same_origin(request_url: httpx.URL, url: str) -> bool:
+        """Whether a request went to the origin of ``url``, compared as httpx sends it. An IDN host
+        is Unicode after normalize_url and punycode in the request; both name the same origin."""
+        other = httpx.URL(url)
+        return (request_url.scheme, request_url.raw_host, request_url.port) == (other.scheme, other.raw_host, other.port)

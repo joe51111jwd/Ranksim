@@ -39,3 +39,6 @@ packages = ["src/aeo"]
 pythonpath = [".", "src"]
 testpaths = ["tests"]
 addopts = "-q"
+markers = [
+  "live: calls a real paid provider; skipped unless RANKSIM_LIVE_TESTS=1",
+]

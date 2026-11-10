@@ -13,6 +13,7 @@ from urllib.parse import urljoin, urlsplit
 
 from bs4 import BeautifulSoup
 
+from aeo.errors import ProviderConfigError
 from aeo.crawl.urls import domain_of, normalize_url
 from aeo.ranksim.graph import pagerank
 
@@ -192,12 +193,13 @@ def attach_graph(pages: dict, graph: LinkGraph) -> int:
                 doc = None
         if doc is None:
             continue
+        # Graph facts are annotations for link advice. They do not overwrite model inputs:
+        # the graph's PageRank is computed on a different node set (most edges point outside
+        # it), and its anchors include sitewide navigation. Corpus PageRank and anchors stay.
         doc.orphan = node.orphan
         doc.link_depth = node.depth
         doc.crawl_inlinks = node.inlinks
-        doc.pagerank = node.pagerank
-        if incoming.get(url):
-            doc.anchors = " ".join(incoming[url])
+        doc.graph_pagerank = node.pagerank
         updated += 1
     return updated
 
@@ -260,6 +262,8 @@ def collect_graph(settings, labels, *, saved_html: dict[str, str], our_domain: s
     def fetch(url: str) -> tuple[str, str]:
         try:
             fetched = crawler.fetch(url)
+        except ProviderConfigError:
+            raise
         except Exception as exc:  # noqa: BLE001
             return "", f"error {exc}"
         if fetched.blocked:

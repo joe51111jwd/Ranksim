@@ -11,8 +11,12 @@ from pathlib import Path
 
 
 def saved_html_dir(root: Path | None = None) -> Path:
-    base = root or Path("smartcrew") / "saved_html"
-    return base
+    """``smartcrew/saved_html`` under the repo root (``RANKSIM_ROOT`` overrides), not the cwd."""
+    if root is not None:
+        return root
+    from aeo.ranksim.keywords import repo_root
+
+    return repo_root() / "smartcrew" / "saved_html"
 
 
 def load_saved_html(directory: Path | None = None) -> tuple[dict[str, str], list[str]]:

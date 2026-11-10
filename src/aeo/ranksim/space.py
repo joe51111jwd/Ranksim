@@ -7,11 +7,16 @@ only. A domain with no stored HTML does not get a predicted rank.
 from __future__ import annotations
 
 import csv
+import ipaddress
+import re
 from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
-from aeo.crawl.urls import domain_of, normalize_url
+from urllib.parse import urlsplit
+
+from aeo.errors import ProviderConfigError
+from aeo.crawl.urls import domain_of
 from aeo.ranksim.features import raw_features
 from aeo.ranksim.groundtruth import SerpLabel
 from aeo.ranksim.lambdamart import RankExample, predict_scores
@@ -33,6 +38,7 @@ class QueryBoard:
     query: str
     players: list[PlayerLine]
     scored_pages: int
+    shells: int = 0  # labeled pages left out: client-rendered shells, as in training
 
 
 @dataclass
@@ -40,14 +46,23 @@ class DomainShare:
     domain: str
     tracked_queries: int
     real_top3: int
-    real_top10: int
+    real_top10: int  # labeled positions 1 to 10 only
     predicted_queries: int
-    predicted_top3: int
+    predicted_top3: int  # kept for existing displays: rank 3 or better among however many pages were scored
     predicted_top10: int
+    # Top k where it means something: only queries where more than k pages were scored (a rank of 3
+    # among 3 pages is not "top 3"). Use these with their own denominators.
+    predicted_top3_qualified: int = 0
+    predicted_top3_queries: int = 0
+    predicted_top10_qualified: int = 0
+    predicted_top10_queries: int = 0
+    kind: str = ""  # business (listed by the user), serp (taken from the labeled results), both, or "" (client)
 
 
 @dataclass
 class HeadToHead:
+    """The client's record against one competitor: wins are queries where the client ranks above it."""
+
     domain: str
     real_queries: int
     real_wins: int
@@ -57,6 +72,7 @@ class HeadToHead:
     predicted_wins: int
     predicted_losses: int
     predicted_ties: int
+    kind: str = ""
 
 
 @dataclass
@@ -92,21 +108,79 @@ def domains_from_labels(labels: list[SerpLabel], our_domain: str) -> list[str]:
     return found
 
 
-def parse_competitor_text(text: str) -> list[str]:
+def parse_competitor_text(text: str, rejected: list[tuple[int, str, str]] | None = None) -> list[str]:
+    """Domains from pasted text or a CSV (first column), one per line; duplicates collapse.
+
+    Lines are read with csv.reader, so a quoted first field with commas is kept whole, and a header
+    row (domain, url, host, site) is skipped. Lines that are not a public site are left out and, when
+    ``rejected`` is given, appended to it as (line number, text, reason) so callers can show them.
+    """
     domains: list[str] = []
     seen: set[str] = set()
-    for raw in text.splitlines():
-        line = raw.strip()
-        if not line or line.startswith("#"):
+    for number, cells in enumerate(csv.reader(text.splitlines()), start=1):
+        first = (cells[0] if cells else "").strip()
+        if not first or first.startswith("#"):
             continue
-        if "," in line and not line.startswith("http"):
-            line = line.split(",")[0].strip()
-        host = _host(line)
-        if not host or host in seen:
+        if number == 1 and first.lower() in {"domain", "url", "host", "site", "website"}:
+            continue
+        host, reason = competitor_host(first)
+        if not host:
+            if rejected is not None:
+                rejected.append((number, first, reason))
+            continue
+        if host in seen:
             continue
         seen.add(host)
         domains.append(host)
     return domains
+
+
+_LABEL = re.compile(r"^(?!-)[a-z0-9-]{1,63}(?<!-)$")
+_NOT_SITES = ("localhost", "local", "internal", "localdomain", "home.arpa")
+
+
+def competitor_host(value: str) -> tuple[str, str]:
+    """(host, "") for a public site name or URL, else ("", reason). www. is dropped; an
+    international name is stored in its IDNA (punycode) form."""
+    text = value.strip()
+    if "://" in text:
+        parts = urlsplit(text)
+        if parts.scheme not in {"http", "https"}:
+            return "", f"unsupported scheme {parts.scheme}"
+        netloc = parts.netloc
+    else:
+        netloc = text.split("/", 1)[0]
+    if "@" in netloc:
+        return "", "credentials are not part of a site name"
+    host = netloc
+    if host.startswith("["):
+        return "", "an IP address is not a site"
+    if ":" in host:
+        return "", "a port is not part of a site name"
+    host = host.strip().strip(".").lower()
+    if not host:
+        return "", "no host"
+    try:
+        ipaddress.ip_address(host)
+        return "", "an IP address is not a site"
+    except ValueError:
+        pass
+    try:
+        host = host.encode("idna").decode("ascii")
+    except UnicodeError:
+        return "", "not a valid international domain name"
+    if host.startswith("www."):
+        host = host[4:]
+    labels = host.split(".")
+    if len(labels) < 2:
+        return "", "a site name needs a dot (example: acme.com)"
+    if any(not _LABEL.match(label) for label in labels) or len(host) > 253:
+        return "", "not a valid host name"
+    if labels[-1].isdigit():
+        return "", "an IP address is not a site"
+    if labels[-1] in _NOT_SITES or ".".join(labels[-2:]) in _NOT_SITES:
+        return "", "a local network name is not a public site"
+    return host, ""
 
 
 def read_competitors(path: str | Path) -> list[str]:
@@ -116,14 +190,33 @@ def read_competitors(path: str | Path) -> list[str]:
     return parse_competitor_text(file_path.read_text(encoding="utf-8"))
 
 
-def write_competitors(path: str | Path, domains: list[str], source: str) -> None:
+def read_competitor_kinds(path: str | Path) -> dict[str, str]:
+    """domain -> kind from a competitors file with a ``kind`` column (business, serp or both)."""
+    file_path = Path(path)
+    if not file_path.is_file():
+        return {}
+    with file_path.open(newline="", encoding="utf-8-sig") as handle:
+        reader = csv.DictReader(handle)
+        if not reader.fieldnames or "kind" not in [name.strip().lower() for name in reader.fieldnames]:
+            return {}
+        fields = {name.strip().lower(): name for name in reader.fieldnames}
+        kinds = {}
+        for raw in reader:
+            host, _reason = competitor_host(raw.get(fields.get("domain", "domain")) or "")
+            if host:
+                kinds[host] = (raw.get(fields["kind"]) or "").strip().lower()
+        return kinds
+
+
+def write_competitors(path: str | Path, domains: list[str], source: str, kinds: dict[str, str] | None = None) -> None:
+    """``kinds``: business (listed by the user), serp (taken from labeled results) or both."""
     file_path = Path(path)
     file_path.parent.mkdir(parents=True, exist_ok=True)
     with file_path.open("w", newline="", encoding="utf-8") as handle:
-        writer = csv.DictWriter(handle, fieldnames=["domain", "source"])
+        writer = csv.DictWriter(handle, fieldnames=["domain", "source", "kind"])
         writer.writeheader()
         for domain in domains:
-            writer.writerow({"domain": domain, "source": source})
+            writer.writerow({"domain": domain, "source": source, "kind": (kinds or {}).get(domain, "")})
 
 
 def build_space(
@@ -134,7 +227,13 @@ def build_space(
     *,
     our_domain: str = "smartcrewhq.com",
     today: date | None = None,
+    intents: dict[str, str] | None = None,
+    kinds: dict[str, str] | None = None,
 ) -> SpaceReport:
+    """``intents`` (query to intent) should be ``intents.query_intents(labels).intents``, the same
+    source training used; without it each query gets the shared rule or the default."""
+    from aeo.ranksim.intents import intent_for
+
     today = today or date.today()
     players = [our_domain] + [domain for domain in competitors if domain != our_domain]
     queries = list(dict.fromkeys(row.query for row in labels))
@@ -142,6 +241,7 @@ def build_space(
     real_best: dict[tuple[str, str], tuple[float, str]] = {}
     predicted_best: dict[tuple[str, str], tuple[int, int, str]] = {}
     our_losses: list[tuple[str, str, object, object]] = []
+    shells_total = 0
     for query in queries:
         query_labels = [row for row in labels if row.query == query]
         for label in query_labels:
@@ -151,14 +251,21 @@ def build_space(
             if current is None or label.position < current[0]:
                 real_best[key] = (label.position, label.url)
         docs = []
+        shells = 0
         for label in query_labels:
             page = _lookup_page(pages, label.url)
-            if page is not None:
-                docs.append(page)
+            if page is None:
+                continue
+            if getattr(page, "js_shell", False):
+                # Its stored text is not what Google rendered. Training and checks leave it out.
+                shells += 1
+                continue
+            docs.append(page)
+        shells_total += shells
         scored = 0
         ranks: dict[int, int] = {}
         if len(docs) >= 2 and models.get(query) is not None:
-            raw = raw_features(query, "commercial", docs, today)
+            raw = raw_features(query, intent_for(query, intents), docs, today)
             examples = [RankExample(query, doc.url, 0.0, row) for doc, row in zip(docs, raw)]
             scores = predict_scores(models[query], examples)
             order = sorted(range(len(docs)), key=lambda index: (-scores[id(examples[index])], index))
@@ -189,7 +296,7 @@ def build_space(
                 )
             )
         lines.sort(key=lambda row: (row.real_position is None, row.real_position or 999, row.predicted_rank or 999))
-        boards.append(QueryBoard(query=query, players=lines, scored_pages=scored))
+        boards.append(QueryBoard(query=query, players=lines, scored_pages=scored, shells=shells))
         ours_p = predicted_best.get((query, our_domain))
         for domain in players:
             if domain == our_domain:
@@ -201,13 +308,14 @@ def build_space(
                 if our_doc is not None and their_doc is not None:
                     our_losses.append((query, domain, our_doc, their_doc))
 
+    kinds = kinds or {}
     shares = []
     for domain in players:
         real_top3 = sum(1 for query in queries if (pos := real_best.get((query, domain))) and pos[0] <= 3)
-        real_top10 = sum(1 for query in queries if (query, domain) in real_best)
+        real_top10 = sum(1 for query in queries if (pos := real_best.get((query, domain))) and pos[0] <= 10)
         pred_queries = [query for query in queries if (query, domain) in predicted_best]
-        pred_top3 = sum(1 for query in pred_queries if predicted_best[(query, domain)][0] <= 3)
-        pred_top10 = sum(1 for query in pred_queries if predicted_best[(query, domain)][0] <= 10)
+        over3 = [query for query in pred_queries if predicted_best[(query, domain)][1] > 3]
+        over10 = [query for query in pred_queries if predicted_best[(query, domain)][1] > 10]
         shares.append(
             DomainShare(
                 domain=domain,
@@ -215,8 +323,13 @@ def build_space(
                 real_top3=real_top3,
                 real_top10=real_top10,
                 predicted_queries=len(pred_queries),
-                predicted_top3=pred_top3,
-                predicted_top10=pred_top10,
+                predicted_top3=sum(1 for query in pred_queries if predicted_best[(query, domain)][0] <= 3),
+                predicted_top10=sum(1 for query in pred_queries if predicted_best[(query, domain)][0] <= 10),
+                predicted_top3_qualified=sum(1 for query in over3 if predicted_best[(query, domain)][0] <= 3),
+                predicted_top3_queries=len(over3),
+                predicted_top10_qualified=sum(1 for query in over10 if predicted_best[(query, domain)][0] <= 10),
+                predicted_top10_queries=len(over10),
+                kind="" if domain == our_domain else kinds.get(domain, ""),
             )
         )
     head = []
@@ -257,6 +370,7 @@ def build_space(
                 predicted_wins=pred_w,
                 predicted_losses=pred_l,
                 predicted_ties=pred_t,
+                kind=kinds.get(domain, ""),
             )
         )
     head.sort(key=lambda row: (-row.real_queries, row.domain))
@@ -267,6 +381,11 @@ def build_space(
         "PREDICTED ranks are among stored pages for that query, not a live Google slot.",
         "A blank predicted rank means that domain had no stored HTML on that query.",
     ]
+    if shells_total:
+        notes.append(
+            f"Labeled pages left out of the PREDICTED ranks as client-rendered shells: {shells_total}. Google renders "
+            "a shell, this tool cannot, so training leaves shells out too. Their REAL positions are kept."
+        )
     if not any(getattr(doc, "authority", None) not in (None, 0) for doc in pages.values()):
         notes.append("Authority was not measured. No backlink key is set, so there is no authority gap number.")
     return SpaceReport(
@@ -288,32 +407,38 @@ def render_space_text(report: SpaceReport) -> str:
         f"Client domain: {report.our_domain}",
         "",
         "Share of tracked queries",
-        "domain\treal_top3\treal_top10\tpredicted_top3\tpredicted_top10\tpredicted_queries",
+        "domain\tkind\treal_top3\treal_top10\tpredicted_top3\tpredicted_top10\tpredicted_queries",
+        "PREDICTED top k counts only queries where more than k pages were scored; REAL top 10 is labeled position 1 to 10.",
     ]
     for row in report.shares:
-        pred3 = "n/a" if row.predicted_queries == 0 else f"{row.predicted_top3} of {row.predicted_queries}"
-        pred10 = "n/a" if row.predicted_queries == 0 else f"{row.predicted_top10} of {row.predicted_queries}"
+        pred3 = "n/a" if row.predicted_top3_queries == 0 else f"{row.predicted_top3_qualified} of {row.predicted_top3_queries}"
+        pred10 = "n/a" if row.predicted_top10_queries == 0 else f"{row.predicted_top10_qualified} of {row.predicted_top10_queries}"
         lines.append(
-            f"{row.domain}\tREAL {row.real_top3} of {row.tracked_queries}\tREAL {row.real_top10} of {row.tracked_queries}\t"
+            f"{row.domain}\t{row.kind or ('client' if row.domain == report.our_domain else 'unknown')}\t"
+            f"REAL {row.real_top3} of {row.tracked_queries}\tREAL {row.real_top10} of {row.tracked_queries}\t"
             f"PREDICTED {pred3}\tPREDICTED {pred10}\t{row.predicted_queries}"
         )
     lines.append("")
-    lines.append("Head to head versus " + report.our_domain)
-    lines.append("domain\treal_record\tpredicted_record")
+    lines.append(f"Head to head: {report.our_domain}'s record against each competitor (a win is a query where {report.our_domain} ranks above it)")
+    lines.append("competitor\tkind\treal_record\tpredicted_record")
     for row in report.headtohead:
         if row.real_queries == 0 and row.predicted_queries == 0:
             continue
-        real = "n/a" if row.real_queries == 0 else f"REAL {row.real_wins} wins, {row.real_losses} losses, {row.real_ties} ties, {row.real_queries} queries"
+        real = (
+            "n/a" if row.real_queries == 0
+            else f"REAL {report.our_domain} won {row.real_wins}, lost {row.real_losses}, tied {row.real_ties} of {row.real_queries} queries"
+        )
         pred = (
             "n/a"
             if row.predicted_queries == 0
-            else f"PREDICTED {row.predicted_wins} wins, {row.predicted_losses} losses, {row.predicted_ties} ties, {row.predicted_queries} queries"
+            else f"PREDICTED {report.our_domain} won {row.predicted_wins}, lost {row.predicted_losses}, tied {row.predicted_ties} of {row.predicted_queries} queries"
         )
-        lines.append(f"{row.domain}\t{real}\t{pred}")
+        lines.append(f"{row.domain}\t{row.kind or 'unknown'}\t{real}\t{pred}")
     lines.append("")
     lines.append("Per query")
     for board in report.boards:
-        lines.append(f"Query: {board.query} ({board.scored_pages} scored pages)")
+        shells = f", {board.shells} client-rendered shell{'s' if board.shells != 1 else ''} left out" if board.shells else ""
+        lines.append(f"Query: {board.query} ({board.scored_pages} scored pages{shells})")
         for player in board.players:
             real = "REAL n/a" if player.real_position is None else f"REAL {player.real_position:g} {player.real_url}"
             if player.predicted_rank is None:
@@ -423,6 +548,8 @@ def crawl_competitor_homepages(settings, domains: list[str], database: str, *, m
             url = f"https://{domain}/"
             try:
                 result = crawler.fetch(url)
+            except ProviderConfigError:
+                raise
             except Exception as exc:  # noqa: BLE001
                 errors.append(f"{domain} {exc}")
                 continue
@@ -439,18 +566,3 @@ def crawl_competitor_homepages(settings, domains: list[str], database: str, *, m
     finally:
         crawler.close()
     return fetched, skipped, errors
-
-
-def _host(value: str) -> str:
-    text = value.strip()
-    if "://" in text:
-        try:
-            return domain_of(normalize_url(text))
-        except ValueError:
-            return ""
-    host = text.lower().strip().strip("/")
-    if host.startswith("www."):
-        host = host[4:]
-    if " " in host or "/" in host or "." not in host:
-        return ""
-    return host

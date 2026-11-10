@@ -13,7 +13,9 @@ from datetime import date
 
 from aeo.crawl.urls import domain_of, normalize_url
 from aeo.ranksim.attribution import LABELS
-from aeo.ranksim.features import FEATURE_NAMES, PageDoc, raw_features
+from aeo.ranksim.intents import normalize_query
+from aeo.ranksim.urlkey import match_key
+from aeo.ranksim.features import MODEL_FEATURES, PageDoc, raw_features
 from aeo.ranksim.groundtruth import SerpLabel
 from aeo.ranksim.lambdamart import (
     RankExample,
@@ -91,6 +93,14 @@ class QueryWhatIf:
     pages: list[PageMove]
     gaps: list[TopGap]
     order: list[tuple[int, str, bool]]
+    # Labeled URLs left out because the stored page is a client-rendered shell (as in training),
+    # and match keys of the bundle pages that took part in this query.
+    shells: list[str] = field(default_factory=list)
+    joined: list[str] = field(default_factory=list)
+    # Labeled URLs whose stored page is a shell that a bundle page replaces. The shell is in no
+    # before set (as in the live variant); only the bundle HTML is scored, in the swap and after sets.
+    replaced_shells: list[str] = field(default_factory=list)
+    real_shell: bool = False  # the real Google SmartCrew URL's stored page is a shell
 
 
 @dataclass
@@ -106,6 +116,7 @@ class WhatIfReport:
     uncovered_urls: int
     queries: list[QueryWhatIf]
     bundle_urls: list[str]
+    unjoined_urls: list[str] = field(default_factory=list)  # bundle pages that joined no query
 
 
 def overrides_from_html(html_by_url: dict[str, str], pages: dict[str, PageDoc]) -> list[Override]:
@@ -121,7 +132,7 @@ def overrides_from_html(html_by_url: dict[str, str], pages: dict[str, PageDoc]) 
             overrides.append(Override(url=key, doc=doc, in_corpus=True))
             continue
         doc.pagerank = 0.0
-        doc.authority = 0.0
+        doc.authority = None
         doc.anchors = ""
         doc.navboost_prior = 0.0
         if donor is not None:
@@ -138,12 +149,15 @@ def score_whatif(
     intents: dict[str, str] | None = None,
     *,
     today: date | None = None,
+    targets: dict[str, set[str]] | None = None,
 ) -> WhatIfReport:
     """Score every labeled query before the bundle and after it.
 
-    Each query is scored by a model trained on the other queries only.
+    Each query is scored by a model trained on the other queries only. A bundle page replaces the
+    stored HTML of a URL labeled for the query; a bundle page that is not labeled there is added only
+    to the queries whose ``targets`` (normalized query -> match keys of target URLs) name it.
     """
-    reports = score_many(labels, pages, {"bundle": overrides}, intents, today=today)
+    reports = score_many(labels, pages, {"bundle": overrides}, intents, today=today, targets=targets)
     return reports["bundle"]
 
 
@@ -155,6 +169,7 @@ def score_many(
     *,
     today: date | None = None,
     compute_accuracy: bool = True,
+    targets: dict[str, set[str]] | None = None,
 ) -> dict[str, WhatIfReport]:
     """Score several HTML bundles with one leave-one-query-out fit per query.
 
@@ -192,7 +207,9 @@ def score_many(
         note += " Navboost prior was withheld because it copied the label position."
     reports = {}
     for name, overrides in variants.items():
-        override_index = {row.url: row for row in overrides}
+        # Keyed by page identity (urlkey.match_key), the key labels join stored pages by: a bundle
+        # page spelled with or without www, scheme or slash replaces the stored copy.
+        override_index = {match_key(row.url): row for row in overrides}
         queries = [
             _score_query(
                 query,
@@ -203,9 +220,11 @@ def score_many(
                 models[query],
                 today,
                 withhold=withheld,
+                targets=(targets or {}).get(normalize_query(query), set()),
             )
             for query in by_query
         ]
+        joined = {key for row in queries for key in row.joined}
         reports[name] = WhatIfReport(
             accuracy_note=note,
             pairwise_accuracy=pairwise,
@@ -218,6 +237,7 @@ def score_many(
             uncovered_urls=uncovered,
             queries=queries,
             bundle_urls=[row.doc.url for row in overrides],
+            unjoined_urls=[row.doc.url for row in overrides if match_key(row.url) not in joined],
         )
     return reports
 
@@ -230,8 +250,11 @@ def render_whatif(
     lines: list[str] = []
     lines.append("Predicted positions. Not live Google ranks.")
     lines.append("Model: LambdaMART, leave-one-query-out. The query being scored was not in that model.")
-    lines.append("Cross-validated accuracy on the labeled file, using the pages stored before this HTML change:")
-    lines.append(f"  Pairwise accuracy: {_num(report.pairwise_accuracy)}")
+    lines.append(
+        "Held-out agreement with the labeled snapshot (each query held out in turn; the same snapshot as the "
+        "training queries, so not accuracy on unseen results), using the pages stored before this HTML change:"
+    )
+    lines.append(f"  Pairwise agreement: {_num(report.pairwise_accuracy)}")
     lines.append(f"  NDCG at 10: {_num(report.ndcg_at_10)}")
     lines.append(f"  Spearman: {_num(report.spearman)}")
     lines.append(f"  Top-3 hit rate: {_num(report.top3_hit_rate)}")
@@ -240,15 +263,18 @@ def render_whatif(
         f"Queries: {report.n_queries}. Pairs: {report.n_pairs}."
     )
     lines.append(
-        "Confidence: use the cross-validated numbers above. Pairwise accuracy is the one to trust first. "
+        "These are same-snapshot numbers on a small file, not accuracy. Pairwise agreement is the steadiest; "
         "Spearman and the top-3 hit rate move around on a 16-query file. A predicted slot is a score inside "
         "the crawled set."
     )
     lines.append(
         "Before set: crawled URLs from the labeled file. After set: those URLs, with bundle HTML on a matching URL, "
-        "plus bundle URLs that were not in that query. A new URL gets crawl PageRank 0. Domain PageRank is copied "
+        "plus a bundle URL that is this query's target page (the manifest's query column, keywords.csv, or the PR "
+        "page targets built into this tool). A query "
+        "with no stored competitor gets no position. A new URL gets crawl PageRank 0. Domain PageRank is copied "
         "from other pages on the same host. No competitor HTML was invented."
     )
+    lines.extend(_set_notes(report))
     lines.append("")
     lines.append(
         "query\treal_google\tbefore_predicted\tafter_predicted\tafter_url\tafter_words\t"
@@ -295,19 +321,48 @@ def _score_query(
     today: date,
     *,
     withhold: bool,
+    targets: set[str] | None = None,
 ) -> QueryWhatIf:
     intent = _intent(query, intents)
     labeled: list[tuple[SerpLabel, PageDoc]] = []
+    shells: list[str] = []
+    replaced_shells: list[str] = []
+    seen: set[str] = set()
     for label in labels:
         page = _lookup_page(pages, label.url)
-        if page is not None:
-            labeled.append((label, page))
-    labeled_keys = {normalize_url(page.url) for _label, page in labeled}
-    before_docs = [_clone(page, _prior(label, withhold)) for label, page in labeled]
+        if page is None:
+            continue
+        # Page identity is the key labels join stored pages by (urlkey.match_key), as in
+        # check_draft: one page labeled under two spellings is scored once.
+        key = match_key(page.url)
+        if key in seen:
+            continue
+        seen.add(key)
+        if getattr(page, "js_shell", False):
+            # A client-rendered shell's stored text is not what Google rendered. Training and
+            # check_draft leave it out, so it is not a competitor here either.
+            if key not in overrides:
+                shells.append(label.url)
+                continue
+            # A bundle page replaces it: score the bundle HTML, as check_draft scores its draft,
+            # but never the shell's stored HTML as a before rank.
+            replaced_shells.append(label.url)
+        labeled.append((label, page))
+    labeled_keys = {match_key(page.url) for _label, page in labeled}
+    replaced_keys = {match_key(page.url) for label, page in labeled if label.url in replaced_shells}
+    # before_at maps each labeled page to its slot in the before set; a replaced shell has none, so
+    # the before set is the live set.
+    before_at: list[int | None] = []
+    before_docs: list[PageDoc] = []
+    for label, page in labeled:
+        if match_key(page.url) in replaced_keys:
+            before_at.append(None)
+            continue
+        before_at.append(len(before_docs))
+        before_docs.append(_clone(page, _prior(label, withhold)))
     swap_docs: list[PageDoc] = []
     for label, page in labeled:
-        key = normalize_url(page.url)
-        override = overrides.get(key)
+        override = overrides.get(match_key(page.url))
         if override is None:
             swap_docs.append(_clone(page, _prior(label, withhold)))
             continue
@@ -315,10 +370,14 @@ def _score_query(
         doc.url = page.url
         swap_docs.append(doc)
     extras: list[tuple[Override, PageDoc]] = []
+    wanted = targets or set()
     for key, override in overrides.items():
-        if key in labeled_keys:
+        # Only a page meant for this query joins it, and never a query with no stored competitor,
+        # where a lone page would be "rank 1 of 1".
+        if key in labeled_keys or not labeled or key not in wanted:
             continue
         extras.append((override, _clone(override.doc, 0.0)))
+    joined = sorted((labeled_keys & set(overrides)) | {match_key(override.url) for override, _doc in extras})
     after_docs = swap_docs + [doc for _override, doc in extras]
     before_raw = raw_features(query, intent, before_docs, today) if before_docs else []
     swap_raw = raw_features(query, intent, swap_docs, today) if swap_docs else []
@@ -336,22 +395,44 @@ def _score_query(
     for index, (label, page) in enumerate(labeled):
         if not _is_smartcrew(domain_of(page.url)):
             continue
-        key = normalize_url(page.url)
-        override = overrides.get(key)
+        override = overrides.get(match_key(page.url))
         after_doc = swap_docs[index]
+        at = before_at[index]
+        if at is None:
+            # A replaced shell: nothing from its stored HTML is reported as a before value.
+            role = "labeled shell, HTML replaced"
+            feature_lines = _new_page_lines(model, after_raw[index]) if model is not None else []
+            pages_out.append(
+                PageMove(
+                    url=page.url,
+                    role=role,
+                    before_rank=None,
+                    after_rank=after_rank[index],
+                    swap_rank=swap_rank[index],
+                    title_before="",
+                    title_after=after_doc.title,
+                    h1_after=after_doc.h1,
+                    words_before=None,
+                    words_after=after_doc.word_count,
+                    tables_before=None,
+                    tables_after=after_doc.table_count,
+                    feature_lines=feature_lines,
+                )
+            )
+            continue
         role = "labeled, HTML replaced" if override else "labeled, HTML unchanged"
         feature_lines: list[str] = []
         if override and model is not None:
             feature_lines = _content_deltas(
                 model,
-                before_raw[index],
+                before_raw[at],
                 swap_raw[index],
             )
         pages_out.append(
             PageMove(
                 url=page.url,
                 role=role,
-                before_rank=before_rank[index],
+                before_rank=before_rank[at],
                 after_rank=after_rank[index],
                 swap_rank=swap_rank[index],
                 title_before=page.title,
@@ -402,7 +483,7 @@ def _score_query(
         if label.position > 3:
             continue
         rival = _lookup_page(pages, label.url)
-        if rival is None:
+        if rival is None or label.url in shells:
             gaps.append(
                 TopGap(
                     label.position,
@@ -445,6 +526,7 @@ def _score_query(
         real_position=real_label.position if real_label else None,
         real_url=real_label.url if real_label else None,
         real_crawled=bool(real_label and _lookup_page(pages, real_label.url)),
+        real_shell=bool(real_label and getattr(_lookup_page(pages, real_label.url), "js_shell", False)),
         before_rank=our_before.before_rank if our_before else None,
         before_url=our_before.url if our_before else None,
         swap_rank=our_swap.swap_rank if our_swap else None,
@@ -456,6 +538,9 @@ def _score_query(
         pages=pages_out,
         gaps=gaps,
         order=order,
+        shells=shells,
+        joined=joined,
+        replaced_shells=replaced_shells,
     )
 
 
@@ -464,10 +549,19 @@ def _render_query(row: QueryWhatIf, statuses: dict[str, tuple[str, str | None]])
     if row.real_position is None:
         lines.append("Real Google position: not in the labeled file.")
     else:
-        crawled = "that URL was crawled" if row.real_crawled else "that URL was not crawled, so it has no before score"
+        if row.real_shell:
+            crawled = "its stored page is a client-rendered shell, so it has no before score"
+        elif row.real_crawled:
+            crawled = "that URL was crawled"
+        else:
+            crawled = "that URL was not crawled, so it has no before score"
         lines.append(f"Real Google position: {row.real_position:g} at {row.real_url} ({crawled}).")
+    own_shell = any(_is_smartcrew(domain_of(url)) for url in row.shells + row.replaced_shells)
+    none_before = (
+        "(none: the stored SmartCrew page is a client-rendered shell)" if own_shell else "(none in the crawled labeled set)"
+    )
     lines.append(
-        f"Best predicted SmartCrew page before: {_rank_cell(row.before_rank, row.before_n)} {row.before_url or '(none in the crawled labeled set)'}."
+        f"Best predicted SmartCrew page before: {_rank_cell(row.before_rank, row.before_n)} {row.before_url or none_before}."
     )
     if row.swap_rank is not None and row.swap_n != row.after_n:
         lines.append(
@@ -479,15 +573,26 @@ def _render_query(row: QueryWhatIf, statuses: dict[str, tuple[str, str | None]])
     if row.after_words is not None and row.after_words < 150:
         lines.append(
             f"That page has {row.after_words} extracted words. The built file is a short crawl shell, not a full article. "
-            "With pairwise accuracy at the cross-validated number above, this slot is not evidence the shell would outrank the crawled pages."
+            "With pairwise agreement at the same-snapshot number above, this slot is not evidence the shell would outrank the crawled pages."
         )
     if row.content_url and row.content_url != row.after_url:
         lines.append(
             f"Best predicted SmartCrew page with at least 150 extracted words: {_rank_cell(row.content_rank, row.after_n)} {row.content_url}."
         )
-    if row.before_rank is None and row.after_rank is not None:
+    if row.before_rank is None and row.after_rank is not None and not row.replaced_shells:
         lines.append(
             "The after rank inserts SmartCrew into a set where the labeled file has no crawled SmartCrew URL. It is not a move from a Google position."
+        )
+    if row.shells:
+        lines.append(
+            f"Left out as client-rendered shells (Google renders them, this tool cannot): {len(row.shells)}. "
+            + ", ".join(_plain(url, 180) for url in row.shells) + "."
+        )
+    if row.replaced_shells:
+        lines.append(
+            f"Stored as client-rendered shells and replaced by bundle HTML: {len(row.replaced_shells)}. "
+            + ", ".join(_plain(url, 180) for url in row.replaced_shells)
+            + ". A shell has no before rank. The after rank scores the bundle HTML. It is not a move from a Google position."
         )
     lines.append("SmartCrew pages in this query:")
     for page in sorted(row.pages, key=lambda item: (item.after_rank or 999, item.url)):
@@ -511,6 +616,11 @@ def _render_query(row: QueryWhatIf, statuses: dict[str, tuple[str, str | None]])
     if not row.gaps:
         lines.append("  This query has no labeled position 1 to 3.")
     for gap in row.gaps:
+        if not gap.crawled and gap.url in row.shells:
+            lines.append(
+                f"  Google #{gap.position:g} {gap.url} | a client-rendered shell, left out of scoring. No page text was invented."
+            )
+            continue
         if not gap.crawled:
             lines.append(
                 f"  Google #{gap.position:g} {gap.url} | {_status_phrase(gap.url, statuses)}. No page text was invented."
@@ -559,11 +669,36 @@ def _render_query(row: QueryWhatIf, statuses: dict[str, tuple[str, str | None]])
     return lines
 
 
+def _set_notes(report: WhatIfReport, name: str = "") -> list[str]:
+    """What the candidate sets left out: client-rendered shells, and bundle pages that joined no query."""
+    lines: list[str] = []
+    shells = sum(len(row.shells) for row in report.queries)
+    if shells and not name:
+        lines.append(
+            f"Labeled rows left out as client-rendered shells: {shells}. A shell's stored HTML is an empty app "
+            "shell. Google renders it, this tool cannot. Training leaves shells out too."
+        )
+    replaced = sum(len(row.replaced_shells) for row in report.queries)
+    if replaced:
+        rows = f"{name} labeled rows" if name else "Labeled rows"
+        lines.append(
+            f"{rows} where a bundle page replaces a client-rendered shell: {replaced}. "
+            "A shell has no before or live rank, so only the bundle HTML is scored there."
+        )
+    lead = f"{name} bundle page" if name else "Bundle page"
+    for url in report.unjoined_urls:
+        lines.append(
+            f"{lead} {url} joined no labeled query, so it was not scored. "
+            "Name its queries in a query column in the manifest."
+        )
+    return lines
+
+
 def _content_deltas(model, before: dict[str, float], after: dict[str, float], limit: int = 5) -> list[str]:
     before_c = _contrib(model, before)
     after_c = _contrib(model, after)
     rows = []
-    for name in FEATURE_NAMES:
+    for name in after_c:
         raw_before = before[name]
         raw_after = after[name]
         raw_delta = raw_after - raw_before
@@ -598,7 +733,7 @@ def _content_deltas(model, before: dict[str, float], after: dict[str, float], li
 
 def _new_page_lines(model, features: dict[str, float], limit: int = 5) -> list[str]:
     contrib = _contrib(model, features)
-    names = sorted(FEATURE_NAMES, key=lambda name: abs(contrib[name]), reverse=True)
+    names = sorted(contrib, key=lambda name: abs(contrib[name]), reverse=True)
     lines = []
     for name in names[:limit]:
         if abs(contrib[name]) < 1e-4:
@@ -610,7 +745,7 @@ def _new_page_lines(model, features: dict[str, float], limit: int = 5) -> list[s
 
 def _gap_lines(ours: dict[str, float], rival: dict[str, float], gain: dict[str, float], limit: int = 4) -> list[str]:
     rows = []
-    for name in FEATURE_NAMES:
+    for name in (list(gain) or list(MODEL_FEATURES)):
         if rival[name] != rival[name] or ours[name] != ours[name]:
             continue
         delta = rival[name] - ours[name]
@@ -630,9 +765,10 @@ def _gap_lines(ours: dict[str, float], rival: dict[str, float], gain: dict[str, 
 def _contrib(model, features: dict[str, float]) -> dict[str, float]:
     import numpy as np
 
-    matrix = np.asarray([[features.get(name, 0.0) for name in FEATURE_NAMES]], dtype=float)
+    names = list(model.feature_name())
+    matrix = np.asarray([[features.get(name, 0.0) for name in names]], dtype=float)
     row = model.predict(matrix, pred_contrib=True)[0]
-    return {name: float(row[index]) for index, name in enumerate(FEATURE_NAMES)}
+    return {name: float(row[index]) for index, name in enumerate(names)}
 
 
 def _scores(model, query: str, rows: list[dict[str, float]]) -> list[float]:
@@ -715,6 +851,9 @@ def _copy_graph(source: PageDoc, target: PageDoc) -> None:
     target.authority = source.authority
     target.ad_hits = source.ad_hits
     target.fetch_ms = source.fetch_ms
+    target.orphan = source.orphan
+    target.link_depth = source.link_depth
+    target.crawl_inlinks = source.crawl_inlinks
 
 
 def _domain_donor(pages: dict[str, PageDoc], domain: str) -> PageDoc | None:
@@ -730,11 +869,9 @@ def _domain_donor(pages: dict[str, PageDoc], domain: str) -> PageDoc | None:
 
 
 def _intent(query: str, intents: dict[str, str]) -> str:
-    if query in intents:
-        return intents[query]
-    if "alternative" in query or " vs " in query:
-        return "comparison"
-    return "commercial"
+    from aeo.ranksim.intents import intent_for
+
+    return intent_for(query, intents)
 
 
 def _status_phrase(url: str, statuses: dict[str, tuple[str, str | None]]) -> str:
@@ -857,8 +994,9 @@ def render_three_way(live: WhatIfReport, v1: WhatIfReport, v2: WhatIfReport) -> 
     lines = [
         "Predicted positions. Not live Google ranks.",
         "Model: LambdaMART, leave-one-query-out. The query being scored was not in that model.",
-        "Cross-validated accuracy on the labeled file, using the stored pages:",
-        f"  Pairwise accuracy: {_num(live.pairwise_accuracy)}",
+        "Held-out agreement with the labeled snapshot (each query held out in turn; the same snapshot as the "
+        "training queries, so not accuracy on unseen results), using the stored pages:",
+        f"  Pairwise agreement: {_num(live.pairwise_accuracy)}",
         f"  NDCG at 10: {_num(live.ndcg_at_10)}",
         f"  Spearman: {_num(live.spearman)}",
         f"  Top-3 hit rate: {_num(live.top3_hit_rate)}",
@@ -866,8 +1004,14 @@ def render_three_way(live: WhatIfReport, v1: WhatIfReport, v2: WhatIfReport) -> 
             f"  Labeled URLs with HTML: {live.n_labeled_urls}. Uncovered URLs: {live.uncovered_urls}. "
             f"Queries: {live.n_queries}. Pairs: {live.n_pairs}."
         ),
-        "Live is the stored crawl. v1 and v2 replace those URLs with the bundle and add URLs the query did not already have.",
+        (
+            "Live is the stored crawl. v1 and v2 replace the HTML of a labeled URL with its bundle page. A bundle URL "
+            "joins a query that did not have it only when the query is one of its targets and has a stored competitor."
+        ),
         "A BLOCK line means v2's predicted rank number is worse than live. That blocks shipping.",
+        *_set_notes(live),
+        *_set_notes(v1, "v1"),
+        *_set_notes(v2, "v2"),
         "",
         "query\tlive\tv1\tv2\tship",
     ]
@@ -899,13 +1043,14 @@ def render_three_way(live: WhatIfReport, v1: WhatIfReport, v2: WhatIfReport) -> 
     lines.append("")
     lines.append("Per SmartCrew URL. A row is included when the query is a target, the URL is on the live set, or the URL is the best predicted SmartCrew page.")
     lines.append("page\tquery\trole\tlive\tv1\tv2\tship")
+    unscored = 0
     for url in PAGE_TARGETS:
         targets = set(PAGE_TARGETS[url])
         for query in live_by:
             left = _page_rank(live_by[query], url)
             mid = _page_rank(v1_by[query], url)
             right = _page_rank(v2_by[query], url)
-            best = url in {
+            best = _key(url) in {
                 _key(live_by[query].after_url),
                 _key(v1_by[query].after_url),
                 _key(v2_by[query].after_url),
@@ -913,6 +1058,10 @@ def render_three_way(live: WhatIfReport, v1: WhatIfReport, v2: WhatIfReport) -> 
             if query not in targets and left[0] is None and not best:
                 continue
             role = "target" if query in targets else "ranks"
+            if left[0] is None and mid[0] is None and right[0] is None:
+                # The page is in no set for this query: say so, not "target n/a n/a n/a" as if checked.
+                role = "target, not scored"
+                unscored += 1
             blocked = worse_than_live(left[0], right[0])
             if blocked:
                 blockers.append(
@@ -931,6 +1080,11 @@ def render_three_way(live: WhatIfReport, v1: WhatIfReport, v2: WhatIfReport) -> 
                     ]
                 )
             )
+    if unscored:
+        lines.append(
+            f"Not scored: {unscored} target rows. The page is not on the live set or in either bundle for that query, "
+            "or the query has no stored competitor. The ship check did not cover them."
+        )
     lines.append("")
     if blockers:
         lines.append(f"Ship blockers: {len(blockers)}. v2 predicts worse than live.")
@@ -946,11 +1100,21 @@ def render_regression(live: WhatIfReport, v2: WhatIfReport, v3: WhatIfReport) ->
     """Short predicted check of live, v2, and v3. Same-set ranks omit new URLs."""
     lines = [
         "Predicted positions. Not live Google ranks.",
-        "Same leave-one-query-out fit as the v2 run. Cross-validation was not rerun.",
-        "CV from that fit: pairwise 0.534, NDCG at 10 0.695, Spearman 0.075, top-3 hit rate 0.500.",
-        "Coverage: 122 of 135 labeled rows, 13 uncovered, 414 pairs.",
+        "Leave-one-query-out fit on the pages stored now.",
+        (
+            f"Held-out agreement from this fit: pairwise {_num(live.pairwise_accuracy)}, NDCG at 10 {_num(live.ndcg_at_10)}, "
+            f"Spearman {_num(live.spearman)}, top-3 hit rate {_num(live.top3_hit_rate)}. "
+            "These are same-snapshot numbers, not accuracy on unseen results."
+        ),
+        (
+            f"Coverage: {live.n_labeled_urls} of {live.n_labeled_urls + live.uncovered_urls} labeled rows, "
+            f"{live.uncovered_urls} uncovered, {live.n_pairs} pairs. See `benchmark` for baselines and intervals."
+        ),
         "Full-set ranks can include new SmartCrew URLs. Same-set ranks use only the live competitor set.",
         "A CLEAR line is a same-set rank number worse than live.",
+        *_set_notes(live),
+        *_set_notes(v2, "v2"),
+        *_set_notes(v3, "v3"),
         "",
         "query\tlive\tv2\tv3",
     ]
@@ -1012,12 +1176,7 @@ def _page_rank(row: QueryWhatIf, url: str) -> tuple[int | None, int]:
 
 
 def _key(url: str | None) -> str:
-    if not url:
-        return ""
-    try:
-        return normalize_url(url)
-    except ValueError:
-        return url
+    return match_key(url) if url else ""
 
 
 def _short(url: str | None) -> str:
@@ -1031,3 +1190,45 @@ def _short(url: str | None) -> str:
     if marker not in key:
         return key
     return "/" + key.split(marker, 1)[1].split("/", 1)[1] if key.count("/") >= 3 else "/"
+
+
+def bundle_targets(manifest_paths, keywords=None) -> dict[str, set[str]]:
+    """Which queries each bundle page is meant for: a ``query`` column in the bundle manifest, every
+    query whose suggested target page in keywords.csv is that URL, and the queries ``PAGE_TARGETS``
+    lists for that URL (the PR pages, whose labeled queries keywords.csv does not name). Keys are
+    normalized queries; values are page match keys."""
+    import csv as _csv
+    from pathlib import Path as _Path
+
+    if keywords is None:
+        from aeo.ranksim.keywords import build_keywords
+
+        keywords = build_keywords()
+    by_page: dict[str, set[str]] = {}
+    for row in keywords:
+        if row.suggested_target_page:
+            by_page.setdefault(match_key(row.suggested_target_page), set()).add(normalize_query(row.query))
+    for page_url, page_queries in PAGE_TARGETS.items():
+        by_page.setdefault(match_key(page_url), set()).update(normalize_query(query) for query in page_queries)
+    targets: dict[str, set[str]] = {}
+    for manifest_path in manifest_paths:
+        manifest = _Path(manifest_path)
+        if not manifest.is_file():
+            continue
+        with manifest.open(newline="", encoding="utf-8-sig") as handle:
+            reader = _csv.DictReader(handle)
+            fields = {name.strip().lower(): name for name in reader.fieldnames or []}
+            for raw in reader:
+                url = (raw.get(fields.get("url", "url")) or "").strip()
+                if not url:
+                    continue
+                key = match_key(url)
+                queries = set(by_page.get(key, set()))
+                if "query" in fields:
+                    named = normalize_query(raw.get(fields["query"]) or "")
+                    if named:
+                        queries.add(named)
+                for query in queries:
+                    targets.setdefault(query, set()).add(key)
+    return targets
+

@@ -11,14 +11,18 @@ from sqlalchemy.orm import Session
 from aeo.crawl.urls import domain_of, normalize_url
 from aeo.ranksim.graph import domain_pagerank, pagerank
 from aeo.ranksim.loop import page_from_row
-from aeo.ranksim.store import RsPage
+from aeo.ranksim.store import EVALUATION_EXCLUDED_SOURCES, RsPage
 
 
 def load_corpus_docs(session: Session) -> dict[str, object]:
-    """PageDoc map keyed by stored URL and by normalized URL."""
+    """PageDoc map keyed by stored URL and by normalized URL. A normalized key never replaces the
+    page stored at exactly that URL, so a draft stored at its slash twin does not take its place."""
     rows = session.query(RsPage).filter(RsPage.status == "fetched").all()
     docs = {row.url: page_from_row(row) for row in rows}
-    html_by_url = {row.url: row.raw_html or "" for row in rows}
+    # Draft HTML is not on the live web, so its outlinks do not feed PageRank or anchor text.
+    html_by_url = {
+        row.url: row.raw_html or "" for row in rows if (row.source or "unknown") not in EVALUATION_EXCLUDED_SOURCES
+    }
     known = set(docs)
     normalized = {}
     for url in list(known):
@@ -59,12 +63,14 @@ def load_corpus_docs(session: Session) -> dict[str, object]:
         doc.domain_rank = float(domains.get(host, 0.0))
         doc.homepage_authority = float(home_rank.get(host, 0.0))
         doc.anchors = " ".join(anchors.get(url, []))
-        doc.authority = doc.pagerank
+        # authority stays whatever the store holds (a backlink provider's value, or None).
+        # It used to be overwritten with in-corpus PageRank, which duplicated `pagerank`.
         try:
             key = normalize_url(url)
         except ValueError:
             continue
-        docs[key] = doc
+        if key not in known:  # a page stored at exactly that URL keeps its own key
+            docs[key] = doc
     return docs
 
 

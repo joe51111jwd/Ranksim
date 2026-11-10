@@ -1,7 +1,11 @@
+Note added in B17 (2026-11-10). This is the test --three-way output recorded on 2026-10-29 (commit 6716409). It was not rerun, because this checkout has no crawl database.
+B17 relabeled two lines below. They said "Cross-validated accuracy" and "Pairwise accuracy". The numbers are same-snapshot agreement under leave-one-query-out, not accuracy. The numbers and ranks are unchanged.
+The ranks use the rule of that time, given in the "Live is the stored crawl" line: every bundle URL joined every query that did not have it. B13 replaced that rule. A bundle URL now joins only its target queries that have a stored competitor. Rerun test --three-way for ranks under the current rule.
+
 Predicted positions. Not live Google ranks.
 Model: LambdaMART, leave-one-query-out. The query being scored was not in that model.
-Cross-validated accuracy on the labeled file, using the stored pages:
-  Pairwise accuracy: 0.534
+Held-out agreement with the labeled snapshot (each query held out in turn; the same snapshot as the training queries, so not accuracy on unseen results), using the stored pages:
+  Pairwise agreement: 0.534
   NDCG at 10: 0.695
   Spearman: 0.075
   Top-3 hit rate: 0.500

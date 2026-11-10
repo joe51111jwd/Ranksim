@@ -2,6 +2,7 @@ from datetime import date
 
 from aeo.ranksim.features import PageDoc
 from aeo.ranksim.groundtruth import SerpLabel
+from aeo.ranksim.urlkey import match_key
 from aeo.ranksim.whatif import (
     PageMove,
     QueryWhatIf,
@@ -77,7 +78,8 @@ def test_bundle_replaces_html_keeps_pagerank_and_inserts_new_urls():
     assert new_doc.doc.pagerank == 0.0
     assert new_doc.doc.domain_rank == 0.2
 
-    report = score_whatif(labels, pages, overrides, today=date(2026, 10, 29))
+    # The new page is meant for query0 only (keywords.csv target or the manifest's query column).
+    report = score_whatif(labels, pages, overrides, today=date(2026, 10, 29), targets={query0: {match_key(new_url)}})
     first = next(row for row in report.queries if row.query == query0)
     replaced = next(page for page in first.pages if page.url == ours0)
     assert replaced.before_rank == 3
@@ -88,9 +90,12 @@ def test_bundle_replaces_html_keeps_pagerank_and_inserts_new_urls():
     assert inserted.after_rank is not None
     assert inserted.role.startswith("new URL")
 
+    # Other queries do not get a page written for query0 (before, every bundle page joined every query).
+    other = next(row for row in report.queries if row.query == "dirtwork software case 1")
+    assert all(page.url != new_url for page in other.pages)
     held = next(row for row in report.queries if row.query == holdout)
     assert held.before_rank is None
-    assert held.after_rank is not None
+    assert held.after_rank is None and not held.pages
     assert held.real_position is None
     missing = next(gap for gap in held.gaps if gap.url == "https://missing.example/top")
     assert missing.crawled is False

@@ -7,19 +7,23 @@ from datetime import date
 
 from sqlalchemy.orm import Session
 
+from aeo.errors import ProviderConfigError
 from aeo.crawl.extract import extract_html
 from aeo.crawl.urls import domain_of, normalize_url
 from aeo.ranksim import OUR_DOMAIN
+from aeo.ranksim.intents import intent_for
 from aeo.ranksim.features import PageDoc
 from aeo.ranksim.keywords import Keyword
 from aeo.ranksim.score import HAND_WEIGHTS, best_our_position, fit_weights, score_pages
-from aeo.ranksim.serp import SerpProvider
+from aeo.ranksim.serp import SerpCollectError, SerpProvider
+from aeo.ranksim.jsshell import is_js_shell
 from aeo.ranksim.store import (
+    EVALUATION_EXCLUDED_SOURCES,
     RsPage,
     latest_weights,
     page_by_url,
     queries_with_serp,
-    replace_serp,
+    append_serp,
     save_keywords,
     save_rank_checks,
     save_test_run,
@@ -37,6 +41,8 @@ class FetchResult:
     status: str
     error: str | None = None
     fetch_ms: float | None = None
+    source: str = "crawl"
+    final_url: str | None = None  # where redirects ended; None when unknown (saved HTML, drafts)
 
 
 @dataclass
@@ -67,8 +73,10 @@ def is_our_url(url: str) -> bool:
     return host == OUR_DOMAIN or host.endswith("." + OUR_DOMAIN)
 
 
-def page_from_html(url: str, html: str, *, fetch_ms: float | None = None, is_ours: bool | None = None) -> PageDoc:
-    extracted = extract_html(html or "", url)
+def page_from_html(
+    url: str, html: str, *, fetch_ms: float | None = None, is_ours: bool | None = None, extracted=None
+) -> PageDoc:
+    extracted = extracted if extracted is not None else extract_html(html or "", url)
     headings = " ".join(str(item.get("text") or "") for item in extracted.headings)
     schema_types = _schema_types(extracted.schema_objects)
     return PageDoc(
@@ -103,6 +111,9 @@ def page_from_row(row: RsPage) -> PageDoc:
         updated=row.updated_label,
         authority=row.authority,
         is_ours=is_our_url(row.url),
+        source=row.source or "unknown",
+        html_sha256=row.html_sha256,
+        js_shell=bool(row.js_shell),
     )
 
 
@@ -117,9 +128,11 @@ def store_fetched_page(session: Session, fetched: FetchResult) -> None:
             raw_html=fetched.html or "",
             fetch_ms=fetched.fetch_ms,
             authority_source="unavailable",
+            source=fetched.source,
         )
         return
-    doc = page_from_html(fetched.url, fetched.html, fetch_ms=fetched.fetch_ms)
+    extracted = extract_html(fetched.html, fetched.final_url or fetched.url)
+    doc = page_from_html(fetched.url, fetched.html, fetch_ms=fetched.fetch_ms, extracted=extracted)
     upsert_page(
         session,
         url=doc.url,
@@ -139,6 +152,10 @@ def store_fetched_page(session: Session, fetched: FetchResult) -> None:
         updated_label=doc.updated,
         authority=None,
         authority_source="unavailable",
+        source=fetched.source,
+        final_url=fetched.final_url,
+        canonical_url=extracted.canonical or None,
+        js_shell=is_js_shell(fetched.html, doc.word_count),
     )
 
 
@@ -169,8 +186,24 @@ def collect_corpus(
         if len(stored) >= max_pages:
             warnings.append(f"Stopped at {max_pages} stored pages. Later queries were not fetched.")
             break
-        hits = provider.search(keyword.query, depth)
-        replace_serp(session, keyword.query, hits)
+        try:
+            hits = provider.search(keyword.query, depth)
+        except SerpCollectError as exc:
+            # Keep whatever SERP was stored before; a failure is not an empty result.
+            warnings.append(f"'{keyword.query}': collection failed ({exc}). The stored SERP was kept.")
+            continue
+        append_serp(
+            session,
+            keyword.query,
+            hits,
+            provider=provider.name,
+            synthetic=provider.synthetic,
+            is_google=provider.is_google,
+            country=getattr(provider, "country", None),
+            language=getattr(provider, "language", None),
+            device=getattr(provider, "device", None),
+            requested_depth=depth,
+        )
         hit_count += len(hits)
         queries_done += 1
         for hit in hits:
@@ -186,6 +219,8 @@ def collect_corpus(
             stored.add(url)
             try:
                 fetched = fetcher(url)
+            except ProviderConfigError:
+                raise
             except Exception as exc:  # noqa: BLE001
                 fetched = FetchResult(url=url, html="", status="error", error=str(exc))
             store_fetched_page(session, fetched)
@@ -243,13 +278,15 @@ def calibrate(session: Session, keywords: list[Keyword], today: date | None = No
             row = page_by_url(session, normalize_url(hit.url)) if _can_normalize(hit.url) else page_by_url(session, hit.url)
             if row is None or row.status != "fetched" or not row.body and not row.title:
                 continue
+            if (row.source or "unknown") in EVALUATION_EXCLUDED_SOURCES:
+                continue  # draft HTML is not the page Google ranked
             doc = page_from_row(row)
             if doc.authority is not None:
                 authority_used = True
             pages.append(doc)
             positions.append(hit.position)
         if len(pages) >= 2:
-            groups.append((query, intents.get(query, "commercial"), pages, positions))
+            groups.append((query, intent_for(query, intents), pages, positions))
     report = fit_weights(groups, today=today, authority_used=authority_used)
     provider_name = ",".join(sorted(providers)) if providers else "none"
     if not groups:
@@ -394,7 +431,25 @@ def track_ranks(
     day = checked_on or date.today().isoformat()
     rows: list[RsRankCheck] = []
     for keyword in keywords:
-        hits = provider.search(keyword.query, depth)
+        try:
+            hits = provider.search(keyword.query, depth)
+        except SerpCollectError as exc:
+            # Recorded as a failed check, never as "not in the top N".
+            rows.append(
+                RsRankCheck(
+                    query=keyword.query,
+                    checked_on=day,
+                    our_position=None,
+                    our_url=None,
+                    provider=provider.name,
+                    synthetic=provider.synthetic,
+                    is_google=provider.is_google,
+                    top_json=[],
+                    status="error",
+                    error=str(exc),
+                )
+            )
+            continue
         ours = [hit for hit in hits if is_our_url(hit.url)]
         best = min(ours, key=lambda hit: hit.position) if ours else None
         rows.append(
@@ -404,6 +459,7 @@ def track_ranks(
                 our_position=best.position if best else None,
                 our_url=best.url if best else None,
                 provider=provider.name,
+                status="ok",
                 synthetic=provider.synthetic,
                 is_google=provider.is_google,
                 top_json=[
@@ -465,6 +521,8 @@ def _candidates(session: Session, hits: list, replacement: PageDoc | None) -> li
             replaced = True
             continue
         row = page_by_url(session, url)
+        if row is not None and (row.source or "unknown") in EVALUATION_EXCLUDED_SOURCES:
+            row = None  # a stored draft is not this competitor's live page
         if row is None or row.status != "fetched":
             pages.append(
                 PageDoc(url=url, title=getattr(hit, "title", "") or "", body=getattr(hit, "snippet", "") or "", is_ours=is_our_url(url))
@@ -502,3 +560,34 @@ def _can_normalize(url: str) -> bool:
     except ValueError:
         return False
     return True
+
+
+def reextract_pages(session: Session) -> tuple[int, int]:
+    """Re-run extraction on every stored page's saved HTML. No network.
+
+    Only derived fields change (title, headings, body, counts, date label, canonical). fetched_at,
+    html_sha256, source and the HTML itself stay as they were, because the snapshot did not
+    change. Returns (pages re-extracted, pages whose word count changed).
+    """
+    rows = session.query(RsPage).filter(RsPage.status == "fetched").all()
+    changed = 0
+    for row in rows:
+        if not (row.raw_html or "").strip():
+            continue
+        extracted = extract_html(row.raw_html, row.final_url or row.url)
+        doc = page_from_html(row.url, row.raw_html, fetch_ms=row.fetch_ms, extracted=extracted)
+        if doc.word_count != row.word_count:
+            changed += 1
+        row.canonical_url = extracted.canonical or None
+        row.js_shell = is_js_shell(row.raw_html, doc.word_count)
+        row.title = doc.title
+        row.h1 = doc.h1
+        row.headings_text = doc.headings
+        row.body = doc.body
+        row.word_count = doc.word_count
+        row.table_count = doc.table_count
+        row.has_faq = doc.has_faq
+        row.link_count = doc.link_count
+        row.updated_label = doc.updated
+    session.commit()
+    return len(rows), changed

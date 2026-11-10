@@ -2,14 +2,17 @@
 
 from __future__ import annotations
 
+import dataclasses
 import math
 from dataclasses import dataclass, field
 from datetime import date
 
 from aeo.crawl.urls import normalize_url
-from aeo.ranksim.features import FEATURE_NAMES, MONOTONE_UP, PageDoc, raw_features
+from aeo.ranksim.intents import intent_for
+from aeo.ranksim.features import FEATURE_NAMES, MODEL_FEATURES, MONOTONE_UP, PageDoc, raw_features
 from aeo.ranksim.groundtruth import SerpLabel, navboost_leaks
-from aeo.ranksim.metrics import mean_metric, ndcg_at_k, spearman
+from aeo.ranksim.store import EVALUATION_EXCLUDED_SOURCES
+from aeo.ranksim.metrics import expected_ndcg_at_k, expected_top_k_hit, mean_metric, spearman
 
 
 @dataclass
@@ -53,13 +56,23 @@ class AccuracyReport:
 
 
 def _lookup_page(pages: dict[str, PageDoc], url: str) -> PageDoc | None:
+    """The stored page for a URL: exact, then normalize_url, then the same page under another
+    spelling (www, scheme, slash, tracking tags; ``urlkey.match_key``), first by stored URL."""
     if url in pages:
         return pages[url]
     try:
-        key = normalize_url(url)
+        found = pages.get(normalize_url(url))
     except ValueError:
-        return None
-    return pages.get(key)
+        found = None
+    if found is not None:
+        return found
+    from aeo.ranksim.urlkey import match_key
+
+    wanted = match_key(url)
+    for key in sorted(pages):
+        if match_key(key) == wanted:
+            return pages[key]
+    return None
 
 
 def relevance(position: float) -> float:
@@ -91,7 +104,9 @@ def build_examples(
     uncovered = 0
     for label in labels:
         page = _lookup_page(pages, label.url)
-        if page is None:
+        if page is None or getattr(page, "source", "crawl") in EVALUATION_EXCLUDED_SOURCES or getattr(page, "js_shell", False):
+            # A draft stored under a live URL, or a client-rendered shell, is not the page Google
+            # ranked. Count it as uncovered.
             uncovered += 1
             continue
         grouped.setdefault(label.query, []).append((label, page))
@@ -100,30 +115,10 @@ def build_examples(
         docs = []
         for label, page in pairs:
             prior = 0.0 if withhold else navboost_value(label.prior_position)
-            docs.append(
-                PageDoc(
-                    url=page.url,
-                    title=page.title,
-                    h1=page.h1,
-                    headings=page.headings,
-                    body=page.body,
-                    word_count=page.word_count,
-                    table_count=page.table_count,
-                    has_faq=page.has_faq,
-                    link_count=page.link_count,
-                    fetch_ms=page.fetch_ms,
-                    updated=page.updated,
-                    authority=page.authority,
-                    anchors=page.anchors,
-                    pagerank=page.pagerank,
-                    domain_rank=page.domain_rank,
-                    homepage_authority=page.homepage_authority,
-                    ad_hits=page.ad_hits,
-                    navboost_prior=prior,
-                    is_ours=page.is_ours,
-                )
-            )
-        raw = raw_features(query, intents.get(query, "commercial"), docs, today)
+            # replace() carries every PageDoc field, including the link-graph fields
+            # (orphan, link_depth, crawl_inlinks) that a hand-written copy dropped.
+            docs.append(dataclasses.replace(page, navboost_prior=prior))
+        raw = raw_features(query, intent_for(query, intents), docs, today)
         for (label, _page), features in zip(pairs, raw):
             examples.append(
                 RankExample(
@@ -131,7 +126,7 @@ def build_examples(
                     url=label.url,
                     position=label.position,
                     features=features,
-                    intent=intents.get(query, "commercial"),
+                    intent=intent_for(query, intents),
                 )
             )
     return examples, uncovered, withhold
@@ -217,10 +212,17 @@ def cross_validate(examples: list[RankExample], *, real_google: bool, folds_mode
     )
 
 
-def fit_lambdamart(examples: list[RankExample], feature_names: tuple[str, ...] | list[str] | None = None):
+def fit_lambdamart(
+    examples: list[RankExample],
+    feature_names: tuple[str, ...] | list[str] | None = None,
+    monotone_up: frozenset[str] | set[str] | None = None,
+    config: str = "default",
+):
+    """Fit one LambdaMART. ``config`` names a fixed entry of ``MODEL_CONFIGS``."""
     import lightgbm as lgb
 
-    names = list(feature_names or FEATURE_NAMES)
+    names = list(feature_names or MODEL_FEATURES)
+    increasing = MONOTONE_UP if monotone_up is None else frozenset(monotone_up)
     ordered = sorted(examples, key=lambda row: row.query)
     features = [[_feature_value(row.features, name) for name in names] for row in ordered]
     labels = [int(max(0, min(10, round(relevance(row.position))))) for row in ordered]
@@ -245,21 +247,69 @@ def fit_lambdamart(examples: list[RankExample], feature_names: tuple[str, ...] |
         group=group,
         feature_name=names,
     )
-    params = {
-        "objective": "lambdarank",
-        "metric": "ndcg",
-        "num_leaves": 15,
-        "learning_rate": 0.08,
-        "min_data_in_leaf": 1,
-        "verbose": -1,
-        "num_threads": 1,
-        "monotone_constraints": [1 if name in MONOTONE_UP else 0 for name in names],
-        "monotone_constraints_method": "advanced",
-    }
-    return lgb.train(params, dataset, num_boost_round=40)
+    params, rounds = config_params(config)
+    params["monotone_constraints"] = [1 if name in increasing else 0 for name in names]
+    return lgb.train(params, dataset, num_boost_round=rounds)
 
 
-def predict_scores(model, examples: list[RankExample], feature_names: list[str] | None = None) -> dict[int, float]:
+# The model's configuration, in one place so a benchmark run can name exactly what it scored.
+LAMBDAMART_PARAMS = {
+    "objective": "lambdarank",
+    "metric": "ndcg",
+    "num_leaves": 15,
+    "learning_rate": 0.08,
+    "min_data_in_leaf": 1,
+    "verbose": -1,
+    "num_threads": 1,
+    "monotone_constraints_method": "advanced",
+}
+NUM_BOOST_ROUND = 40
+
+# B16: one alternative fixed before it was measured (not a grid search). Fewer, larger leaves and an
+# L2 penalty because about 300 rows in 11 to 16 queries let 15 one-row leaves memorize; a linear
+# label gain (relevance 0..10) because the reported metric is pairwise order, which the default
+# exponential gain (2^rel - 1) does not weigh evenly. Learning rate x rounds stays about 3.
+REGULARIZED_PARAMS = {
+    **LAMBDAMART_PARAMS,
+    "num_leaves": 7,
+    "min_data_in_leaf": 5,
+    "lambda_l2": 1.0,
+    "learning_rate": 0.05,
+    "label_gain": [float(gain) for gain in range(11)],
+}
+REGULARIZED_ROUNDS = 60
+MODEL_CONFIGS = {
+    "default": (LAMBDAMART_PARAMS, NUM_BOOST_ROUND),
+    "regularized": (REGULARIZED_PARAMS, REGULARIZED_ROUNDS),
+}
+
+
+def config_params(config: str) -> tuple[dict, int]:
+    if config not in MODEL_CONFIGS:
+        raise ValueError(f"Unknown model config {config!r}. Use one of {', '.join(MODEL_CONFIGS)}.")
+    params, rounds = MODEL_CONFIGS[config]
+    return dict(params), rounds
+
+
+def model_id(feature_names: list[str] | tuple[str, ...], monotone_up: frozenset[str] | None = None, config: str = "default") -> str:
+    """Stable id for a model configuration: features, monotone set, parameters and rounds."""
+    import hashlib
+    import json
+
+    increasing = sorted(MONOTONE_UP if monotone_up is None else monotone_up)
+    params, rounds = config_params(config)
+    body = json.dumps(
+        {"features": list(feature_names), "monotone_up": increasing, "params": params, "rounds": rounds},
+        sort_keys=True,
+    )
+    return "lgbm-" + hashlib.sha256(body.encode()).hexdigest()[:16]
+
+
+def predict_scores(
+    model, examples: list[RankExample], feature_names: list[str] | None = None, *, gate: bool = True
+) -> dict[int, float]:
+    """Model scores keyed by id(example). With ``gate`` (default) the 150-word rule then moves
+    thin pages below every fuller page; ``gate=False`` returns the model's own scores."""
     if not examples:
         return {}
     import numpy as np
@@ -271,7 +321,7 @@ def predict_scores(model, examples: list[RankExample], feature_names: list[str] 
     )
     values = model.predict(matrix)
     scores = {id(row): float(score) for row, score in zip(examples, values)}
-    return gate_thin_pages(examples, scores)
+    return gate_thin_pages(examples, scores) if gate else scores
 
 
 def gate_thin_pages(examples: list[RankExample], scores: dict[int, float]) -> dict[int, float]:
@@ -290,6 +340,21 @@ def gate_thin_pages(examples: list[RankExample], scores: dict[int, float]) -> di
         for offset, row in enumerate(ordered, start=1):
             adjusted[id(row)] = floor - offset
     return adjusted
+
+
+def gated_rows(examples: list[RankExample]) -> set[int]:
+    """ids of the rows whose score the 150-word rule replaces: thin pages in a query that also has
+    a fuller page. Their order against any page comes from the rule, and their score gaps are
+    synthetic offsets, so they say nothing about how sure the model is."""
+    grouped: dict[str, list[RankExample]] = {}
+    for example in examples:
+        grouped.setdefault(example.query, []).append(example)
+    gated: set[int] = set()
+    for group in grouped.values():
+        thin = [row for row in group if _is_thin(row)]
+        if thin and len(thin) < len(group):
+            gated.update(id(row) for row in thin)
+    return gated
 
 
 def _is_thin(example: RankExample) -> bool:
@@ -314,15 +379,15 @@ def load_model(path: str):
 
 
 def _ndcg(group: list[RankExample], scores: list[float]) -> float | None:
-    order = sorted(range(len(group)), key=lambda index: (-scores[index], index))
-    gains = {str(index): relevance(group[index].position) for index in range(len(group))}
-    return ndcg_at_k([str(index) for index in order], gains, k=10)
+    """Expected NDCG@10 over random orders of tied scores, so input order cannot leak labels."""
+    return expected_ndcg_at_k(scores, [relevance(row.position) for row in group], k=10)
 
 
 def _top3_hit(group: list[RankExample], scores: list[float]) -> float:
-    gold = min(range(len(group)), key=lambda index: (group[index].position, index))
-    order = sorted(range(len(group)), key=lambda index: (-scores[index], index))
-    return 1.0 if gold in order[:3] else 0.0
+    """Expected top-3 hit for the best-labeled row; ties are ordered at random, not by input."""
+    best = min(row.position for row in group)
+    golds = [index for index, row in enumerate(group) if row.position == best]
+    return sum(expected_top_k_hit(scores, gold, k=3) for gold in golds) / len(golds)
 
 
 def _pairs(group: list[RankExample], scores: list[float]) -> tuple[int, int]:
@@ -379,7 +444,7 @@ def _folds(queries: list[str], fold_count: int) -> list[set[str]]:
 
 def _need_more(n_queries: int) -> str:
     return (
-        f"Accuracy was not computed ({n_queries} usable queries). "
+        f"Agreement was not computed ({n_queries} usable queries). "
         "Need at least 2 queries, each with at least 2 result URLs we have pages for. "
         "Best input is a real Google top 10 for many of the 150 keywords: query, url, position. "
         "A Search Console export with Query, Page, and Position also works. "

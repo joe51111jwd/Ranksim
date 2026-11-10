@@ -6,6 +6,8 @@ from datetime import date
 from pathlib import Path
 
 from fastapi import FastAPI, Form
+from html import escape
+
 from fastapi.responses import HTMLResponse
 
 from aeo.config import Settings
@@ -21,7 +23,16 @@ from aeo.ranksim.keywords import build_keywords
 from aeo.ranksim.lambdamart import build_examples
 from aeo.ranksim.linkgraph import LinkGraph, attach_graph, load_graph
 from aeo.ranksim.llm import resolve_llm
-from aeo.ranksim.store import open_session
+from aeo.ranksim.benchmark import corpus_fingerprint, feature_names_sha, file_sha256, git_commit, lightgbm_version
+from aeo.ranksim.features import MODEL_FEATURES
+from aeo.ranksim.ledger import record_check
+from aeo.ranksim.store import RsPage, open_session
+
+LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
+CSP = (
+    "default-src 'none'; style-src 'unsafe-inline'; img-src 'self' data:; "
+    "form-action 'self'; frame-ancestors 'none'; base-uri 'none'"
+)
 
 SAMPLE_QUERY = "hcss heavyjob alternative"
 SAMPLE_URL = "https://www.smartcrewhq.com/compare/hcss-heavyjob-alternative/"
@@ -31,7 +42,11 @@ GRAPH_PATH = Path("smartcrew/linkgraph.json")
 
 class DemoState:
     def __init__(self, settings: Settings, serp_file: str, database: str) -> None:
+        import secrets
+
         self.settings = settings
+        self.database = database
+        self.csrf = secrets.token_urlsafe(32)  # per process; the check form must echo it
         self.today = date.today()
         self.labels = load_serp_file(serp_file)
         self.queries = list(dict.fromkeys(row.query for row in self.labels))
@@ -43,8 +58,23 @@ class DemoState:
         session = open_session(database)
         try:
             self.pages = load_corpus_docs(session)
+            stored = [
+                (url, html or "")
+                for url, html in session.query(RsPage.url, RsPage.raw_html).filter(RsPage.status == "fetched").all()
+            ]
         finally:
             session.close()
+        self.provenance = {
+            "labels_file": serp_file,
+            "labels_sha256": file_sha256(serp_file),
+            "corpus_sha256": corpus_fingerprint(stored),
+            "corpus_pages": len(stored),
+            "git_commit": git_commit(),
+            "lightgbm": lightgbm_version(),
+            "features_sha": feature_names_sha(list(MODEL_FEATURES)),
+            "model": "lambdamart leave-one-query-out (the checked query held out)",
+            "as_of": self.today.isoformat(),
+        }
         self.graph = load_graph(str(GRAPH_PATH)) if GRAPH_PATH.is_file() else LinkGraph(
             notes=["No linkgraph.json yet. Run python -m aeo.ranksim graph."]
         )
@@ -76,15 +106,38 @@ class DemoState:
         return (
             f"Backtest on the pages stored now, leave-one-query-out, PREDICTED: pairwise {pairwise}, "
             f"NDCG at 10 {ndcg}, Spearman {spearman}, top-3 hit rate {top3}. "
-            f"{self.fit.n_queries} queries, {self.fit.n_pairs} pairs, {self.uncovered} labeled rows had no stored HTML. "
-            "An earlier fuller crawl (122 of 135 rows) scored pairwise 0.534 after the monotone and thin-page fixes. "
-            "These are not the same test."
+            f"{self.fit.n_queries} queries, {self.fit.n_pairs} pairs, {self.uncovered} labeled rows had no usable stored HTML. "
+            "On a fresh crawl of this label file, the model was not distinguishable from a BM25F-only baseline or from "
+            "luck once near-duplicate queries and pages were held out (python -m aeo.ranksim benchmark). "
+            "Treat every call here as unproven."
         )
 
     def llm_note(self) -> str:
         if self.llm.available:
             return f"AI layer: {self.llm.name}. Explanations and rewrites are model text about PREDICTED ranks."
         return "AI layer: stub. No OPENROUTER_API_KEY, OPENAI_API_KEY, or ANTHROPIC_API_KEY is set. Explanations are templates. Rewrites do not run."
+
+    def freshness_note(self) -> str:
+        dates = sorted({row.observed_on[:10] for row in self.labels if row.observed_on})
+        missing = [
+            name
+            for name, present in (
+                ("country", any(row.country for row in self.labels)),
+                ("device", any(row.device for row in self.labels)),
+            )
+            if not present
+        ]
+        missing_text = f" It also has no {' or '.join(missing)}." if missing else ""
+        if not dates:
+            return f"Google results: the label file has no collection date, so their age is unknown.{missing_text}"
+        newest = dates[-1]
+        try:
+            age = (self.today - date.fromisoformat(newest)).days
+            age_text = f", {age} days before this check"
+        except ValueError:
+            age_text = ""
+        span = newest if len(dates) == 1 else f"{dates[0]} to {newest}"
+        return f"Google results collected {span}{age_text}.{missing_text}"
 
     def page(self, *, selected: str, url_value: str, html_value: str, result=None, error: str = "") -> HTMLResponse:
         html = render_page(
@@ -101,6 +154,8 @@ class DemoState:
             graph=self.graph,
             fixes=self.fixes,
             error=error,
+            freshness_note=self.freshness_note(),
+            csrf=self.csrf,
         )
         return HTMLResponse(html)
 
@@ -110,8 +165,59 @@ class DemoState:
         return "<html><head><title>HCSS alternative for dirtwork contractors</title></head><body><h1>HCSS alternative</h1><p>Draft.</p></body></html>"
 
 
-def create_app(state: DemoState) -> FastAPI:
+def _host_only(value: str) -> str:
+    value = value.strip().lower()
+    if value.startswith("["):
+        return value[1 : value.find("]")] if "]" in value else value
+    return value.rsplit(":", 1)[0] if value.count(":") == 1 else value
+
+
+def create_app(state: DemoState, *, allowed_hosts: set[str] | frozenset[str] | None = None) -> FastAPI:
+    """The demo app. Only requests whose Host header names an allowed host are served.
+
+    A page on another site can make a browser send requests to 127.0.0.1 (and DNS rebinding can
+    make a hostile name resolve there); checking Host refuses those. POST /check also needs the
+    per-process CSRF token from the form. The app has no user accounts: it is single-user.
+    """
+    from secrets import compare_digest
+
+    from fastapi.responses import PlainTextResponse
+
     app = FastAPI(title="Pre-publish rank check")
+    allowed = {host.lower() for host in (allowed_hosts or LOOPBACK_HOSTS)}
+
+    @app.middleware("http")
+    async def guard(request, call_next):
+        if _host_only(request.headers.get("host", "")) not in allowed:
+            return PlainTextResponse(
+                "Unknown host. Open this tool at http://127.0.0.1 on the computer running it.", status_code=400
+            )
+        response = await call_next(request)
+        response.headers["content-security-policy"] = CSP
+        response.headers["x-content-type-options"] = "nosniff"
+        response.headers["referrer-policy"] = "no-referrer"
+        response.headers["x-frame-options"] = "DENY"
+        response.headers["cache-control"] = "no-store"
+        return response
+
+    from starlette.exceptions import HTTPException as StarletteHTTPException
+    from starlette.requests import Request
+
+    @app.exception_handler(StarletteHTTPException)
+    async def friendly_errors(request: Request, exc: StarletteHTTPException):
+        if request.url.path == "/check" and exc.status_code == 400 and "maximum size" in str(exc.detail):
+            response = state.page(
+                selected="",
+                url_value="",
+                html_value="",
+                error=(
+                    "That draft is too large for the form: the limit is 1 MB after form encoding, which is roughly "
+                    "500 KB of HTML. Remove inline scripts and styles, or paste the visible content only."
+                ),
+            )
+            response.status_code = 413
+            return response
+        return HTMLResponse(escape(str(exc.detail)), status_code=exc.status_code, headers=getattr(exc, "headers", None))
 
     @app.get("/", response_class=HTMLResponse)
     def home(demo: int = 0) -> HTMLResponse:
@@ -128,7 +234,8 @@ def create_app(state: DemoState) -> FastAPI:
             today=state.today,
             intent=state.intent_for.get(SAMPLE_QUERY, "comparison"),
             llm=state.llm,
-            run_ai=True,
+            # Loading a page must never spend money. AI runs only when a person ticks the box on /check.
+            run_ai=False,
         )
         return state.page(selected=SAMPLE_QUERY, url_value=SAMPLE_URL, html_value="", result=result, error=result.error)
 
@@ -137,11 +244,24 @@ def create_app(state: DemoState) -> FastAPI:
         return HTMLResponse(render_space_page(state.space, state.llm_note()))
 
     @app.post("/check", response_class=HTMLResponse)
-    def check(query: str = Form(""), url: str = Form(""), html: str = Form(""), ai: str = Form("")) -> HTMLResponse:
+    def check(
+        query: str = Form(""), url: str = Form(""), html: str = Form(""), ai: str = Form(""), csrf: str = Form("")
+    ) -> HTMLResponse:
+        if not csrf or not compare_digest(csrf.encode("utf-8"), state.csrf.encode("utf-8")):
+            response = state.page(selected="", url_value="", html_value="", error="This form expired. Reload the page and try again.")
+            response.status_code = 403
+            return response
         query = " ".join(query.split())
         url = url.strip()
         if query not in state.fit.models:
-            return state.page(selected=query, url_value=url, html_value=html, error="That query is not in the stored Google file. No rank was invented.")
+            labeled = query in state.queries
+            message = (
+                "That query is in the stored Google file, but fewer than two of its pages have stored HTML, so it has "
+                "no model. No rank was invented. Run index-serp to crawl its pages."
+                if labeled
+                else "That query is not in the stored Google file. No rank was invented."
+            )
+            return state.page(selected=query, url_value=url, html_value=html, error=message)
         draft = html.strip()
         if not draft and url:
             draft = _fetch_html(state.settings, url)
@@ -164,9 +284,22 @@ def create_app(state: DemoState) -> FastAPI:
             llm=state.llm,
             run_ai=ai == "1",
         )
-        return state.page(selected=query, url_value=url, html_value="" if url != "https://draft.local/page" else draft, result=result, error=result.error)
+        _record(state, result, draft)
+        # Echo what the person pasted so they can keep editing; a fetched page is not echoed.
+        return state.page(selected=query, url_value=url, html_value=html, result=result, error=result.error)
 
     return app
+
+
+def _record(state: DemoState, result, html: str) -> None:
+    """Append the check to the prediction ledger. A ledger failure never blocks the answer."""
+    session = open_session(state.database)
+    try:
+        record_check(session, result, html=html, calibration=state.fit.calibration, provenance=state.provenance)
+    except Exception as exc:  # pragma: no cover - defensive
+        print(f"Prediction ledger write failed: {exc}")
+    finally:
+        session.close()
 
 
 def _fetch_html(settings: Settings, url: str) -> str:

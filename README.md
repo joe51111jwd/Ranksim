@@ -44,6 +44,8 @@ Jobs live in the `jobs` table. Postgres workers claim with `FOR UPDATE SKIP LOCK
 
 The crawler allows only `http` and `https`, refuses credentials, and blocks private, loopback, and link-local addresses unless `CRAWL_ALLOW_PRIVATE=true`. It also checks resolved addresses before connecting.
 
+Before the crawler fetches any public site, including the site you submit and live competitors, set `CRAWL_USER_AGENT` to your crawler's name and a contact site owners can reach. The example.com default is refused: the crawl job fails with an error that names `CRAWL_USER_AGENT`. `CRAWL_ALLOW_PRIVATE=true` turns this check off for local labs, so set a real contact before you use it with public sites.
+
 ## Setup
 
 ```bash
@@ -176,6 +178,8 @@ See `.env.example`. The important switches are `DATABASE_URL`, `SEARCH_PROVIDER`
 pytest
 ```
 
+The suite ignores provider keys in your environment and in `.env`, ignores environment and system proxy settings, and fails any test that tries to open a non-loopback connection. DNS lookups are not blocked. Tests that would call a paid provider must be marked `@pytest.mark.live` and only run with `RANKSIM_LIVE_TESTS=1`. CI runs the suite on Python 3.11-3.13 with and without fake keys.
+
 They cover Okapi BM25 (including a hand-checked `log(2)` score), reciprocal rank fusion, hybrid ordering, fan-out parsing, citation position and mention rate, the mock run-to-run variation, diagnostic branches, before/after diffs, calibration with an empty log and with known pairs, robots.txt, private-address blocking, the Brave and OpenAI request shapes, and an API run that recomputes citation share from the mock policy. Network is not required. Mock output is flagged `synthetic`.
 
 ## Google rank simulator (SmartCrew)
@@ -187,7 +191,9 @@ pip install -e ".[dev]"
 python -m aeo.ranksim serve
 ```
 
-Then open http://127.0.0.1:8765/ . The first start, on an empty database, loads the committed HTML in `smartcrew/saved_html` and `smartcrew/pr8_v3`. It does not crawl and it does not invent the pages that are not in those files.
+Then open http://127.0.0.1:8765/ . The first start, on an empty database, loads the committed HTML in `smartcrew/saved_html` and `smartcrew/pr8_v3`. It does not crawl and it does not invent the pages that are not in those files. The `pr8_v3` pages are unpublished drafts stored under live SmartCrew URLs; they are marked `draft_bundle` and never count as evaluation rows. That seed covers only 29 of 135 labeled rows, so it is a demo corpus, not an evaluation corpus. For real numbers, run `index-serp` first (it crawls about 120 public URLs politely, respecting robots.txt).
+
+The server binds 127.0.0.1 by default and has no authentication. Loading a page never calls an LLM; only the AI checkbox on a check does, within `RANKSIM_LLM_MAX_CALLS` and `RANKSIM_LLM_MAX_USD`.
 
 The AI eval, after you export a key:
 
@@ -219,8 +225,13 @@ python -m aeo.ranksim gaps
 | `OPENROUTER_API_KEY` | Cheap AI layer via OpenRouter (`openai/gpt-4o-mini` by default). |
 | `OPENAI_API_KEY` | OpenAI, or OpenRouter when the key starts with `sk-or-`. |
 | `ANTHROPIC_API_KEY` | Anthropic Haiku when no OpenRouter or OpenAI key is set. |
-| `RANKSIM_LLM_MODEL` | Optional model override. |
+| `SERPER_API_KEY` | Google organic results via Serper. |
+| `RANKSIM_LLM_MODEL` | Optional model override, checked against the provider's name format (OpenRouter `vendor/model`, OpenAI without a prefix, Anthropic `claude-...`). Default OpenRouter `openai/gpt-4o-mini`. |
+| `RANKSIM_LLM_PROVIDER` | `auto` (OpenRouter, then OpenAI, then Anthropic, by which key is set), or `openrouter`, `openai`, `anthropic`. A named provider without its key is an error, not a silent switch. |
+| `RANKSIM_LLM_MAX_CALLS`, `RANKSIM_LLM_MAX_USD` | Per-process caps on LLM requests sent (retries included) and estimated spend (default 200, $1.00). The dollar cap needs a known rate for the model; for an unpriced model it stops after the first call unless set to 0. |
 | `RANKSIM_AUTHORITY=dataforseo` | Optional backlink rank on the same DataForSEO account. Off by default. |
+
+Crawling third-party sites needs `CRAWL_USER_AGENT` set to your crawler's name and a contact site owners can reach (a URL or email that is not example.com or similar); the placeholder default is refused at the first real fetch. The check is off when `CRAWL_ALLOW_PRIVATE=true`. robots.txt is read per RFC 9309 (longest match, `*` and `$` patterns), the same on every Python version.
 
 If none of the SERP keys are set, `collect` and `track` exit with an error. They do not invent a Google top 10. `--mock` is explicit and every row is marked synthetic.
 
@@ -228,6 +239,14 @@ If none of the SERP keys are set, `collect` and `track` exit with an error. They
 
 ```bash
 python -m aeo.ranksim evaluate smartcrew/serp.csv
+python -m aeo.ranksim benchmark smartcrew/serp.csv --as-of 2026-10-29 --json bench.json
+python -m aeo.ranksim benchmark-freeze smartcrew/serp.csv --out data/snapshots/2026-11-05 --as-of 2026-10-29
+python -m aeo.ranksim benchmark --snapshot data/snapshots/2026-11-05
+python -m aeo.ranksim benchmark --snapshot data/snapshots/2026-11-05 --final
+python -m aeo.ranksim benchmark --snapshot data/snapshots/2026-11-05 --candidate regularized
+python -m aeo.ranksim ledger verify
+python -m aeo.ranksim ledger observe later.csv --observed-on 2026-11-20 --provider serper --depth 10
+python -m aeo.ranksim ledger score
 python -m aeo.ranksim train smartcrew/serp.csv
 python -m aeo.ranksim test page.html --url https://www.smartcrewhq.com/dirtwork-software/
 python -m aeo.ranksim test https://www.smartcrewhq.com/dirtwork-software/
@@ -237,19 +256,32 @@ python -m aeo.ranksim test --regression smartcrew/pr8_v2/manifest.csv smartcrew/
 python -m aeo.ranksim graph --serp smartcrew/serp.csv
 python -m aeo.ranksim graph-eval
 python -m aeo.ranksim noise day-one.csv day-two.csv
+python -m aeo.ranksim noise --from-db
+python -m aeo.ranksim export-serp latest.csv
+python -m aeo.ranksim collect --keywords my-queries.csv
 python -m aeo.ranksim serve --port 8765
 python -m aeo.ranksim competitors import --from-serps --crawl
 python -m aeo.ranksim space
 python -m aeo.ranksim report
 ```
 
-`evaluate` and `train` default to leave-one-query-out. They read `query,url,position` or a Search Console export with Query, Page, and Position. Optional `prior_position` is an older Google observation used as a Navboost stand-in. If that column copies `position`, it is withheld so the metric cannot cheat. With fewer than two usable queries, the command prints what file is needed and does not emit NDCG, Spearman, top-3 hit rate, or pairwise accuracy.
+`evaluate` and `train` default to leave-one-query-out. They read `query,url,position` or a Search Console export with Query, Page, and Position. Optional `prior_position` is an older Google observation used as a Navboost stand-in. If that column copies `position`, it is withheld so the metric cannot cheat. With fewer than two usable queries, the command prints what file is needed and does not emit NDCG, Spearman, top-3 hit rate, or pairwise agreement. These are same-snapshot numbers on the labeled file, not accuracy on unseen results.
+
+`benchmark-freeze` copies the label file, every stored page (HTML, source, fetch time, hashes) and an optional link graph into a new directory, and splits whole query clusters into dev and final. `benchmark --snapshot` reruns on that copy without a recrawl and scores the dev split only. `--final` trains on dev, scores the final split, and appends the result to the snapshot's `results.jsonl`; a second final run for the same model configuration is refused. With fewer than 10 scored query clusters the report gives no verdict. Snapshots contain third-party HTML: keep them under `data/` (ignored by git) and do not publish them.
+
+`ledger` is the prediction track record. Every draft check with a real URL is appended as a PREDICTED row in a hash chain. `ledger verify` detects an edited or reordered row, or a removed row that has later rows after it; deleting the newest rows, or rebuilding the whole chain, is only caught against a head hash published earlier, so publish the latest hash that verify prints (a commit or a dated post) and check it with `ledger verify --expect-head HASH`. `ledger observe` appends later Google positions with the file name and sha256 (a date after today's latest local date anywhere is refused). It records one day and one provider per file: a file with rows dated another day than `--observed-on`, a date not written as YYYY-MM-DD, rows with a blank date in a file that has dates, or rows from another provider than `--provider` is refused and nothing is recorded. `ledger score` scores each call against the first observation made after the prediction. Rows belong to a project (`--project`, default `default`); a prediction is scored only against observations of the same project. A row with no project is legacy and a row from another tool with no write time is undated: both are kept and verified, counted, and not scored. The ledger stores when each row was really written, inside the hashed payload; a row stated as earlier than that (a protocol time) is reported as backdated and dated from when it was written, and an observation already in the ledger when a prediction was written never resolves it. The hash format matches the integration branch (version 2 binds the project).
+
+`evaluate` and `benchmark` print why each labeled row is or is not usable: covered, thin (stored but under 150 words, so the 150-word rule decides its order), js_shell (a client-rendered page whose stored HTML is an empty app shell; Google renders it, this tool cannot, so it is left out like a draft, and a check refuses a shell draft and asks for the rendered HTML), empty, draft_only (only an unpublished draft is stored), blocked, error, or not_attempted. `--coverage-csv FILE` writes the per-label table. Bundled folders (`smartcrew/saved_html`, the pr8 draft folders) are found from the repo root, or `RANKSIM_ROOT`, whatever the working directory. Labels join stored pages by page identity: `www.`, scheme, trailing slash, tracking tags and fragments do not make a different page (the same key as the web UI's). A crawl stores where redirects ended and the page's canonical; coverage flags labeled URLs that redirected elsewhere or name another canonical, because their stored HTML may not be what Google ranked there.
+
+Query intent has one source for training, checks, what-if, the space view and the whole-site table: an optional `intent` column in the label file, then `smartcrew/keywords.csv`, then one rule (a query with "alternative" or " vs " is a comparison), then "commercial". `evaluate` and `benchmark` list the labeled queries that fell through to the default. Exception: the local demo (`serve.py`, `demo.py`, owned by the web UI branch) trains its model and runs its `/check` form and `/space` page with its own intent map from `keywords.csv`, while its whole-site table and link fixes use the shared source. If the label file has an `intent` column that disagrees with `keywords.csv`, the demo's whole-site table scores that query with another intent than its model was trained on. On the SmartCrew labels, which have no `intent` column, the two agree, because the rule matches no labeled query outside `keywords.csv`.
 
 Blocked pages can be added later without a refetch. Put the HTML in `smartcrew/saved_html/` and list `url,file` in `manifest.csv`. A missing file is skipped. No page text is invented.
 
 `test` with one source re-fetches that page, or reads a local file, and rescores with the linear weights. Competitors stay as stored. A blank before-position means SmartCrew was outside the stored results, not a rank of 151.
 
-`test --bundle` reads a `manifest.csv` of built HTML (`url,file`, files next to the manifest) and rescores every query in the labeled file with leave-one-query-out LambdaMART. Matching URLs replace stored HTML. URLs that were not in that query are added only on the after side. The report says predicted, names feature contribution changes, and lists Google top-3 URLs that were never crawled instead of inventing their text.
+`test --bundle` reads a `manifest.csv` of built HTML (`url,file`, optional `query`; files next to the manifest) and rescores every query in the labeled file with leave-one-query-out LambdaMART. A bundle page replaces the stored HTML of a URL labeled for the query; a page that is not labeled there joins only the queries it is meant for (the manifest's `query` column, the query's suggested target page in `keywords.csv`, or the PR pages' targets in `whatif.PAGE_TARGETS`), and never a query with no stored competitor. The report names a bundle page that joined no query. The agreement figure it prints is held-out agreement with the labeled snapshot, not accuracy. The report says predicted, names feature contribution changes, and lists Google top-3 URLs that were never crawled instead of inventing their text.
+
+Every `collect` and `index-serp` appends a collection per query instead of replacing the last one, with the time it was collected and the country, language and device the request asked for (blank when the provider was not told, so its default applied). A label file with no date is stored once, however often it is imported, and it gets no observation date. A Search Console file is not stored as a collection, because its positions are averages, not a results page. The latest collection feeds calibration and tests. A label file with no date is the latest only when the query has no dated collection, since its stored time is when it was imported. `export-serp` writes the latest Google list of each query as a `query,url,position,observed_on,...` file that `evaluate`, `noise` and `ledger observe` read. An undated label file gets a blank `observed_on`. `ledger observe` refuses an export with lists from other days or undated lists, so record an export whose lists were all collected on the day you pass. `noise FILE FILE` pairs like with like as `--from-db` does: it leaves out a query whose list has the same `collection_id` in both files (not collected again), an undated list, lists whose provider, country, language or device differ, a list with a date that is not YYYY-MM-DD (such as 11/10/2026 from a spreadsheet), and a pair whose first date is not earlier than the second, and it says how many it left out. Plain files with none of these columns are compared as they are. `export-serp --all` writes every collection, and those readers refuse that file. Rows marked synthetic, and rows marked `google=no` (Brave lists), are dropped when a file is read. `noise --from-db` compares one pair of collections per query with the same source, provider, country, language and device. It pairs the newest collection with the latest one from an earlier day, and uses a pair from the same day only when there is none. It leaves out undated label files and lists that are not Google, and it says how many queries it could not pair. `collect` and `track` take `--keywords FILE` (a comma, tab or semicolon separated file with a `query`, `keyword`, `queries` or `top queries` column, or one query per line) instead of the SmartCrew set. The header may sit below title and date rows, as in Keyword Planner and Google Ads exports, and those rows are skipped. There the header must name the query column next to another export column, such as Match type or Clicks, or have a column of only numbers, and each row under it must have as many cells. A table with none of those query columns, such as `Term,Volume`, is refused. Below title rows it is refused when one of its columns holds only numbers. Any other file is read one query per line. In a table with a query column, Google Ads totals rows, such as `Total: Account` in the first cell or the query cell, and query cells of only punctuation, such as `--`, are skipped. An emoji query is kept. A file read one query per line keeps every line.
 
 Daily check, once a SERP key is set:
 
@@ -261,7 +293,7 @@ The tracker appends a row per query. It does not fill days you did not run.
 
 The HTML report is [http://127.0.0.1:8741/ranksim](http://127.0.0.1:8741/ranksim) and `smartcrew/report.html`.
 
-`smartcrew/serp.csv` is a 16-query Google US export from 2026-10-29 (135 rows). `index-serp` crawls those URLs and, when `smartcrew/saved_html/manifest.csv` has a file, stores that HTML instead. Leave-one-query-out accuracy on the stored pages, after missing heading and body matches, monotone match features, and the 150-word gate: pairwise accuracy 0.534, NDCG at 10 of 0.695, Spearman 0.075, top-3 hit rate 0.500, on 122 labeled rows and 414 pairs. Thirteen labeled rows are still uncovered. The previous fit, before those constraints, had pairwise accuracy 0.604. Do not treat either figure as a stable measure of Google accuracy. A later polite recrawl stored fewer pages (41 labeled rows still uncovered). On that smaller set, pairwise accuracy is 0.592 without link-graph features and 0.604 with them. The +0.012 delta is not a meaningful gain, and it is not comparable to the 0.534 above.
+`smartcrew/serp.csv` is a 16-query Google export from 2026-10-29 (135 rows; the file itself has no date, locale or device columns). `index-serp` crawls those URLs and, when `smartcrew/saved_html/manifest.csv` has a file, stores that HTML instead. These are same-snapshot numbers: the held-out queries come from the same day's results as the training queries, so they measure agreement with that snapshot, not accuracy on unseen results. On a fresh crawl (128 of 135 rows covered, 458 pairs), `python -m aeo.ranksim benchmark` puts LambdaMART's held-out-query agreement at 0.581 leave-one-query-out and 0.498 with near-duplicate query clusters and their URLs held out, against 0.478 for BM25F alone, 0.602 and 0.548 for a domain prior that reads no page content, and 0.424-0.572 for random scores on the same pairs. Under the stricter protocol, which is closest to scoring an unseen draft, the model is at chance, and on this data a content-free domain prior does at least as well under every protocol. Small corpus changes move these numbers by several points. Earlier figures (0.534, 0.604, 0.592) came from databases that are not in the repo and cannot be reproduced. The first forward check, models frozen on a Nov 6 snapshot of 30 queries and scored once on Nov 9 (integration branch, PR #5), points the same way: with ties counted as half, LambdaMART 0.546 and BM25 0.484, while simply keeping the Nov 6 order scores 0.767 (E14). See `ACCURACY_PLAN.md` and `docs/EXPERIMENTS.md`.
 
 ## What's next
 

@@ -18,6 +18,14 @@ Published LambdaMART, from evals/forward-2026-11-09/new_page.md:
 
 Bootstrap: 2000 draws, seed 20261110, a query's pairs stay together.
 Every row is PREDICTED. Clicks and behavior data are not available.
+
+2026-11-10 Serper scrape fill, committed before those scores are read.
+The rules are the same as commit 6a0910a. Every slice in GATE_SLICES is
+required. The published LambdaMART counts above do not move. Scrape text is
+score-time content only. It is not a Nov 6 training row. Text of 500
+characters or fewer stays unknown. The scrape was captured on 2026-11-10,
+after both the Nov 6 and Nov 9 SERP days, so the words can differ from the
+page Google ranked.
 """
 
 from __future__ import annotations

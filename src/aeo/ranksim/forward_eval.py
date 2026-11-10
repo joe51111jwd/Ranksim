@@ -443,13 +443,14 @@ def evaluate_snapshot_pair(
         train_scores = [float(predicted_train[id(example)]) for example in training]
     score_mean, score_std = score_scale(train_scores)
     history = [(" ".join(label.query.split()), label.url, float(label.position)) for label in baseline_labels]
-    recovered_index: dict[str, tuple[str, str]] = {}
+    recovered_index: dict[str, tuple[str, str, str | None]] = {}
     for raw_url, payload in (recovered or {}).items():
-        body, method = payload
+        body, method, *extra = payload
         label = str(method or "").strip() or "http"
-        if not label.startswith("recovered_"):
+        if label != "serper_scrape" and not label.startswith("recovered_"):
             label = f"recovered_{label}"
-        recovered_index[_key(raw_url)] = (body, label)
+        captured = str(extra[0]) if extra and extra[0] else None
+        recovered_index[_key(raw_url)] = (body, label, captured)
 
     scored: list[dict] = []
     by_query: dict[str, list[dict]] = defaultdict(list)
@@ -460,6 +461,7 @@ def evaluate_snapshot_pair(
         for key, (url, position) in sorted(forward_map[query].items(), key=lambda item: (item[1][1], item[1][0])):
             prior = baseline_map.get(query, {}).get(key)
             page = _lookup_page(corpus, url)
+            captured_on = None
             if page is not None:
                 html_source = "baseline"
                 html_text = baseline_html.get(page.url) or baseline_html.get(url)
@@ -470,7 +472,7 @@ def evaluate_snapshot_pair(
                 page = page_from_html(url, html_text)
                 html_source = "forward_fetch"
             elif key in recovered_index:
-                html_text, html_source = recovered_index[key]
+                html_text, html_source, captured_on = recovered_index[key]
                 page = page_from_html(url, html_text)
             else:
                 page = None
@@ -486,6 +488,7 @@ def evaluate_snapshot_pair(
                 "html": page is not None,
                 "html_source": html_source,
                 "html_sha256": _html_sha(html_text),
+                "content_captured_on": captured_on if html_source == "serper_scrape" else None,
             }
             prepared.append(row)
             if page is not None:
@@ -546,6 +549,7 @@ def evaluate_snapshot_pair(
         "html_forward_fetch_only": sum(1 for row in scored if row["html_source"] == "forward_fetch"),
         "html_missing": sum(1 for row in scored if row["html_source"] == "missing"),
         "html_recovered": sum(1 for row in scored if str(row["html_source"]).startswith("recovered_")),
+        "html_serper_scrape": sum(1 for row in scored if row["html_source"] == "serper_scrape"),
         "content_missing": sum(1 for row in scored if row.get("content_missing")),
         "queries": len(forward_map),
         "training_examples": len(training),

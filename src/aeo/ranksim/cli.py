@@ -204,7 +204,10 @@ def main(argv: list[str] | None = None) -> None:
     )
     ledger = sub.add_parser("ledger", help="Prediction track record: verify, list, record observed results, score")
     ledger_sub = ledger.add_subparsers(dest="ledger_command", required=True)
-    ledger_sub.add_parser("verify", help="Check that no recorded prediction was changed, removed, or reordered")
+    ledger_verify = ledger_sub.add_parser("verify", help="Check that no recorded prediction was changed, removed, or reordered")
+    ledger_verify.add_argument(
+        "--expect-head", default=None, help="A latest hash published earlier; fails if it is no longer in the chain (newest rows removed)"
+    )
     ledger_list = ledger_sub.add_parser("list", help="Show recorded predictions")
     ledger_list.add_argument("--limit", type=int, default=20)
     ledger_list.add_argument("--project", default=None, help="Only this project slug")
@@ -1052,6 +1055,11 @@ def _ledger(database: str, args) -> None:
         if args.ledger_command == "verify":
             ok, message = verify_ledger(session)
             print(message)
+            if ok and args.expect_head:
+                from aeo.ranksim.ledger import head_is_anchored
+
+                ok, anchored = head_is_anchored(session, args.expect_head)
+                print(anchored)
             if not ok:
                 raise SystemExit(1)
         elif args.ledger_command == "list":

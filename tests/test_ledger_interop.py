@@ -106,7 +106,8 @@ def test_outcomes_resolve_only_within_one_named_project(tmp_path):
     _observe(session, "2026-11-12", slug="")
     _observe(session, "2026-11-12")
     score = score_ledger(session)
-    assert (score.calls, score.resolved, score.no_outcome_yet) == (3, 1, 2)  # only the default-project call
+    # The default-project call resolves; the other project's waits; the blank one is legacy, not waiting.
+    assert (score.calls, score.resolved, score.no_outcome_yet, score.legacy) == (2, 1, 1, 1)
     assert score_ledger(session, project_slug="other").resolved == 0
     session.close()
 
@@ -231,3 +232,75 @@ def test_an_older_ledger_database_gains_the_new_columns(tmp_path):
     columns = {row[1] for row in session.execute(text("PRAGMA table_info(rs_outcomes)"))}
     assert {"project_slug", "source_file", "source_sha256", "uploaded_at"} <= columns
     session.close()
+
+
+def test_an_outcome_dated_after_every_time_zone_is_refused_at_the_boundary(tmp_path):
+    session = open_session(f"sqlite:///{tmp_path / 'l.db'}")
+    NOW["now"] = datetime(2026, 11, 10, 0, 30, tzinfo=timezone.utc)  # 14:30 on Nov 10 in UTC+14, nowhere Nov 11 yet
+    with pytest.raises(LedgerError, match="in the future"):
+        record_outcome(session, query=QUERY, observed_on="2026-11-11", provider="t", positions={SUBJECT: 1}, depth=10)
+    NOW["now"] = datetime(2026, 11, 10, 10, 0, tzinfo=timezone.utc)  # now Nov 11 in UTC+14
+    record_outcome(session, query=QUERY, observed_on="2026-11-11", provider="t", positions={SUBJECT: 1}, depth=10)
+    session.close()
+
+
+def test_an_outcome_recorded_before_the_prediction_never_resolves_it(tmp_path):
+    session = open_session(f"sqlite:///{tmp_path / 'l.db'}")
+    # Inserted directly (bypassing the date check): dated later, but already in the ledger.
+    session.add(RsOutcome(recorded_at=datetime(2026, 11, 4, tzinfo=timezone.utc), observed_on="2026-11-12", query=QUERY,
+                          provider="t", depth=10, positions={SUBJECT: 1, "https://a.example/": 2}, notes="", project_slug=DEFAULT_PROJECT_SLUG))
+    session.commit()
+    _predict(session, written=datetime(2026, 11, 5, tzinfo=timezone.utc))
+    assert score_ledger(session).resolved == 0
+    session.close()
+
+
+def test_a_published_head_catches_removal_of_the_newest_rows(tmp_path, capsys):
+    db = f"sqlite:///{tmp_path / 'l.db'}"
+    session = open_session(db)
+    for day in (5, 6, 7):
+        _predict(session, written=datetime(2026, 11, day, tzinfo=timezone.utc))
+    head = session.query(RsPrediction).order_by(RsPrediction.id.desc()).first().row_hash
+    session.execute(text("DELETE FROM rs_predictions WHERE id = 3"))
+    session.commit()
+    assert verify_ledger(session)[0]  # the remaining chain is intact on its own
+    session.close()
+    with pytest.raises(SystemExit):
+        main(["--database", db, "ledger", "verify", "--expect-head", head])
+    assert "not in this ledger" in capsys.readouterr().out
+
+
+def test_rows_from_another_writer_without_a_write_time_are_not_scored(tmp_path):
+    session = open_session(f"sqlite:///{tmp_path / 'l.db'}")
+    payload = {"calls": [{"competitor_url": "https://a.example/", "predicted": "above", "score_gap": 1.0, "confidence": "UNSURE"}],
+               "ledger_hash_version": 2, "provenance": {}}
+    stamp = "2026-11-07T04:00:00+00:00"
+    session.add(RsPrediction(created_at=stamp, kind="forward", query=QUERY, subject_url=SUBJECT, project_slug=DEFAULT_PROJECT_SLUG,
+                             payload=payload, prev_hash="0" * 64,
+                             row_hash=_row_hash("0" * 64, stamp, "forward", QUERY, SUBJECT, payload, DEFAULT_PROJECT_SLUG)))
+    session.commit()
+    _observe(session, "2026-11-09")
+    score = score_ledger(session)
+    assert (score.undated, score.resolved, score.calls) == (1, 0, 0)
+    assert "carry no write time" in render_score(score)
+    session.close()
+
+
+def test_only_a_unique_violation_counts_as_a_fork_race():
+    from aeo.ranksim.ledger import _is_fork_race
+
+    class Orig(Exception):
+        def __init__(self, message, sqlstate=None):
+            super().__init__(message)
+            self.sqlstate = sqlstate
+
+    class Wrapped(Exception):
+        def __init__(self, orig):
+            self.orig = orig
+
+    not_null = Orig('null value in column "x" violates not-null constraint\nDETAIL: Failing row contains (duplicate content checker, unique).', "23502")
+    assert not _is_fork_race(Wrapped(not_null))
+    assert _is_fork_race(Wrapped(Orig('duplicate key value violates unique constraint "rs_predictions_prev_hash_key"', "23505")))
+    assert _is_fork_race(Wrapped(Orig("UNIQUE constraint failed: rs_predictions.prev_hash")))
+    assert not _is_fork_race(Wrapped(Orig("NOT NULL constraint failed: rs_predictions.reviewer\nduplicate")))
+

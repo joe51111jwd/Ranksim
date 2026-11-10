@@ -91,7 +91,7 @@ class RsOutcome(Base):
     __tablename__ = "rs_outcomes"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    recorded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    recorded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: _now())
     observed_on: Mapped[str] = mapped_column(String(10), index=True)
     query: Mapped[str] = mapped_column(String(500), index=True)
     provider: Mapped[str] = mapped_column(String(64))
@@ -126,6 +126,8 @@ class LedgerScore:
     no_outcome_yet: int = 0
     backdated: int = 0  # predictions written later than their stated time
     unscored: int = 0  # predictions on synthetic, historical or no data
+    legacy: int = 0  # predictions with no project (written before projects existed): kept, not scored
+    undated: int = 0  # version 2 rows with no write time (another writer): stated time unverifiable, not scored
 
     @property
     def accuracy(self) -> float | None:
@@ -216,10 +218,12 @@ def record_outcome(
 ) -> RsOutcome:
     """Append an observed result list. ``positions`` maps URL to organic position.
 
-    ``observed_on`` is the date the caller supplied; a date after today (UTC, plus one day for
-    time zones) is refused. The file fields describe an imported file, not a live Google pull.
+    ``observed_on`` is the date the caller supplied; a date after the latest local date anywhere
+    (UTC plus 14 hours, the same rule scoring uses) is refused, so an outcome can never be dated
+    after a prediction written later. The file fields describe an imported file, not a live
+    Google pull.
     """
-    if observed_on > (_now() + timedelta(days=1)).date().isoformat():
+    if observed_on > (_now() + timedelta(hours=14)).date().isoformat():
         raise LedgerError(f"observed_on {observed_on} is in the future; an outcome cannot be observed before it happens.")
     row = RsOutcome(
         observed_on=observed_on,
@@ -252,10 +256,27 @@ def verify_ledger(session: Session) -> tuple[bool, str]:
             return False, f"Prediction {row.id}: contents changed after it was recorded."
         prev = row.row_hash
     head = prev if rows else "none"
-    note = f"{len(rows)} predictions, chain intact. Latest hash {head}."
+    note = (
+        f"{len(rows)} predictions, chain intact. Latest hash {head}. Publish this hash (a commit or a dated post) and "
+        "check it later with `ledger verify --expect-head`: deleting the newest rows passes this check on its own."
+    )
     if legacy:
         note += f" {legacy} legacy rows use the original hash and do not bind project_slug."
     return True, note
+
+
+def head_is_anchored(session: Session, expected_head: str) -> tuple[bool, str]:
+    """Whether a head hash published earlier is still a row of the chain.
+
+    ``verify_ledger`` only checks the rows that remain, so deleting the newest rows (or rebuilding
+    the whole chain) passes it. Comparing against a head recorded somewhere else catches both.
+    """
+    wanted = (expected_head or "").strip().lower()
+    row = session.query(RsPrediction).filter(RsPrediction.row_hash == wanted).first()
+    if row is None:
+        return False, f"The published head {wanted[:16]}... is not in this ledger: rows were removed or the chain was rebuilt."
+    later = session.query(RsPrediction).filter(RsPrediction.id > row.id).count()
+    return True, f"The published head is prediction {row.id}; {later} predictions were added after it."
 
 
 def _same_project(prediction: RsPrediction, outcome: RsOutcome) -> bool:
@@ -265,16 +286,19 @@ def _same_project(prediction: RsPrediction, outcome: RsOutcome) -> bool:
     return bool(left) and left == right
 
 
-def prediction_time(prediction: RsPrediction) -> tuple[datetime, bool]:
+def prediction_time(prediction: RsPrediction) -> tuple[datetime | None, bool]:
     """(the time the prediction is dated by, whether it was backdated).
 
     The later of the stated ``created_at`` and the wall-clock ``payload.recorded_at``: a row
-    cannot be resolved by an outcome that existed before the row did.
+    cannot be resolved by an outcome that existed before the row did. A version 2 row without
+    ``recorded_at`` comes from another writer that does not stamp the write time (for example a
+    replay at a stated protocol time); its time cannot be checked, so it is ``None`` (undated).
+    Version 1 rows predate the stamp and keep their stated time.
     """
     stated = _aware(datetime.fromisoformat(prediction.created_at))
     written_text = (prediction.payload or {}).get("recorded_at")
     if not written_text:
-        return stated, False  # rows from before recorded_at existed: only the stated time is known
+        return (None, False) if _hash_version(prediction.payload) >= 2 else (stated, False)
     written = _aware(datetime.fromisoformat(written_text))
     return max(stated, written), written - stated > BACKDATE_TOLERANCE
 
@@ -300,13 +324,22 @@ def score_ledger(session: Session, *, project_slug: str | None = None) -> Ledger
         if dataset in UNSCORED_DATASETS:
             score.unscored += 1
             continue
+        if not _project_slug(prediction.project_slug):
+            score.legacy += 1  # no project: matches no outcome, and is not "waiting" for one
+            continue
         made, backdated = prediction_time(prediction)
+        if made is None:
+            score.undated += 1
+            continue
         score.backdated += int(backdated)
         latest_local_day = (made + timedelta(hours=14)).date().isoformat()
         later = [
             row
             for row in by_query.get(" ".join(prediction.query.split()), [])
-            if row.observed_on > latest_local_day and _same_project(prediction, row)
+            if row.observed_on > latest_local_day
+            and _same_project(prediction, row)
+            # An outcome already in the ledger when the prediction was written cannot resolve it.
+            and (row.recorded_at is None or _aware(row.recorded_at) > made)
         ]
         calls = prediction.payload.get("calls", [])
         score.calls += len(calls)
@@ -344,6 +377,16 @@ def render_score(score: LedgerScore) -> str:
         )
     if score.unscored:
         lines.append(f"{score.unscored} predictions on synthetic, historical or no data are not scored.")
+    if score.legacy:
+        lines.append(
+            f"{score.legacy} predictions were written before projects existed (no project). They are kept and verified "
+            "but not scored: their hash does not bind a project, so no outcome can be matched to them safely."
+        )
+    if score.undated:
+        lines.append(
+            f"{score.undated} predictions carry no write time (written by another tool). Their stated time cannot be "
+            "checked, so they are not evidence that the prediction came before the result, and are not scored."
+        )
     if score.resolved:
         lines.append(f"Right {score.correct} of {score.resolved} resolved calls ({score.accuracy:.3f}).")
     else:
@@ -397,10 +440,17 @@ def _row_hash(
 
 
 def _is_fork_race(exc) -> bool:
-    """True when another writer took the same prev_hash slot (unique constraint), the one
-    IntegrityError worth retrying. A NOT NULL or other failure is reported, not retried."""
-    message = str(getattr(exc, "orig", exc)).lower()
-    return "unique" in message or "duplicate" in message
+    """True when another writer took the same prev_hash slot (a unique violation), the one
+    IntegrityError worth retrying. A NOT NULL or other failure is reported, not retried.
+
+    The driver's error code decides when there is one (PostgreSQL 23505); otherwise only the
+    first line of the message is read, because a DETAIL line can quote the row's own values."""
+    orig = getattr(exc, "orig", exc)
+    state = getattr(orig, "sqlstate", None) or getattr(orig, "pgcode", None)
+    if state:
+        return str(state) == "23505"
+    first = (str(orig).splitlines() or [""])[0].lower()
+    return first.startswith("unique constraint failed") or "duplicate key" in first or "duplicate entry" in first
 
 
 def _aware(moment: datetime) -> datetime:

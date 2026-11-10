@@ -284,7 +284,7 @@ def append_serp(
     ).first()
     if seen is None and not dated:
         # A database from before the dated column signed an undated import with its import day.
-        # It signed a dated import the same way, so a row that can only be a dated import is left
+        # It signed a dated import the same way, so a row that may be a dated import is left
         # out: matching it would mark a real observation as undated.
         legacy = session.query(RsSerpCollection).filter(
             RsSerpCollection.query == query,
@@ -295,7 +295,7 @@ def append_serp(
         seen = next(
             (
                 row for row in legacy
-                if not collection_dated(row)
+                if not legacy_dated_import(row)
                 and _collection_signature(source, provider, row.collected_at.date().isoformat(), body) == row.signature
             ),
             None,
@@ -306,6 +306,15 @@ def append_serp(
         if source != "live":
             if seen.dated is None:
                 seen.dated = dated  # a re-import now says whether that older row carried a date
+            if dated and seen.dated and is_google and search_console_list(seen):
+                # Its dated label file is a results list, not Search Console averages, so a mark
+                # an earlier index-serp put on this older row is taken off. That index-serp marked
+                # only rows with no dated flag, and an earlier re-import may have set the flag
+                # since, so a row already dated is restored too. index-serp stores every label
+                # list as Google, so no other dated label row is marked.
+                seen.is_google = True
+                for row in collection_hits(session, seen.id):
+                    row.is_google = True
             if not dated:
                 # An undated list is ordered by its import time. Importing an earlier version of
                 # the file again makes its list the latest undated one again, without a second row.
@@ -387,12 +396,25 @@ def pick_latest(collections: list[RsSerpCollection]) -> RsSerpCollection | None:
     A label file with no date was stored at its import time, which says nothing about when its
     list was observed. So it is the latest only when the query has no dated, non-synthetic
     collection. Importing an old undated file after a live collect does not replace the live list.
+
+    A list an older version stored from a dated file that may be Search Console averages (see
+    legacy_unclassified) is never the latest dated list. When it is later than the query's latest
+    dated label list, that list may not be the latest either, so there is none (None) until
+    index-serp reads the original file again. A live collect stays the latest.
     """
+    def order(c):
+        return (c.collected_at, c.recorded_at or c.collected_at, c.id)
+
     if any(collection_dated(c) and not c.synthetic for c in collections):
-        collections = [c for c in collections if collection_dated(c)]
+        latest = max((c for c in collections if collection_dated(c)), key=order)
+        if latest.source != "live" and any(
+            legacy_unclassified(c) and _utc(c.collected_at) > _utc(latest.collected_at) for c in collections
+        ):
+            return None
+        return latest
     if not collections:
         return None
-    return max(collections, key=lambda c: (c.collected_at, c.recorded_at or c.collected_at, c.id))
+    return max(collections, key=order)
 
 
 def serp_collections(session: Session, query: str | None = None, *, include_synthetic: bool = False) -> list[RsSerpCollection]:
@@ -407,16 +429,47 @@ def serp_collections(session: Session, query: str | None = None, *, include_synt
 def collection_dated(collection: RsSerpCollection) -> bool:
     """True when collected_at is when the list was observed. A live collect always is. A label
     file is only when it carried a date. An older label_file row that did not record this is
-    read from its times: that version stored a dated file at UTC midnight of its observed day,
-    and an undated file at its import time."""
+    dated only when it is a legacy_dated_import whose URLs are on more than one site. A Search
+    Console list holds only your own site's pages, so such a list did not come from one."""
     if collection.dated is not None:
         return bool(collection.dated)
     if collection.source == "live":
         return True
+    return legacy_dated_import(collection) and _spans_sites(collection)
+
+
+def legacy_dated_import(collection: RsSerpCollection) -> bool:
+    """A label_file row from before the dated column, stored at UTC midnight of a day. The older
+    version stored a dated file that way, and an undated file at its import time. But it also
+    stored a Search Console file with a date column that way, so the row may hold averages."""
+    if collection.dated is not None or collection.source == "live":
+        return False
     collected, recorded = _utc(collection.collected_at), _utc(collection.recorded_at)
     if collected is None or (collected.hour, collected.minute, collected.second, collected.microsecond) != (0, 0, 0, 0):
         return False
     return recorded is None or abs(recorded - collected) > timedelta(seconds=1)
+
+
+def legacy_unclassified(collection: RsSerpCollection) -> bool:
+    """A legacy_dated_import on one site, still read as Google: a dated label file or Search
+    Console averages, and the row cannot tell which. It is read as undated, so it is never a dated
+    Google list. Running index-serp again on its original file classifies it: a label file dates
+    it, and a Search Console file marks it as not Google."""
+    return legacy_dated_import(collection) and collection.is_google and not collection_dated(collection)
+
+
+def _spans_sites(collection: RsSerpCollection) -> bool:
+    """True when the collection's URLs are on more than one site (the last two host labels, so a
+    Search Console domain property and its subdomains count as one site)."""
+    from sqlalchemy.orm import object_session
+
+    from aeo.crawl.urls import domain_of
+
+    session = object_session(collection)
+    if session is None:
+        return False
+    urls = session.scalars(select(RsSerp.url).where(RsSerp.collection_id == collection.id)).all()
+    return len({".".join(domain_of(url).split(".")[-2:]) for url in urls}) > 1
 
 
 def _utc(value: datetime | None) -> datetime | None:
@@ -509,7 +562,7 @@ def serp_for_query(session: Session, query: str) -> list[RsSerp]:
     if latest is not None:
         return collection_hits(session, latest.id)
     if session.query(RsSerpCollection.id).filter(RsSerpCollection.query == query).first() is not None:
-        return []  # only Search Console lists are stored for this query
+        return []  # only Search Console lists, or its latest list is not known (see pick_latest)
     return list(
         session.scalars(
             select(RsSerp).where(RsSerp.query == query, RsSerp.collection_id.is_(None)).order_by(RsSerp.position)

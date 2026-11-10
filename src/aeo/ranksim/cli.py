@@ -154,6 +154,18 @@ def main(argv: list[str] | None = None) -> None:
     bench.add_argument("--json", dest="json_out", default=None, help="Write the full report as JSON")
     bench.add_argument("--coverage-csv", default=None, help="Write one row per label: stored HTML or the reason it is missing")
     bench.add_argument(
+        "--model",
+        choices=["default", "regularized"],
+        default="default",
+        help="LambdaMART configuration for the lambdamart row (and the model id of a --final run)",
+    )
+    bench.add_argument(
+        "--candidate",
+        choices=["regularized", "default"],
+        default=None,
+        help="Also score this configuration on the same folds, report its in-sample vs held-out gap, and apply the fixed adoption rule",
+    )
+    bench.add_argument(
         "--snapshot",
         default=None,
         help="Run on a frozen snapshot (benchmark-freeze) instead of the live database. Scores the dev split only.",
@@ -627,11 +639,15 @@ def _run_benchmark_report(
     those once (protocols ``final`` and ``final-url``).
     """
     from aeo.ranksim.benchmark import (
+        CANDIDATE_PREFIX,
         FINAL_PROTOCOLS,
         PROTOCOLS,
+        adoption_decision,
         build_report,
         corpus_fingerprint,
         default_scorers,
+        in_sample_pairwise,
+        lambdamart_scorer,
         query_clusters,
         run_benchmark,
         run_final,
@@ -661,6 +677,23 @@ def _run_benchmark_report(
         print(render_coverage(coverage))
         return None
     cluster_source = cluster_labels if cluster_labels is not None else labels
+    model_config = getattr(args, "model", "default")
+    candidate = getattr(args, "candidate", None)
+    scorers = default_scorers(names, args.seed, examples, config=model_config)
+    if candidate:
+        if final_queries is not None:
+            raise SystemExit("--candidate is for the dev split. A final run scores one configuration (--model).")
+        scorers[CANDIDATE_PREFIX + candidate] = lambdamart_scorer(names, config=candidate)
+        gaps = []
+        for name in (model_config, candidate):
+            inside = in_sample_pairwise(examples, lambdamart_scorer(names, config=name))
+            gaps.append(f"{name} {inside:.3f}" if inside is not None else f"{name} n/a")
+        notes.append(
+            "In-sample pairwise (trained and scored on the same queries; compare with the held-out rows above): "
+            + ", ".join(gaps) + "."
+        )
+    if model_config != "default":
+        notes.append(f"lambdamart uses the {model_config} configuration.")
     try:
         if final_queries is None:
             clusters, results = run_benchmark(
@@ -671,7 +704,12 @@ def _run_benchmark_report(
                 seed=args.seed,
                 feature_names=names,
                 cluster_source=cluster_source,
+                scorers=scorers,
             )
+            if candidate:
+                for result in results:
+                    if result.protocol == "cluster-url":
+                        notes.append(adoption_decision(result, candidate))
         else:
             all_clusters = query_clusters(cluster_source, args.cluster_threshold)
             used = {row.query for row in examples}
@@ -680,7 +718,7 @@ def _run_benchmark_report(
                 examples,
                 set(final_queries),
                 all_clusters,
-                default_scorers(names, args.seed, examples),
+                scorers,
                 protocols=FINAL_PROTOCOLS,
                 bootstrap=args.bootstrap,
                 seed=args.seed,
@@ -794,7 +832,7 @@ def _benchmark_snapshot(args) -> None:
         notes.append(f"as_of overridden to {args.as_of}; the snapshot was frozen with {manifest['as_of']}.")
     as_of = date.fromisoformat(args.as_of or manifest["as_of"])
     names = _model_feature_names(args)
-    model = model_id(names)
+    model = model_id(names, config=args.model)
     if args.final:
         if args.protocol:
             raise SystemExit("--protocol does not apply to --final, which runs final and final-url.")

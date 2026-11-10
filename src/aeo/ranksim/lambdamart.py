@@ -216,7 +216,9 @@ def fit_lambdamart(
     examples: list[RankExample],
     feature_names: tuple[str, ...] | list[str] | None = None,
     monotone_up: frozenset[str] | set[str] | None = None,
+    config: str = "default",
 ):
+    """Fit one LambdaMART. ``config`` names a fixed entry of ``MODEL_CONFIGS``."""
     import lightgbm as lgb
 
     names = list(feature_names or MODEL_FEATURES)
@@ -245,9 +247,9 @@ def fit_lambdamart(
         group=group,
         feature_name=names,
     )
-    params = dict(LAMBDAMART_PARAMS)
+    params, rounds = config_params(config)
     params["monotone_constraints"] = [1 if name in increasing else 0 for name in names]
-    return lgb.train(params, dataset, num_boost_round=NUM_BOOST_ROUND)
+    return lgb.train(params, dataset, num_boost_round=rounds)
 
 
 # The model's configuration, in one place so a benchmark run can name exactly what it scored.
@@ -263,15 +265,41 @@ LAMBDAMART_PARAMS = {
 }
 NUM_BOOST_ROUND = 40
 
+# B16: one alternative fixed before it was measured (not a grid search). Fewer, larger leaves and an
+# L2 penalty because about 300 rows in 11 to 16 queries let 15 one-row leaves memorize; a linear
+# label gain (relevance 0..10) because the reported metric is pairwise order, which the default
+# exponential gain (2^rel - 1) does not weigh evenly. Learning rate x rounds stays about 3.
+REGULARIZED_PARAMS = {
+    **LAMBDAMART_PARAMS,
+    "num_leaves": 7,
+    "min_data_in_leaf": 5,
+    "lambda_l2": 1.0,
+    "learning_rate": 0.05,
+    "label_gain": [float(gain) for gain in range(11)],
+}
+REGULARIZED_ROUNDS = 60
+MODEL_CONFIGS = {
+    "default": (LAMBDAMART_PARAMS, NUM_BOOST_ROUND),
+    "regularized": (REGULARIZED_PARAMS, REGULARIZED_ROUNDS),
+}
 
-def model_id(feature_names: list[str] | tuple[str, ...], monotone_up: frozenset[str] | None = None) -> str:
+
+def config_params(config: str) -> tuple[dict, int]:
+    if config not in MODEL_CONFIGS:
+        raise ValueError(f"Unknown model config {config!r}. Use one of {', '.join(MODEL_CONFIGS)}.")
+    params, rounds = MODEL_CONFIGS[config]
+    return dict(params), rounds
+
+
+def model_id(feature_names: list[str] | tuple[str, ...], monotone_up: frozenset[str] | None = None, config: str = "default") -> str:
     """Stable id for a model configuration: features, monotone set, parameters and rounds."""
     import hashlib
     import json
 
     increasing = sorted(MONOTONE_UP if monotone_up is None else monotone_up)
+    params, rounds = config_params(config)
     body = json.dumps(
-        {"features": list(feature_names), "monotone_up": increasing, "params": LAMBDAMART_PARAMS, "rounds": NUM_BOOST_ROUND},
+        {"features": list(feature_names), "monotone_up": increasing, "params": params, "rounds": rounds},
         sort_keys=True,
     )
     return "lgbm-" + hashlib.sha256(body.encode()).hexdigest()[:16]

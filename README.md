@@ -238,6 +238,7 @@ python -m aeo.ranksim benchmark smartcrew/serp.csv --as-of 2026-10-29 --json ben
 python -m aeo.ranksim benchmark-freeze smartcrew/serp.csv --out data/snapshots/2026-11-05 --as-of 2026-10-29
 python -m aeo.ranksim benchmark --snapshot data/snapshots/2026-11-05
 python -m aeo.ranksim benchmark --snapshot data/snapshots/2026-11-05 --final
+python -m aeo.ranksim benchmark --snapshot data/snapshots/2026-11-05 --candidate regularized
 python -m aeo.ranksim ledger verify
 python -m aeo.ranksim ledger observe later.csv --observed-on 2026-11-20 --provider serper --depth 10
 python -m aeo.ranksim ledger score

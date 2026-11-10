@@ -244,14 +244,16 @@ def split_fold(usable: dict[str, list[RankExample]], fold: Fold, protocol: str) 
 # Scorers -----------------------------------------------------------------------------
 
 
-def lambdamart_scorer(feature_names: list[str] | None = None, monotone_up: frozenset[str] | None = None) -> Scorer:
+def lambdamart_scorer(
+    feature_names: list[str] | None = None, monotone_up: frozenset[str] | None = None, config: str = "default"
+) -> Scorer:
     names = list(feature_names or MODEL_FEATURES)
 
     def score(train: list[RankExample], test: list[RankExample]) -> list[float]:
         trainable = _queries_with_pairs(train)
         if len(trainable) < 1:
             return [0.0 for _ in test]
-        model = fit_lambdamart(trainable, names, monotone_up)
+        model = fit_lambdamart(trainable, names, monotone_up, config=config)
         scores = predict_scores(model, test, names)
         return [scores[id(row)] for row in test]
 
@@ -343,11 +345,13 @@ def random_scorer(seed: int) -> Scorer:
     return score
 
 
-def default_scorers(feature_names: list[str], seed: int, examples: list[RankExample] | None = None) -> dict[str, Scorer]:
+def default_scorers(
+    feature_names: list[str], seed: int, examples: list[RankExample] | None = None, config: str = "default"
+) -> dict[str, Scorer]:
     """The model and its baselines. ``persistence`` (order by the earlier Google position; pages
     without one tie below) is added only when the labels carry prior positions."""
     scorers = {
-        "lambdamart": lambdamart_scorer(feature_names),
+        "lambdamart": lambdamart_scorer(feature_names, config=config),
         "bm25f_only": feature_scorer("bm25f"),
         "linear_prior": linear_prior_scorer(),
         "domain_prior": domain_prior_scorer(),
@@ -442,6 +446,49 @@ def run_protocol(
 
 
 _KIND_LABEL = {"pairs": "head-to-head gaps", "adjacent": "gaps to the predicted neighbour"}
+
+
+# B16: the rule for replacing the model configuration, fixed before any candidate was measured.
+# A candidate replaces the current configuration only if, under cluster-url (closest to scoring a
+# page the model never saw), it beats it by at least ADOPTION_MARGIN pairwise, the paired 95%
+# interval of the difference is above 0, and at least MIN_VERDICT_CLUSTERS clusters were scored.
+ADOPTION_MARGIN = 0.05
+CANDIDATE_PREFIX = "candidate_"
+
+
+def adoption_decision(result: "ProtocolResult", candidate: str) -> str:
+    by_name = {row.name: row for row in result.scorers}
+    row = by_name.get(CANDIDATE_PREFIX + candidate)
+    base = by_name.get("lambdamart")
+    if row is None or base is None or row.diff_vs_model is None or row.diff_vs_model.point is None:
+        return f"Candidate {candidate}: not measurable."
+    diff = row.diff_vs_model
+    interval = "no interval" if diff.low is None else f"95% CI {diff.low:+.3f} to {diff.high:+.3f}"
+    reasons = []
+    if diff.point < ADOPTION_MARGIN:
+        reasons.append(f"the gain {diff.point:+.3f} is under {ADOPTION_MARGIN:.2f}")
+    if diff.low is None or diff.low <= 0:
+        reasons.append("the interval does not exclude 0")
+    if result.n_clusters < MIN_VERDICT_CLUSTERS:
+        reasons.append(f"only {result.n_clusters} clusters were scored (fewer than {MIN_VERDICT_CLUSTERS})")
+    if reasons:
+        return f"Candidate {candidate} vs the current model ({result.protocol}): {diff.point:+.3f}, {interval}. Not adopted: " + "; ".join(reasons) + "."
+    return f"Candidate {candidate} vs the current model ({result.protocol}): {diff.point:+.3f}, {interval}. Meets the adoption rule."
+
+
+def in_sample_pairwise(examples: list[RankExample], scorer: Scorer) -> float | None:
+    """Pairwise agreement when the scorer is trained and scored on the same queries. The gap to
+    the held-out number shows how much a configuration memorizes."""
+    usable = _queries_with_pairs(examples)
+    if not usable:
+        return None
+    scores = scorer(usable, usable)
+    credit = total = 0.0
+    for indexes in _by_query_index(usable).values():
+        result = _query_result([usable[i] for i in indexes], [scores[i] for i in indexes], 0)
+        credit += result.credit
+        total += result.total
+    return credit / total if total else None
 
 
 def cross_fitted_confidence(
@@ -825,17 +872,18 @@ def render_report(report: BenchmarkReport) -> str:
             f"[{protocol.protocol}] folds {protocol.n_folds}, clusters {protocol.n_clusters}, "
             f"training rows dropped for URL overlap {protocol.dropped_train_rows}"
         )
-        lines.append(f"  {'scorer':<14}{'pairwise (95% CI)':<26}{'macro':>7}{'ndcg10':>8}{'spearman':>9}{'pairs':>7}{'ties':>6}  vs bm25f_only (95% CI)")
+        width = max([14] + [len(row.name) + 2 for row in protocol.scorers])
+        lines.append(f"  {'scorer':<{width}}{'pairwise (95% CI)':<26}{'macro':>7}{'ndcg10':>8}{'spearman':>9}{'pairs':>7}{'ties':>6}  vs bm25f_only (95% CI)")
         for row in protocol.scorers:
             diff = "" if row.diff_vs_bm25f is None else _interval(row.diff_vs_bm25f, signed=True)
             lines.append(
-                f"  {row.name:<14}{_interval(row.pairwise):<26}{_num(row.pairwise_macro):>7}{_num(row.ndcg):>8}"
+                f"  {row.name:<{width}}{_interval(row.pairwise):<26}{_num(row.pairwise_macro):>7}{_num(row.ndcg):>8}"
                 f"{_num(row.spearman):>9}{row.n_pairs:>7}{row.n_ties:>6}  {diff}"
             )
         band = protocol.random_band
         if band is not None and band.mean is not None:
             lines.append(
-                f"  {'random':<14}{band.mean:.3f} mean over {band.seeds} seeds; 95% of seeds between "
+                f"  {'random':<{width}}{band.mean:.3f} mean over {band.seeds} seeds; 95% of seeds between "
                 f"{band.low:.3f} and {band.high:.3f} on these pairs (luck alone); "
                 f"random NDCG10 {_num(band.ndcg_mean)} for this query mix"
             )

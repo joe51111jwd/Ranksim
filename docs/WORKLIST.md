@@ -138,8 +138,10 @@ fixed in advance.
   counts training queries that list the page's site; `persistence` (earlier Google position) is a
   row when labels carry `prior_position`. Dev split: site prior is the best row under every
   protocol, 8 clusters, no verdict (E16).
-- [ ] B16. LambdaMART regularization and linear label gain, chosen a priori, measured on the
-  benchmark and documented whatever the result (P1-3).
+- [x] B16. LambdaMART regularization and linear label gain, chosen a priori, measured on the
+  benchmark and documented whatever the result (P1-3). Done: `--candidate regularized` on the dev
+  split, fixed adoption rule; +0.003 under cluster-url on 8 clusters, not adopted, no final run
+  (E17).
 - [ ] B17. Independent review of B1-B16 (multi-lens review with adversarial verification); fix
   confirmed defects with regression tests.
 

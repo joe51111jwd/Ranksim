@@ -313,3 +313,26 @@ benchmark counts a tie as half (what random tie-breaking scores), so the figures
   signal, and the check must not suggest otherwise.
 - No persistence row: `smartcrew/serp.csv` has no `prior_position` column.
 
+## 2026-11-10 E17. A regularized LambdaMART, fixed in advance, against the current one
+
+- Candidate written into `lambdamart.REGULARIZED_PARAMS` before any run: 7 leaves (was 15),
+  `min_data_in_leaf` 5 (was 1), `lambda_l2` 1.0, learning rate 0.05 for 60 rounds (was 0.08 for
+  40), linear label gain 0..10 (was the exponential default). Model id `lgbm-ec2fb7a6ab11c05e`;
+  the current configuration keeps `lgbm-98ceb518acedd909`.
+- Adoption rule written into `benchmark.adoption_decision` before the run: under cluster-url the
+  candidate must beat the current model by at least 0.05, with the paired 95% interval above 0,
+  and at least 10 clusters scored.
+- Frozen dev split, same folds and 337 pairs, 1000 resamples:
+
+  | protocol | current | regularized |
+  |---|---:|---:|
+  | loqo | 0.632 | 0.588 |
+  | cluster | 0.543 | 0.537 |
+  | cluster-url | 0.528 | 0.531 |
+
+  Paired difference under cluster-url: +0.003 (95% interval -0.060 to +0.074). Not adopted: the gain
+  is under 0.05, the interval includes 0, and only 8 clusters were scored.
+- In-sample agreement (trained and scored on the same 11 queries): current 0.950, regularized 0.893.
+  Against held-out cluster-url (0.528, 0.531), both memorize most of what they fit; regularization
+  narrows the gap without improving held-out agreement. The final split was not used.
+

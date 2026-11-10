@@ -593,6 +593,7 @@ _FILE_PAIR_REASONS = {
     "undated": "No observation date in a file that has dates (a label file with no date): {count}.",
     "same": "Same collection_id in both files, so the list was not collected again in between: {count}.",
     "settings": "Different provider, country, language or device: {count}.",
+    "unreadable": "Date that cannot be read as YYYY-MM-DD: {count}. Write each date as YYYY-MM-DD.",
     "later": "Dated later in the first file than in the second: {count}. Pass the earlier file first.",
     "same_day": "Dated the same day in both files, or on days that overlap: {count}. Compare files from different days.",
 }
@@ -649,8 +650,9 @@ def _comparable_file_lists(left, left_report, right, right_report):
     The like-with-like rule of noise --from-db, for two results files. A query in both files is left
     out when a row is undated in a file that has dates, when its list has the same collection_id in
     both (it was not collected again), when the provider, country, language or device are set in both
-    files and differ, or when its first-file day is not earlier than its second-file day. Files with
-    no such columns, or with a date that is not YYYY-MM-DD, are compared as they are.
+    files and differ, when a date in either file is not YYYY-MM-DD (so its order cannot be checked),
+    or when its first-file day is not earlier than its second-file day. Files with no such columns
+    are compared as they are.
     """
     from collections import Counter
 
@@ -665,7 +667,9 @@ def _comparable_file_lists(left, left_report, right, right_report):
             reasons[query] = "same"
         elif any(a[name] and b[name] and a[name] != b[name] for name in _LIST_SETTINGS):
             reasons[query] = "settings"
-        elif a["days"] and b["days"] and not (a["unreadable"] or b["unreadable"]):
+        elif a["unreadable"] or b["unreadable"]:
+            reasons[query] = "unreadable"
+        elif a["days"] and b["days"]:
             # YYYY-MM-DD days sort as dates. Swapping the files helps only when every first-file day is later.
             if min(a["days"]) > max(b["days"]):
                 reasons[query] = "later"

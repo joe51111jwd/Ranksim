@@ -345,7 +345,9 @@ def load_keyword_file(path: str | Path) -> list[Keyword]:
     a row counts as a header only when it has two or more cells, every row under it has as many,
     and it names the query column next to an export column (volume, clicks, match type, campaign
     and the like) or has a column of only numbers. So a later line that is just "keyword", or a
-    query with commas in a plain list, stays a query.
+    query with commas in a plain list, stays a query. In a table, a Google Ads totals row (a cell
+    such as 'Total: Keywords' or 'Total: Account') and a query cell with no letter or digit, such
+    as '--', are not queries. A plain list keeps every line.
     A table whose header has none of those is refused rather than read as one query per line,
     since each row would become a paid search. It counts as a table when every line has the
     same number of cells and the header names a metric column (volume, clicks, CPC and the
@@ -383,12 +385,16 @@ def load_keyword_file(path: str | Path) -> list[Keyword]:
         intent_position = header.index("intent") if "intent" in header else None
         for line in lines[1:]:
             row = cells(line, delimiter)
+            if any(_totals_cell(cell) for cell in row):
+                continue  # a Google Ads totals row, such as 'Total: Keywords' or 'Total: Account'
             if len(header) == 1:
                 # A one-column list keeps a query with an unquoted comma whole.
                 query = row[0] if len(row) == 1 else line.strip()
             else:
                 query = row[position] if position < len(row) else ""
-            intent = (row[intent_position] if intent_position is not None and intent_position < len(row) else "").lower()
+            if not any(char.isalnum() for char in query):
+                continue  # a placeholder such as '--' in a report row, not a query
+            intent =(row[intent_position] if intent_position is not None and intent_position < len(row) else "").lower()
             rows.append((query, intent if intent in KNOWN_INTENTS else None))
     else:
         for delimiter in _DELIMITERS:
@@ -409,6 +415,13 @@ def load_keyword_file(path: str | Path) -> list[Keyword]:
         seen.add(key)
         out.append(Keyword(query=key, intent=intent or intent_for(key, {}), cluster="file", suggested_target_page="", page_exists=False, notes=f"from {Path(path).name}"))
     return out
+
+
+def _totals_cell(cell: str) -> bool:
+    """Whether a table cell is a Google Ads totals label, such as 'Total: Keywords' or 'Total: Account'.
+    A query such as 'total gym' has no colon after the word total, so it is not one."""
+    head, colon, _ = cell.partition(":")
+    return bool(colon) and head.strip().casefold() == "total"
 
 
 def _number(cell: str) -> bool:

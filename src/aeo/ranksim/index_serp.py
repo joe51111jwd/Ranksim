@@ -17,7 +17,7 @@ from aeo.ranksim.loop import FetchResult, store_fetched_page
 from aeo.ranksim.saved_html import load_saved_html
 from aeo.ranksim.serp import SerpHit
 from aeo.ranksim.urlkey import match_key
-from aeo.ranksim.store import EVALUATION_EXCLUDED_SOURCES, RsPage, open_session, replace_serp
+from aeo.ranksim.store import EVALUATION_EXCLUDED_SOURCES, RsPage, append_serp, open_session
 
 
 def index_serp_csv(
@@ -94,7 +94,20 @@ def index_serp_csv(
                 )
                 for row in sorted(rows, key=lambda item: item.position)
             ]
-            replace_serp(session, query, hits)
+            first = rows[0]
+            append_serp(
+                session,
+                query,
+                hits,
+                provider="browser_export",
+                synthetic=False,
+                is_google=True,
+                country=first.country,
+                language=first.language,
+                device=first.device,
+                collected_at=_observed_time(first.observed_on),
+                source="label_file",
+            )
     finally:
         session.close()
     return {
@@ -156,3 +169,17 @@ def _fetch_host(urls: list[str], settings: Settings, delay_seconds: float) -> li
     finally:
         crawler.close()
     return out
+
+
+def _observed_time(observed_on: str | None):
+    """The label file's collection date as a UTC midnight, or None (then the import time is used)."""
+    from datetime import date, datetime, timezone
+
+    if not observed_on:
+        return None
+    try:
+        day = date.fromisoformat(observed_on[:10])
+    except ValueError:
+        return None
+    return datetime(day.year, day.month, day.day, tzinfo=timezone.utc)
+

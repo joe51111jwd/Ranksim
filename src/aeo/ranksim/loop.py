@@ -23,7 +23,7 @@ from aeo.ranksim.store import (
     latest_weights,
     page_by_url,
     queries_with_serp,
-    replace_serp,
+    append_serp,
     save_keywords,
     save_rank_checks,
     save_test_run,
@@ -192,7 +192,18 @@ def collect_corpus(
             # Keep whatever SERP was stored before; a failure is not an empty result.
             warnings.append(f"'{keyword.query}': collection failed ({exc}). The stored SERP was kept.")
             continue
-        replace_serp(session, keyword.query, hits)
+        append_serp(
+            session,
+            keyword.query,
+            hits,
+            provider=provider.name,
+            synthetic=provider.synthetic,
+            is_google=provider.is_google,
+            country=getattr(provider, "country", None),
+            language=getattr(provider, "language", None),
+            device=getattr(provider, "device", None),
+            requested_depth=depth,
+        )
         hit_count += len(hits)
         queries_done += 1
         for hit in hits:

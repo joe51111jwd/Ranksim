@@ -317,3 +317,34 @@ def gap_summary(rows: list[Keyword] | None = None) -> dict[str, int]:
         "with_page": sum(1 for row in body if row.page_exists),
         "gaps": len(gaps),
     }
+
+
+def load_keyword_file(path: str | Path) -> list[Keyword]:
+    """Queries to collect or track from a file: a CSV with a ``query`` column (optional ``intent``)
+    or one query per line. Intent falls back to the shared rule (aeo.ranksim.intents)."""
+    import csv as _csv
+
+    from aeo.ranksim.intents import KNOWN_INTENTS, intent_for, normalize_query
+
+    text = Path(path).read_text(encoding="utf-8-sig")
+    lines = [line for line in text.splitlines() if line.strip() and not line.lstrip().startswith("#")]
+    rows: list[tuple[str, str | None]] = []
+    if lines and "query" in [cell.strip().lower() for cell in next(_csv.reader([lines[0]]))]:
+        reader = _csv.DictReader(lines)
+        fields = {name.strip().lower(): name for name in reader.fieldnames or []}
+        for raw in reader:
+            query = (raw.get(fields["query"]) or "").strip()
+            intent = (raw.get(fields.get("intent", ""), "") or "").strip().lower() if "intent" in fields else ""
+            rows.append((query, intent if intent in KNOWN_INTENTS else None))
+    else:
+        rows = [(line.strip(), None) for line in lines]
+    seen: set[str] = set()
+    out: list[Keyword] = []
+    for query, intent in rows:
+        key = normalize_query(query)
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        out.append(Keyword(query=key, intent=intent or intent_for(key, {}), cluster="file", suggested_target_page="", page_exists=False, notes=f"from {Path(path).name}"))
+    return out
+

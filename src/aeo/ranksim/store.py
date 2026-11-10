@@ -45,6 +45,32 @@ class RsSerp(Base):
     synthetic: Mapped[bool] = mapped_column(Boolean, default=False)
     is_google: Mapped[bool] = mapped_column(Boolean, default=False)
     fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    # The collection this row belongs to. None: a row from before collections (one per query, as
+    # the old code replaced the list on every collect).
+    collection_id: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
+
+
+class RsSerpCollection(Base):
+    """One collected results list for one query. Collections are appended, never replaced, so two
+    collections of a query are both kept. Locale and device are what the request asked for; None
+    means the request did not say (the provider's default applied)."""
+
+    __tablename__ = "rs_serp_collections"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    query: Mapped[str] = mapped_column(String(500), index=True)
+    provider: Mapped[str] = mapped_column(String(32))
+    synthetic: Mapped[bool] = mapped_column(Boolean, default=False)
+    is_google: Mapped[bool] = mapped_column(Boolean, default=False)
+    source: Mapped[str] = mapped_column(String(32), default="live")  # live or label_file
+    collected_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    recorded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    country: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    language: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    device: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    requested_depth: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    hits: Mapped[int] = mapped_column(Integer, default=0)
+    signature: Mapped[str] = mapped_column(String(64), default="")
 
 
 class RsPage(Base):
@@ -194,8 +220,55 @@ def save_keywords(session: Session, rows: list[Keyword]) -> None:
     session.commit()
 
 
-def replace_serp(session: Session, query: str, hits: list[SerpHit]) -> None:
-    session.query(RsSerp).filter(RsSerp.query == query).delete(synchronize_session=False)
+def append_serp(
+    session: Session,
+    query: str,
+    hits: list[SerpHit],
+    *,
+    provider: str | None = None,
+    synthetic: bool | None = None,
+    is_google: bool | None = None,
+    country: str | None = None,
+    language: str | None = None,
+    device: str | None = None,
+    requested_depth: int | None = None,
+    collected_at: datetime | None = None,
+    source: str = "live",
+) -> str | None:
+    """Store one collected list as a new collection; earlier collections stay. Returns its id, or
+    None when the list is identical to the query's latest collection from the same source and
+    time (re-importing the same file adds nothing). An empty list is a real observation and is kept."""
+    import hashlib
+    import uuid
+
+    first = hits[0] if hits else None
+    provider = provider or (first.provider if first else "unknown")
+    synthetic = bool(first.synthetic if synthetic is None and first else synthetic)
+    is_google = bool(first.is_google if is_google is None and first else is_google)
+    collected_at = collected_at or utcnow()
+    body = "|".join(f"{hit.position}:{hit.url}" for hit in sorted(hits, key=lambda item: item.position))
+    signature = hashlib.sha256(f"{source}|{provider}|{collected_at.date().isoformat()}|{body}".encode()).hexdigest()
+    latest = latest_collection(session, query)
+    if latest is not None and latest.signature == signature:
+        return None
+    collection_id = uuid.uuid4().hex
+    session.add(
+        RsSerpCollection(
+            id=collection_id,
+            query=query,
+            provider=provider,
+            synthetic=synthetic,
+            is_google=is_google,
+            source=source,
+            collected_at=collected_at,
+            country=country,
+            language=language,
+            device=device,
+            requested_depth=requested_depth,
+            hits=len(hits),
+            signature=signature,
+        )
+    )
     for hit in hits:
         session.add(
             RsSerp(
@@ -207,9 +280,39 @@ def replace_serp(session: Session, query: str, hits: list[SerpHit]) -> None:
                 provider=hit.provider,
                 synthetic=hit.synthetic,
                 is_google=hit.is_google,
+                fetched_at=collected_at,
+                collection_id=collection_id,
             )
         )
     session.commit()
+    return collection_id
+
+
+def replace_serp(session: Session, query: str, hits: list[SerpHit]) -> None:
+    """Kept for callers on other branches. It no longer deletes: it appends a collection."""
+    append_serp(session, query, hits)
+
+
+def latest_collection(session: Session, query: str) -> RsSerpCollection | None:
+    return (
+        session.query(RsSerpCollection)
+        .filter(RsSerpCollection.query == query)
+        .order_by(RsSerpCollection.collected_at.desc(), RsSerpCollection.recorded_at.desc(), RsSerpCollection.id.desc())
+        .first()
+    )
+
+
+def serp_collections(session: Session, query: str | None = None, *, include_synthetic: bool = False) -> list[RsSerpCollection]:
+    rows = session.query(RsSerpCollection)
+    if query is not None:
+        rows = rows.filter(RsSerpCollection.query == query)
+    if not include_synthetic:
+        rows = rows.filter(RsSerpCollection.synthetic.is_(False))
+    return list(rows.order_by(RsSerpCollection.query, RsSerpCollection.collected_at, RsSerpCollection.recorded_at).all())
+
+
+def collection_hits(session: Session, collection_id: str) -> list[RsSerp]:
+    return list(session.scalars(select(RsSerp).where(RsSerp.collection_id == collection_id).order_by(RsSerp.position)).all())
 
 
 def _add_missing_columns(engine) -> None:
@@ -285,7 +388,15 @@ def latest_weights(session: Session) -> RsWeight | None:
 
 
 def serp_for_query(session: Session, query: str) -> list[RsSerp]:
-    return list(session.scalars(select(RsSerp).where(RsSerp.query == query).order_by(RsSerp.position)).all())
+    """The query's latest collected list (older collections are kept; see serp_collections)."""
+    latest = latest_collection(session, query)
+    if latest is not None:
+        return collection_hits(session, latest.id)
+    return list(
+        session.scalars(
+            select(RsSerp).where(RsSerp.query == query, RsSerp.collection_id.is_(None)).order_by(RsSerp.position)
+        ).all()
+    )
 
 
 def queries_with_serp(session: Session) -> list[str]:

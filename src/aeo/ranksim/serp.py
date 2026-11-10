@@ -79,6 +79,10 @@ class SerpProvider:
     name = "base"
     synthetic = False
     is_google = False
+    # What the request asks for. None: not sent, so the provider's default applied (not recorded as US).
+    country: str | None = None
+    language: str | None = None
+    device: str | None = None
 
     def search(self, query: str, count: int = 10) -> list[SerpHit]:
         raise NotImplementedError
@@ -193,6 +197,8 @@ class SerpApiProvider(SerpProvider):
 
 
 class DataForSeoProvider(SerpProvider):
+    country = "us"
+    language = "en"
     name = "dataforseo"
     synthetic = False
     is_google = True
@@ -249,6 +255,8 @@ def parse_serper(payload: dict, count: int) -> list[SerpHit]:
 
 class SerperProvider(SerpProvider):
     """Google organic results via Serper. Requires SERPER_API_KEY."""
+    country = "us"
+    language = "en"
 
     name = "serper"
     synthetic = False

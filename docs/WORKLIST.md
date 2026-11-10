@@ -131,8 +131,9 @@ fixed in advance.
 - [x] B10. Competitor import validation: csv.reader, IDNA, reject IPs/localhost/ports, report
   rejected lines (P1-2). Done: `space.competitor_host`; `competitors import` prints each rejected
   line with its reason. The UI path (`workspace.parse_competitors`, PR #2) is unchanged.
-- [ ] B11. SERP history append-only with locale/device/collected_at; `export-serp`; `--keywords`
-  file input (P1-7).
+- [x] B11. SERP history append-only with locale/device/collected_at; `export-serp`; `--keywords`
+  file input (P1-7). Done: `rs_serp_collections`; identical re-imports skipped; `noise --from-db`.
+  Raw provider payloads are not stored.
 - [ ] B12. Attribution scores before and after separately against the same peers (P1-8).
 - [ ] B13. `test --bundle` inserts only matching pages; report renders bundle runs and computes
   accuracy from the label file (P1-10).

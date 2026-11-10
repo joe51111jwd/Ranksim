@@ -23,7 +23,7 @@ from aeo.crawl.fetch import Crawler
 from aeo.errors import ProviderConfigError, UnsafeURL
 from aeo.ranksim.authority import authority_client
 from aeo.ranksim.intents import intent_for, query_intents
-from aeo.ranksim.keywords import build_keywords, gap_summary, page_gaps, refresh_sitemap, write_keywords_csv
+from aeo.ranksim.keywords import build_keywords, gap_summary, load_keyword_file, page_gaps, refresh_sitemap, write_keywords_csv
 from aeo.ranksim.loop import FetchResult, attach_authority, collect_corpus, calibrate, page_from_html, run_test, track_ranks
 from aeo.ranksim.report import render_report
 from aeo.ranksim.index_serp import index_serp_csv
@@ -46,6 +46,7 @@ def main(argv: list[str] | None = None) -> None:
     collect.add_argument("--mock", action="store_true", help="Use the synthetic SERP. Not Google.")
     collect.add_argument("--depth", type=int, default=None)
     collect.add_argument("--max-pages", type=int, default=None)
+    collect.add_argument("--keywords", default=None, help="Queries from a file (CSV with a query column, or one per line) instead of the SmartCrew set")
 
     sub.add_parser("calibrate", help="Fit weights to the stored SERP order")
 
@@ -79,6 +80,7 @@ def main(argv: list[str] | None = None) -> None:
     track.add_argument("--provider", default="auto")
     track.add_argument("--mock", action="store_true")
     track.add_argument("--depth", type=int, default=None)
+    track.add_argument("--keywords", default=None, help="Queries from a file (CSV with a query column, or one per line) instead of the SmartCrew set")
 
     report = sub.add_parser("report", help="Write the HTML report")
     report.add_argument("--out", default=None)
@@ -109,7 +111,15 @@ def main(argv: list[str] | None = None) -> None:
     graph_eval.add_argument("--graph", default="smartcrew/linkgraph.json")
 
     noise = sub.add_parser("noise", help="Compare two Google snapshots. One file is not enough.")
-    noise.add_argument("snapshots", nargs="+")
+    noise.add_argument("snapshots", nargs="*")
+    noise.add_argument("--from-db", action="store_true", help="Compare the two latest non-synthetic collections of each query in the database")
+
+    export_serp = sub.add_parser(
+        "export-serp", help="Write collected results lists as a query,url,position CSV (for evaluate, noise or ledger observe)"
+    )
+    export_serp.add_argument("out")
+    export_serp.add_argument("--all", action="store_true", help="Every collection, not only the latest per query")
+    export_serp.add_argument("--include-synthetic", action="store_true", help="Also mock results (marked synthetic; never Google)")
 
     competitors = sub.add_parser("competitors", help="Import competitor domains")
     comp_sub = competitors.add_subparsers(dest="competitors_command", required=True)
@@ -285,7 +295,9 @@ def main(argv: list[str] | None = None) -> None:
         elif args.command == "graph-eval":
             _graph_eval(database, args)
         elif args.command == "noise":
-            _noise(args)
+            _noise(args, database)
+        elif args.command == "export-serp":
+            _export_serp(database, args)
         elif args.command == "serve":
             _serve(settings, database, args)
         elif args.command == "benchmark":
@@ -434,14 +446,22 @@ def _fmt(value) -> str:
     return "n/a" if value is None else f"{value:.3f}"
 
 
-def _noise(args) -> None:
+def _noise(args, database: str) -> None:
     from aeo.ranksim.groundtruth import load_serp_file
     from aeo.ranksim.noise import noise_ceiling
 
-    if len(args.snapshots) < 2:
-        print("Noise ceiling was not computed. Pass two snapshot CSVs of the same queries from different days.")
+    if args.from_db:
+        left, right, compared = _two_latest_collections(database)
+        if not compared:
+            print("Noise ceiling was not computed. No query has two non-synthetic collections in the database yet.")
+            return
+        print(f"Comparing the two latest collections of {compared} queries from the database.")
+        report = noise_ceiling(left, right)
+    elif len(args.snapshots) < 2:
+        print("Noise ceiling was not computed. Pass two snapshot CSVs of the same queries from different days, or --from-db.")
         return
-    report = noise_ceiling(load_serp_file(args.snapshots[0]), load_serp_file(args.snapshots[1]))
+    else:
+        report = noise_ceiling(load_serp_file(args.snapshots[0]), load_serp_file(args.snapshots[1]))
     print(report.note)
     if not report.computed:
         print("No pairwise agreement, top-1 rate, or position change is reported.")
@@ -455,6 +475,72 @@ def _noise(args) -> None:
     print(f"Mean list overlap: {fmt(report.mean_overlap)}. URLs entered: {report.entered}. URLs dropped: {report.dropped}.")
     print(f"Top-1 same rate: {fmt(report.top1_same_rate)}.")
     print(f"Mean absolute position change (URLs present both days): {fmt(report.mean_abs_position_change)}.")
+
+
+def _two_latest_collections(database: str):
+    """(older labels, newer labels, number of queries) from each query's two latest real collections."""
+    from aeo.ranksim.groundtruth import SerpLabel
+    from aeo.ranksim.store import collection_hits, serp_collections
+
+    session = open_session(database)
+    left: list = []
+    right: list = []
+    compared = 0
+    try:
+        by_query: dict[str, list] = {}
+        for collection in serp_collections(session):
+            by_query.setdefault(collection.query, []).append(collection)
+        for query, collections in sorted(by_query.items()):
+            if len(collections) < 2:
+                continue
+            compared += 1
+            for target, collection in ((left, collections[-2]), (right, collections[-1])):
+                day = collection.collected_at.date().isoformat()
+                target.extend(
+                    SerpLabel(query, hit.url, float(hit.position), None, "database", observed_on=day,
+                              country=collection.country, language=collection.language, device=collection.device,
+                              provider=collection.provider)
+                    for hit in collection_hits(session, collection.id)
+                )
+    finally:
+        session.close()
+    return left, right, compared
+
+
+def _export_serp(database: str, args) -> None:
+    import csv
+
+    from aeo.ranksim.store import collection_hits, serp_collections
+
+    session = open_session(database)
+    written = 0
+    try:
+        collections = serp_collections(session, include_synthetic=args.include_synthetic)
+        if not args.all:
+            latest: dict[str, object] = {}
+            for collection in collections:
+                latest[collection.query] = collection  # ordered by collection time, so the last wins
+            collections = list(latest.values())
+        out = Path(args.out)
+        out.parent.mkdir(parents=True, exist_ok=True)
+        with out.open("w", newline="", encoding="utf-8") as handle:
+            writer = csv.writer(handle)
+            writer.writerow(["query", "url", "position", "observed_on", "country", "language", "device", "provider", "synthetic", "collected_at", "collection_id"])
+            for collection in collections:
+                for hit in collection_hits(session, collection.id):
+                    writer.writerow([
+                        collection.query, hit.url, hit.position, collection.collected_at.date().isoformat(),
+                        collection.country or "", collection.language or "", collection.device or "", collection.provider,
+                        "yes" if collection.synthetic else "", collection.collected_at.isoformat(), collection.id,
+                    ])
+                    written += 1
+    finally:
+        session.close()
+    print(f"Wrote {written} rows from {len(collections)} collections to {args.out}.")
+    if args.include_synthetic:
+        print("Rows marked synthetic come from the mock provider. They are not Google results; do not use them as labels.")
+    if args.all:
+        print("Every collection is included; a query appears once per collection, told apart by observed_on and collection_id.")
 
 
 def _competitors(settings, database: str, args) -> None:
@@ -1160,7 +1246,7 @@ def _gaps() -> None:
 def _collect(settings, database: str, args) -> None:
     choice = "mock" if args.mock else args.provider
     provider = resolve_serp(settings, choice)
-    keywords = build_keywords()
+    keywords = load_keyword_file(args.keywords) if args.keywords else build_keywords()
     depth = args.depth or settings.ranksim_serp_depth
     max_pages = args.max_pages or settings.ranksim_max_pages
     if max_pages > 1000:
@@ -1405,7 +1491,8 @@ def _track(settings, database: str, args) -> None:
     depth = args.depth or settings.ranksim_serp_depth
     session = open_session(database)
     try:
-        rows = track_ranks(session, build_keywords(), provider, depth=depth)
+        keywords = load_keyword_file(args.keywords) if args.keywords else build_keywords()
+        rows = track_ranks(session, keywords, provider, depth=depth)
     finally:
         session.close()
         close = getattr(provider, "close", None)

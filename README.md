@@ -253,6 +253,9 @@ python -m aeo.ranksim test --regression smartcrew/pr8_v2/manifest.csv smartcrew/
 python -m aeo.ranksim graph --serp smartcrew/serp.csv
 python -m aeo.ranksim graph-eval
 python -m aeo.ranksim noise day-one.csv day-two.csv
+python -m aeo.ranksim noise --from-db
+python -m aeo.ranksim export-serp latest.csv
+python -m aeo.ranksim collect --keywords my-queries.csv
 python -m aeo.ranksim serve --port 8765
 python -m aeo.ranksim competitors import --from-serps --crawl
 python -m aeo.ranksim space
@@ -274,6 +277,8 @@ Blocked pages can be added later without a refetch. Put the HTML in `smartcrew/s
 `test` with one source re-fetches that page, or reads a local file, and rescores with the linear weights. Competitors stay as stored. A blank before-position means SmartCrew was outside the stored results, not a rank of 151.
 
 `test --bundle` reads a `manifest.csv` of built HTML (`url,file`, files next to the manifest) and rescores every query in the labeled file with leave-one-query-out LambdaMART. Matching URLs replace stored HTML. URLs that were not in that query are added only on the after side. The report says predicted, names feature contribution changes, and lists Google top-3 URLs that were never crawled instead of inventing their text.
+
+Every `collect` and `index-serp` appends a collection per query instead of replacing the last one, with the time it was collected and the country, language and device the request asked for (blank when the provider was not told, so its default applied). The latest collection feeds calibration and tests; `export-serp` writes collections as a `query,url,position,observed_on,...` file that `evaluate`, `noise` and `ledger observe` read; `noise --from-db` compares each query's two latest collections. `collect` and `track` take `--keywords FILE` (a CSV with a `query` column, or one query per line) instead of the SmartCrew set.
 
 Daily check, once a SERP key is set:
 

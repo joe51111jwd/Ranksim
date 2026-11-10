@@ -44,6 +44,12 @@ Legend: `[x]` done (commit noted), `[ ]` open, `[-]` blocked (reason given).
   `product_label`, `held_out`) but not all of its behaviour: PR #5 tests that expect CLEARER from a
   head-to-head threshold on a neighbour gap, scoring of blank-slug rows, or scoring of rows without
   a write time (its forward ledger) will fail and must be updated with the merge.
+  At 96d4a25 the dry-run merge conflicts in 17 paths (the 16 above plus `corpus.py`, from this
+  branch's B20 serpstore fix); the new-page commits add none. Keep both `new-page-eval` and this
+  branch's commands in the cli.py dispatch hunk. `new_page.py` runs on this branch's ledger
+  (11 tests pass), but a rerun stamps `recorded_at` and resolves 0 calls, so it cannot regenerate
+  the committed `new_page_ledger.json`: keep that file as PR #5's record or regenerate it and update
+  new_page.md line 5 and 60 and COORDINATION.md line 234.
 
 ## I. Interoperability with PR #5 and PR #6 (added 2026-11-10)
 
@@ -93,7 +99,29 @@ Requests for other roles, drafted here and not posted (posting on another role's
 - PR #2 (UI owner): the demo banner shows `fit.calibration.note` (the head-to-head note) while the
   predicted rank is labeled from `adjacent_note`; show the note that matches each label.
 - PR #5: its forward ledger rows have no write time; this branch's ledger counts them as undated and
-  does not score them (I7). `forward_eval` can stamp `payload.recorded_at` with the real write time.
+  does not score them (I7). The same holds for `new_page_ledger.json` (E19). `forward_eval` can stamp `payload.recorded_at` with the real write time.
+- PR #5 / SEO Tool Builder, new-page check (000f2c4, 96d4a25; evidence in E19):
+  1. Protocol timing: COORDINATION.md line 232 and the 000f2c4 docstrings say the protocol came
+     before the Nov 9 look, but the Nov 9 outcomes were in git from f76f7f1 and the 000f2c4 test
+     asserts the Nov 9 34/116 split (lines 181 to 185). Say the gate was written with that breakdown
+     known, and treat it as fixed before the next snapshot.
+  2. Backdated ledger rows: all 897 rows carry created_at 2026-11-07T04:00:00Z (`new_page.py` line
+     905) and no write time; stamped at their real time 0 of 3,744 calls resolve. Store
+     `payload.recorded_at`, export `uploaded_at`, say in new_page.md lines 5 and 60 that the resolved
+     calls are a replay written after the outcome, and do not store them under "accuracy" (line 993).
+  3. Tie rule: the "gain interval above 0" claim (new_page.md line 58, COORDINATION.md line 233)
+     holds only with ties counted as wrong; report tie-as-half rates beside it. The blend weight fit
+     (`choose_blend_weight`, line 228) also counts ties as wrong.
+  4. The 167-pair "draft has text" slice includes 51 pairs whose ranking page has no HTML, but
+     MISSION.md line 57 calls 87/167 the figure on pages that have text.
+  5. The content score takes z-scores and BM25 statistics over each query's Nov 9 list, while
+     new_page.md line 31 says families are scored from Nov 6 rows only. Say so and fix the reference
+     set before the next snapshot. Missing text adds 0, which gives 16 of the content rule's 26 extra
+     right draft pairs; note it beside the gain.
+  6. Reproduction: add `--ledger-json` and a scratch `--out` to the AGENTS.md command; use
+     `math.fsum` in `population_z` (Python 3.11 gives chain head bc3d2e31, not d6e51fed); test the
+     chain head, pin the bootstrap seed and draw count, isolate the BM25 clause, and recompute the
+     gate from the stored metrics. Write the forward CSV's sha256 in outcome rows (now blank).
 - PR #2 (UI owner): the space table in `demo.py` shows `predicted_top3` over `predicted_queries`,
   which counts "rank 3 of 3" as top 3; use `predicted_top3_qualified` over `predicted_top3_queries`
   (and the top 10 pair), and say whose record a head-to-head row is (B9).
@@ -264,11 +292,16 @@ fixed in advance.
 - [ ] B22. Review of the B21 fixes as merged (22bcd90..HEAD), including the follow-up commits:
   multi-lens review with adversarial verification; fix confirmed defects with regression tests.
 
-- [ ] B23. PR #5 moved (384c4a6 to 96d4a25, 2026-11-10): a family-out new-page check (`new_page.py`,
-  `new-page-eval`) and its Nov 9 results, none adopted. Reproduce it from git alone, check it for
-  Nov 9 leakage and the protocol timeline, recompute it with ties as half (E10 convention), check
-  the timing of its 897 ledger rows and that no page text is committed; record E19 and draft a
-  request to PR #5 (not posted).
+- [x] B23. PR #5 moved (384c4a6 to 96d4a25, 2026-11-10): a family-out new-page check (`new_page.py`,
+  `new-page-eval`) and its Nov 9 results, none adopted. Reviewed by four readers with an adversarial
+  verifier per finding; recorded as E19. It rebuilds byte for byte from three tracked files on
+  Python 3.13 (no HTML, no network), no Nov 9 position reaches a new scorer, and no page text is
+  committed. With ties as half no decision changes, but the content rule's draft gain interval then
+  includes 0 and the content-blind domain prior is the best point estimate on 4 of 5 slices. The
+  protocol commit's own test reads the Nov 9 split, so "committed before the Nov 9 look" does not
+  hold; the 897 ledger rows are stamped 2026-11-07 but were written on 2026-11-10, and that stamp
+  is the only reason they resolve. This branch's ledger verifies the chain and scores none of it.
+  Request drafted below (not posted).
 
 - [x] B18. A check says which question it answers (P0-5, backend half): where the page would sit
   among the stored results, not whether Google would show a new page at all; the evidence it cites
@@ -291,5 +324,8 @@ fixed in advance.
 - [-] C3. Non-ranking candidates / "enters the top 10" task (P0-5): needs deeper SERP collection.
   E18 used PR #5's two snapshots for a pre-registered test of content-blind signals on new entrants:
   no evidence yet (195 entrant pairs). Page-text models on entrants need the private HTML.
+  E19: PR #5's family-out new-page check on the same snapshots adopted nothing; with ties as half
+  its content-blind domain prior leads on 4 of 5 slices, and BM25 on the 22 pairs of two drafts
+  with text.
 - [-] C4. AI relevance judge rerun: needs an LLM key and a few hundred labeled pairs.
 - [-] C5. Durable shared deployment (storage, accounts): needs a decision from James.

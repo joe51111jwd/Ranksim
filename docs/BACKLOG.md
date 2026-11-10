@@ -87,6 +87,10 @@ Each item lists the problem, the change, acceptance criteria, dependencies, effo
 - 2026-11-10 (B18, backend half): every check carries a `scope` sentence saying it orders the page
   among stored results and cannot say whether Google would show a new page; the CLI prints it. The
   web UI showing it is PR #2's. Ordering within the top 10 is still the only task the benchmark scores.
+- 2026-11-10 (E19): PR #5's family-out new-page check (domain prior, URL plus BM25, a blend fit on
+  Nov 6) adopted nothing on the same two snapshots. With ties as half the content-blind domain prior
+  is the best point estimate on 4 of 5 draft slices; on the 22 pairs of two drafts with text, BM25
+  leads. One 2.5-day interval, scored on an outcome already looked at, so not forward evidence.
 
 ## P1: quality and trust
 

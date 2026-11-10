@@ -405,3 +405,138 @@ E18 results (the single run of the protocol above; script and inputs kept outsid
   was at the band's edge (it is just above it), and the context line said the report gives the
   tie-as-half figures (they are computed from its counts). The decision is unchanged.
 
+## 2026-11-10 E19. The integration branch's new-page check, recomputed with ties as half
+
+Analysis of PR #5's committed files and a rerun of its code from git, not a new snapshot and not a
+new claim. Source: `cursor/integration-review-175f`, commit 000f2c4 (the protocol: `new_page.py`,
+the `new-page-eval` command and `tests/test_new_page.py`, 2026-11-10 14:22:48Z) and commit 96d4a25
+(the results: `evals/forward-2026-11-09/new_page.md`, `new_page_report.json` and
+`new_page_ledger.json`, 14:26:57Z). It uses the same two Serper lists as E14 and E18 (Nov 6 and
+Nov 9, 30 queries) and the same Nov 9 outcome, so nothing here is new forward evidence.
+
+- What it ran. A draft is a Nov 9 URL with no Nov 6 position on that query and no page stored on
+  Nov 6: 63 rows, 34 with Nov 9 page text and 29 with no HTML. They are a strict subset of E18's 97
+  entrants; the other 34 entrants have a stored page because they ranked on another Nov 6 query.
+  Queries form 4 families, and each family is scored from the other families' Nov 6 rows. Three
+  scorers: a domain prior (the host's mean Nov 6 relevance; an unseen host gets the training mean),
+  content and query match (within-query z-scores of URL-token overlap and of the frozen BM25;
+  missing text adds 0), and a blend whose domain weight was fit on Nov 6 (0.75, 0.5, 0.5, 0.75).
+  LambdaMART and BM25 are read back from the Nov 9 ledger's score gaps; their HTML is private.
+- Its gate, in the protocol commit: on both text slices (two drafts with text, 22 pairs; a draft
+  with text against a page that already ranked, 167 pairs), beat LambdaMART by 0.05, stay at least
+  at BM25, and keep the query bootstrap interval of the gain above 0 (2000 resamples, seed
+  20261110). A tie counts as wrong. Nothing passed, and the ranker is unchanged.
+- Reproduction from git alone. The AGENTS.md command plus `--ledger-json`, on Python 3.13, rebuilds
+  `new_page_report.json` and `new_page_ledger.json` byte for byte (chain head d6e51fed). It reads
+  three tracked files (the Nov 9 `ledger.json`, `baseline_serp.csv`, `forward_serp.csv`), no HTML,
+  and opens no network connection. 99 number checks against `new_page.md` and the ledger match, and
+  341 tests pass on 3.11 and 3.13. Limits: the documented command (AGENTS.md lines 38 to 42) has no
+  `--ledger-json`, so it does not rebuild the ledger, and its `--out` overwrites the committed
+  report. On Python 3.11 every shown number matches, but the chain head is bc3d2e31: `sum()` changed
+  in Python 3.12, and `population_z` (`new_page.py` lines 122 to 132) feeds the hashed score gaps.
+  No test checks the bootstrap seed or draw count, the BM25 clause of the gate on its own, or the
+  committed intervals.
+
+Ties as half, from the report's own counts and its own bootstrap stream (a replay with ties as
+wrong matches the report within 5e-7). Each cell: ties as half (published figure with ties as
+wrong; ties).
+
+| scorer | draft vs draft (116 pairs, 16 queries) | both drafts have text (22, 8) | draft vs ranking page (281, 23) | draft has text (167, 19) | all pairs (1341, 30) |
+|---|---:|---:|---:|---:|---:|
+| LambdaMART | 0.414 (0.293; 28) | 0.545 (0.545; 0) | 0.528 (0.477; 29) | 0.521 (0.521; 0) | 0.546 (0.507; 104) |
+| BM25 | 0.444 (0.319; 29) | 0.705 (0.682; 1) | 0.472 (0.420; 29) | 0.425 (0.425; 0) | 0.484 (0.444; 105) |
+| domain prior | 0.595 (0.397; 46) | 0.636 (0.409; 10) | 0.536 (0.441; 53) | 0.569 (0.473; 32) | 0.574 (0.500; 197) |
+| content and query match | 0.556 (0.517; 9) | 0.659 (0.636; 1) | 0.457 (0.431; 15) | 0.419 (0.419; 0) | 0.523 (0.501; 58) |
+| blend | 0.552 (0.534; 4) | 0.636 (0.636; 0) | 0.495 (0.480; 8) | 0.497 (0.497; 0) | 0.545 (0.536; 24) |
+
+- Decision: unchanged. PR #5's own `adopt_draft_path`, fed these figures, still rejects all three
+  scorers on both gates. The domain prior comes closest on the pasted-draft path: 0.569 against a
+  bar of 0.571 when the draft has text, but 0.636 is below BM25's 0.705 when both drafts have text,
+  and both of its text-slice gain intervals include 0. On the slices that keep pages with no HTML
+  it clears draft vs draft and fails draft vs ranking page (0.536 against a bar of 0.578).
+- One published statement depends on the tie rule. `new_page.md` line 58 and COORDINATION.md line
+  233 say the content rule's draft vs draft gain interval is above 0 (+0.224, 0.068 to 0.379; the
+  blend +0.241, 0.084 to 0.400). With ties as half the content gain is +0.142 (-0.021 to +0.325) and
+  the blend's +0.138 (-0.014 to +0.329). Over 300 bootstrap seeds the content interval's low end is
+  above 0 in all 300 with ties as wrong and in none with ties as half. The only draft vs draft gain
+  interval above 0 with ties as half is the domain prior's: +0.181 (+0.026 to +0.426). The tie rule
+  accounts for 0.082 of the content gain; with ties as half, +0.138 of the remaining +0.142 is on the
+  66 pairs where one draft has text and the other does not.
+- With ties as half the content-blind domain prior is the best point estimate on 4 of the 5 slices,
+  and BM25 on the 22 pairs. Counting ties as wrong made it look like the weakest new rule on draft
+  vs draft: 46 of its 116 pairs are ties between two hosts that are unseen in that family's
+  training rows. The report's Random row (0.500) compares only with tie-as-half figures.
+- The blend weight was also fit with ties counted as wrong. With ties as half, family 4 picks 1.0
+  instead of 0.75. That blend is still rejected (0.682 on the 22 pairs, 0.491 on the 167).
+
+Leakage and timeline:
+
+- No Nov 9 position reaches a new scorer. Shuffling the Nov 9 positions inside each query changes 0
+  of 299 scores for all three. The domain prior, the families and the blend weights come back from
+  Nov 6 rows alone, and mutation runs show the tests catch the leaks they target.
+- The Nov 9 list and Nov 9 page text do reach the content rule and the blend (and the BM25 and
+  LambdaMART rows): their z-scores and BM25 statistics are taken over each query's Nov 9 list. A
+  user would know only the current list. Taking overlap and domain z-scores over the Nov 6 list plus
+  the page, and BM25 z-scores over returning pages with text plus the page, moves the 22-pair rate
+  from 0.659 to 0.614 (content) and from 0.636 to 0.591 (blend). Most of that shift comes from
+  leaving the drafts' own BM25 out of the reference set. No decision changes. `new_page.md` line 31
+  says each family is scored from other families' Nov 6 rows only; that is true of the prior and the
+  weight, not of the content score.
+- A draft's text is the Nov 9 crawl, taken after the page ranked (the fetch time is not in git). It
+  holds no position. Whether a draft has text tracks its position: the 29 drafts with no HTML average
+  position 5.448, the 34 with text 7.441.
+- Missing text adds 0. With missing pages ranked last instead, content and query match is 44/116 on
+  draft vs draft, not 60/116, so 16 of its 26 extra right pairs over LambdaMART come from that
+  choice. The rule copies the z-scored blend of f76f7f1, but it was not fixed before the Nov 9 labels
+  existed.
+- The 167-pair slice ("draft has text") includes 51 pairs whose ranking page has no HTML. LambdaMART
+  is 9 of those 51 and 78/116 (0.672) when both pages have text. PR #5's MISSION.md line 57 gives
+  87/167 as the figure "on pages that have text". On the 116 pairs where both have text, every new
+  rule is below LambdaMART with ties as half: blend 0.491, domain prior 0.517, content 0.397.
+- Timeline. The Nov 9 outcomes entered git in f76f7f1 (2026-11-09 14:32:04Z), about 20 minutes after
+  the Nov 9 Serper pull, and 384c4a6 restated 34/116 in MISSION.md. `new_page.py` and its gates first
+  appear in 000f2c4. That commit's own test reads the Nov 9 labels and asserts the split behind 34/116
+  (28 ties, 22 right and 44 wrong on mixed pairs, 12 right and 10 wrong on text pairs;
+  `tests/test_new_page.py` lines 181 to 185 at 000f2c4). Its test fixture (lines 113 to 114) holds
+  the Nov 9 text-slice values of LambdaMART (0.545, 0.521) and BM25 (0.425). So the text-slice gate
+  was written with the Nov 9 breakdown known.
+- COORDINATION.md line 232 ("Protocol was committed before the Nov 9 look") does not hold on the git
+  record, and neither do the 000f2c4 docstrings (`new_page.py` line 3, the test file's line 3) or its
+  commit message. `new_page.md` line 29 ("fixed before these scores") is the narrower claim, and git
+  cannot check it: the two commits are 4 min 9 s apart and a full run takes a few seconds.
+- The late gate did not decide the outcome. No setting tried (margin 0 to 0.05, BM25 floor on or
+  off, interval rule on or off) adopts any rule on the pasted-draft path.
+
+Ledger timing:
+
+- All 897 rows of `new_page_ledger.json` carry created_at 2026-11-07T04:00:00Z (`new_page.py` line
+  905, `PREDICTION_CREATED_AT`). They could not exist then: every row's candidate list is that
+  query's Nov 9 list, and 105 rows use Nov 9 page text. The file holds no write time: the export
+  drops `uploaded_at`, no row has `recorded_at`, all 90 outcomes have an empty `source_sha256`, and
+  the `created_at_meaning` note that the Nov 9 ledger rows carry is missing.
+- That stamp is the only reason the rows resolve. PR #5's `score_ledger` counts an outcome observed
+  after created_at plus 14 hours; stamped at the 000f2c4 commit time, 0 of 3,744 calls resolve.
+  `new_page.md` line 60 reports 671/1144, 672/1283 and 719/1317 resolved calls, and the ledger's
+  `scores` block stores those tie-dropped rates under the key "accuracy".
+- This branch's ledger verifies the chain (897 rows, head d6e51fed) and scores none of it, because
+  the rows carry no write time (I2, I7). Written through this branch on Nov 10, the same rows would
+  be dated by that write and resolve 0 calls.
+- No page text, HTML, snippets or SmartCrew corpus content is in the added files. The longest string
+  in the ledger is 147 characters, and all 155 URLs were already in the Nov 9 `ledger.json`.
+
+Reading:
+
+- For "does my page beat the competitors for this search?" with a new page, this check adds no
+  support for a text-based answer. On the 22 pairs closest to a pasted draft (two new pages with
+  text, 8 queries) LambdaMART is 0.545 (0.286 to 0.778) and BM25 0.705 (0.500 to 0.917). Against
+  pages that already ranked (167 pairs, 19 queries) LambdaMART is 0.521 and both new text rules are
+  lower.
+- With ties as half, a content-blind host signal is again the best point estimate on most slices,
+  as in E10, E16 and E18. It also failed the gate, and a page edit cannot move it. On the 116 draft
+  pairs E18's site prior is 0.634 and this domain prior 0.595; on the 22 text pairs E18's site prior
+  is 0.500 (10 ties). These cross-checks reuse an outcome both analyses had already seen, so they are
+  diagnostics. E18's decision (no evidence) stands.
+- Limits: one 2.5-day interval on 30 queries in one site's niche, with 116 draft pairs in 16 queries
+  and 22 text pairs in 8. These are retrospective scores on an outcome that had already been looked
+  at: not accuracy and not forward evidence. The next Serper snapshot of the same 30 queries (C2) is
+  the first chance to score a gate fixed before its outcome exists.

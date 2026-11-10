@@ -228,6 +228,8 @@ python -m aeo.ranksim gaps
 | `RANKSIM_LLM_MAX_CALLS`, `RANKSIM_LLM_MAX_USD` | Per-process caps on LLM requests sent (retries included) and estimated spend (default 200, $1.00). The dollar cap needs a known rate for the model; for an unpriced model it stops after the first call unless set to 0. |
 | `RANKSIM_AUTHORITY=dataforseo` | Optional backlink rank on the same DataForSEO account. Off by default. |
 
+Crawling third-party sites needs `CRAWL_USER_AGENT` set to your crawler's name and a contact site owners can reach (a URL or email that is not example.com or similar); the placeholder default is refused at the first real fetch. robots.txt is read per RFC 9309 (longest match, `*` and `$` patterns), the same on every Python version.
+
 If none of the SERP keys are set, `collect` and `track` exit with an error. They do not invent a Google top 10. `--mock` is explicit and every row is marked synthetic.
 
 ### Commands

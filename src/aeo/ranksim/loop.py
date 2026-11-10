@@ -7,6 +7,7 @@ from datetime import date
 
 from sqlalchemy.orm import Session
 
+from aeo.errors import ProviderConfigError
 from aeo.crawl.extract import extract_html
 from aeo.crawl.urls import domain_of, normalize_url
 from aeo.ranksim import OUR_DOMAIN
@@ -207,6 +208,8 @@ def collect_corpus(
             stored.add(url)
             try:
                 fetched = fetcher(url)
+            except ProviderConfigError:
+                raise
             except Exception as exc:  # noqa: BLE001
                 fetched = FetchResult(url=url, html="", status="error", error=str(exc))
             store_fetched_page(session, fetched)

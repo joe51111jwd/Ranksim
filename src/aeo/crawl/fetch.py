@@ -14,7 +14,7 @@ from aeo.crawl import guard
 from aeo.crawl.robots import crawl_delay_seconds, parse_robots
 from aeo.crawl.sitemap import parse_sitemap
 from aeo.crawl.urls import assert_safe_url, normalize_url, same_site
-from aeo.errors import UnsafeURL
+from aeo.errors import ProviderConfigError, UnsafeURL
 
 MAX_BYTES = 2_000_000
 MAX_REDIRECTS = 5
@@ -60,6 +60,31 @@ class HostBackoff(Exception):
     """The host asked crawlers to wait longer than this crawl will wait."""
 
 
+PLACEHOLDER_DOMAINS = frozenset({"example.com", "example.org", "example.net", "localhost"})
+PLACEHOLDER_SUFFIXES = (".example", ".test", ".invalid", ".localhost", ".example.com", ".example.org", ".example.net")
+
+
+def user_agent_problem(user_agent: str) -> str | None:
+    """Why this user agent may not crawl third-party sites, or None.
+
+    Site owners need to know who is crawling and how to reach them, so the user agent must name the
+    crawler and give a contact URL or email that is not a placeholder (example.com and the like).
+    """
+    import re
+
+    text = (user_agent or "").strip()
+    if not text:
+        return "the crawler user agent is empty"
+    hosts = [urlsplit(url).hostname or "" for url in re.findall(r"https?://[^\s)]+", text)]
+    hosts += [domain for domain in re.findall(r"[\w.+-]+@([\w-]+(?:\.[\w-]+)+)", text)]
+    real = [host.lower() for host in hosts if host and host.lower() not in PLACEHOLDER_DOMAINS and not host.lower().endswith(PLACEHOLDER_SUFFIXES)]
+    if real:
+        return None
+    if hosts:
+        return f"the crawler user agent's contact is a placeholder ({hosts[0]})"
+    return "the crawler user agent gives no contact URL or email"
+
+
 def retry_after_seconds(value: str | None, *, now: float | None = None) -> float | None:
     """Seconds from a Retry-After header (delay-seconds or an HTTP date), or None."""
     text = (value or "").strip()
@@ -94,6 +119,9 @@ class Crawler:
         timeout: float = 20.0,
         client: httpx.Client | None = None,
     ) -> None:
+        # Checked at the first fetch of a real host, so a crawler that only meets unresolvable or
+        # synthetic hosts (mock runs) still works.
+        self._user_agent_problem = None if allow_private else user_agent_problem(user_agent)
         self.user_agent = user_agent
         self.delay_seconds = delay_seconds
         self.allow_private = allow_private
@@ -122,6 +150,7 @@ class Crawler:
             raise
         except ValueError as exc:
             return Fetched(url=url, final_url=url, error=str(exc), robots_status="skipped")
+        self._require_contact()
 
         allowed, robots_status = self._allowed(current)
         if not allowed:
@@ -216,6 +245,13 @@ class Crawler:
     def crawl(self, start_url: str, *, sitemap_url: str | None, max_pages: int) -> CrawlBatch:
         batch = CrawlBatch()
         start = normalize_url(start_url)
+        if self._user_agent_problem:
+            try:
+                assert_safe_url(start, allow_private=self.allow_private, resolve=True)
+            except (UnsafeURL, ValueError):
+                pass  # an unusable start URL fails below with its own message
+            else:
+                self._require_contact()
         seeds = self._seed_urls(start, sitemap_url, max_pages, batch.warnings)
         queue = list(seeds)
         seen: set[str] = set()
@@ -431,6 +467,14 @@ class Crawler:
         )
         capped.extensions["truncated"] = truncated
         return capped
+
+    def _require_contact(self) -> None:
+        if self._user_agent_problem:
+            raise ProviderConfigError(
+                f"Refusing to crawl third-party sites: {self._user_agent_problem}. Set CRAWL_USER_AGENT to your crawler's "
+                "name and a contact site owners can reach, for example: "
+                "RanksimBot/0.1 (+https://yourdomain.com/bot; you@yourdomain.com)."
+            )
 
     def _clear_deadline(self) -> None:
         for item in self._guards:

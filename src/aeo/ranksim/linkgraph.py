@@ -13,6 +13,7 @@ from urllib.parse import urljoin, urlsplit
 
 from bs4 import BeautifulSoup
 
+from aeo.errors import ProviderConfigError
 from aeo.crawl.urls import domain_of, normalize_url
 from aeo.ranksim.graph import pagerank
 
@@ -261,6 +262,8 @@ def collect_graph(settings, labels, *, saved_html: dict[str, str], our_domain: s
     def fetch(url: str) -> tuple[str, str]:
         try:
             fetched = crawler.fetch(url)
+        except ProviderConfigError:
+            raise
         except Exception as exc:  # noqa: BLE001
             return "", f"error {exc}"
         if fetched.blocked:

@@ -109,8 +109,10 @@ fixed in advance.
 - [x] B3. Crawler: connect to the vetted IP (DNS rebinding), deadline covers response headers,
   honour Retry-After with per-host backoff (P0-4 remainder). Done: `crawl/guard.py`; local tests
   for rebinding, dripped headers and a 429 storm; a real fetch through the proxy still works.
-- [ ] B4. robots.txt RFC 9309 matcher (wildcards, longest match on 3.11/3.12); refuse a placeholder
-  user agent for third-party crawls (P1-6).
+- [x] B4. robots.txt RFC 9309 matcher (wildcards, longest match on 3.11/3.12); refuse a placeholder
+  user agent for third-party crawls (P1-6). Done: own matcher, tests pass on 3.11 and 3.13; the
+  refusal happens at the first real fetch so mock runs on unresolvable hosts still work, and crawl
+  loops stop on it instead of logging it per URL.
 - [x] B5. URL match key for joining labels to pages; persist final URL and canonical; flag labeled
   URLs that redirect (P1-4). Done: `urlkey.match_key` equals PR #2's `loose_key` on test vectors;
   `normalize_url` unchanged; benchmark numbers on the snapshot dev split unchanged.

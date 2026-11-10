@@ -11,6 +11,7 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
+from aeo.errors import ProviderConfigError
 from aeo.crawl.urls import domain_of, normalize_url
 from aeo.ranksim.features import raw_features
 from aeo.ranksim.groundtruth import SerpLabel
@@ -428,6 +429,8 @@ def crawl_competitor_homepages(settings, domains: list[str], database: str, *, m
             url = f"https://{domain}/"
             try:
                 result = crawler.fetch(url)
+            except ProviderConfigError:
+                raise
             except Exception as exc:  # noqa: BLE001
                 errors.append(f"{domain} {exc}")
                 continue

@@ -10,7 +10,7 @@ from pathlib import Path
 from aeo.config import Settings
 from aeo.crawl.fetch import Crawler
 from aeo.crawl.urls import domain_of
-from aeo.errors import UnsafeURL
+from aeo.errors import ProviderConfigError, UnsafeURL
 from aeo.ranksim.groundtruth import load_serp_file
 from aeo.ranksim.keywords import load_sitemap_urls
 from aeo.ranksim.loop import FetchResult, store_fetched_page
@@ -139,6 +139,8 @@ def _fetch_host(urls: list[str], settings: Settings, delay_seconds: float) -> li
             except UnsafeURL as exc:
                 out.append((url, FetchResult(url=url, html="", status="blocked", error=f"Unsafe URL: {exc}")))
                 continue
+            except ProviderConfigError:
+                raise  # a missing crawler contact stops the crawl with its message, not once per URL
             except Exception as exc:  # noqa: BLE001 - one bad URL must not abort the whole crawl
                 out.append((url, FetchResult(url=url, html="", status="error", error=f"{type(exc).__name__}: {exc}")))
                 continue

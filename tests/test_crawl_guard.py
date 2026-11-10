@@ -16,6 +16,7 @@ from aeo.crawl.robots import parse_robots
 from aeo.errors import UnsafeURL
 
 PUBLIC = "93.184.216.34"
+CONTACT_UA = "RanksimTest/1.0 (+https://ci.ranksim-tests.org/bot)"
 
 
 def _allow_all(crawler: Crawler, origin: str) -> None:
@@ -33,7 +34,7 @@ def test_a_name_that_rebinds_to_a_private_address_is_refused_at_connect(monkeypa
         return real(host, port, *args, **kwargs)
 
     monkeypatch.setattr(socket, "getaddrinfo", rebinding)
-    crawler = Crawler(user_agent="ranksim-test", delay_seconds=0)
+    crawler = Crawler(user_agent=CONTACT_UA, delay_seconds=0)
     _allow_all(crawler, "http://rebind.example")
     try:
         with pytest.raises(UnsafeURL, match="non-public address at connect time"):

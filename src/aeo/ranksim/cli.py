@@ -207,7 +207,10 @@ def main(argv: list[str] | None = None) -> None:
     ledger_sub = ledger.add_subparsers(dest="ledger_command", required=True)
     ledger_verify = ledger_sub.add_parser("verify", help="Check that no recorded prediction was changed, removed, or reordered")
     ledger_verify.add_argument(
-        "--expect-head", default=None, help="A latest hash published earlier, in full or its first 12 characters or more; fails if it is no longer in the chain (newest rows removed)"
+        "--expect-head",
+        default=None,
+        help="A latest hash published earlier; fails if it is no longer in the chain (newest rows removed). "
+        "Publish and check the full hash. A prefix of 12 characters or more is accepted as a weaker check.",
     )
     ledger_list = ledger_sub.add_parser("list", help="Show recorded predictions")
     ledger_list.add_argument("--limit", type=int, default=20)

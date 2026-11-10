@@ -221,3 +221,75 @@ def test_an_honest_numbered_list_is_not_blocked():
                          gaps=gaps)
     text_shown, is_template = _explain(FakeLlm("Close three gaps: 1. title 2. headings 3. FAQ."), result)
     assert not is_template and text_shown.startswith("PREDICTED.")
+
+
+# Review follow-up (U10): list numbering never covers a rank claim after or outside the list.
+
+
+def _two_gap_result():
+    gaps = [GapFix("title match", "A page ahead scores 0.90 on title match. This draft scores 0.10.", "Put the query in the title."),
+            GapFix("H1 match", "A page ahead scores 0.70 on H1 match. This draft scores 0.20.", "Put the query in the H1.")]
+    return CheckResult(query="crm software", url="https://ours.example/", predicted_rank=2, predicted_of=2, confidence="UNSURE",
+                       confidence_note="", competitors=[CompetitorRow("https://r.example/", "Rival guide", 4, 1, "loses", -0.3)],
+                       gaps=gaps)
+
+
+def test_a_rank_claim_after_an_honest_list_is_not_taken_for_list_numbering():
+    claims = [
+        "Two fixes: 1. Put the query in the title. 2. Put it in the H1. Doing both can lift the page into the top 3.",
+        "Two fixes:\n1. Put the query in the title.\n2. Put it in the H1.\nThis should move the page to position 3.",
+        "Two fixes:\n1. Put the query in the title.\n2. Put it in the H1.\nThis should move the page to position 3.\nGood luck.",
+        "1. Put the query in the title. 2. Put it in the H1. That can reach the top 3. Then add a FAQ.",
+        "(1) title (2) H1. You could be number 3) after that.",
+    ]
+    for reply in claims:
+        assert invented_numbers(reply, BRIEF) == ["3"], reply
+        shown, is_template = _explain(FakeLlm(reply), _two_gap_result())
+        assert is_template and "not in the brief (3)" in shown, reply
+    honest = [
+        "Two fixes: 1. Put the query in the title. 2. Put it in the H1. 3. Add a FAQ.",
+        "Fixes:\n1. Put the query in the title.\n2. Put it in the H1.\n3. Add a FAQ.\nGood luck.",
+        "(1) title (2) H1 (3) FAQ",
+        "Wins:\n1) title\n2) H1\nLosses:\n1) speed\n2) links\n3) FAQ",
+    ]
+    for reply in honest:
+        assert invented_numbers(reply, BRIEF) == [], reply
+    # Known limit: a number written and placed exactly like the next list marker reads as list
+    # numbering and passes.
+    assert invented_numbers("Fix these: 1. title 2. headings to reach the top 3. FAQ", BRIEF) == []
+    assert invented_numbers("Fixes:\n1. title\n2. H1\n3. place is in reach.", BRIEF) == []
+
+
+# Review follow-up (U10): restating the brief in a shorter or plural form is not an invented number.
+
+
+def test_a_shortened_feature_name_or_a_plural_heading_tag_passes():
+    brief = (
+        "Query: crm software\nPREDICTED rank 3 of 5\nloses Rival guide stored_google=4.0 predicted_rank=1\n"
+        "BM25F: A page ahead scores 0.85 on BM25F. This draft scores 0.12. Fix: Use the query in the title, the H1, and the first section."
+    )
+    assert invented_numbers("The page ahead has a higher BM25 score.", brief) == []
+    assert invented_numbers("Add the query to your H2s and H3s.", brief) == []
+    assert invented_numbers("Raise the BM25F scores and use an H2.", brief) == []
+    # Other glued digits are still checked.
+    assert invented_numbers("It will reach the top25 and beat BM25X pages.", brief) == ["25"]
+    assert invented_numbers("Use seven H7s.", brief) == ["7"]
+
+
+# Review follow-up (U8): a prefix match is reported as the weaker check it is.
+
+
+def test_a_head_prefix_match_says_only_a_prefix_was_compared(tmp_path, capsys):
+    db, session, head = _three_rows(tmp_path)
+    session.close()
+    main(["--database", db, "ledger", "verify", "--expect-head", head[:12]])
+    out = capsys.readouterr().out
+    assert "prediction 3" in out and "Only the first 12 characters of the hash were compared." in out
+    assert "check the full hash" in out
+    main(["--database", db, "ledger", "verify", "--expect-head", head])
+    out = capsys.readouterr().out
+    assert "prediction 3" in out and "were compared" not in out
+    with pytest.raises(SystemExit):
+        main(["ledger", "verify", "--help"])
+    help_text = " ".join(capsys.readouterr().out.split())
+    assert "Publish and check the full hash" in help_text and "weaker check" in help_text

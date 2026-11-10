@@ -275,7 +275,9 @@ def head_is_anchored(session: Session, expected_head: str | None) -> tuple[bool,
     ``verify_ledger`` only checks the rows that remain, so deleting the newest rows (or rebuilding
     the whole chain) passes it. Comparing against a head recorded somewhere else catches both.
     The full hash or a unique prefix of at least ``MIN_HEAD_PREFIX`` hex characters is accepted,
-    in any case. An empty value is refused, never skipped.
+    in any case. An empty value is refused, never skipped. A prefix is a weaker check: whoever
+    rebuilds the chain can search for a row whose hash starts with it (about 2**48 hashes for 12
+    characters), so a prefix match says so and the full hash stays the strong check.
     """
     wanted = (expected_head or "").strip().lower()
     if not wanted:
@@ -292,7 +294,13 @@ def head_is_anchored(session: Session, expected_head: str | None) -> tuple[bool,
     if row is None:
         return False, f"The published head {wanted[:16]}... is not in this ledger: rows were removed or the chain was rebuilt."
     later = session.query(RsPrediction).filter(RsPrediction.id > row.id).count()
-    return True, f"The published head is prediction {row.id}; {later} predictions were added after it."
+    message = f"The published head is prediction {row.id}; {later} predictions were added after it."
+    if len(wanted) < len(row.row_hash):
+        message += (
+            f" Only the first {len(wanted)} characters of the hash were compared. A rebuilt chain can be made to match a "
+            "prefix, so publish and check the full hash."
+        )
+    return True, message
 
 
 def _same_project(prediction: RsPrediction, outcome: RsOutcome) -> bool:

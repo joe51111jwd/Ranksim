@@ -161,7 +161,7 @@ def test_f4_noise_files_leave_out_lists_not_recollected_or_undated(tmp_path, cap
     _noise(tmp_path, day1, day2)
     printed = capsys.readouterr().out
     assert "Left out 4 of 5 queries that are in both files" in printed
-    assert "No observation date in a file that has dates (a label file with no date): 3." in printed
+    assert "No observation date in a file that has dates: 3. export-serp leaves it blank for a label file with no date" in printed
     assert "Same collection_id in both files, so the list was not collected again in between: 1." in printed
     assert "Queries compared: 1." in printed
     assert "Top-1 same rate: 0.000." in printed

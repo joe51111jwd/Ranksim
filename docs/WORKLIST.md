@@ -234,18 +234,35 @@ fixed in advance.
   - [x] F16: the demo trains with a keywords-only intent map while its whole-site table uses the
     shared source. `serve.py` is PR #2's: README exception and the request above corrected.
 
-- [ ] B21. Review of the B20 fixes as merged (15f23b2..bc813d6), including the review follow-up
+- [x] B21. Review of the B20 fixes as merged (15f23b2..bc813d6), including the review follow-up
   commits and the merge of the four area branches: multi-lens review with adversarial
   verification; fix confirmed defects with regression tests. Review: 7 lenses, 14 findings
-  verified, 8 confirmed (all low after verification), 6 refuted.
-  - [ ] SERP store (G0, G3): legacy Search Console averages stored at midnight read as dated
-    Google lists again; the averages marker can mark real dated legacy lists as not Google.
-  - [ ] Crawler (G1, G2): a rebinding or IDN host seen private by the robots URL check is cached
-    as unreachable; one non-UTF-8 byte sends the whole robots.txt back to the declared charset.
-  - [ ] Observe (G4, G5): Google Ads totals rows are sent as queries; `noise FILE FILE` skips the
-    day check without a word when a date is not YYYY-MM-DD.
-  - [ ] Evaluation (G6): the docs claim check lets a negation before "and" hide an accuracy claim.
+  verified, 8 confirmed (all low after verification), 6 refuted. Fixed on four area branches, each
+  with an independent reviewer (three needed one follow-up round), and merged. Each code fix has a
+  test that fails on bc813d6 (G7 is a docs change).
+  - [x] SERP store (G0, G3): a list 87511c0 stored at a day's midnight is read as dated only when
+    its URLs span more than one site, since a Search Console list holds one site's pages. A one-site
+    list is unclassified: never a dated Google list, export-serp blanks its date, noise leaves it
+    out, a live collect beats it, and when it is later than the latest dated label list the query
+    has no latest list until index-serp reads the original file again. Each message says so. The
+    averages marker matches the day an older version would have stored, so an undated Search
+    Console file never marks a dated list, and a dated label re-import takes a wrong mark off.
+  - [x] Crawler (G1, G2): a host that resolves to a private address at the robots.txt URL check,
+    or an IDN host refused by the connection guard, is an unsafe URL, with nothing cached and no
+    page stored. robots.txt is decoded line by line, so one stray latin-1 byte no longer changes
+    how UTF-8 rules on other lines are read.
+  - [x] Observe (G4, G5): Google Ads totals rows and placeholder query cells are not queries in a
+    table; an emoji query and a "Total: 5" note in another column stay. `noise FILE FILE` leaves out
+    a list whose date is not YYYY-MM-DD and says so; its undated reason names the unclassified case.
+  - [x] Evaluation (G6): the docs claim check ends a negation at "and", "that", "which", "who" and
+    a participle right after the negation, so "never seen and measures accuracy" is flagged.
   - [x] G7: the B20 line above said every new test fails on 15f23b2; 9 of 58 pass there by design.
+  - Known limits: a Google Ads totals label in another language in the query column of a
+    keyword-first export (such as "Gesamt: Konto") is still read as a query. A docs claim inside a
+    relative clause before the negation can still pass the pattern check.
+
+- [ ] B22. Review of the B21 fixes as merged (22bcd90..HEAD), including the follow-up commits:
+  multi-lens review with adversarial verification; fix confirmed defects with regression tests.
 
 - [x] B18. A check says which question it answers (P0-5, backend half): where the page would sit
   among the stored results, not whether Google would show a new page at all; the evidence it cites

@@ -601,7 +601,11 @@ def _paired_collections(database: str):
 
 _LIST_SETTINGS = ("provider", "country", "language", "device")
 _FILE_PAIR_REASONS = {
-    "undated": "No observation date in a file that has dates (a label file with no date): {count}.",
+    "undated": (
+        "No observation date in a file that has dates: {count}. export-serp leaves it blank for a label file with "
+        "no date, and for a list an older version stored that may be Search Console averages. "
+        "Run index-serp again on that original file to classify it."
+    ),
     "same": "Same collection_id in both files, so the list was not collected again in between: {count}.",
     "settings": "Different provider, country, language or device: {count}.",
     "unreadable": "Date that cannot be read as YYYY-MM-DD: {count}. Write each date as YYYY-MM-DD.",

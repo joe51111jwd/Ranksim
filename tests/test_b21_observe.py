@@ -103,6 +103,17 @@ def test_g4_placeholder_query_cell_is_dropped_without_a_total_label(tmp_path):
         assert [row.query for row in load_keyword_file(path)] == ["dirt work software"], name
 
 
+def test_g4_emoji_queries_and_total_notes_in_other_columns_stay_queries(tmp_path):
+    # A Search Console "Top queries" export can hold an emoji query, which is a query, not a
+    # placeholder. A note such as 'Total: 5' in another column is not a Google Ads totals row.
+    emoji = tmp_path / "top_queries.csv"
+    emoji.write_text("Top queries,Clicks,Impressions\ndirt work software,4,80\n❤️,1,30\n-,0,5\n")
+    assert [row.query for row in load_keyword_file(emoji)] == ["dirt work software", "❤️"]
+    notes = tmp_path / "notes.csv"
+    notes.write_text("Keyword,Notes,Clicks\ndirt work software,Total: 5 crews,4\nhcss alternative,,2\n")
+    assert [row.query for row in load_keyword_file(notes)] == WANTED
+
+
 def test_g4_readme_scopes_the_export_column_rule_to_a_header_below_title_rows(tmp_path):
     # Review follow-up R2: a header on the first line needs only a query column, so the README
     # must not state the export column rule for every table.

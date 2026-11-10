@@ -345,9 +345,9 @@ def load_keyword_file(path: str | Path) -> list[Keyword]:
     a row counts as a header only when it has two or more cells, every row under it has as many,
     and it names the query column next to an export column (volume, clicks, match type, campaign
     and the like) or has a column of only numbers. So a later line that is just "keyword", or a
-    query with commas in a plain list, stays a query. In a table, a Google Ads totals row (a cell
-    such as 'Total: Keywords' or 'Total: Account') and a query cell with no letter or digit, such
-    as '--', are not queries. A plain list keeps every line.
+    query with commas in a plain list, stays a query. In a table, a Google Ads totals row ('Total:
+    Keywords' or 'Total: Account' in the first cell or the query cell) and a query cell of only
+    punctuation, such as '--', are not queries. An emoji query stays. A plain list keeps every line.
     A table whose header has none of those is refused rather than read as one query per line,
     since each row would become a paid search. It counts as a table when every line has the
     same number of cells and the header names a metric column (volume, clicks, CPC and the
@@ -385,14 +385,14 @@ def load_keyword_file(path: str | Path) -> list[Keyword]:
         intent_position = header.index("intent") if "intent" in header else None
         for line in lines[1:]:
             row = cells(line, delimiter)
-            if any(_totals_cell(cell) for cell in row):
+            if any(_totals_cell(cell) for cell in (row[:1] + row[position:position + 1])):
                 continue  # a Google Ads totals row, such as 'Total: Keywords' or 'Total: Account'
             if len(header) == 1:
                 # A one-column list keeps a query with an unquoted comma whole.
                 query = row[0] if len(row) == 1 else line.strip()
             else:
                 query = row[position] if position < len(row) else ""
-            if not any(char.isalnum() for char in query):
+            if _placeholder(query):
                 continue  # a placeholder such as '--' in a report row, not a query
             intent = (row[intent_position] if intent_position is not None and intent_position < len(row) else "").lower()
             rows.append((query, intent if intent in KNOWN_INTENTS else None))
@@ -415,6 +415,14 @@ def load_keyword_file(path: str | Path) -> list[Keyword]:
         seen.add(key)
         out.append(Keyword(query=key, intent=intent or intent_for(key, {}), cluster="file", suggested_target_page="", page_exists=False, notes=f"from {Path(path).name}"))
     return out
+
+
+def _placeholder(query: str) -> bool:
+    """Whether a query cell holds only punctuation and spaces, such as '--' in a report row. An
+    emoji query, which Search Console exports can hold, is a query."""
+    import unicodedata
+
+    return all(char.isspace() or unicodedata.category(char).startswith("P") for char in query)
 
 
 def _totals_cell(cell: str) -> bool:

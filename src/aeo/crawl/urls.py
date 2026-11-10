@@ -35,10 +35,32 @@ def normalize_url(url: str, *, keep_trailing_slash: bool = False) -> str:
         netloc = f"{host}:{port}"
     else:
         netloc = host
-    path = parts.path or "/"
+    path = _remove_dot_segments(parts.path) or "/"
     if path != "/" and path.endswith("/") and not keep_trailing_slash:
         path = path[:-1]
     return urlunsplit((parts.scheme, netloc, path, parts.query, ""))
+
+
+def _remove_dot_segments(path: str) -> str:
+    """Drop '.' and '..' segments as httpx does before it sends a request, so robots.txt is checked
+    against the path the server receives. A segment spelled with %2E counts too: many servers
+    resolve /a/%2E%2E/b as /b. A path without such a segment is returned unchanged."""
+    if "." not in path and "%2e" not in path.lower():
+        return path
+    segments = path.split("/")
+    plain = [segment.replace("%2E", ".").replace("%2e", ".") for segment in segments]
+    if "." not in plain and ".." not in plain:
+        return path
+    output: list[str] = []
+    for segment, spelled in zip(segments, plain):
+        if spelled == ".":
+            continue
+        if spelled == "..":
+            if output and output != [""]:
+                output.pop()
+            continue
+        output.append(segment)
+    return "/".join(output)
 
 
 def same_site(left: str, right: str) -> bool:

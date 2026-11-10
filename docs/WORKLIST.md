@@ -205,7 +205,9 @@ fixed in advance.
 - [x] B20. Review of the B17 fixes as merged (87511c0..15f23b2): multi-lens review with adversarial
   verification; fix confirmed defects with regression tests. Review: 7 lenses, 22 findings verified,
   20 confirmed (1 high, 7 medium, 12 low), 2 refuted. Fixed on four area branches, each with an
-  independent reviewer and one follow-up round, and merged. Every new test fails on 15f23b2.
+  independent reviewer and one follow-up round, and merged. Each code fix has a test that fails on
+  15f23b2 (F16 is a docs change). Of the 58 new tests, 49 fail there; the other 9 guard behaviour
+  that should not change, test the docs check itself, or guard the R1 follow-up (B21 G7).
   - [x] Evaluation (F0, F17, F19): `docs/accuracy.md` had listed the `--final` number among the
     checks of unseen results; it now says a final run is a same-snapshot holdout from the same
     frozen label file, so its number is agreement, not accuracy, and the `--final` printout says so.
@@ -234,7 +236,16 @@ fixed in advance.
 
 - [ ] B21. Review of the B20 fixes as merged (15f23b2..bc813d6), including the review follow-up
   commits and the merge of the four area branches: multi-lens review with adversarial
-  verification; fix confirmed defects with regression tests.
+  verification; fix confirmed defects with regression tests. Review: 7 lenses, 14 findings
+  verified, 8 confirmed (all low after verification), 6 refuted.
+  - [ ] SERP store (G0, G3): legacy Search Console averages stored at midnight read as dated
+    Google lists again; the averages marker can mark real dated legacy lists as not Google.
+  - [ ] Crawler (G1, G2): a rebinding or IDN host seen private by the robots URL check is cached
+    as unreachable; one non-UTF-8 byte sends the whole robots.txt back to the declared charset.
+  - [ ] Observe (G4, G5): Google Ads totals rows are sent as queries; `noise FILE FILE` skips the
+    day check without a word when a date is not YYYY-MM-DD.
+  - [ ] Evaluation (G6): the docs claim check lets a negation before "and" hide an accuracy claim.
+  - [x] G7: the B20 line above said every new test fails on 15f23b2; 9 of 58 pass there by design.
 
 - [x] B18. A check says which question it answers (P0-5, backend half): where the page would sit
   among the stored results, not whether Google would show a new page at all; the evidence it cites

@@ -185,7 +185,12 @@ class BenchmarkReport:
     notes: list[str]
 
     def to_json(self) -> str:
-        return json.dumps(_drop_keys(asdict(self), {"margins", "adjacent"}), indent=2, sort_keys=True, default=_json_default)
+        payload = _drop_keys(asdict(self), {"margins", "adjacent"})
+        for protocol in payload["protocols"]:
+            # The rendered report withholds intervals below MIN_VERDICT_CLUSTERS; the JSON keeps
+            # the raw bootstrap numbers and says they are not trustworthy.
+            protocol["interval_trustworthy"] = protocol["n_clusters"] >= MIN_VERDICT_CLUSTERS
+        return json.dumps(payload, indent=2, sort_keys=True, default=_json_default)
 
 
 def query_clusters(examples, threshold: float = 0.3) -> dict[str, int]:
@@ -463,14 +468,23 @@ def adoption_decision(result: "ProtocolResult", candidate: str) -> str:
     if row is None or base is None or row.diff_vs_model is None or row.diff_vs_model.point is None:
         return f"Candidate {candidate}: not measurable."
     diff = row.diff_vs_model
-    interval = "no interval" if diff.low is None else f"95% CI {diff.low:+.3f} to {diff.high:+.3f}"
+    # Below MIN_VERDICT_CLUSTERS the report withholds intervals, because a bootstrap over a handful
+    # of clusters looks tight and is not. The adoption note withholds it too.
+    few = result.n_clusters < MIN_VERDICT_CLUSTERS
+    if few:
+        interval = "interval withheld"
+    else:
+        interval = "no interval" if diff.low is None else f"95% CI {diff.low:+.3f} to {diff.high:+.3f}"
     reasons = []
     if diff.point < ADOPTION_MARGIN:
         reasons.append(f"the gain {diff.point:+.3f} is under {ADOPTION_MARGIN:.2f}")
-    if diff.low is None or diff.low <= 0:
+    if not few and (diff.low is None or diff.low <= 0):
         reasons.append("the interval does not exclude 0")
-    if result.n_clusters < MIN_VERDICT_CLUSTERS:
-        reasons.append(f"only {result.n_clusters} clusters were scored (fewer than {MIN_VERDICT_CLUSTERS})")
+    if few:
+        reasons.append(
+            f"only {result.n_clusters} clusters were scored (fewer than {MIN_VERDICT_CLUSTERS}), "
+            "too few for a trustworthy interval"
+        )
     if reasons:
         return f"Candidate {candidate} vs the current model ({result.protocol}): {diff.point:+.3f}, {interval}. Not adopted: " + "; ".join(reasons) + "."
     return f"Candidate {candidate} vs the current model ({result.protocol}): {diff.point:+.3f}, {interval}. Meets the adoption rule."

@@ -100,7 +100,8 @@ def _test_block(database_url: str | None) -> str:
     if row is None:
         return "<p>No page test has been saved. Run <code>python -m aeo.ranksim test</code> after a corpus exists.</p>"
     summary = row.summary_json or {}
-    if summary.get("queries") is not None:
+    # A single-page `test` run saves "queries" as a count; only a `test --bundle` run saves a list.
+    if summary.get("kind") == "bundle" or isinstance(summary.get("queries"), list):
         return _bundle_block(row, summary)
     synthetic = " The corpus is synthetic." if row.synthetic_corpus else ""
     google = "Google SERP" if row.is_google else "a non-Google or unlabeled source"

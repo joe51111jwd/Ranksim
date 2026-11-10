@@ -494,7 +494,7 @@ def _render_query(row: QueryWhatIf, statuses: dict[str, tuple[str, str | None]])
     if row.after_words is not None and row.after_words < 150:
         lines.append(
             f"That page has {row.after_words} extracted words. The built file is a short crawl shell, not a full article. "
-            "With pairwise accuracy at the cross-validated number above, this slot is not evidence the shell would outrank the crawled pages."
+            "With pairwise agreement at the same-snapshot number above, this slot is not evidence the shell would outrank the crawled pages."
         )
     if row.content_url and row.content_url != row.after_url:
         lines.append(
@@ -874,8 +874,9 @@ def render_three_way(live: WhatIfReport, v1: WhatIfReport, v2: WhatIfReport) -> 
     lines = [
         "Predicted positions. Not live Google ranks.",
         "Model: LambdaMART, leave-one-query-out. The query being scored was not in that model.",
-        "Cross-validated accuracy on the labeled file, using the stored pages:",
-        f"  Pairwise accuracy: {_num(live.pairwise_accuracy)}",
+        "Held-out agreement with the labeled snapshot (each query held out in turn; the same snapshot as the "
+        "training queries, so not accuracy on unseen results), using the stored pages:",
+        f"  Pairwise agreement: {_num(live.pairwise_accuracy)}",
         f"  NDCG at 10: {_num(live.ndcg_at_10)}",
         f"  Spearman: {_num(live.spearman)}",
         f"  Top-3 hit rate: {_num(live.top3_hit_rate)}",
@@ -883,7 +884,11 @@ def render_three_way(live: WhatIfReport, v1: WhatIfReport, v2: WhatIfReport) -> 
             f"  Labeled URLs with HTML: {live.n_labeled_urls}. Uncovered URLs: {live.uncovered_urls}. "
             f"Queries: {live.n_queries}. Pairs: {live.n_pairs}."
         ),
-        "Live is the stored crawl. v1 and v2 replace those URLs with the bundle and add URLs the query did not already have.",
+        (
+            "Live is the stored crawl. v1 and v2 replace the HTML of a URL labeled for the query. A bundle URL that is "
+            "not labeled there joins only the queries it targets (keywords.csv, or the manifest's query column), and "
+            "never a query with no stored competitor."
+        ),
         "A BLOCK line means v2's predicted rank number is worse than live. That blocks shipping.",
         "",
         "query\tlive\tv1\tv2\tship",

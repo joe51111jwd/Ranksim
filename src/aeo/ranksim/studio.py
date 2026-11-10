@@ -624,7 +624,8 @@ def register(app: FastAPI, ui) -> None:
         try:
             made = create_project(_text(body.get("name"), 200), _text(body.get("site"), 300), searches, root=ui.root)
         except (ProjectError, ValueError) as exc:
-            return _error(400, str(exc))
+            message = str(exc).replace(f" in {ui.root}", "").replace(str(ui.root), "the projects folder")
+            return _error(400, message)
         meta = ws.WorkspaceMeta()
         meta.competitors, problems = ws.parse_competitors(_text(_join(body.get("competitors")), 20000), made.domain)
         meta.dataset = ws.DATASET_NONE

@@ -6,7 +6,8 @@ mirrors them to a private Vercel Blob store:
 - save() packs the data folder (the projects folder plus a consistent copy of the SQLite rank database) into one
   gzipped tar, uploads it under a new immutable name, then rewrites a small pointer blob naming that version.
 - refresh() asks for the pointer's metadata (a cheap call that is not served from a cache). When it changed since this
-  instance last synced, it finds the newest version, downloads it and swaps it in.
+  instance last synced, or every LIST_EVERY_SECONDS anyway, it lists the versions, downloads the newest and swaps it in.
+  The pointer write is best effort: a save counts once its immutable version is stored.
 
 Versions are immutable, so a cached download can never be stale. One owner works at a time; two writers at once means
 the last save wins, and the losing request is not merged. Nothing here runs unless BLOB_READ_WRITE_TOKEN is set.
@@ -29,6 +30,10 @@ PREFIX = "ranksim/state/"
 POINTER = "ranksim/HEAD"
 KEEP_VERSIONS = 3
 REFRESH_EVERY_SECONDS = 2.0
+# The pointer is a hint. Every LIST_EVERY_SECONDS an active instance also lists the versions, so a pointer write that
+# failed or was slow can only delay, never hide, a newer save.
+LIST_EVERY_SECONDS = 45.0
+POINTER_WAIT_SECONDS = 8.0
 SKIP_PARTS = {"llm-cache", "__pycache__"}
 
 
@@ -47,6 +52,7 @@ class CloudState:
     _seen: str | None = None  # pointer etag this instance last synced to
     _version: str | None = None
     _checked: float = 0.0
+    _listed: float = 0.0
     _lock: threading.RLock = field(default_factory=threading.RLock)
     _written: list[str] = field(default_factory=list)
     last_error: str = ""
@@ -75,27 +81,32 @@ class CloudState:
             from vercel.blob import sync as blob
 
             try:
-                head = blob.head_blob(POINTER)
+                head = _retry(blob.head_blob, POINTER)
+                etag = head.etag
             except blob.BlobNotFoundError:
-                self._checked = now
-                return False  # nothing saved yet: a fresh store
+                etag = "none"  # nothing pointed at yet; versions may still exist
+            except blob.BlobError:
+                etag = None  # the hint is unavailable: fall back to listing
+            self._checked = now
+            if etag is not None and etag == self._seen and now - self._listed < LIST_EVERY_SECONDS:
+                return False
+            try:
+                versions = sorted((item.pathname for item in _retry(lambda: list(blob.query_blobs(prefix=PREFIX)))), reverse=True)
             except blob.BlobError as exc:
                 self.last_error = f"Could not reach storage: {type(exc).__name__}."
                 raise CloudError(self.last_error) from exc
-            self._checked = now
-            if head.etag and head.etag == self._seen:
-                return False
-            versions = sorted((item.pathname for item in blob.query_blobs(prefix=PREFIX)), reverse=True)
-            if not versions:
-                self._seen = head.etag
+            self._listed = now
+            if not versions or versions[0] == self._version:
+                self._seen = etag
                 return False
             newest = versions[0]
-            if newest == self._version:
-                self._seen = head.etag
-                return False
-            body = blob.get_blob(newest, access="private").body
+            try:
+                body = _retry(blob.get_blob, newest, access="private").body
+            except blob.BlobError as exc:
+                self.last_error = f"Could not read storage: {type(exc).__name__}."
+                raise CloudError(self.last_error) from exc
             self._install(body)
-            self._version, self._seen = newest, head.etag
+            self._version, self._seen = newest, etag
             self.last_error = ""
             for callback in list(self.on_change):
                 callback()
@@ -135,15 +146,13 @@ class CloudState:
             body = self.pack()
             name = f"{PREFIX}{time.time_ns():020d}-{secrets.token_hex(3)}.tgz"
             try:
-                blob.put_blob(name, body, access="private", content_type="application/gzip")
-                pointer = blob.put_blob(
-                    POINTER, name.encode(), access="private", content_type="text/plain", allow_overwrite=True
-                )
+                _retry(blob.put_blob, name, body, access="private", content_type="application/gzip")
             except blob.BlobError as exc:
                 self.last_error = f"Could not save to storage: {type(exc).__name__}."
                 raise CloudError(self.last_error) from exc
-            previous, self._version, self._seen = self._version, name, pointer.etag
-            self._checked = time.monotonic()
+            previous, self._version = self._version, name
+            self._seen = self._write_pointer(name)
+            self._checked = self._listed = time.monotonic()
             self.last_error = ""
             self._written.append(name)
             if previous and previous not in self._written:
@@ -156,6 +165,27 @@ class CloudState:
                 except blob.BlobError:
                     pass  # an old version left behind costs storage, not correctness
             return name
+
+    def _write_pointer(self, name: str) -> str | None:
+        """Point at the new version, waiting a few seconds at most. Returns the pointer's etag when it was written."""
+        from vercel.blob import sync as blob
+
+        box: dict = {}
+
+        def write() -> None:
+            try:
+                box["etag"] = _retry(
+                    blob.put_blob, POINTER, name.encode(), access="private", content_type="text/plain", allow_overwrite=True
+                ).etag
+            except Exception as exc:  # noqa: BLE001 - the pointer is a hint; listing finds the version anyway
+                box["error"] = type(exc).__name__
+
+        worker = threading.Thread(target=write, name="ranksim-pointer", daemon=True)
+        worker.start()
+        worker.join(POINTER_WAIT_SECONDS)
+        if "error" in box or worker.is_alive():
+            print(f"ranksim: storage pointer not updated ({box.get('error', 'slow')}); other servers will find the save by listing.", flush=True)
+        return box.get("etag")
 
     def pack(self) -> bytes:
         """A gzipped tar of projects/ plus a consistent copy of the SQLite database."""
@@ -197,3 +227,19 @@ def _dispose_engines(db_file: Path) -> None:
             bind = factory.kw.get("bind")
             if bind is not None:
                 bind.dispose()
+
+
+def _retry(call, *args, tries: int = 3, **kwargs):
+    """Blob calls fail now and then; the SDK does not retry. A missing blob is an answer, not a failure."""
+    from vercel.blob import sync as blob
+
+    for attempt in range(tries):
+        try:
+            return call(*args, **kwargs)
+        except blob.BlobNotFoundError:
+            raise
+        except blob.BlobError:
+            if attempt == tries - 1:
+                raise
+            time.sleep(0.5 * (attempt + 1) ** 2)
+    return None

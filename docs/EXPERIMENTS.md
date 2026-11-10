@@ -373,10 +373,13 @@ E18 results (the single run of the protocol above; script and inputs kept outsid
 | entrant vs entrant | 195 | 0.500 (all ties) | 0.613 (0.522 to 0.696) | 0.613 | 0.395 to 0.605 |
 
 - Decision under the rule: no evidence. On entrant vs entrant pairs (23 queries) the site prior's
-  interval starts at 0.522, inside the random band (0.395 to 0.605). Its point estimate is at the
-  band's upper edge.
-- Context, not part of the rule: PR #5's committed report gives the content models on the same 195
-  entrant pairs, with ties as half, LambdaMART 0.472 and BM25 0.479. Persistence alone reproduces
+  interval starts at 0.522, inside the random band (0.395 to 0.605). Its point estimate (0.613) is
+  just above the band's upper edge: about 1.3% to 1.5% of random scorings reach it. The rule asks
+  for the interval's lower end to clear the band, and it does not.
+- Context, not part of the rule: PR #5's committed report gives the content models' right, tied
+  and wrong counts on the same 195 entrant pairs. With ties as half they come to LambdaMART 0.472
+  (78 right, 28 tied) and BM25 0.479 (79 right, 29 tied); the report's own figures, which count a
+  tie as wrong, are 0.400 and 0.405. Persistence alone reproduces
   E14 (0.767 on 1341 pairs, 195 ties). The combined rule adds about 0.016 overall by ordering
   entrants among themselves.
 - Correction, recorded rather than hidden: the first run computed the random band from independent
@@ -385,6 +388,13 @@ E18 results (the single run of the protocol above; script and inputs kept outsid
   the protocol's; with either band the rule is not met, and the signals' numbers did not change.
 - Reading: on this one 2.5-day interval, nothing tested here places new entrants reliably. The
   content-blind site prior points the right way (as E16 and PR #2's lab did) but 195 pairs in 23
-  queries cannot separate it from luck. More snapshots of the same queries (C2) are the cheapest way
-  to grow the entrant set; each Serper snapshot of 30 queries costs about 30 credits.
+  queries are not enough to meet the rule fixed in advance. More snapshots of the same queries (C2)
+  are the cheapest way to grow the entrant set; each Serper snapshot of 30 queries costs about 30
+  credits.
+- Review (B19, 2026-11-10): an independent reimplementation from the protocol text alone matched
+  every pair count and point estimate, the inputs matched the files on PR #5's branch byte for
+  byte, and the protocol text did not change between its commit (13f7074) and the results
+  (ec70ad3). The review corrected two descriptions above: the decision line said the point estimate
+  was at the band's edge (it is just above it), and the context line said the report gives the
+  tie-as-half figures (they are computed from its counts). The decision is unchanged.
 

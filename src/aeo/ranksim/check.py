@@ -15,6 +15,7 @@ from aeo.ranksim.lambdamart import RankExample, gate_thin_pages, predict_scores
 from aeo.ranksim.linkgraph import LinkGraph
 from aeo.ranksim.llm import LlmClient
 from aeo.ranksim.loop import page_from_html
+from aeo.ranksim.urlkey import match_key
 from aeo.ranksim.whatif import _copy_graph, _lookup_page
 
 FIXES = {
@@ -196,19 +197,20 @@ class CheckResult:
     scope: str = ""  # which question this check answers, and which it cannot (check_scope)
 
 
-def check_scope(added_draft: bool, competitors: int) -> str:
+def check_scope(new_page: bool, competitors: int) -> str:
     """Say which question a check answers, in words a reader can act on (BACKLOG P0-5).
 
-    The model learned only from pages already in Google's results, so a check orders a page among
-    stored results; it cannot say whether Google would show a new page at all. The evidence cited
-    is in docs/EXPERIMENTS.md and is stated with its size.
+    ``new_page`` means Google's labeled results for the query do not include this page under any
+    spelling. The model learned only from pages already in Google's results, so a check orders a
+    page among stored results; it cannot say whether Google would show a new page at all. The
+    evidence cited is in docs/EXPERIMENTS.md and each size is the size of the experiment cited.
     """
     pages = f"{competitors} stored competitor page{'s' if competitors != 1 else ''}"
-    if added_draft:
+    if new_page:
         return (
             f"What this answers: where your page would sit among the {pages} from Google's results for this "
             "query. It cannot say whether Google would show your page at all, because the model learned only "
-            "from pages that already rank. In the tests so far (16 labeled queries, and 30 queries checked again "
+            "from pages that already rank. In the tests so far (11 labeled queries, and 30 queries checked again "
             "from Nov 6 to Nov 9, 2026), which site a page is on ordered pages as well as or better than page text "
             "did, on samples too small for a firm verdict (docs/EXPERIMENTS.md E16, E18). A text edit alone may "
             "not change a real position."
@@ -290,33 +292,44 @@ def check_draft(
             else "This query is not in the labeled file, so no competitor set was scored and no position was invented."
         )
         return result
-    try:
-        draft_key = normalize_url(url)
-    except ValueError:
-        draft_key = url
+    # The draft is the user's page if it is the same page as a label or a stored page under any
+    # spelling (www, scheme, slash, tracking tags): the key the label join uses (urlkey, B5).
+    # normalize_url keeps www and the scheme, so it kept the stored copy of the user's own page in
+    # the set as a competitor when the URL was typed another way.
+    draft_match = match_key(url)
     docs: list[PageDoc] = []
     positions: dict[str, float] = {}
-    replaced = False
+    ours: int | None = None
     shells: list[str] = []
+    in_results = False
+    seen: set[str] = set()
     for label in labels:
         if label.query != query:
             continue
+        own = match_key(label.url) == draft_match
+        in_results = in_results or own
         page = _lookup_page(pages, label.url)
         if page is None:
-            result.missing_urls.append(label.url)
+            if not own:
+                result.missing_urls.append(label.url)
             continue
-        if getattr(page, "js_shell", False) and normalize_url(page.url) != draft_key:
+        own = own or match_key(page.url) == draft_match
+        if match_key(page.url) in seen:
+            continue  # a second label for a page already in the set, under another spelling
+        seen.add(match_key(page.url))
+        if getattr(page, "js_shell", False) and not own:
             # Its stored text is not what Google rendered: leave it out and say so.
             result.missing_urls.append(label.url)
             shells.append(label.url)
             continue
         positions[normalize_url(page.url)] = label.position
-        if normalize_url(page.url) == draft_key:
+        if own:
+            ours = len(docs)
             docs.append(draft_doc if draft_doc is not None else _draft_doc(url, html, page))
-            replaced = True
         else:
             docs.append(page)
-    if not replaced:
+    if ours is None:
+        ours = len(docs)
         docs.append(draft_doc if draft_doc is not None else _draft_doc(url, html, None))
         result.added_draft = True
     if len(docs) < 2:
@@ -329,12 +342,11 @@ def check_draft(
     scores = gate_thin_pages(examples, raw_scores)
     order = sorted(range(len(docs)), key=lambda index: (-scores[id(examples[index])], index))
     ranks = {index: place for place, index in enumerate(order, start=1)}
-    ours = next(index for index, doc in enumerate(docs) if normalize_url(doc.url) == draft_key or doc.url == url)
     result.predicted_rank = ranks[ours]
     result.predicted_of = len(docs)
     ordered_scores = [scores[id(example)] for example in examples]
     result.competitors = _competitors(docs, ranks, positions, ours, ordered_scores)
-    result.scope = check_scope(result.added_draft, len(docs) - 1)
+    result.scope = check_scope(not in_results, len(docs) - 1)
     by_url = {doc.url: index for index, doc in enumerate(docs)}
     for row in result.competitors:
         other = by_url.get(row.url)
@@ -350,7 +362,7 @@ def check_draft(
             "renders them, this tool cannot, so they were left out: " + ", ".join(shells[:5]) + ("." if len(shells) <= 5 else ", ...")
         )
     result.confidence, result.confidence_note = rank_confidence(calibration, examples, raw_scores, ours, synthetic=synthetic)
-    labeled, stored = _competitor_coverage(labels, query, draft_key, result.missing_urls)
+    labeled, stored = _competitor_coverage(labels, query, draft_match, result.missing_urls)
     if labeled and stored * 2 < labeled:
         result.confidence = "UNSURE"
         result.confidence_note = (
@@ -557,18 +569,11 @@ def _competitors(docs, ranks, positions, ours: int, scores: list[float] | None =
 NON_MONOTONE_LENGTH = frozenset({"word_count", "content_effort"})
 
 
-def _competitor_coverage(labels, query: str, draft_key: str, missing_urls: list[str]) -> tuple[int, int]:
+def _competitor_coverage(labels, query: str, draft_match: str, missing_urls: list[str]) -> tuple[int, int]:
     """(labeled competitor pages for the query, how many of them have stored HTML). The checked
-    page's own URL is not a competitor."""
-
-    def key(url: str) -> str:
-        try:
-            return normalize_url(url)
-        except ValueError:
-            return url
-
-    labeled = {key(label.url) for label in labels if label.query == query} - {draft_key}
-    missing = {key(url) for url in missing_urls} - {draft_key}
+    page is not a competitor under any spelling; pages are counted by ``urlkey.match_key``."""
+    labeled = {match_key(label.url) for label in labels if label.query == query} - {draft_match}
+    missing = {match_key(url) for url in missing_urls} - {draft_match}
     return len(labeled), len(labeled - missing)
 
 

@@ -101,8 +101,11 @@ Requests for other roles, drafted here and not posted (posting on another role's
   stay_on_that_cohort` fails against this branch's one-cluster guard; pr8_v3 drafts stored under
   live URLs are counted as covered.
 - PR #1: `track-record score` compares raw query text, while label import casefolds queries.
-- PR #2 (UI owner): show `CheckResult.scope` near the verdict in `demo.py`, so a reader of a new
-  page's check sees that it cannot say whether Google would show the page at all (B18, P0-5).
+- PR #2 (UI owner): the main draft screen (`workspace_ui.py`, through `workspace.run_draft`) already
+  says a PREDICTED order is not a forecast (`DRAFT_LIMIT_NOTE`); it could add the reason from
+  `check.check_scope` (the model learned only from pages that already rank, so it cannot say
+  whether Google would show a new page at all), and the old `/check` in `demo.py` could show
+  `CheckResult.scope` near the verdict (B18, P0-5).
 - PR #2 / PR #5 owners: `project.guess_intent` and `forward_eval.py` (hard-coded "commercial") can
   call `intents.query_intents(labels)` / `intent_for(query, intents)` so every path agrees.
 
@@ -178,6 +181,14 @@ fixed in advance.
   among the stored results, not whether Google would show a new page at all; the evidence it cites
   is stated with its size (E14, E16, E18). Done: `CheckResult.scope`, printed by the CLI; the web UI
   is PR #2's (request above). Tests fail on the previous commit (no `check_scope`).
+
+- [x] B19. Review of f281274..6f5f3ba (E18 protocol and results, B18) with an independent E18
+  recomputation and adversarial verification; fix confirmed defects with regression tests. Done:
+  3 lenses, 9 findings, 7 verified: 3 confirmed and fixed, 2 refuted. E18 recomputed exactly and its
+  protocol was not edited after the results; two descriptions corrected (E18 Review note). A check
+  now finds the user's page under any spelling (match key), so its stored copy is no longer a
+  competitor and the scope no longer calls a ranked page new; the scope gives E16's real size (11
+  queries). 4 new tests fail on 6f5f3ba. The same spelling gap in what-if is a B17 finding.
 
 ## C. Blocked on credentials or decisions
 

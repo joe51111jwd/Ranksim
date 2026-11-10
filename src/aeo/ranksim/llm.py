@@ -420,11 +420,15 @@ OPENAI_PUBLIC_BASE = "https://api.openai.com"
 
 def model_format_problem(provider: str, model: str, *, openai_base_url: str | None = None) -> str | None:
     """Why this model name cannot be meant for this provider, or None. One name is no longer sent to
-    whichever provider has a key."""
+    whichever provider has a key. The check is against the provider actually selected, so with
+    several keys set an Anthropic name is refused when auto picks OpenAI."""
+    public_openai = (openai_base_url or OPENAI_PUBLIC_BASE).startswith(OPENAI_PUBLIC_BASE)
     if provider == "openrouter" and "/" not in model:
         return "OpenRouter model names look like vendor/model, for example openai/gpt-4o-mini"
-    if provider == "openai" and "/" in model and (openai_base_url or OPENAI_PUBLIC_BASE).startswith(OPENAI_PUBLIC_BASE):
+    if provider == "openai" and "/" in model and public_openai:
         return "OpenAI model names have no vendor prefix, for example gpt-4o-mini (openai/... is an OpenRouter name)"
+    if provider == "openai" and model.lower().startswith("claude") and public_openai:
+        return "OpenAI does not serve claude models. Set RANKSIM_LLM_PROVIDER=anthropic to use one"
     if provider == "anthropic" and not model.startswith("claude"):
         return "Anthropic model names start with claude, for example claude-3-5-haiku-20241022"
     return None

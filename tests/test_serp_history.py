@@ -70,7 +70,7 @@ def test_export_feeds_evaluate_and_noise_from_the_database(tmp_path, capsys):
     capsys.readouterr()
     main(["--database", db, "noise", "--from-db"])
     report = capsys.readouterr().out
-    assert "two latest collections of 1 queries" in report and "Pairwise agreement" in report
+    assert "one pair of collections for each of 1 queries" in report and "Pairwise agreement" in report
 
 
 def test_keyword_files_in_csv_or_plain_lines(tmp_path):

@@ -93,8 +93,12 @@ def load_serp_file(path: str | Path, *, report: ImportReport | None = None) -> l
 
     Rows that cannot be used are dropped and counted in ``report`` with their CSV row numbers:
     blank query or URL, a URL without http(s), a position that is not a finite number >= 1,
-    and non-organic rows when a result_type column says so. Queries are whitespace-collapsed
-    and case-folded. A repeated query+URL keeps its best position and is reported.
+    non-organic rows when a result_type column says so, rows a synthetic column marks as mock
+    results, and rows a google column marks as not Google (export-serp writes google=no for
+    Brave and mock lists). Queries are whitespace-collapsed and case-folded. A repeated
+    query+URL keeps its best position and is reported. A file that holds more than one collection of a query
+    (an export-serp --all file, told apart by collection_id) is refused: merging the lists
+    would give a results page nobody observed.
     """
     from aeo.crawl.urls import normalize_url
 
@@ -130,6 +134,10 @@ def load_serp_file(path: str | Path, *, report: ImportReport | None = None) -> l
         kind = "search_console_avg" if is_gsc and not prior_key else "serp_snapshot"
         report.kind = kind
         source = "search_console" if kind == "search_console_avg" else "manual_csv"
+        synthetic_key = fields.get("synthetic")
+        google_key = fields.get("google")
+        collection_key = fields.get("collection_id")
+        collections: dict[str, set[str]] = {}
         best: dict[tuple[str, str], SerpLabel] = {}
         order: list[tuple[str, str]] = []
         for row_number, raw in enumerate(reader, start=2):
@@ -148,6 +156,12 @@ def load_serp_file(path: str | Path, *, report: ImportReport | None = None) -> l
             result_type = _meta(raw, meta_keys["result_type"])
             if result_type is not None and result_type.casefold() not in ORGANIC_TYPES:
                 report.drop(f"not an organic result ({result_type})", row_number)
+                continue
+            if (_meta(raw, synthetic_key) or "").casefold() in {"yes", "true", "1"}:
+                report.drop("synthetic (mock) result, not Google", row_number)
+                continue
+            if (_meta(raw, google_key) or "").casefold() in {"no", "false", "0"}:
+                report.drop(f"not a Google result ({_meta(raw, meta_keys['provider']) or 'unknown provider'})", row_number)
                 continue
             position = _float(raw.get(position_key))
             if position is None or not math.isfinite(position) or position < 1:
@@ -171,6 +185,9 @@ def load_serp_file(path: str | Path, *, report: ImportReport | None = None) -> l
                 intent=_intent_value(_meta(raw, meta_keys["intent"])),
                 kind=kind,
             )
+            collection_id = _meta(raw, collection_key)
+            if collection_id:
+                collections.setdefault(query, set()).add(collection_id)
             key = (query, key_url)
             if key in best:
                 kept = best[key]
@@ -180,6 +197,13 @@ def load_serp_file(path: str | Path, *, report: ImportReport | None = None) -> l
                 continue
             best[key] = label
             order.append(key)
+    several = sorted(query for query, ids in collections.items() if len(ids) > 1)
+    if several:
+        raise ValueError(
+            f"{file_path} holds {len(collections[several[0]])} collections of the query {several[0]!r} "
+            f"({len(several)} queries have more than one). A results file must hold one list per query. "
+            "Export without --all, or split the file by collection_id."
+        )
     rows = [best[key] for key in order]
     positions: dict[str, list[float]] = {}
     for row in rows:

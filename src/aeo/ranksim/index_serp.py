@@ -17,7 +17,7 @@ from aeo.ranksim.loop import FetchResult, store_fetched_page
 from aeo.ranksim.saved_html import load_saved_html
 from aeo.ranksim.serp import SerpHit
 from aeo.ranksim.urlkey import match_key
-from aeo.ranksim.store import EVALUATION_EXCLUDED_SOURCES, RsPage, append_serp, open_session
+from aeo.ranksim.store import EVALUATION_EXCLUDED_SOURCES, RsPage, append_serp, collection_dated, latest_collection, open_session
 
 
 def index_serp_csv(
@@ -45,13 +45,20 @@ def index_serp_csv(
                 seen.add(url)
                 urls.append(url)
     already = _already_fetched(database) if skip_fetched else set()
+    # A draft stored at this exact URL is not a crawl of it, even when the live page is stored
+    # under another spelling: every join prefers the exact URL, so it would keep finding the draft.
+    drafts = _stored_drafts(database) if skip_fetched else set()
+
+    def is_stored(url: str) -> bool:
+        return match_key(url) in already and url not in drafts
+
     saved_used: list[str] = []
     to_crawl: list[str] = []
     for url in urls:
         if url in saved and saved[url].strip():
             saved_used.append(url)
             continue
-        if match_key(url) in already:
+        if is_stored(url):
             continue
         to_crawl.append(url)
     by_host: dict[str, list[str]] = defaultdict(list)
@@ -65,8 +72,12 @@ def index_serp_csv(
         for future in as_completed(futures):
             fetched.extend(future.result())
     session = open_session(database)
-    skipped = [url for url in urls if match_key(url) in already and url not in saved]
+    skipped = [url for url in urls if is_stored(url) and url not in saved]
     counts = {"fetched": 0, "blocked": 0, "error": 0, "saved_html": 0, "skipped": len(skipped)}
+    # Search Console positions are averages over a period for your own pages, not a results page.
+    # They are not stored as collections, so export-serp, noise and the ledger never read them as one.
+    search_console = bool(labels) and labels[0].kind == "search_console_avg"
+    behind_dated = 0  # queries of an undated file whose dated results list stays the latest
     try:
         for url in saved_used:
             store_fetched_page(
@@ -79,7 +90,7 @@ def index_serp_csv(
             store_fetched_page(session, result)
             counts[result.status] = counts.get(result.status, 0) + 1
         grouped: dict[str, list] = defaultdict(list)
-        for label in labels:
+        for label in ([] if search_console else labels):
             grouped[label.query].append(label)
         for query, rows in grouped.items():
             hits = [
@@ -95,6 +106,7 @@ def index_serp_csv(
                 for row in sorted(rows, key=lambda item: item.position)
             ]
             first = rows[0]
+            observed = _observed_time(first.observed_on)
             append_serp(
                 session,
                 query,
@@ -105,9 +117,13 @@ def index_serp_csv(
                 country=first.country,
                 language=first.language,
                 device=first.device,
-                collected_at=_observed_time(first.observed_on),
+                collected_at=observed,
                 source="label_file",
             )
+            if observed is None:
+                latest = latest_collection(session, query)
+                if latest is not None and collection_dated(latest):
+                    behind_dated += 1
     finally:
         session.close()
     return {
@@ -115,6 +131,8 @@ def index_serp_csv(
         "queries": len({row.query for row in labels}),
         "attempted": len(to_crawl),
         "saved_missing": missing_files,
+        "search_console": search_console,
+        "undated_behind_dated": behind_dated,
         **counts,
         "blocked_urls": [url for url, result in fetched if result.status == "blocked"],
         "error_urls": [(url, result.error) for url, result in fetched if result.status == "error"],
@@ -132,6 +150,16 @@ def _already_fetched(database: str) -> set[str]:
             for row in rows
             if (row.raw_html or "").strip() and (row.source or "unknown") not in EVALUATION_EXCLUDED_SOURCES
         }
+    finally:
+        session.close()
+
+
+def _stored_drafts(database: str) -> set[str]:
+    """Exact URLs whose stored row is a draft, so a crawl of the live page can replace it."""
+    session = open_session(database)
+    try:
+        rows = session.query(RsPage.url, RsPage.source).all()
+        return {url for url, source in rows if (source or "unknown") in EVALUATION_EXCLUDED_SOURCES}
     finally:
         session.close()
 

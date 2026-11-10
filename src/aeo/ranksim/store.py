@@ -71,6 +71,9 @@ class RsSerpCollection(Base):
     requested_depth: Mapped[int | None] = mapped_column(Integer, nullable=True)
     hits: Mapped[int] = mapped_column(Integer, default=0)
     signature: Mapped[str] = mapped_column(String(64), default="")
+    # False: a label file with no date. collected_at then holds the import time, which is not
+    # when the list was observed. None: a row from before this column (see collection_dated).
+    dated: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
 
 
 class RsFinalRun(Base):
@@ -252,20 +255,46 @@ def append_serp(
     source: str = "live",
 ) -> str | None:
     """Store one collected list as a new collection; earlier collections stay. Returns its id, or
-    None when the list is identical to the query's latest collection from the same source and
-    time (re-importing the same file adds nothing). An empty list is a real observation and is kept."""
-    import hashlib
+    None when the query already has this exact collection, at any point in its history (not only
+    as its latest one). A live collect is its own observation unless its collection time is the
+    same, so a re-collect that found the same list is kept. A label file matches on its date, or
+    on its list alone when it has no date, so re-importing the same file adds nothing on any day,
+    even after a live collect of the query. An empty list is a real observation and is kept."""
     import uuid
 
     first = hits[0] if hits else None
     provider = provider or (first.provider if first else "unknown")
     synthetic = bool(first.synthetic if synthetic is None and first else synthetic)
     is_google = bool(first.is_google if is_google is None and first else is_google)
+    dated = collected_at is not None or source == "live"
     collected_at = collected_at or utcnow()
+    if source == "live":
+        when = collected_at.isoformat()
+    elif dated:
+        when = collected_at.date().isoformat()
+    else:
+        when = "undated"
     body = "|".join(f"{hit.position}:{hit.url}" for hit in sorted(hits, key=lambda item: item.position))
-    signature = hashlib.sha256(f"{source}|{provider}|{collected_at.date().isoformat()}|{body}".encode()).hexdigest()
-    latest = latest_collection(session, query)
-    if latest is not None and latest.signature == signature:
+    signature = _collection_signature(source, provider, when, body)
+    seen = session.query(RsSerpCollection).filter(
+        RsSerpCollection.query == query, RsSerpCollection.signature == signature
+    ).first()
+    if seen is None and not dated:
+        # A database from before the dated column signed an undated import with its import day.
+        legacy = session.query(RsSerpCollection).filter(
+            RsSerpCollection.query == query,
+            RsSerpCollection.source == source,
+            RsSerpCollection.provider == provider,
+            RsSerpCollection.dated.is_(None),
+        )
+        seen = next(
+            (row for row in legacy if _collection_signature(source, provider, row.collected_at.date().isoformat(), body) == row.signature),
+            None,
+        )
+    if seen is not None:
+        if seen.dated is None and source != "live":
+            seen.dated = dated  # a re-import now says whether that older row carried a date
+            session.commit()
         return None
     collection_id = uuid.uuid4().hex
     session.add(
@@ -283,6 +312,7 @@ def append_serp(
             requested_depth=requested_depth,
             hits=len(hits),
             signature=signature,
+            dated=dated,
         )
     )
     for hit in hits:
@@ -309,13 +339,29 @@ def replace_serp(session: Session, query: str, hits: list[SerpHit]) -> None:
     append_serp(session, query, hits)
 
 
+def _collection_signature(source: str, provider: str, when: str, body: str) -> str:
+    import hashlib
+
+    return hashlib.sha256(f"{source}|{provider}|{when}|{body}".encode()).hexdigest()
+
+
 def latest_collection(session: Session, query: str) -> RsSerpCollection | None:
-    return (
-        session.query(RsSerpCollection)
-        .filter(RsSerpCollection.query == query)
-        .order_by(RsSerpCollection.collected_at.desc(), RsSerpCollection.recorded_at.desc(), RsSerpCollection.id.desc())
-        .first()
-    )
+    """The query's latest collection (see pick_latest)."""
+    return pick_latest(session.query(RsSerpCollection).filter(RsSerpCollection.query == query).all())
+
+
+def pick_latest(collections: list[RsSerpCollection]) -> RsSerpCollection | None:
+    """The latest of one query's collections, by collection time.
+
+    A label file with no date was stored at its import time, which says nothing about when its
+    list was observed. So it is the latest only when the query has no dated, non-synthetic
+    collection. Importing an old undated file after a live collect does not replace the live list.
+    """
+    if any(collection_dated(c) and not c.synthetic for c in collections):
+        collections = [c for c in collections if collection_dated(c)]
+    if not collections:
+        return None
+    return max(collections, key=lambda c: (c.collected_at, c.recorded_at or c.collected_at, c.id))
 
 
 def serp_collections(session: Session, query: str | None = None, *, include_synthetic: bool = False) -> list[RsSerpCollection]:
@@ -325,6 +371,15 @@ def serp_collections(session: Session, query: str | None = None, *, include_synt
     if not include_synthetic:
         rows = rows.filter(RsSerpCollection.synthetic.is_(False))
     return list(rows.order_by(RsSerpCollection.query, RsSerpCollection.collected_at, RsSerpCollection.recorded_at).all())
+
+
+def collection_dated(collection: RsSerpCollection) -> bool:
+    """True when collected_at is when the list was observed. A live collect always is. A label
+    file is only when it carried a date; an older label_file row that did not record this is
+    treated as undated."""
+    if collection.dated is not None:
+        return bool(collection.dated)
+    return collection.source == "live"
 
 
 def collection_hits(session: Session, collection_id: str) -> list[RsSerp]:

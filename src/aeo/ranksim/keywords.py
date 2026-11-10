@@ -319,24 +319,65 @@ def gap_summary(rows: list[Keyword] | None = None) -> dict[str, int]:
     }
 
 
+# Columns that keyword tools and Search Console put next to the query. In a plain list of
+# queries a whole comma-separated cell is almost never one of these.
+_EXPORT_COLUMNS = frozenset({
+    "intent", "volume", "search volume", "avg. monthly searches", "kd", "keyword difficulty", "difficulty", "cpc",
+    "competition", "competitive density", "clicks", "impressions", "ctr", "position", "traffic", "url",
+})
+_DELIMITERS = (",", "\t", ";")
+
+
 def load_keyword_file(path: str | Path) -> list[Keyword]:
-    """Queries to collect or track from a file: a CSV with a ``query`` column (optional ``intent``)
-    or one query per line. Intent falls back to the shared rule (aeo.ranksim.intents)."""
+    """Queries to collect or track from a file: a CSV with a query column (optional ``intent``)
+    or one query per line. The query column may be named query, keyword, queries or top queries,
+    as keyword tool and Search Console exports name it, and the file may be separated by commas,
+    tabs or semicolons. A table whose header has none of those is refused rather than read as
+    one query per line, since each row would become a paid search. It counts as a table when
+    every line has the same number of cells and the header names a metric column (volume,
+    clicks, CPC and the like) or a column holds only numbers below a text header. A plain list
+    whose queries contain commas is still read one query per line.
+    Intent falls back to the shared rule (aeo.ranksim.intents)."""
     import csv as _csv
 
+    from aeo.ranksim.groundtruth import QUERY_COLUMNS
     from aeo.ranksim.intents import KNOWN_INTENTS, intent_for, normalize_query
+
+    def cells(line: str, delimiter: str) -> list[str]:
+        return [cell.strip() for cell in next(_csv.reader([line], delimiter=delimiter))]
 
     text = Path(path).read_text(encoding="utf-8-sig")
     lines = [line for line in text.splitlines() if line.strip() and not line.lstrip().startswith("#")]
     rows: list[tuple[str, str | None]] = []
-    if lines and "query" in [cell.strip().lower() for cell in next(_csv.reader([lines[0]]))]:
-        reader = _csv.DictReader(lines)
-        fields = {name.strip().lower(): name for name in reader.fieldnames or []}
-        for raw in reader:
-            query = (raw.get(fields["query"]) or "").strip()
-            intent = (raw.get(fields.get("intent", ""), "") or "").strip().lower() if "intent" in fields else ""
+    found = None
+    for delimiter in _DELIMITERS if lines else ():
+        header = [cell.lower() for cell in cells(lines[0], delimiter)]
+        query_column = next((name for name in QUERY_COLUMNS if name in header), None)
+        if query_column:
+            found = (delimiter, header, query_column)
+            break
+    if found:
+        delimiter, header, query_column = found
+        position = header.index(query_column)
+        intent_position = header.index("intent") if "intent" in header else None
+        for line in lines[1:]:
+            row = cells(line, delimiter)
+            if len(header) == 1:
+                # A one-column list keeps a query with an unquoted comma whole.
+                query = row[0] if len(row) == 1 else line.strip()
+            else:
+                query = row[position] if position < len(row) else ""
+            intent = (row[intent_position] if intent_position is not None and intent_position < len(row) else "").lower()
             rows.append((query, intent if intent in KNOWN_INTENTS else None))
     else:
+        for delimiter in _DELIMITERS:
+            header = _metric_table_header(lines, delimiter, cells)
+            if header:
+                raise ValueError(
+                    f"{path} looks like a table with the columns {', '.join(header)}, but none is a query column. "
+                    f"Name the query column one of: {', '.join(QUERY_COLUMNS)}. "
+                    "If every line is one query, add a first line that says query."
+                )
         rows = [(line.strip(), None) for line in lines]
     seen: set[str] = set()
     out: list[Keyword] = []
@@ -347,4 +388,28 @@ def load_keyword_file(path: str | Path) -> list[Keyword]:
         seen.add(key)
         out.append(Keyword(query=key, intent=intent or intent_for(key, {}), cluster="file", suggested_target_page="", page_exists=False, notes=f"from {Path(path).name}"))
     return out
+
+
+def _metric_table_header(lines: list[str], delimiter: str, cells) -> list[str] | None:
+    """The header of a keyword table with no query column, or None when the lines read as queries."""
+    import math
+
+    def number(cell: str) -> bool:
+        value = cell.strip().strip("$€£%<>~").replace(",", "").replace(" ", "")
+        try:
+            return math.isfinite(float(value))
+        except ValueError:
+            return False
+
+    table = [cells(line, delimiter) for line in lines[:21]]
+    if not table or len(table[0]) < 2 or any(len(row) != len(table[0]) for row in table):
+        return None
+    header = [cell.lower() for cell in table[0]]
+    if any(cell in _EXPORT_COLUMNS for cell in header):
+        return header
+    for column, name in enumerate(header):
+        values = [row[column] for row in table[1:] if row[column]]
+        if name and not number(name) and values and all(number(value) for value in values):
+            return header
+    return None
 

@@ -103,14 +103,17 @@ LEGACY_PATHS = ("/demo", "/space", "/check")
 STUDIO_CSP = (
     "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https:; img-src 'self' data: https: http:; "
     "font-src 'self' data: https:; connect-src 'self'; frame-src 'self'; form-action 'self'; frame-ancestors 'none'; "
-    "base-uri 'none'; object-src 'none'"
+    "base-uri 'self' https:; object-src 'none'"
 )
+# base-uri allows https so the editable preview (a srcdoc frame, which inherits this policy) can set <base> to the
+# page's own address and load its own CSS, images and fonts. Scripts stay 'self' only, so a base element cannot
+# redirect one. The Studio builds its own DOM with textContent and never parses outside HTML into the app page.
 
 
 def csp_for(path: str) -> str:
     if path.startswith(LEGACY_PATHS):
         return LEGACY_CSP
-    if path in {"/", "/app", "/start"} or path.startswith("/app/"):
+    if path in {"/", "/app", "/start", "/edit"} or path.startswith("/app/"):
         return STUDIO_CSP
     return STRICT_CSP
 STEP_LABELS = {

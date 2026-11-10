@@ -35,7 +35,7 @@ SCREENS = {"studio", "rankings", "data", "overview", "issues", "searches", "comp
 MAX_CSV_BYTES = 5 * 1024 * 1024
 DATE_RE = r"^\d{4}-\d{2}-\d{2}$"
 # Paths that answer without a login: the app shell (it holds no data), its assets, and the login itself.
-OPEN_EXACT = {"/", "/app", "/start", "/healthz", "/favicon.ico", "/api/v1/session", "/api/v1/login", "/api/v1/logout"}
+OPEN_EXACT = {"/", "/app", "/start", "/edit", "/healthz", "/favicon.ico", "/api/v1/session", "/api/v1/login", "/api/v1/logout"}
 OPEN_PREFIX = ("/studio/", "/app/")
 NO_STATE_PREFIX = ("/studio/", "/static/")
 NO_SAVE_SUFFIX = ("/pull", "/fetch", "/login", "/logout")
@@ -468,6 +468,10 @@ def register(app: FastAPI, ui) -> None:
     def studio_start() -> Response:
         return shell_response()
 
+    @app.get("/edit", response_class=HTMLResponse)
+    def studio_edit() -> Response:
+        return shell_response()  # /edit?url=... opens any page in the editor
+
     @app.get("/app/{slug}", response_class=HTMLResponse)
     def studio_project(slug: str) -> Response:
         return shell_response()
@@ -889,6 +893,31 @@ def register(app: FastAPI, ui) -> None:
 
         return StreamingResponse(stream(), media_type="application/x-ndjson", headers={"cache-control": "no-store", "x-accel-buffering": "no"})
 
+    @app.post("/api/v1/fetch")
+    async def api_fetch_any(request: Request) -> JSONResponse:
+        """Any public page, for the live preview. robots.txt respected, private addresses refused, nothing stored."""
+        _check_header_csrf(ui, request)
+        blocked = _not_public(ui)
+        if blocked is not None:
+            return blocked
+        body = await _json_body(request, 8192)
+        try:
+            url = serve._clean_url(serve._with_scheme(_text(body.get("url"), 2048).strip()), what="page address")
+        except serve._InputError as exc:
+            return _error(400, str(exc))
+        html, error = await run_in_threadpool(ui.preview_fetch, url)
+        if not html:
+            return _error(400, ui.scrub(f"Could not open {url}: {error or 'no page came back'}."))
+        from aeo.ranksim.project import list_projects
+
+        domain = (urlsplit_host(url) or "").removeprefix("www.")
+        owner = None
+        for row in list_projects(root=ui.root):
+            if row.site.removeprefix("www.") == domain:
+                owner = row.slug
+                break
+        return JSONResponse({"url": url, "html": html, "project": owner})
+
     @app.get("/api/v1/projects/{slug}/report")
     async def api_report(slug: str) -> JSONResponse:
         try:
@@ -939,7 +968,7 @@ def _run_pull(ui, project, use_google: bool, events) -> dict:
         options.setdefault("skip_google", not use_google)
     report = pull(project, ui.settings, database=ui.database, progress=progress, **options)
     ui.forget(project.slug)
-    if report.google_kind == "api":
+    if report.searches_with_results:
         from aeo.ranksim import autopilot
         from aeo.ranksim.project import latest_google
 
@@ -997,7 +1026,20 @@ def _analyze(ui, site: str, events, searches=None) -> dict:
     def step(name: str, message: str, done: int = 0, total: int = 0, state: str = "active", **extra) -> None:
         events.put({"type": "step", "step": name, "state": state, "message": ui.scrub(message), "done": done, "total": total, **extra})
 
+    from aeo.ranksim.project import latest_google, list_projects
+
     host = clean_site(site)
+    want_domain = host.removeprefix("www.")
+    project = None
+    for row in list_projects(root=ui.root):
+        try:
+            found = load_project(row.slug, root=ui.root)
+        except (ProjectError, FileNotFoundError, OSError, ValueError):
+            continue
+        if found.domain.removeprefix("www.") == want_domain:  # one project per site, with or without www
+            project = found
+            host = clean_site(found.site)  # read the host this project already uses
+            break
     fetcher = ui.pull_options.get("fetcher")
     step("site", f"Reading {host}.")
     pages = autopilot.read_site(host, ui.settings, ui.database, fetcher=fetcher, progress=lambda message, done, total: step("site", message, done, total))
@@ -1014,24 +1056,30 @@ def _analyze(ui, site: str, events, searches=None) -> dict:
         chosen = [brand.lower()]
     step("searches", f"Found {len(chosen)} searches your pages are written for.", len(chosen), len(chosen), state="done", searches=chosen)
 
-    project = None
-    want_domain = host.removeprefix("www.")
-    for name in (brand, f"{brand} {want_domain}"):
-        try:
-            found = load_project(slugify(name), root=ui.root)
-        except (ProjectError, FileNotFoundError, OSError, ValueError):
-            project = create_project(name, host, chosen, root=ui.root)
-            break
-        if found.domain.removeprefix("www.") == want_domain:
-            project = update_searches(found, replace=chosen)  # a new analysis starts from what the site says now
-            break
+    google = google_status(ui)
     if project is None:
-        raise ProjectError(f"A different site already uses the name {brand}. Rename that project first.")
+        name = brand
+        try:
+            load_project(slugify(name), root=ui.root)
+            name = f"{brand} {want_domain}"
+        except (ProjectError, FileNotFoundError, OSError, ValueError):
+            pass
+        project = create_project(name, host, chosen, root=ui.root)
+    else:
+        snapshot = latest_google(project)
+        has_results = snapshot is not None and any(entry.results for entry in snapshot.searches)
+        if not has_results:
+            project = update_searches(project, replace=chosen)
+        elif google["ready"]:
+            project = update_searches(project, replace=project.searches + [q for q in chosen if q not in project.searches][:5])
+        chosen = list(project.searches)  # searches with real Google results stay; guesses never replace them
+    events.put({"type": "project", "slug": project.slug, "name": project.name, "site": project.site})
     meta = ws.load_meta(project)
     ws.save_meta(project, meta)
 
-    google = google_status(ui)
-    if google["ready"]:
+    previous = latest_google(project)
+    can_rank = google["ready"] or (previous is not None and any(entry.results for entry in previous.searches))
+    if can_rank:
         pull_events: list = []
 
         class Relay:
@@ -1042,11 +1090,11 @@ def _analyze(ui, site: str, events, searches=None) -> dict:
                         events.put({"type": "step", "step": name, "state": "active", "message": item.get("message", ""), "done": item.get("done", 0), "total": item.get("total", 0)})
                 pull_events.append(item)
 
-        summary = _run_pull(ui, project, True, Relay())
+        if not google["ready"]:
+            step("google", "Using the Google results already saved for this site.", 1, 1, state="done")
+        summary = _run_pull(ui, project, google["ready"], Relay())
         meta = ws.load_meta(project)
-        from aeo.ranksim.project import latest_google
-
-        picked = autopilot.pick_competitors(latest_google(project), project.domain)
+        picked = meta.competitors or autopilot.pick_competitors(latest_google(project), project.domain)
         if picked and not meta.competitors:
             meta.competitors = picked
             ws.save_meta(project, meta)
@@ -1071,3 +1119,9 @@ def _analyze_error(ui, exc: Exception) -> str:
     if isinstance(exc, ProjectError):
         return ui.scrub(str(exc).replace(str(ui.root), "the projects folder"))
     return ui.scrub(f"The analysis stopped: {type(exc).__name__}: {str(exc)[:300]}")
+
+
+def urlsplit_host(url: str) -> str:
+    from urllib.parse import urlsplit
+
+    return (urlsplit(url).hostname or "").lower()

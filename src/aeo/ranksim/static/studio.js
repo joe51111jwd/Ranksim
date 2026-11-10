@@ -239,6 +239,7 @@
   function parseLocation() {
     const parts = location.pathname.split('/').filter(Boolean);
     const params = new URLSearchParams(location.search);
+    if (parts[0] === 'edit') return { slug: null, screen: 'open', params };
     if (parts[0] === 'app' && parts[1]) {
       const raw = ALIASES[parts[2]] || parts[2];
       return { slug: decodeURIComponent(parts[1]), screen: SCREENS.includes(raw) ? raw : 'overview', params };
@@ -321,6 +322,10 @@
   async function route() {
     const where = parseLocation();
     S.params = where.params;
+    if (where.screen === 'open' && !S.publicDemo) {
+      openUrl(where.params.get('url') || '');
+      return;
+    }
     try {
       if (where.slug && S.projects.some((p) => p.slug === where.slug)) {
         if (where.slug !== S.slug || !S.report) await openSite(where.slug);
@@ -348,16 +353,16 @@
     renderHome();
   }
 
-  async function openSite(slug) {
+  async function openSite(slug, { keepDrafts = false } = {}) {
     S.slug = slug;
     S.compare.clear();
     S.pages.clear();
-    S.drafts.clear();
+    if (!keepDrafts) S.drafts.clear();
     S.results.clear();
     S.report = null;
     S.project = null;
     renderBar();
-    clear(main).append(h('div', { class: 'boot' }, h('span', { class: 'spinner', 'aria-hidden': 'true' })));
+    if (!keepDrafts) clear(main).append(h('div', { class: 'boot' }, h('span', { class: 'spinner', 'aria-hidden': 'true' })));
     const [report, project] = await Promise.all([api.get(`/api/v1/projects/${enc(slug)}/report`), api.get(`/api/v1/projects/${enc(slug)}`)]);
     S.report = report;
     S.project = project;
@@ -491,8 +496,8 @@
 
   function renderHome() {
     document.title = 'Ranksim';
-    const input = h('input', { type: 'text', inputmode: 'url', autocomplete: 'off', spellcheck: 'false', placeholder: 'yoursite.com', 'aria-label': 'Your site' });
-    const submit = h('button', { class: 'btn btn-primary', type: 'submit' }, 'Analyze', icon('arrow'));
+    const input = h('input', { type: 'text', inputmode: 'url', autocomplete: 'off', spellcheck: 'false', placeholder: 'yoursite.com or any page address', 'aria-label': 'Page address' });
+    const submit = h('button', { class: 'btn btn-primary', type: 'submit' }, 'Open', icon('arrow'));
     const form = h('form', { class: 'composer' }, icon('globe', 'lead'), input, submit);
     form.addEventListener('submit', (event) => {
       event.preventDefault();
@@ -501,13 +506,13 @@
         input.focus();
         return;
       }
-      analyze(site);
+      navigate(`/edit?url=${enc(/^https?:\/\//i.test(site) ? site : `https://${site}`)}`);
     });
     const hero = h('section', { class: 'hero' },
-      h('h1', { text: 'Which site should we look at?' }),
-      h('p', { class: 'sub', text: 'Type your address. Ranksim finds the searches you show up for, who you compete with, and what to fix. Then you can test changes before you publish.' }),
+      h('h1', { text: 'Which page should we look at?' }),
+      h('p', { class: 'sub', text: 'Paste any address, yours or a competitor\'s. You get the live page to edit right away, while Ranksim finds its searches, who it competes with, and what to fix.' }),
       S.publicDemo ? h('p', { class: 'hints', text: 'This demo is read only.' }) : form,
-      S.publicDemo ? null : h('div', { class: 'hints' }, h('span', { text: 'Reads your site and the pages that rank against you' }), h('span', { text: 'About a minute' })));
+      S.publicDemo ? null : h('div', { class: 'hints' }, h('span', { text: 'Edit any page. Publishing needs you to own the site.' })));
     const body = [hero];
     if (S.projects.length) {
       const grid = h('div', { class: 'sites-grid' });
@@ -556,96 +561,148 @@
     ['report', 'Writing your report'],
   ];
 
-  async function analyze(site) {
-    document.title = 'Analyzing · Ranksim';
+  /* Open any page: the live page is editable at once; the site's analysis runs beside it. */
+  async function openUrl(raw) {
+    let url = (raw || '').trim();
+    if (!url) {
+      navigate('/', { replace: true });
+      return;
+    }
+    if (!/^https?:\/\//i.test(url)) url = `https://${url}`;
+    const domain = hostOf(url);
     S.slug = null;
     S.report = null;
+    S.project = null;
+    S.screen = 'editor';
+    S.params = new URLSearchParams({ page: url });
+    S.open = { url, domain, steps: new Map(), current: null, state: 'reading', error: '', started: Date.now() };
+    document.title = `${domain} · Ranksim`;
     renderBar();
-    const rows = new Map();
-    const list = h('div', { class: 'steps' });
-    for (const [key, label] of STEPS) {
-      const row = h('div', { class: 'step pending', dataset: { step: key } },
-        h('span', { class: 'box' }),
-        h('div', { class: 'body' }, h('div', { class: 't', text: label }), h('div', { class: 'c' }), h('div', { class: 'extra' })));
-      rows.set(key, row);
-      list.append(row);
-    }
-    const started = Date.now();
-    const timer = h('span', { class: 'aside num' });
-    const after = h('div', { class: 'form-actions after-steps' });
-    clear(main).append(h('div', { class: 'wrap screen' },
-      h('section', { class: 'hero' }, h('h1', { text: `Analyzing ${site.replace(/^https?:\/\//, '').replace(/\/.*$/, '')}` }), h('p', { class: 'sub', text: 'This takes about a minute. Keep this page open.' })),
-      h('div', { class: 'tile steps-tile' }, h('div', { class: 'tile-head' }, h('h2', { text: 'Progress' }), timer), list, after)));
-    const tick = setInterval(() => {
-      timer.textContent = `${Math.round((Date.now() - started) / 1000)} s`;
-    }, 500);
-    let current = null;
-    const mark = (row, state) => {
-      row.classList.remove('pending', 'active', 'done', 'failed', 'skipped');
-      row.classList.add(state || 'pending');
-      const box = clear(row.querySelector('.box'));
-      if (state === 'active') box.append(h('span', { class: 'spinner', 'aria-hidden': 'true' }));
-      else if (state === 'done') box.append(icon('check'));
-      else if (state === 'failed') box.append(icon('x'));
-    };
-    const set = (key, state, message, done, total, extra) => {
-      const row = rows.get(key);
-      if (!row) return;
-      if (current && current !== key) {
-        const prev = rows.get(current);
-        if (prev && prev.classList.contains('active')) mark(prev, 'done');
-      }
-      if (state === 'active') current = key;
-      mark(row, state);
-      if (message) row.querySelector('.c').textContent = message;
-      const slot = clear(row.querySelector('.extra'));
-      if (state === 'active' && total) slot.append(bar(done / total));
-      if (extra) slot.append(extra);
-    };
-    let result = null;
-    let failed = '';
+    renderEditor();
+    let found = null;
     try {
-      await stream('/api/v1/sites', { site }, (event) => {
+      found = await api.post('/api/v1/fetch', { url });
+      const draft = draftFor(url);
+      draft.text = normalize(found.html);
+      draft.base = draft.text;
+      draft.url = found.url;
+      draft.loaded = found.url;
+      draft.loading = false;
+      draft.failed = '';
+    } catch (err) {
+      const draft = draftFor(url);
+      draft.loading = false;
+      draft.failed = err.message;
+    }
+    if (S.open && S.open.url === url && !S.report) {
+      paintFrame();
+      paintSide();
+    }
+    const known = found && found.project ? S.projects.find((p) => p.slug === found.project) : null;
+    if (known && known.built) {
+      await finishOpen(known.slug, url);
+      return;
+    }
+    S.open.state = 'analyzing';
+    paintSide();
+    let result = null;
+    try {
+      await stream('/api/v1/sites', { site: url }, (event) => {
+        if (!S.open || S.open.url !== url) return;
         if (event.type === 'step') {
           const key = event.step === 'save' ? 'model' : event.step;
-          let extra = null;
-          if (event.searches) extra = h('div', { class: 'found' }, event.searches.slice(0, 15).map((q) => h('span', { class: 'chip chip-gray', text: q })));
-          if (event.competitors) extra = h('div', { class: 'found' }, event.competitors.map((d) => h('span', { class: 'chip', text: d })));
-          set(key, event.state, event.message, event.done, event.total, extra);
-          if (event.state === 'skipped' && key === 'google') {
-            for (const name of ['pages', 'model', 'competitors']) set(name, 'skipped', 'Needs search data on the server.');
+          if (S.open.current && S.open.current !== key) {
+            const prev = S.open.steps.get(S.open.current);
+            if (prev && prev.state === 'active') prev.state = 'done';
           }
+          if (event.state === 'active') S.open.current = key;
+          S.open.steps.set(key, { state: event.state, message: event.message, done: event.done, total: event.total, searches: event.searches, competitors: event.competitors });
+          if (event.state === 'skipped' && key === 'google') {
+            for (const name of ['pages', 'model', 'competitors']) S.open.steps.set(name, { state: 'skipped', message: 'Needs Google results for this site.' });
+          }
+          paintProgress();
+        } else if (event.type === 'project') {
+          S.open.slug = event.slug;
         } else if (event.type === 'done') {
           result = event;
         } else if (event.type === 'error') {
-          failed = event.error;
+          S.open.error = event.error;
         }
       });
     } catch (err) {
-      failed = err.message;
+      S.open.error = err.message;
     }
-    clearInterval(tick);
+    if (!S.open || S.open.url !== url) return;
     if (!result) {
-      if (current) set(current, 'failed', failed);
-      else set('site', 'failed', failed);
-      toast(failed || 'The analysis stopped.');
-      after.append(h('button', { class: 'btn btn-dark', type: 'button', onClick: () => navigate('/') }, 'Try another address'));
+      S.open.state = 'failed';
+      paintSide();
       return;
     }
-    for (const [key] of STEPS) {
-      const row = rows.get(key);
-      if (row.classList.contains('active')) mark(row, 'done');
-      else if (row.classList.contains('pending')) mark(row, key === 'report' ? 'done' : 'skipped');
-    }
     await loadProjects();
-    setTimeout(() => navigate(`/app/${enc(result.slug)}`), 700);
+    await finishOpen(result.slug, url);
   }
+
+  async function finishOpen(slug, url) {
+    try {
+      await openSite(slug, { keepDrafts: true });
+    } catch (err) {
+      S.open.state = 'failed';
+      S.open.error = err.message;
+      paintSide();
+      return;
+    }
+    S.open = null;
+    S.screen = 'editor';
+    S.params = new URLSearchParams({ page: url });
+    history.replaceState({}, '', pathFor('editor', { page: url }));
+    renderBar();
+    render();
+  }
+
+  function progressTile() {
+    const O = S.open;
+    const tile = h('section', { class: 'tile progress-tile' });
+    const timer = Math.round((Date.now() - O.started) / 1000);
+    tile.append(h('div', { class: 'tile-head' }, h('h2', { text: O.state === 'failed' ? `Couldn't finish ${O.domain}` : `Analyzing ${O.domain}` }), h('span', { class: 'aside num', text: O.state === 'failed' ? '' : `${timer} s` })));
+    if (O.state === 'failed') {
+      tile.append(h('p', { class: 'tile-sub', text: O.error || 'The analysis stopped.' }), h('div', { class: 'result-actions' }, h('button', { class: 'btn btn-dark', type: 'button', onClick: () => openUrl(O.url) }, icon('refresh'), 'Try again')));
+      return tile;
+    }
+    const list = h('div', { class: 'steps compact' });
+    for (const [key, label] of STEPS) {
+      const info = O.steps.get(key) || { state: 'pending' };
+      const box = h('span', { class: 'box' });
+      if (info.state === 'active') box.append(h('span', { class: 'spinner', 'aria-hidden': 'true' }));
+      else if (info.state === 'done') box.append(icon('check'));
+      const row = h('div', { class: `step ${info.state || 'pending'}` }, box, h('div', { class: 'body' }, h('div', { class: 't', text: label }), info.message && info.state !== 'pending' ? h('div', { class: 'c', text: info.message }) : null));
+      if (info.state === 'active' && info.total) row.querySelector('.body').append(bar(info.done / info.total));
+      if (info.searches && info.state === 'done') row.querySelector('.body').append(h('div', { class: 'found' }, info.searches.slice(0, 8).map((q) => h('span', { class: 'chip chip-gray', text: q }))));
+      list.append(row);
+    }
+    tile.append(h('p', { class: 'tile-sub', text: 'Edit the page while this runs. Testing unlocks when it finishes.' }), list);
+    return tile;
+  }
+
+  function paintProgress() {
+    const old = main.querySelector('.progress-tile');
+    if (old && S.open) old.replaceWith(progressTile());
+  }
+
+  setInterval(() => {
+    if (S.open && S.open.state === 'analyzing') {
+      const aside = main.querySelector('.progress-tile .aside');
+      if (aside) aside.textContent = `${Math.round((Date.now() - S.open.started) / 1000)} s`;
+    }
+  }, 1000);
 
   /* ------------------------------------------------------------------ render dispatch */
 
   function render() {
     closeSheet(true);
-    if (!S.report) return;
+    if (!S.report) {
+      if (S.open) renderEditor();
+      return;
+    }
     const titles = { overview: 'Overview', issues: 'Issues', searches: 'Searches', competitors: 'Competitors', editor: 'Editor', settings: 'Settings' };
     document.title = `${titles[S.screen]} · ${S.report.name} · Ranksim`;
     if (S.screen === 'issues') renderIssues();
@@ -985,18 +1042,90 @@ img,video{max-width:100%;height:auto;border-radius:10px}
   function serialize(doc) {
     const root = doc.documentElement.cloneNode(true);
     root.querySelectorAll('[data-rs]').forEach((node) => node.remove());
+    root.querySelectorAll('[data-rs-reveal]').forEach((node) => node.removeAttribute('data-rs-reveal'));
     return `<!doctype html>\n${root.outerHTML}`;
   }
 
   const normalize = (text) => serialize(cleanDoc(text));
 
-  function frameSource(text) {
+  /* Pages built for scripts often hide content until a script reveals it. The preview shows it anyway. */
+  const REVEAL_CSS = 'html,body{opacity:1!important;visibility:visible!important}[style*="opacity:0"],[style*="opacity: 0"]{opacity:1!important;transform:none!important}[style*="visibility:hidden"],[style*="visibility: hidden"]{visibility:visible!important}';
+
+  /* Pages drawn by scripts send search engines a hidden copy of their text. When the preview comes out empty, that
+     copy is shown as a plain page: it is exactly what Google and Ranksim read. */
+  const HIDDEN_CSS = `[data-rs-reveal]{position:static!important;clip:auto!important;clip-path:none!important;width:auto!important;height:auto!important;max-width:760px!important;margin:0 auto!important;padding:48px 32px 64px!important;overflow:visible!important;white-space:normal!important;display:block!important;opacity:1!important;visibility:visible!important;transform:none!important;background:#fff!important;font:17px/1.62 -apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif!important;color:#1b1b19!important;text-align:left!important}
+[data-rs-reveal] *{white-space:normal!important}
+[data-rs-reveal] h1{font-size:38px!important;line-height:1.12!important;letter-spacing:-.025em;margin:0 0 14px!important;font-weight:700!important}
+[data-rs-reveal] h2{font-size:25px!important;line-height:1.25!important;margin:40px 0 10px!important;font-weight:700!important}
+[data-rs-reveal] h3{font-size:19px!important;margin:28px 0 6px!important;font-weight:650!important}
+[data-rs-reveal] p{margin:0 0 16px!important;color:#333330!important}
+[data-rs-reveal] a{color:#3358eb!important;text-decoration:none!important}
+[data-rs-reveal] ul,[data-rs-reveal] ol{padding-left:24px!important;margin:0 0 16px!important;list-style:revert!important}
+[data-rs-reveal] summary{cursor:pointer;color:#555550;margin:24px 0 8px}
+html:has([data-rs-reveal]),body:has([data-rs-reveal]){background:#fff!important;height:auto!important;overflow:auto!important}`;
+
+  function revealHidden(doc) {
+    const win = doc.defaultView;
+    if (!win || !doc.body) return false;
+    const text = (doc.body.textContent || '').trim().length;
+    if (text < 120 || doc.body.scrollHeight > 160) return false; // it shows something already
+    let best = null;
+    let most = 0;
+    for (const el of doc.body.querySelectorAll('article,main,section,div')) {
+      const size = (el.textContent || '').trim().length;
+      if (size < most || size < 80) continue;
+      const box = el.getBoundingClientRect();
+      const cs = win.getComputedStyle(el);
+      const hidden = box.width <= 2 || box.height <= 2 || (cs.clip && cs.clip !== 'auto') || (cs.clipPath && cs.clipPath !== 'none') || cs.display === 'none' || cs.visibility === 'hidden';
+      if (hidden && size >= most) {
+        best = el;
+        most = size;
+      }
+    }
+    if (!best) return false;
+    best.setAttribute('data-rs-reveal', '');
+    for (let up = best.parentElement; up && up !== doc.body; up = up.parentElement) {
+      const cs = win.getComputedStyle(up);
+      if (cs.display === 'none') up.style.setProperty('display', 'block', 'important');
+    }
+    const style = doc.createElement('style');
+    style.setAttribute('data-rs', '1');
+    style.textContent = HIDDEN_CSS;
+    doc.head.append(style);
+    return true;
+  }
+
+  function frameSource(text, url) {
     const doc = cleanDoc(text);
+    const head = doc.head || doc.documentElement;
+    if (url && /^https?:\/\//i.test(url)) {
+      const base = doc.createElement('base');
+      base.setAttribute('href', url);
+      base.setAttribute('data-rs', '1');
+      head.prepend(base); // the page's own CSS, images and fonts load from its own site
+    }
+    for (const link of doc.querySelectorAll('link')) {
+      const rel = (link.getAttribute('rel') || '').toLowerCase();
+      const as = (link.getAttribute('as') || '').toLowerCase();
+      if (/modulepreload|prefetch|prerender/.test(rel) || (rel.includes('preload') && as !== 'style')) {
+        link.remove(); // scripts never run in the preview, so there is nothing to preload
+        continue;
+      }
+      if (rel.includes('preload') && as === 'style') link.setAttribute('rel', 'stylesheet'); // the onload swap was removed
+      link.removeAttribute('crossorigin'); // a CORS fetch fails when the site sends no CORS header; a plain load works
+      link.removeAttribute('integrity');
+    }
+    for (const img of doc.querySelectorAll('img[data-src], img[data-lazy-src], source[data-srcset], img[data-srcset]')) {
+      const src = img.getAttribute('data-src') || img.getAttribute('data-lazy-src');
+      if (src && !img.getAttribute('src')) img.setAttribute('src', src);
+      const set = img.getAttribute('data-srcset');
+      if (set && !img.getAttribute('srcset')) img.setAttribute('srcset', set);
+    }
     const styled = doc.querySelector('style, link[rel~="stylesheet"]');
     const style = doc.createElement('style');
     style.setAttribute('data-rs', '1');
-    style.textContent = (styled ? '' : READER_CSS) + EDIT_CSS;
-    (doc.head || doc.documentElement).append(style);
+    style.textContent = (styled ? '' : READER_CSS) + REVEAL_CSS + EDIT_CSS;
+    head.append(style);
     return `<!doctype html>${doc.documentElement.outerHTML}`;
   }
 
@@ -1015,9 +1144,10 @@ img,video{max-width:100%;height:auto;border-radius:10px}
     };
   }
 
-  function draftFor(q) {
-    if (!S.drafts.has(q)) S.drafts.set(q, { text: '', url: '', base: null, loaded: '', touched: false, loading: false });
-    return S.drafts.get(q);
+  /* One draft per page address. Switching the search keeps your edits. */
+  function draftFor(url) {
+    if (!S.drafts.has(url)) S.drafts.set(url, { text: '', url, base: null, loaded: '', touched: false, loading: false, failed: '' });
+    return S.drafts.get(url);
   }
 
   async function getPage(url) {
@@ -1042,51 +1172,110 @@ img,video{max-width:100%;height:auto;border-radius:10px}
 
   const ED = { mode: 'visual', device: 'desktop', frame: null, code: null, refs: null };
 
-  function editorQuery() {
+  function tokens(text) {
+    return new Set(String(text || '').toLowerCase().replace(/[^a-z0-9 ]+/g, ' ').split(/\s+/).filter((w) => w.length > 2 && !['and', 'the', 'for', 'with', 'your', 'you'].includes(w)));
+  }
+
+  function bestSearchFor(text) {
     const R = S.report;
+    const have = tokens(text);
+    let best = null;
+    let score = 0;
+    for (const row of R.rankings) {
+      const want = tokens(row.q);
+      const overlap = want.size ? [...want].filter((w) => have.has(w)).length / want.size : 0;
+      if (overlap > score) {
+        best = row.q;
+        score = overlap;
+      }
+    }
+    return score >= 0.5 ? best : null;
+  }
+
+  function currentPage() {
+    if (!S.report) return S.open ? S.open.url : '';
+    const R = S.report;
+    const want = S.params.get('page');
+    if (want) return want;
+    const q = S.params.get('q');
+    const row = R.rankings.find((item) => item.q === q) || R.rankings.find((item) => item.position) || null;
+    if (row && row.url) return row.url;
+    const first = R.pages.find((item) => item.status === 'fetched');
+    return first ? first.url : `https://${R.site}/`;
+  }
+
+  function currentQuery(draft) {
+    const R = S.report;
+    if (!R || !R.rankings.length) return '';
     const want = S.params.get('q');
     if (want && R.rankings.some((row) => row.q === want)) return want;
-    const ranked = R.rankings.find((row) => row.position) || R.rankings[0];
-    return ranked ? ranked.q : '';
+    const mine = R.rankings.find((row) => row.url && looseKey(row.url) === looseKey(draft.url));
+    if (mine) return mine.q;
+    const f = facts(draft.text);
+    return bestSearchFor(`${f.title} ${f.h1}`) || (R.rankings.find((row) => row.position) || R.rankings[0]).q;
+  }
+
+  async function loadPage(url) {
+    const draft = draftFor(url);
+    if (draft.loading) return;
+    draft.loading = true;
+    draft.failed = '';
+    try {
+      const stored = S.report && S.report.pages.some((item) => item.url === url && item.status === 'fetched');
+      const got = stored ? await getPage(url) : await api.post('/api/v1/fetch', { url });
+      draft.text = normalize(got.html);
+      draft.base = draft.text;
+      draft.url = got.url;
+      draft.loaded = got.url;
+      draft.touched = false;
+    } catch (err) {
+      draft.failed = err.message;
+    } finally {
+      draft.loading = false;
+      if (ED.refs && ED.refs.page === url) {
+        ED.refs.address.value = draft.url;
+        paintFrame();
+        paintSide();
+      }
+    }
   }
 
   function renderEditor() {
     const R = S.report;
-    const q = editorQuery();
-    const row = R.rankings.find((item) => item.q === q) || {};
-    const draft = draftFor(q);
-    const wantPage = S.params.get('page') || row.url || '';
-    if (!draft.text && !draft.loading && !draft.touched) {
-      draft.url = wantPage || `https://${R.site}/new-page/`;
-      if (wantPage) loadIntoDraft(q, wantPage);
+    const pageUrl = currentPage();
+    const draft = draftFor(pageUrl);
+    if (!draft.text && !draft.loading && !draft.failed && !S.open) loadPage(pageUrl);
+    if (S.open && !draft.text && !draft.failed) draft.loading = true;
+
+    const toolbar = h('div', { class: 'toolbar' });
+    const left = h('div', { class: 'left' });
+    if (R) {
+      const options = [];
+      const seen = new Set();
+      const add = (url, label) => {
+        if (seen.has(looseKey(url))) return;
+        seen.add(looseKey(url));
+        options.push(h('option', { value: url, selected: looseKey(url) === looseKey(pageUrl), text: label }));
+      };
+      if (!R.pages.some((item) => looseKey(item.url) === looseKey(pageUrl))) add(pageUrl, hostOf(pageUrl) === R.site.replace(/^www\./, '') ? pathOf(pageUrl) : `${hostOf(pageUrl)}${pathOf(pageUrl)}`);
+      for (const item of R.pages.filter((p) => p.status === 'fetched')) add(item.url, item.path);
+      options.push(h('option', { value: '__new', text: 'Start a new page' }));
+      const pSelect = h('select', { 'aria-label': 'Page to edit' }, options);
+      pSelect.addEventListener('change', () => {
+        syncFromFrame();
+        if (pSelect.value === '__new') {
+          const url = `https://${R.site}/new-page/`;
+          const fresh = draftFor(url);
+          if (!fresh.text) Object.assign(fresh, { text: normalize('New page title\n\nWrite the page here. Click any line to change it.'), url, base: null, loaded: '', touched: true, failed: '' });
+          go('editor', { page: url });
+          return;
+        }
+        go('editor', { page: pSelect.value });
+      });
+      left.append(h('label', { class: 'select' }, pSelect, icon('chevron', 'chev')));
+    } else {
+      left.append(h('span', { class: 'chip chip-gray', text: S.open ? S.open.domain : '' }));
     }
-
-    const qSelect = h('select', { 'aria-label': 'Search to test' }, R.rankings.map((item) => h('option', { value: item.q, selected: item.q === q, text: item.q })));
-    qSelect.addEventListener('change', () => {
-      syncFromFrame();
-      history.replaceState({}, '', pathFor('editor', { q: qSelect.value }));
-      S.params = new URLSearchParams({ q: qSelect.value });
-      renderEditor();
-    });
-    const pageOptions = [h('option', { value: '', text: 'Choose a page' })].concat(
-      R.pages.filter((item) => item.status === 'fetched').map((item) => h('option', { value: item.url, selected: item.url === draft.loaded, text: item.path })),
-      [h('option', { value: '__new', text: 'Start a new page' }), S.publicDemo ? null : h('option', { value: '__url', text: 'Load from a URL' })].filter(Boolean));
-    const pSelect = h('select', { 'aria-label': 'Page to edit' }, pageOptions);
-    pSelect.addEventListener('change', () => {
-      const value = pSelect.value;
-      if (value === '__new') {
-        Object.assign(draft, { text: normalize(`${q.charAt(0).toUpperCase()}${q.slice(1)}\n\nWrite the page here. Click any line to change it.`), url: `https://${R.site}/new-page/`, base: null, loaded: '', touched: true });
-        ED.refs.address.value = draft.url;
-        paintFrame();
-        paintSide();
-      } else if (value === '__url') {
-        const url = window.prompt('Page address to load');
-        if (url) loadFromUrl(q, url.trim());
-      } else if (value) {
-        loadIntoDraft(q, value);
-      }
-    });
-
     const modeSeg = h('div', { class: 'seg seg-sm', role: 'group', 'aria-label': 'Edit mode' });
     for (const [key, label, ic] of [['visual', 'Visual', 'eye'], ['html', 'HTML', 'code']]) {
       modeSeg.append(h('button', { type: 'button', 'aria-pressed': String(ED.mode === key), onClick: () => { syncFromFrame(); ED.mode = key; renderEditor(); } }, icon(ic), label));
@@ -1095,82 +1284,42 @@ img,video{max-width:100%;height:auto;border-radius:10px}
     for (const [key, label] of [['desktop', 'Desktop'], ['mobile', 'Phone']]) {
       deviceSeg.append(h('button', { type: 'button', title: label, 'aria-label': label, 'aria-pressed': String(ED.device === key), onClick: () => { syncFromFrame(); ED.device = key; renderEditor(); } }, icon(key)));
     }
-    const toolbar = h('div', { class: 'toolbar' },
-      h('div', { class: 'left' }, h('label', { class: 'select' }, qSelect, icon('chevron', 'chev')), h('label', { class: 'select' }, pSelect, icon('chevron', 'chev'))),
-      h('div', { class: 'right' }, modeSeg, deviceSeg));
+    toolbar.append(left, h('div', { class: 'right' }, modeSeg, deviceSeg));
 
-    const address = h('input', { type: 'text', value: draft.url, 'aria-label': 'Page address', spellcheck: 'false' });
-    address.addEventListener('change', () => {
+    const address = h('input', { type: 'text', value: draft.url || pageUrl, 'aria-label': 'Page address', spellcheck: 'false', title: 'Press Return to open another page' });
+    address.addEventListener('keydown', (event) => {
+      if (event.key !== 'Enter') return;
+      event.preventDefault();
       let value = address.value.trim();
-      if (value && !/^https?:\/\//i.test(value)) value = `https://${value}`;
-      draft.url = value || `https://${R.site}/new-page/`;
-      address.value = draft.url;
+      if (!value) return;
+      if (!/^https?:\/\//i.test(value)) value = `https://${value}`;
+      syncFromFrame();
+      if (R && hostOf(value) === hostOf(`https://${R.site}`)) go('editor', { page: value });
+      else navigate(`/edit?url=${enc(value)}`);
     });
     const viewport = h('div', { class: `viewport${ED.device === 'mobile' ? ' phone' : ''}` });
+    const hint = h('span', { class: 'edit-hint', text: ED.mode === 'visual' ? 'Click any text to edit it' : 'Editing HTML' });
     const browser = h('section', { class: 'browser' },
-      h('div', { class: 'chrome' }, h('span', { class: 'lights', 'aria-hidden': 'true' }, h('i'), h('i'), h('i')), h('label', { class: 'address' }, icon('lock'), address), h('span', { class: 'edit-hint', text: ED.mode === 'visual' ? 'Click any text to edit it' : 'Editing HTML' })),
+      h('div', { class: 'chrome' }, h('span', { class: 'lights', 'aria-hidden': 'true' }, h('i'), h('i'), h('i')), h('label', { class: 'address' }, icon('lock'), address), hint),
       viewport);
-
     const side = h('div', { class: 'side-col' });
     const result = h('div', { class: 'result', id: 'result', tabindex: '-1' });
-    clear(main).append(page('Editor', 'Change the page, then test where it would land among the pages that rank today.', null,
-      toolbar, h('div', { class: 'editor-grid' }, browser, side), result), footer());
-    ED.refs = { viewport, side, result, address, q };
+    const title = R ? 'Editor' : (S.open ? S.open.domain : 'Editor');
+    const sub = R ? 'Change the page, then test where it would land among the pages that rank today.' : 'Your page is ready to edit. Ranksim is reading the site and the pages that rank against it.';
+    clear(main).append(page(title, sub, null, toolbar, h('div', { class: 'editor-grid' }, browser, side), result), footer());
+    ED.refs = { viewport, side, result, address, hint, page: pageUrl, q: R ? currentQuery(draft) : '' };
     paintFrame();
     paintSide();
-    const saved = S.results.get(q);
-    if (saved) renderResult(saved, false);
-    getCompare(q).catch(() => {});
-  }
-
-  async function loadIntoDraft(q, url) {
-    const draft = draftFor(q);
-    draft.loading = true;
-    if (ED.refs && ED.refs.q === q) paintFrame();
-    try {
-      const got = await getPage(url);
-      draft.text = normalize(got.html);
-      draft.base = draft.text;
-      draft.url = got.url;
-      draft.loaded = url;
-      draft.touched = false;
-    } catch (err) {
-      toast(err.message);
-    } finally {
-      draft.loading = false;
-      if (ED.refs && ED.refs.q === q && S.screen === 'editor') {
-        ED.refs.address.value = draft.url;
-        paintFrame();
-        paintSide();
-      }
-    }
-  }
-
-  async function loadFromUrl(q, url) {
-    const draft = draftFor(q);
-    draft.loading = true;
-    paintFrame();
-    try {
-      const got = await api.post(`/api/v1/projects/${enc(S.slug)}/fetch`, { url });
-      draft.text = normalize(got.html);
-      draft.base = null;
-      draft.loaded = '';
-      draft.touched = true;
-      toast(`Loaded ${hostOf(got.url)}. It is tested as a new page at the address above.`);
-    } catch (err) {
-      toast(err.message);
-    } finally {
-      draft.loading = false;
-      if (ED.refs && ED.refs.q === q) {
-        paintFrame();
-        paintSide();
-      }
+    if (R && ED.refs.q) {
+      const saved = S.results.get(`${ED.refs.q}|${looseKey(pageUrl)}`);
+      if (saved) renderResult(saved, false);
+      getCompare(ED.refs.q).catch(() => {});
     }
   }
 
   function syncFromFrame() {
     if (!ED.refs) return;
-    const draft = draftFor(ED.refs.q);
+    const draft = draftFor(ED.refs.page);
     if (ED.mode === 'visual' && ED.frame && ED.frame.contentDocument && ED.frame.contentDocument.body && draft.touched) {
       draft.text = serialize(ED.frame.contentDocument);
     } else if (ED.mode === 'html' && ED.code) {
@@ -1180,13 +1329,16 @@ img,video{max-width:100%;height:auto;border-radius:10px}
 
   function paintFrame() {
     if (!ED.refs) return;
-    const { viewport, q } = ED.refs;
-    const draft = draftFor(q);
+    const { viewport, page: pageUrl } = ED.refs;
+    const draft = draftFor(pageUrl);
     clear(viewport);
     ED.frame = null;
     ED.code = null;
     if (!draft.text) {
-      viewport.append(h('div', { class: 'empty' }, icon('doc'), h('strong', { text: draft.loading ? 'Loading the page' : 'Pick a page to edit' }), h('span', { text: draft.loading ? 'One moment.' : 'Choose one of your pages above, or start a new one.' })));
+      const note = draft.failed
+        ? [icon('warn'), h('strong', { text: 'This page could not be opened' }), h('span', { text: draft.failed }), h('button', { class: 'btn', type: 'button', onClick: () => { draft.failed = ''; loadPage(pageUrl); paintFrame(); } }, 'Try again')]
+        : [h('span', { class: 'spinner', 'aria-hidden': 'true' }), h('strong', { text: 'Opening the page' }), h('span', { text: hostOf(pageUrl) })];
+      viewport.append(h('div', { class: 'empty' }, note));
       return;
     }
     if (ED.mode === 'html') {
@@ -1201,10 +1353,15 @@ img,video{max-width:100%;height:auto;border-radius:10px}
       return;
     }
     const frame = h('iframe', { sandbox: 'allow-same-origin', title: 'Editable page', referrerpolicy: 'no-referrer' });
-    frame.srcdoc = frameSource(draft.text);
+    frame.srcdoc = frameSource(draft.text, draft.url);
     frame.addEventListener('load', () => {
       const doc = frame.contentDocument;
       if (!doc || !doc.body) return;
+      const revealed = revealHidden(doc);
+      if (ED.refs && ED.refs.hint) {
+        ED.refs.hint.textContent = revealed ? 'Showing what Google reads' : 'Click any text to edit it';
+        ED.refs.hint.title = revealed ? 'The live site builds its look with scripts, which never run here. This is the HTML Google and Ranksim score. Click any text to edit it.' : '';
+      }
       doc.designMode = 'on';
       doc.addEventListener('input', debounce(() => {
         draft.text = serialize(doc);
@@ -1232,7 +1389,7 @@ img,video{max-width:100%;height:auto;border-radius:10px}
   const debouncedSide = debounce(() => paintSide(), 300);
 
   function setHead(field, value) {
-    const draft = draftFor(ED.refs.q);
+    const draft = draftFor(ED.refs.page);
     if (draft.touched) syncFromFrame();
     const live = ED.mode === 'visual' && ED.frame && ED.frame.contentDocument && ED.frame.contentDocument.head;
     const target = live ? ED.frame.contentDocument : cleanDoc(draft.text);
@@ -1257,13 +1414,80 @@ img,video{max-width:100%;height:auto;border-radius:10px}
     if (ED.mode === 'html' && ED.code) ED.code.value = tidy(draft.text);
   }
 
+  function testTile(draft) {
+    const R = S.report;
+    if (!R) return progressTile();
+    const q = ED.refs.q;
+    const tile = h('section', { class: 'tile' });
+    if (!R.rankings.length || !S.project || !S.project.engine || !S.project.engine.ready) {
+      tile.append(h('div', { class: 'tile-k', text: 'Testing' }),
+        h('p', { class: 'tile-sub', text: R.google_ready ? 'Rankings for this site are still being pulled. Refresh it in Settings.' : `Predictions need Google results for ${R.site}. Search data isn't connected on the server yet, so you can edit and download, but not test.` }));
+      tile.append(h('div', { class: 'result-actions' }, h('button', { class: 'btn btn-primary btn-large btn-block', type: 'button', disabled: true }, 'Test changes'), publishButton(draft)));
+      return tile;
+    }
+    const qSelect = h('select', { 'aria-label': 'Search to test against' }, R.rankings.map((item) => h('option', { value: item.q, selected: item.q === q, text: item.q })));
+    qSelect.addEventListener('change', () => {
+      syncFromFrame();
+      S.params = new URLSearchParams({ page: ED.refs.page, q: qSelect.value });
+      history.replaceState({}, '', pathFor('editor', { page: ED.refs.page, q: qSelect.value }));
+      renderEditor();
+    });
+    const row = R.rankings.find((item) => item.q === q) || {};
+    const mine = row.url && looseKey(row.url) === looseKey(draft.url);
+    const standing = !row.checked ? 'No Google results for this search yet.'
+      : mine && row.position ? `This page is #${row.position} on Google${row.predicted && row.predicted.position ? `; the model puts it #${row.predicted.position} of ${row.predicted.of}` : ''}.`
+        : row.position ? `${R.name} is #${row.position} with ${pathOf(row.url)}. This page is tested as a new entry.` : 'Not in the top 10 yet. This page is tested against the pages that are.';
+    const testBtn = h('button', { class: 'btn btn-primary btn-large btn-block', type: 'button', id: 'test-btn', disabled: !draft.text || draft.loading, onClick: runTest }, 'Test changes');
+    tile.append(h('div', { class: 'tile-k', text: 'Test against the search' }), h('label', { class: 'select select-block' }, qSelect, icon('chevron', 'chev')), h('p', { class: 'tile-sub', text: standing }),
+      h('div', { class: 'result-actions' }, testBtn, publishButton(draft)));
+    return tile;
+  }
+
+  function publishButton(draft) {
+    return h('button', { class: 'btn btn-block', type: 'button', disabled: !draft.text, onClick: () => openPublish(draft) }, 'Publish');
+  }
+
+  function openPublish(draft) {
+    syncFromFrame();
+    const domain = hostOf(draft.url);
+    const owned = S.report && hostOf(`https://${S.report.site}`) === domain;
+    openSheet((sheet, closeBtn) => {
+      sheet.append(h('div', { class: 'sheet-head' }, h('div', null, h('h2', { text: `Publish to ${domain}` }), h('div', { class: 'sub', text: draft.url })), closeBtn));
+      const body = h('div', { class: 'sheet-body' });
+      body.append(h('div', { class: 'tile white' },
+        h('span', { class: 'label label-medium', text: 'Needs ownership' }),
+        h('p', { class: 'reason', text: owned ? `Pushing a change live needs you to prove you own ${domain} and connect where it's hosted. Connecting a site is coming next.` : `Anyone can edit and test this page. Pushing it live needs you to own ${domain}.` }),
+        h('p', { class: 'caveat', text: 'Until then, take the edited page with you. The file is the page HTML with your edits and without its scripts, so copy your changes into the real page rather than replacing it.' })));
+      const download = h('button', { class: 'btn btn-dark btn-large', type: 'button' }, 'Download HTML');
+      download.addEventListener('click', () => {
+        const blob = new Blob([draftFor(ED.refs.page).text], { type: 'text/html' });
+        const a = h('a', { href: URL.createObjectURL(blob), download: `${(pathOf(draft.url).replace(/^\/|\/$/g, '').replace(/\//g, '-') || 'index')}.html` });
+        document.body.append(a);
+        a.click();
+        setTimeout(() => {
+          URL.revokeObjectURL(a.href);
+          a.remove();
+        }, 500);
+      });
+      const copy = h('button', { class: 'btn btn-large', type: 'button' }, 'Copy HTML');
+      copy.addEventListener('click', async () => {
+        try {
+          await navigator.clipboard.writeText(draftFor(ED.refs.page).text);
+          toast('Copied the edited HTML.');
+        } catch (_err) {
+          toast('Copy is blocked here. Use Download instead.');
+        }
+      });
+      body.append(h('div', { class: 'form-actions' }, download, copy));
+      sheet.append(body);
+    });
+  }
+
   function paintSide() {
     if (!ED.refs) return;
-    const R = S.report;
-    const { side, q } = ED.refs;
-    const draft = draftFor(q);
+    const { side, page: pageUrl } = ED.refs;
+    const draft = draftFor(pageUrl);
     const f = facts(draft.text);
-    const row = R.rankings.find((item) => item.q === q) || {};
     if (document.activeElement && side.contains(document.activeElement) && document.activeElement.dataset.field) {
       const snippet = side.querySelector('.snippet');
       if (snippet) snippet.replaceWith(snippetCard(f, draft));
@@ -1273,7 +1497,7 @@ img,video{max-width:100%;height:auto;border-radius:10px}
     }
     clear(side);
     const titleCount = h('span', { class: `counter${f.title.length > 60 ? ' over' : ''}`, text: `${f.title.length}/60` });
-    const titleField = h('input', { class: 'field', value: f.title, 'aria-label': 'Title', dataset: { field: 'title' } });
+    const titleField = h('input', { class: 'field', value: f.title, 'aria-label': 'Title', dataset: { field: 'title' }, disabled: !draft.text });
     titleField.addEventListener('input', () => {
       setHead('title', titleField.value);
       titleCount.textContent = `${titleField.value.length}/60`;
@@ -1281,19 +1505,15 @@ img,video{max-width:100%;height:auto;border-radius:10px}
       debouncedSide();
     });
     const metaCount = h('span', { class: `counter${f.meta.length > 160 ? ' over' : ''}`, text: `${f.meta.length}/160` });
-    const metaField = h('textarea', { class: 'field', rows: '3', value: f.meta, 'aria-label': 'Meta description', dataset: { field: 'meta' } });
+    const metaField = h('textarea', { class: 'field', rows: '3', value: f.meta, 'aria-label': 'Meta description', dataset: { field: 'meta' }, disabled: !draft.text });
     metaField.addEventListener('input', () => {
       setHead('meta', metaField.value);
       metaCount.textContent = `${metaField.value.length}/160`;
       metaCount.classList.toggle('over', metaField.value.length > 160);
       debouncedSide();
     });
-    const testBtn = h('button', { class: 'btn btn-primary btn-large btn-block', type: 'button', id: 'test-btn', disabled: !draft.text || draft.loading, onClick: runTest }, 'Test changes');
-    const standing = row.position
-      ? `Google has you at #${row.position}${row.predicted && row.predicted.position ? `. The model puts you #${row.predicted.position} of ${row.predicted.of}.` : '.'}`
-      : row.checked ? 'You are not in the top 10 for this search yet.' : 'No Google results for this search yet.';
     side.append(
-      h('section', { class: 'tile' }, h('div', { class: 'tile-k', text: `"${q}"` }), h('div', { class: 'tile-sub', text: standing }), h('div', { class: 'result-actions' }, testBtn)),
+      testTile(draft),
       snippetCard(f, draft),
       h('section', { class: 'tile' },
         h('div', { class: 'form' },
@@ -1312,8 +1532,9 @@ img,video{max-width:100%;height:auto;border-radius:10px}
     }
     const title = f.title || f.h1 || 'Untitled page';
     const desc = f.meta || 'No description. Google will pick a line from the page.';
+    const name = S.report && hostOf(`https://${S.report.site}`) === hostOf(draft.url) ? S.report.name : hostOf(draft.url);
     return h('section', { class: 'snippet' },
-      h('div', { class: 's-site' }, h('span', { class: 'fav', text: initial(hostOf(draft.url)) }), h('div', null, h('div', { class: 's-name', text: S.report.name }), h('div', { class: 's-url', text: crumbs }))),
+      h('div', { class: 's-site' }, h('span', { class: 'fav', text: initial(hostOf(draft.url)) }), h('div', null, h('div', { class: 's-name', text: name }), h('div', { class: 's-url', text: crumbs }))),
       h('div', { class: 's-title', text: title.length > 62 ? `${title.slice(0, 59).replace(/\s+\S*$/, '')} ...` : title }),
       h('div', { class: 's-desc', text: desc.length > 160 ? `${desc.slice(0, 157).replace(/\s+\S*$/, '')} ...` : desc }));
   }
@@ -1330,12 +1551,13 @@ img,video{max-width:100%;height:auto;border-radius:10px}
   let testing = false;
 
   async function runTest() {
-    if (testing || !ED.refs) return;
+    if (testing || !ED.refs || !S.report || !ED.refs.q) return;
     syncFromFrame();
     const q = ED.refs.q;
-    const draft = draftFor(q);
+    const pageUrl = ED.refs.page;
+    const draft = draftFor(pageUrl);
     if (!draft.text) {
-      toast('Choose or write a page first.');
+      toast('Open or write a page first.');
       return;
     }
     const sameAsLoaded = draft.base != null && !!draft.loaded && looseKey(draft.url) === looseKey(draft.loaded);
@@ -1350,8 +1572,8 @@ img,video{max-width:100%;height:auto;border-radius:10px}
         api.post(`/api/v1/projects/${enc(S.slug)}/test`, { q, draft: draft.text, url: draft.url, original: sameAsLoaded ? 'current' : 'none', original_html: sameAsLoaded ? draft.base : '' }),
         getCompare(q).catch(() => null),
       ]);
-      S.results.set(q, run);
-      if (ED.refs && ED.refs.q === q && S.screen === 'editor') {
+      S.results.set(`${q}|${looseKey(pageUrl)}`, run);
+      if (ED.refs && ED.refs.q === q && ED.refs.page === pageUrl && S.screen === 'editor') {
         renderResult(run, true);
         ED.refs.result.scrollIntoView({ behavior: reduceMotion.matches ? 'auto' : 'smooth', block: 'start' });
       }
@@ -1434,7 +1656,7 @@ img,video{max-width:100%;height:auto;border-radius:10px}
   function orderTile(run, animate) {
     const after = run.after;
     const before = run.before && run.before.order && run.before.order.length ? run.before : null;
-    const f = facts(draftFor(run.search).text);
+    const f = facts(draftFor(ED.refs ? ED.refs.page : run.url).text);
     const keyOf = (item) => (item.page ? '__page__' : item.url);
     const titles = new Map();
     const rows = new Map();

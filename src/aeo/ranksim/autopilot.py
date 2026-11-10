@@ -223,7 +223,8 @@ def brand_of(pages: list[SitePage], host: str) -> str:
     readable = [page for page in pages if page.status == "fetched"]
     if counts:
         name, seen = counts.most_common(1)[0]
-        if seen >= max(2, len(readable) * 0.3) and len(name) <= 40:
+        # A brand is a short name, not a tagline: "SmartCrew", not "All-in-one dirtwork software: HCSS ...".
+        if seen >= max(2, len(readable) * 0.3) and len(name) <= 28 and len(name.split()) <= 3:
             return name
     tokens = sorted(brand_tokens(host), key=len)
     text = " ".join(f"{page.title} {page.h1}" for page in readable)

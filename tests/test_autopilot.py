@@ -134,3 +134,24 @@ def test_public_demo_cannot_analyze(tmp_path):
 def test_page_html_fixture_still_reads():
     facts = autopilot.page_facts(OUR_URL, page_html("Dirt work software", "Dirt Work Software"))
     assert facts.status == "fetched" and facts.title and facts.words > 0
+
+
+def test_the_bare_domain_and_www_open_one_project_and_keep_its_google_results(tmp_path):
+    settings = make_settings(tmp_path, serpapi_key="sk-test-autopilot")
+    options = {"serp_provider": FakeGoogle(), "fetcher": FakeCrawler(_site_pages()), "today": TODAY, "workers": 4}
+    app = create_app(settings=settings, projects_root=tmp_path / "projects", public_demo=False, pull_options=options)
+    client = TestClient(app)
+    token = _token(client)
+    first = _lines(client.post("/api/v1/sites", json={"site": SITE}, headers={"x-ranksim-csrf": token}))
+    assert first[-1]["type"] == "done"
+    assert any(line["type"] == "project" and line["slug"] == first[-1]["slug"] for line in first)
+    before = set(first[-1]["searches"])
+    bare = SITE.removeprefix("www.")
+    again = _lines(client.post("/api/v1/sites", json={"site": f"https://{bare}/"}, headers={"x-ranksim-csrf": token}))
+    assert again[-1]["type"] == "done" and again[-1]["slug"] == first[-1]["slug"]
+    assert before <= set(again[-1]["searches"])  # searches with Google results are kept, not replaced
+    assert len(client.get("/api/v1/projects").json()["projects"]) == 1
+    fetched = client.post("/api/v1/fetch", json={"url": HOME}, headers={"x-ranksim-csrf": token})
+    assert fetched.status_code in (200, 400)
+    if fetched.status_code == 200:
+        assert fetched.json()["project"] == first[-1]["slug"]

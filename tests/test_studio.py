@@ -194,3 +194,28 @@ def test_public_demo_refuses_other_projects(public):
     assert client.get("/api/v1/projects/private/compare", params={"q": "private query"}).status_code == 404
     assert _post(client, "/api/v1/projects/private/test", {"q": "private query", "draft": "x"}, public["token"]).status_code == 404
     assert [row["slug"] for row in client.get("/api/v1/projects").json()["projects"]] == [ws.DEMO_SLUG]
+
+
+def test_any_page_opens_for_editing_and_names_its_project(tmp_path):
+    asked = []
+
+    def preview(url: str):
+        asked.append(url)
+        if "broken" in url:
+            return "", "HTTP 500"
+        return "<html><head><title>Their page</title></head><body><h1>Hello</h1></body></html>", ""
+
+    settings = make_settings(tmp_path)
+    app = create_app(settings=settings, database=settings.ranksim_database_url, projects_root=tmp_path / "projects", public_demo=False, preview_fetch=preview)
+    client = TestClient(app)
+    token = _csrf(client)
+    edit = client.get("/edit?url=https://example.com/pricing")
+    assert edit.status_code == 200 and "'unsafe-inline'" in edit.headers["content-security-policy"]
+    assert _post(client, "/api/v1/fetch", {"url": "example.com/pricing"}, None).status_code == 403
+    got = _post(client, "/api/v1/fetch", {"url": "example.com/pricing"}, token)
+    assert got.status_code == 200, got.text
+    body = got.json()
+    assert body["url"] == "https://example.com/pricing" and "<h1>Hello</h1>" in body["html"] and body["project"] is None
+    assert asked == ["https://example.com/pricing"]
+    failed = _post(client, "/api/v1/fetch", {"url": "https://example.com/broken"}, token)
+    assert failed.status_code == 400 and "HTTP 500" in failed.json()["error"]

@@ -1,6 +1,8 @@
 """B21 review fixes for observed results and keyword files: Google Ads totals rows are not queries
 (G4), and noise FILE FILE leaves out a list whose date is not YYYY-MM-DD (G5). Synthetic data."""
 
+from pathlib import Path
+
 import pytest
 
 from aeo.ranksim.cli import main
@@ -76,6 +78,43 @@ def test_g4_guard_queries_that_start_with_total_stay_and_plain_lists_keep_every_
     plain = tmp_path / "plain.txt"  # no header row, so every line is a query as before
     plain.write_text("dirt work software\nTotal: Keywords\n--\n")
     assert [row.query for row in load_keyword_file(plain)] == ["dirt work software", "total: keywords", "--"]
+
+
+def test_g4_placeholder_query_cell_is_dropped_without_a_total_label(tmp_path):
+    # Review follow-up R1: in the other fixtures every '--' sits in a 'Total:' row, so the
+    # totals check alone removed it. These rows have '--' in the query column and no 'Total:' cell.
+    files = {
+        # A localized Google Ads download names its totals row in another language.
+        "localized_status_first.csv": ADS_TITLE + (
+            "Keyword status,Keyword,Match type,Clicks,Impr.\n"
+            "Enabled,dirt work software,Phrase match,12,340\n"
+            "Gesamt: Konto, --, --,12,340\n"
+        ),
+        "one_column.csv": "keyword\ndirt work software\n--\n",
+        "keyword_first_blank_query.csv": (
+            "Keyword,Match type,Clicks,Impr.\n"
+            "dirt work software,Phrase match,12,340\n"
+            " --,Exact match,0,0\n"
+        ),
+    }
+    for name, body in files.items():
+        path = tmp_path / name
+        path.write_text(body)
+        assert [row.query for row in load_keyword_file(path)] == ["dirt work software"], name
+
+
+def test_g4_readme_scopes_the_export_column_rule_to_a_header_below_title_rows(tmp_path):
+    # Review follow-up R2: a header on the first line needs only a query column, so the README
+    # must not state the export column rule for every table.
+    first_line = tmp_path / "first_line.csv"
+    first_line.write_text("Keyword,Notes\ndirt work software,check later\n")
+    assert [row.query for row in load_keyword_file(first_line)] == ["dirt work software"]
+    readme = (Path(__file__).resolve().parents[1] / "README.md").read_text(encoding="utf-8")
+    paragraph = next(block for block in readme.split("\n\n") if "--keywords FILE" in block)
+    before = paragraph[: paragraph.index("next to another export column")]
+    previous, current = before.rsplit(". ", 2)[-2:]
+    assert "title" in previous or "title" in current
+    assert "A file read one query per line keeps every line." in paragraph
 
 
 def _label_file(path, query_days, order="abc"):

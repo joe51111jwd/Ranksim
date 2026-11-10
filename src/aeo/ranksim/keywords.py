@@ -394,7 +394,7 @@ def load_keyword_file(path: str | Path) -> list[Keyword]:
                 query = row[position] if position < len(row) else ""
             if not any(char.isalnum() for char in query):
                 continue  # a placeholder such as '--' in a report row, not a query
-            intent =(row[intent_position] if intent_position is not None and intent_position < len(row) else "").lower()
+            intent = (row[intent_position] if intent_position is not None and intent_position < len(row) else "").lower()
             rows.append((query, intent if intent in KNOWN_INTENTS else None))
     else:
         for delimiter in _DELIMITERS:

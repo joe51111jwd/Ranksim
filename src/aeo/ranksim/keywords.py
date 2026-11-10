@@ -326,17 +326,23 @@ _EXPORT_COLUMNS = frozenset({
     "competition", "competitive density", "clicks", "impressions", "ctr", "position", "traffic", "url",
 })
 _DELIMITERS = (",", "\t", ";")
+# Keyword Planner and Google Ads exports put a title and a date range above the header row.
+_HEADER_LINES = 10
 
 
 def load_keyword_file(path: str | Path) -> list[Keyword]:
     """Queries to collect or track from a file: a CSV with a query column (optional ``intent``)
     or one query per line. The query column may be named query, keyword, queries or top queries,
     as keyword tool and Search Console exports name it, and the file may be separated by commas,
-    tabs or semicolons. A table whose header has none of those is refused rather than read as
-    one query per line, since each row would become a paid search. It counts as a table when
-    every line has the same number of cells and the header names a metric column (volume,
-    clicks, CPC and the like) or a column holds only numbers below a text header. A plain list
-    whose queries contain commas is still read one query per line.
+    tabs or semicolons. The header may sit below title rows within the first 10 lines, as in
+    Keyword Planner and Google Ads exports; the rows above it are dropped. Below the first line,
+    only a row of two or more cells that names a metric column, followed by a row of the same
+    width, counts as a header, so a later line that is just "keyword" stays a query.
+    A table whose header has none of those is refused rather than read as one query per line,
+    since each row would become a paid search. It counts as a table when every line has the
+    same number of cells and the header names a metric column (volume, clicks, CPC and the
+    like) or a column holds only numbers below a text header, or when such a metric header sits
+    below title rows. A plain list whose queries contain commas is still read one query per line.
     Intent falls back to the shared rule (aeo.ranksim.intents)."""
     import csv as _csv
 
@@ -350,11 +356,18 @@ def load_keyword_file(path: str | Path) -> list[Keyword]:
     lines = [line for line in text.splitlines() if line.strip() and not line.lstrip().startswith("#")]
     rows: list[tuple[str, str | None]] = []
     found = None
-    for delimiter in _DELIMITERS if lines else ():
-        header = [cell.lower() for cell in cells(lines[0], delimiter)]
-        query_column = next((name for name in QUERY_COLUMNS if name in header), None)
-        if query_column:
-            found = (delimiter, header, query_column)
+    for start in range(min(_HEADER_LINES, len(lines))):
+        for delimiter in _DELIMITERS:
+            if start:
+                header = _titled_table_header(lines, start, delimiter, cells) or []
+            else:
+                header = [cell.lower() for cell in cells(lines[0], delimiter)]
+            query_column = next((name for name in QUERY_COLUMNS if name in header), None)
+            if query_column:
+                found = (delimiter, header, query_column)
+                lines = lines[start:]  # title rows above the header are not queries
+                break
+        if found:
             break
     if found:
         delimiter, header, query_column = found
@@ -402,14 +415,31 @@ def _metric_table_header(lines: list[str], delimiter: str, cells) -> list[str] |
             return False
 
     table = [cells(line, delimiter) for line in lines[:21]]
-    if not table or len(table[0]) < 2 or any(len(row) != len(table[0]) for row in table):
-        return None
-    header = [cell.lower() for cell in table[0]]
-    if any(cell in _EXPORT_COLUMNS for cell in header):
-        return header
-    for column, name in enumerate(header):
-        values = [row[column] for row in table[1:] if row[column]]
-        if name and not number(name) and values and all(number(value) for value in values):
+    if table and len(table[0]) >= 2 and all(len(row) == len(table[0]) for row in table):
+        header = [cell.lower() for cell in table[0]]
+        if any(cell in _EXPORT_COLUMNS for cell in header):
+            return header
+        for column, name in enumerate(header):
+            values = [row[column] for row in table[1:] if row[column]]
+            if name and not number(name) and values and all(number(value) for value in values):
+                return header
+    for start in range(1, min(_HEADER_LINES, len(lines))):
+        header = _titled_table_header(lines, start, delimiter, cells)
+        if header:
             return header
     return None
+
+
+def _titled_table_header(lines: list[str], start: int, delimiter: str, cells) -> list[str] | None:
+    """The header of an export table that starts below title rows, at ``lines[start]``, or None.
+
+    It needs two or more filled cells, one of them a metric column (volume, clicks, CPC and the
+    like), and the next line, if any, must have the same number of cells. A query line further
+    down a plain list rarely looks like that."""
+    header = [cell.lower() for cell in cells(lines[start], delimiter)]
+    if sum(1 for cell in header if cell) < 2 or not any(cell in _EXPORT_COLUMNS for cell in header):
+        return None
+    if start + 1 < len(lines) and len(cells(lines[start + 1], delimiter)) != len(header):
+        return None
+    return header
 

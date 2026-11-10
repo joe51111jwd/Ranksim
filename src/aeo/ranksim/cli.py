@@ -217,7 +217,12 @@ def main(argv: list[str] | None = None) -> None:
     ledger_list.add_argument("--project", default=None, help="Only this project slug")
     observe = ledger_sub.add_parser("observe", help="Append observed Google positions (query,url,position CSV)")
     observe.add_argument("serp_file")
-    observe.add_argument("--observed-on", required=True, help="Date the results were collected, YYYY-MM-DD")
+    observe.add_argument(
+        "--observed-on",
+        required=True,
+        help="Date the results were collected, YYYY-MM-DD. A file with rows dated another day, undated rows in a file "
+        "with dates, or rows from another provider is refused.",
+    )
     observe.add_argument("--provider", required=True, help="Where the results came from, e.g. serper, manual_browser")
     observe.add_argument(
         "--depth",
@@ -488,7 +493,24 @@ def _noise(args, database: str) -> None:
         print("Noise ceiling was not computed. Pass two snapshot CSVs of the same queries from different days, or --from-db.")
         return
     else:
-        report = noise_ceiling(load_serp_file(args.snapshots[0]), load_serp_file(args.snapshots[1]))
+        from aeo.ranksim.groundtruth import ImportReport
+
+        left_report, right_report = ImportReport(), ImportReport()
+        left = load_serp_file(args.snapshots[0], report=left_report)
+        right = load_serp_file(args.snapshots[1], report=right_report)
+        left, right, shared, left_out = _comparable_file_lists(left, left_report, right, right_report)
+        if left_out:
+            print(
+                f"Left out {sum(left_out.values())} of {shared} queries that are in both files, because their two "
+                "lists are not comparable snapshots from different days."
+            )
+            for reason, text in _FILE_PAIR_REASONS.items():
+                if left_out[reason]:
+                    print(text.format(count=left_out[reason]))
+            if sum(left_out.values()) == shared:
+                print("Noise ceiling was not computed. No query in both files has two comparable lists.")
+                return
+        report = noise_ceiling(left, right)
     print(report.note)
     if not report.computed:
         print("No pairwise agreement, top-1 rate, or position change is reported.")
@@ -564,6 +586,131 @@ def _paired_collections(database: str):
     finally:
         session.close()
     return left, right, pairing
+
+
+_LIST_SETTINGS = ("provider", "country", "language", "device")
+_FILE_PAIR_REASONS = {
+    "undated": "No observation date in a file that has dates (a label file with no date): {count}.",
+    "same": "Same collection_id in both files, so the list was not collected again in between: {count}.",
+    "settings": "Different provider, country, language or device: {count}.",
+    "order": "Not dated earlier in the first file than in the second: {count}. Pass the earlier file first.",
+}
+
+
+def _row_day(value: str) -> str:
+    """The YYYY-MM-DD day of an observed_on or collected_at value, or the value as written when it is not one."""
+    from datetime import date
+
+    try:
+        return date.fromisoformat(value.strip()[:10]).isoformat()
+    except ValueError:
+        return value.strip()
+
+
+def _file_lists(labels, report) -> dict[str, dict]:
+    """What a results file says about each query's list: its days, whether a row is undated in a file
+    that has dates, its collection ids, and its provider, country, language and device.
+
+    A file has dates when it has a date column or collection ids. export-serp leaves the date of an
+    undated label file blank, because its stored time is when it was imported, not when it was observed.
+    """
+    dated_file = "observed_on" in report.metadata_columns or any(label.collection_id for label in labels)
+    lists: dict[str, dict] = {}
+    for label in labels:
+        entry = lists.setdefault(
+            label.query, {"days": set(), "undated": False, "collections": set(), **{name: set() for name in _LIST_SETTINGS}}
+        )
+        if label.observed_on:
+            entry["days"].add(_row_day(label.observed_on))
+        elif dated_file:
+            entry["undated"] = True
+        if label.collection_id:
+            entry["collections"].add(label.collection_id)
+        for name in _LIST_SETTINGS:
+            value = getattr(label, name)
+            if value:
+                entry[name].add(value.casefold())
+    return lists
+
+
+def _comparable_file_lists(left, left_report, right, right_report):
+    """(left labels, right labels, queries in both files, Counter of reasons for those left out).
+
+    The like-with-like rule of noise --from-db, for two results files. A query in both files is left
+    out when a row is undated in a file that has dates, when its list has the same collection_id in
+    both (it was not collected again), when the provider, country, language or device are set in both
+    files and differ, or when its first-file day is not earlier than its second-file day. Files with
+    no such columns are compared as they are.
+    """
+    from collections import Counter
+    from datetime import date
+
+    a_lists, b_lists = _file_lists(left, left_report), _file_lists(right, right_report)
+    shared = sorted(set(a_lists) & set(b_lists))
+    reasons: dict[str, str] = {}
+    for query in shared:
+        a, b = a_lists[query], b_lists[query]
+        if a["undated"] or b["undated"]:
+            reasons[query] = "undated"
+        elif a["collections"] & b["collections"]:
+            reasons[query] = "same"
+        elif any(a[name] and b[name] and a[name] != b[name] for name in _LIST_SETTINGS):
+            reasons[query] = "settings"
+        elif a["days"] and b["days"]:
+            try:
+                in_order = max(map(date.fromisoformat, a["days"])) < min(map(date.fromisoformat, b["days"]))
+            except ValueError:
+                in_order = True  # a date that is not YYYY-MM-DD cannot be ordered; compare as before
+            if not in_order:
+                reasons[query] = "order"
+    if not reasons:
+        return left, right, len(shared), Counter()
+    return (
+        [label for label in left if label.query not in reasons],
+        [label for label in right if label.query not in reasons],
+        len(shared),
+        Counter(reasons.values()),
+    )
+
+
+def _observe_conflicts(labels, report, observed_on: str, provider: str, name: str) -> str | None:
+    """Why ledger observe must not record this file with one date and provider, or None.
+
+    Every query is recorded as observed on --observed-on from --provider. A row the file dates on
+    another day, a blank date in a file that has dates (an undated label file from export-serp), or
+    a row from another provider would be recorded with a date or provider it does not have.
+    """
+    lists = _file_lists(labels, report)
+    total = len(lists)
+    wanted = provider.strip().casefold()
+    other_day = sorted(query for query, entry in lists.items() if entry["days"] - {observed_on})
+    undated = sorted(query for query, entry in lists.items() if entry["undated"])
+    other_provider = sorted(query for query, entry in lists.items() if entry["provider"] - {wanted})
+    if not (other_day or undated or other_provider):
+        return None
+    lines = [
+        f"Nothing was recorded. ledger observe records one day and one provider per file, and {name} has lists "
+        f"that were not observed on {observed_on} from {provider}."
+    ]
+    if other_day:
+        days = ", ".join(sorted(lists[other_day[0]]["days"] - {observed_on}))
+        lines.append(f"Observed on another day: {len(other_day)} of {total} queries, for example {other_day[0]!r} on {days}.")
+    if undated:
+        lines.append(
+            f"No observation date in a file that has dates: {len(undated)} of {total} queries, for example {undated[0]!r}. "
+            "export-serp leaves the date blank for a label file with no date."
+        )
+    if other_provider:
+        providers = ", ".join(sorted(lists[other_provider[0]]["provider"] - {wanted}))
+        lines.append(
+            f"From another provider than {provider}: {len(other_provider)} of {total} queries, "
+            f"for example {other_provider[0]!r} from {providers}."
+        )
+    lines.append(
+        "Record each day and provider from its own file with that --observed-on and --provider, "
+        "or re-collect those queries and export again."
+    )
+    return "\n".join(lines)
 
 
 def _export_serp(database: str, args) -> None:
@@ -1277,7 +1424,7 @@ def _ledger(database: str, args) -> None:
     from datetime import date
     from collections import defaultdict
 
-    from aeo.ranksim.groundtruth import load_serp_file
+    from aeo.ranksim.groundtruth import ImportReport, load_serp_file
     from datetime import datetime, timezone
 
     from aeo.ranksim.benchmark import file_sha256
@@ -1310,12 +1457,16 @@ def _ledger(database: str, args) -> None:
                 )
         elif args.ledger_command == "observe":
             observed_on = date.fromisoformat(args.observed_on).isoformat()
-            labels = load_serp_file(args.serp_file)
+            import_report = ImportReport()
+            labels = load_serp_file(args.serp_file, report=import_report)
             if any(label.kind == "search_console_avg" for label in labels):
                 raise SystemExit(
                     "Search Console averages are not an observed results page and only cover your own URLs. "
                     "Record a results snapshot (query,url,position) instead."
                 )
+            conflicts = _observe_conflicts(labels, import_report, observed_on, args.provider, Path(args.serp_file).name)
+            if conflicts:
+                raise SystemExit(conflicts)
             grouped: dict[str, dict[str, int]] = defaultdict(dict)
             for label in labels:
                 grouped[label.query][label.url] = int(round(label.position))

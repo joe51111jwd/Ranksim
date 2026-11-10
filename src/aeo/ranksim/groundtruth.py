@@ -26,6 +26,8 @@ class SerpLabel:
     device: str | None = None
     provider: str | None = None
     intent: str | None = None  # from an optional intent column; one of intents.KNOWN_INTENTS
+    # export-serp's collection_id: the same id in two files is the same list, not collected again.
+    collection_id: str | None = None
     # "serp_snapshot": an organic position from one results page.
     # "search_console_avg": Search Console's average position over a period; not a snapshot,
     # and it only covers your own pages.
@@ -184,8 +186,9 @@ def load_serp_file(path: str | Path, *, report: ImportReport | None = None) -> l
                 provider=_meta(raw, meta_keys["provider"]),
                 intent=_intent_value(_meta(raw, meta_keys["intent"])),
                 kind=kind,
+                collection_id=_meta(raw, collection_key),
             )
-            collection_id = _meta(raw, collection_key)
+            collection_id = label.collection_id
             if collection_id:
                 collections.setdefault(query, set()).add(collection_id)
             key = (query, key_url)

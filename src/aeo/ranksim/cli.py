@@ -463,15 +463,22 @@ def _competitors(settings, database: str, args) -> None:
 
     domains: list[str] = []
     source_bits = []
+    rejected: list[tuple[int, str, str]] = []
     if args.from_serps:
         domains.extend(domains_from_labels(load_serp_file(args.serp), "smartcrewhq.com"))
         source_bits.append("labeled_top10")
     if args.file:
-        domains.extend(parse_competitor_text(Path(args.file).read_text(encoding="utf-8")))
+        file_rejected: list[tuple[int, str, str]] = []
+        domains.extend(parse_competitor_text(Path(args.file).read_text(encoding="utf-8"), file_rejected))
+        rejected += [(f"{args.file} line {number}", text, reason) for number, text, reason in file_rejected]
         source_bits.append("file")
     if args.domains:
-        domains.extend(parse_competitor_text("\n".join(args.domains)))
+        argv_rejected: list[tuple[int, str, str]] = []
+        domains.extend(parse_competitor_text("\n".join(args.domains), argv_rejected))
+        rejected += [(f"argument {number}", text, reason) for number, text, reason in argv_rejected]
         source_bits.append("argv")
+    for where, text, reason in rejected:
+        print(f"Rejected {where}: {text!r}: {reason}.")
     ordered = list(dict.fromkeys(domains))
     if not ordered:
         raise SystemExit("No competitors. Pass domains, --file, or --from-serps. Nothing was invented.")

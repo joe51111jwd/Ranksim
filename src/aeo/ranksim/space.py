@@ -7,12 +7,16 @@ only. A domain with no stored HTML does not get a predicted rank.
 from __future__ import annotations
 
 import csv
+import ipaddress
+import re
 from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
+from urllib.parse import urlsplit
+
 from aeo.errors import ProviderConfigError
-from aeo.crawl.urls import domain_of, normalize_url
+from aeo.crawl.urls import domain_of
 from aeo.ranksim.features import raw_features
 from aeo.ranksim.groundtruth import SerpLabel
 from aeo.ranksim.lambdamart import RankExample, predict_scores
@@ -93,21 +97,79 @@ def domains_from_labels(labels: list[SerpLabel], our_domain: str) -> list[str]:
     return found
 
 
-def parse_competitor_text(text: str) -> list[str]:
+def parse_competitor_text(text: str, rejected: list[tuple[int, str, str]] | None = None) -> list[str]:
+    """Domains from pasted text or a CSV (first column), one per line; duplicates collapse.
+
+    Lines are read with csv.reader, so a quoted first field with commas is kept whole, and a header
+    row (domain, url, host, site) is skipped. Lines that are not a public site are left out and, when
+    ``rejected`` is given, appended to it as (line number, text, reason) so callers can show them.
+    """
     domains: list[str] = []
     seen: set[str] = set()
-    for raw in text.splitlines():
-        line = raw.strip()
-        if not line or line.startswith("#"):
+    for number, cells in enumerate(csv.reader(text.splitlines()), start=1):
+        first = (cells[0] if cells else "").strip()
+        if not first or first.startswith("#"):
             continue
-        if "," in line and not line.startswith("http"):
-            line = line.split(",")[0].strip()
-        host = _host(line)
-        if not host or host in seen:
+        if number == 1 and first.lower() in {"domain", "url", "host", "site", "website"}:
+            continue
+        host, reason = competitor_host(first)
+        if not host:
+            if rejected is not None:
+                rejected.append((number, first, reason))
+            continue
+        if host in seen:
             continue
         seen.add(host)
         domains.append(host)
     return domains
+
+
+_LABEL = re.compile(r"^(?!-)[a-z0-9-]{1,63}(?<!-)$")
+_NOT_SITES = ("localhost", "local", "internal", "localdomain", "home.arpa")
+
+
+def competitor_host(value: str) -> tuple[str, str]:
+    """(host, "") for a public site name or URL, else ("", reason). www. is dropped; an
+    international name is stored in its IDNA (punycode) form."""
+    text = value.strip()
+    if "://" in text:
+        parts = urlsplit(text)
+        if parts.scheme not in {"http", "https"}:
+            return "", f"unsupported scheme {parts.scheme}"
+        netloc = parts.netloc
+    else:
+        netloc = text.split("/", 1)[0]
+    if "@" in netloc:
+        return "", "credentials are not part of a site name"
+    host = netloc
+    if host.startswith("["):
+        return "", "an IP address is not a site"
+    if ":" in host:
+        return "", "a port is not part of a site name"
+    host = host.strip().strip(".").lower()
+    if not host:
+        return "", "no host"
+    try:
+        ipaddress.ip_address(host)
+        return "", "an IP address is not a site"
+    except ValueError:
+        pass
+    try:
+        host = host.encode("idna").decode("ascii")
+    except UnicodeError:
+        return "", "not a valid international domain name"
+    if host.startswith("www."):
+        host = host[4:]
+    labels = host.split(".")
+    if len(labels) < 2:
+        return "", "a site name needs a dot (example: acme.com)"
+    if any(not _LABEL.match(label) for label in labels) or len(host) > 253:
+        return "", "not a valid host name"
+    if labels[-1].isdigit():
+        return "", "an IP address is not a site"
+    if labels[-1] in _NOT_SITES or ".".join(labels[-2:]) in _NOT_SITES:
+        return "", "a local network name is not a public site"
+    return host, ""
 
 
 def read_competitors(path: str | Path) -> list[str]:
@@ -447,18 +509,3 @@ def crawl_competitor_homepages(settings, domains: list[str], database: str, *, m
     finally:
         crawler.close()
     return fetched, skipped, errors
-
-
-def _host(value: str) -> str:
-    text = value.strip()
-    if "://" in text:
-        try:
-            return domain_of(normalize_url(text))
-        except ValueError:
-            return ""
-    host = text.lower().strip().strip("/")
-    if host.startswith("www."):
-        host = host[4:]
-    if " " in host or "/" in host or "." not in host:
-        return ""
-    return host

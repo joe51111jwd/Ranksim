@@ -128,8 +128,9 @@ fixed in advance.
   rule; 9 of 16 SmartCrew queries fall through to the default and are listed; numbers unchanged.
 - [ ] B9. Space metrics: top-k only when the set has more than k pages; observed top 10 means
   position <= 10; head-to-head perspective; business vs SERP competitors (P1-1, backend only).
-- [ ] B10. Competitor import validation: csv.reader, IDNA, reject IPs/localhost/ports, report
-  rejected lines (P1-2).
+- [x] B10. Competitor import validation: csv.reader, IDNA, reject IPs/localhost/ports, report
+  rejected lines (P1-2). Done: `space.competitor_host`; `competitors import` prints each rejected
+  line with its reason. The UI path (`workspace.parse_competitors`, PR #2) is unchanged.
 - [ ] B11. SERP history append-only with locale/device/collected_at; `export-serp`; `--keywords`
   file input (P1-7).
 - [ ] B12. Attribution scores before and after separately against the same peers (P1-8).

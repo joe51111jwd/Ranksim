@@ -191,14 +191,24 @@ def _joined_sources(database: str) -> dict[str, str]:
 
 
 def _mark_stored_averages(session, labels) -> int:
-    """An older version stored a Search Console file as a results list. Mark each such list, same
-    query and the same rounded positions and URLs, as not Google, so export-serp, the latest list
-    and the ledger never read it as a results page. Nothing is deleted. Returns how many."""
-    from aeo.ranksim.store import RsSerpCollection, collection_hits
+    """An older version stored a Search Console file as a results list. Mark each list it could
+    have stored from this file as not Google, so export-serp, the latest list and the ledger never
+    read it as a results page: same query, the same rounded positions and URLs, and the same day.
+    That version stored a query's list at UTC midnight of its date in the file, or at the import
+    time when it had none, so a dated label list on another day, or on any day for a file with no
+    dates, is left alone. Nothing is deleted. Returns how many."""
+    from aeo.ranksim.store import RsSerpCollection, _utc, collection_hits, legacy_dated_import
 
     wanted: dict[str, list] = defaultdict(list)
+    days: dict[str, set] = defaultdict(set)
+    undated: set[str] = set()
     for label in labels:
         wanted[label.query].append((int(round(label.position)), label.url))
+        observed = _observed_time(label.observed_on)
+        if observed is None:
+            undated.add(label.query)
+        else:
+            days[label.query].add(observed.date())
     marked = 0
     for query, hits in wanted.items():
         stored = session.query(RsSerpCollection).filter(
@@ -209,6 +219,11 @@ def _mark_stored_averages(session, labels) -> int:
             RsSerpCollection.dated.is_(None),  # only rows from before the dated column
         )
         for collection in stored.all():
+            if legacy_dated_import(collection):
+                if _utc(collection.collected_at).date() not in days[query]:
+                    continue
+            elif query not in undated:
+                continue
             rows = collection_hits(session, collection.id)
             if sorted((row.position, row.url) for row in rows) != sorted(hits):
                 continue

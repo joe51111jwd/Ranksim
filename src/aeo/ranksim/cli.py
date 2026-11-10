@@ -469,10 +469,17 @@ def _noise(args, database: str) -> None:
             f"Could not pair {pairing['unpaired']} queries that have more than one collection. Their collections differ "
             "in source, provider, country, language or device, or are undated label files or not Google results."
         )
+        unclassified = (
+            f"{pairing['unclassified']} queries have lists that an older version stored from a dated file. Such a file "
+            "may have been a Search Console export of average positions, so those lists are not compared. "
+            "Run index-serp again on each original file to classify it."
+        )
         if not compared:
             print("Noise ceiling was not computed. No query has two comparable non-synthetic collections in the database yet.")
             if pairing["unpaired"]:
                 print(unpaired)
+            if pairing["unclassified"]:
+                print(unclassified)
             return
         print(f"Comparing one pair of collections for each of {compared} queries from the database.")
         print(
@@ -483,6 +490,8 @@ def _noise(args, database: str) -> None:
         print(f"Each pair has the same source, provider, country, language and device: {groups}.")
         if pairing["unpaired"]:
             print(unpaired)
+        if pairing["unclassified"]:
+            print(unclassified)
         if pairing["same_day"]:
             print(
                 f"{pairing['same_day']} of {compared} pairs were collected on the same day. "
@@ -531,15 +540,16 @@ def _paired_collections(database: str):
 
     Two collections are comparable only when they share source, provider, country, language and
     device. Synthetic and non-Google lists and label files with no date are never compared: an
-    undated file's stored time is when it was imported, not when it was observed. A query's pair
-    is the newest collection that has a comparable one from an earlier UTC day, with the latest
-    such collection, so a re-collect later on the same day does not hide the day-to-day change.
-    A same-day pair is used only when the query has no pair across days.
+    undated file's stored time is when it was imported, not when it was observed. Nor is a dated
+    list an older version stored that may be Search Console averages (store.legacy_unclassified).
+    A query's pair is the newest collection that has a comparable one from an earlier UTC day,
+    with the latest such collection, so a re-collect later on the same day does not hide the
+    day-to-day change. A same-day pair is used only when the query has no pair across days.
     """
     from collections import Counter
 
     from aeo.ranksim.groundtruth import SerpLabel
-    from aeo.ranksim.store import collection_dated, collection_hits, serp_collections
+    from aeo.ranksim.store import collection_dated, collection_hits, legacy_unclassified, serp_collections
 
     def key(collection):
         return (collection.source, collection.provider, collection.country, collection.language, collection.device)
@@ -547,12 +557,13 @@ def _paired_collections(database: str):
     session = open_session(database)
     left: list = []
     right: list = []
-    pairing = {"compared": 0, "unpaired": 0, "same_day": 0, "groups": Counter()}
+    pairing = {"compared": 0, "unpaired": 0, "same_day": 0, "unclassified": 0, "groups": Counter()}
     try:
         by_query: dict[str, list] = {}
         for collection in serp_collections(session):
             by_query.setdefault(collection.query, []).append(collection)
         for query, collections in sorted(by_query.items()):
+            pairing["unclassified"] += any(legacy_unclassified(c) for c in collections)
             usable = [c for c in collections if c.is_google and collection_dated(c)]
             pair = same_day = None
             for index in range(len(usable) - 1, 0, -1):
@@ -734,10 +745,17 @@ def _observe_conflicts(labels, report, observed_on: str, provider: str, name: st
 def _export_serp(database: str, args) -> None:
     import csv
 
-    from aeo.ranksim.store import collection_dated, collection_hits, pick_latest, serp_collections
+    from aeo.ranksim.store import (
+        collection_dated,
+        collection_hits,
+        legacy_dated_import,
+        legacy_unclassified,
+        pick_latest,
+        serp_collections,
+    )
 
     session = open_session(database)
-    written = undated = 0
+    written = undated = unclassified = left_out = 0
     not_google: set[str] = set()
     try:
         collections = serp_collections(session, include_synthetic=args.include_synthetic)
@@ -747,9 +765,9 @@ def _export_serp(database: str, args) -> None:
             by_query: dict[str, list] = {}
             for collection in collections:
                 by_query.setdefault(collection.query, []).append(collection)
-            collections = [
-                pick_latest([c for c in group if c.is_google] or group) for group in by_query.values()
-            ]
+            picked = [pick_latest([c for c in group if c.is_google] or group) for group in by_query.values()]
+            collections = [c for c in picked if c is not None]
+            left_out = len(picked) - len(collections)  # see pick_latest
         out = Path(args.out)
         out.parent.mkdir(parents=True, exist_ok=True)
         with out.open("w", newline="", encoding="utf-8") as handle:
@@ -762,7 +780,9 @@ def _export_serp(database: str, args) -> None:
                 # An undated label file was stored at its import time. That is not when the list
                 # was observed, so its date columns stay blank.
                 dated = collection_dated(collection)
-                if not dated:
+                if legacy_unclassified(collection):
+                    unclassified += 1
+                elif not dated and not legacy_dated_import(collection):
                     undated += 1
                 if not collection.is_google and not collection.synthetic:
                     not_google.add(collection.provider)
@@ -779,6 +799,18 @@ def _export_serp(database: str, args) -> None:
     print(f"Wrote {written} rows from {len(collections)} collections to {args.out}.")
     if undated:
         print(f"{undated} collections come from label files with no date. Their observed_on is blank, not the import date.")
+    if unclassified:
+        print(
+            f"{unclassified} collections come from dated files that an older version stored. Such a file may have been "
+            "a Search Console export of average positions, so their observed_on is blank. "
+            "Run index-serp again on each original file to classify it."
+        )
+    if left_out:
+        print(
+            f"{left_out} queries were left out. Each has a later list that an older version stored from a dated file, "
+            "which may have been a Search Console export of average positions. "
+            "Run index-serp again on that file to classify it."
+        )
     if not_google:
         print(
             f"Some collections are not Google results ({', '.join(sorted(not_google))}). "

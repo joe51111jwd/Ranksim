@@ -1041,7 +1041,11 @@ def _benchmark_snapshot(args, registry_database: str) -> None:
         raise SystemExit(str(exc)) from None
     split_key = snapshot_final_key(args.snapshot, manifest)
     # Runs recorded only in this snapshot's results.jsonl (E12 predates rs_final_runs) protect re-frozen copies too.
-    _backfill_final_runs(registry_database, split_key, args.snapshot)
+    # A line of results.jsonl that cannot be read stops every run here, dev runs included, with the file and line.
+    try:
+        _backfill_final_runs(registry_database, split_key, args.snapshot)
+    except SnapshotError as exc:
+        raise SystemExit(str(exc)) from None
     if args.graph:
         raise SystemExit("--graph is not used with --snapshot. Freeze the graph with the pages (benchmark-freeze --graph).")
     split = manifest["split"]
@@ -1064,7 +1068,10 @@ def _benchmark_snapshot(args, registry_database: str) -> None:
     if args.final:
         if args.protocol:
             raise SystemExit("--protocol does not apply to --final, which runs final and final-url.")
-        previous = [row for row in final_runs(args.snapshot) if row.get("model_id") == model]
+        try:
+            previous = [row for row in final_runs(args.snapshot) if row.get("model_id") == model]
+        except SnapshotError as exc:
+            raise SystemExit(str(exc)) from None
         registered = _scored_models(registry_database, manifest, split_key).get(model)
         if previous or registered:
             when = previous[0].get("created_at") if previous else registered
@@ -1106,6 +1113,11 @@ def _benchmark_snapshot(args, registry_database: str) -> None:
         _attach_graph_file(pages, graph, notes)
     if args.final:
         notes.append("Final split: trained on every dev query, scored the final queries once.")
+        notes.append(
+            "This is a same-snapshot holdout, not accuracy. The final queries come from the same frozen snapshot "
+            "as the dev queries, collected on the same day. Only a forward check against a later snapshot (the ledger) "
+            "can measure that."
+        )
         report = _run_benchmark_report(
             args,
             labels=labels,
@@ -1172,7 +1184,8 @@ def _benchmark_snapshot(args, registry_database: str) -> None:
 
 def _scored_models(database: str, manifest: dict, key: str) -> dict[str, str]:
     """Model configurations already scored on this final split, with when: the git-tracked registry
-    (smartcrew/final_runs.jsonl) and the main database, under the current or the legacy key."""
+    (smartcrew/final_runs.jsonl) and the main database, under the current or the legacy key. Legacy
+    rows are first copied under the current key of the snapshot they name (``_rekey_legacy_final_runs``)."""
     from aeo.ranksim.snapshot import legacy_final_key
     from aeo.ranksim.store import RsFinalRun
 
@@ -1180,6 +1193,7 @@ def _scored_models(database: str, manifest: dict, key: str) -> dict[str, str]:
     for row in _final_registry_rows():
         if row["final_key"] == key:
             found.setdefault(row["model_id"], str(row.get("created_at") or "date not recorded"))
+    _rekey_legacy_final_runs(database)
     session = open_session(database)
     try:
         for row in session.query(RsFinalRun).filter(RsFinalRun.final_key.in_([key, legacy_final_key(manifest)])):
@@ -1187,6 +1201,62 @@ def _scored_models(database: str, manifest: dict, key: str) -> dict[str, str]:
     finally:
         session.close()
     return found
+
+
+def _rekey_legacy_final_runs(database: str) -> None:
+    """Copy each rs_final_runs row stored under the 87511c0 key (label file bytes, cluster threshold,
+    final queries) under the current ``final_key`` of the snapshot folder the row names. A copy of
+    the same split re-frozen from LF labels or with another cluster threshold is then refused even
+    if the old snapshot is never opened again. Adds rows only: the old row is kept as it was.
+
+    A row is not copied when its folder no longer resolves (moved or deleted, or a relative path from
+    another working directory) or its labels.csv no longer matches its manifest. Such a row still
+    blocks a re-freeze of byte-identical labels with the same cluster threshold, through its old key."""
+    import json
+
+    from aeo.ranksim.benchmark import file_sha256
+    from aeo.ranksim.groundtruth import load_serp_file
+    from aeo.ranksim.snapshot import LABELS, MANIFEST, final_key, legacy_final_key
+    from aeo.ranksim.store import RsFinalRun
+
+    session = open_session(database)
+    try:
+        rows = session.query(RsFinalRun).all()
+        present = {(row.final_key, row.model_id) for row in rows}
+        folders: dict[str, list] = {}
+        for row in rows:
+            if row.snapshot_dir:
+                folders.setdefault(row.snapshot_dir, []).append(row)
+        added = False
+        for folder, folder_rows in folders.items():
+            try:
+                manifest = json.loads((Path(folder) / MANIFEST).read_text(encoding="utf-8"))
+                old_key = legacy_final_key(manifest)
+            except (OSError, ValueError, KeyError, TypeError):
+                continue
+            legacy = [row for row in folder_rows if row.final_key == old_key]
+            if not legacy or file_sha256(Path(folder) / LABELS) != manifest["labels_sha256"]:
+                continue
+            try:
+                new_key = final_key(manifest, load_serp_file(Path(folder) / LABELS))
+            except (OSError, ValueError, KeyError, TypeError):
+                continue
+            for row in legacy:
+                if (new_key, row.model_id) in present:
+                    continue
+                summary = dict(row.summary) if isinstance(row.summary, dict) else {}
+                session.add(
+                    RsFinalRun(
+                        final_key=new_key, model_id=row.model_id, created_at=row.created_at, snapshot_dir=row.snapshot_dir,
+                        summary={**summary, "rekeyed_from": old_key},
+                    )
+                )
+                present.add((new_key, row.model_id))
+                added = True
+        if added:
+            session.commit()
+    finally:
+        session.close()
 
 
 def _final_registry_rows() -> list[dict]:

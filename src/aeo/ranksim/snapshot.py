@@ -19,8 +19,14 @@ snapshot's ``results.jsonl`` (E12) is in that file too, and opening any snapshot
 ``results.jsonl`` runs into the database. ``--final`` refuses a model configuration found in any
 of them, so a split is scored at most once per model configuration, also after re-freezing it.
 Rows written under the first key (label file bytes, cluster threshold, final queries) are still
-looked up. A registry line that cannot be read stops ``benchmark-freeze`` and ``--final`` before
-they write anything, with the file and the line number.
+looked up and never changed. While the snapshot folder such a row names still exists, the row is
+also copied under that folder's current key before a final split is checked, so it blocks a copy
+re-frozen with other line endings or another cluster threshold. When that path no longer resolves
+(the folder was moved or deleted, or the path was relative to another working directory), the old
+row only blocks a re-freeze of byte-identical labels with the same cluster threshold. A line of a
+snapshot's ``results.jsonl`` that cannot be read stops ``benchmark --snapshot`` (dev runs too) with
+the file and the line number. A registry line that cannot be read stops ``benchmark-freeze`` and
+``--final`` before they write anything, with the file and the line number.
 
 The split assigns whole query clusters (URL-overlap clusters from the label file) to ``dev`` or
 ``final`` from a hash of each cluster's queries and a seed, so it is deterministic and never puts
@@ -105,7 +111,8 @@ def final_key(manifest: dict, labels) -> str:
 
 def legacy_final_key(manifest: dict) -> str:
     """The key the first rs_final_runs rows were stored under (label file bytes, cluster threshold,
-    final queries). Only looked up, so runs registered with it stay protected."""
+    final queries). Only looked up, so runs registered with it stay protected. While the snapshot
+    folder a row names exists, the row is also copied under that folder's ``final_key``."""
     split = manifest["split"]
     body = f"{manifest['labels_sha256']}|{split['cluster_threshold']}|" + "\n".join(sorted(split["final_queries"]))
     return hashlib.sha256(body.encode()).hexdigest()
@@ -269,10 +276,37 @@ def graph_path(snapshot_dir: str | Path, manifest: dict) -> Path | None:
 
 
 def final_runs(snapshot_dir: str | Path) -> list[dict]:
+    """Every final run in a snapshot's results.jsonl: one JSON object per line, never rewritten.
+
+    A line that is not UTF-8 JSON for an object with a ``model_id`` raises SnapshotError naming the
+    file and that line's number, so no final run is checked against a partial list."""
     path = Path(snapshot_dir) / RESULTS
     if not path.is_file():
         return []
-    return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    rows: list[dict] = []
+    for number, raw in enumerate(path.read_bytes().split(b"\n"), start=1):
+        try:
+            line = raw.decode("utf-8-sig" if number == 1 else "utf-8")
+        except UnicodeDecodeError:
+            raise SnapshotError(_results_problem(path, number, "it is not UTF-8 text")) from None
+        if not line.strip():
+            continue
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError as exc:
+            raise SnapshotError(_results_problem(path, number, f"it is not valid JSON ({exc.msg}: column {exc.colno})")) from None
+        if not isinstance(row, dict) or not isinstance(row.get("model_id"), str) or not row["model_id"]:
+            raise SnapshotError(_results_problem(path, number, "it needs a model_id"))
+        rows.append(row)
+    return rows
+
+
+def _results_problem(path: Path, number: int, what: str) -> str:
+    return (
+        f"Line {number} of {path} cannot be read: {what}. Fix that line by hand. "
+        'Each line is one JSON object with a model_id, for example {"model_id": "...", "created_at": "..."}. '
+        "Until then benchmark --snapshot stops here for this snapshot, because it cannot check its earlier final runs."
+    )
 
 
 def record_final(snapshot_dir: str | Path, entry: dict) -> None:

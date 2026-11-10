@@ -44,7 +44,7 @@ The file is not generated here. Positions you have not recorded are left out. Th
 
 On each held-out query:
 
-- Pairwise agreement: among labeled URL pairs, how often the model scores the better Google position higher. This is the number to watch first. On the labeled file it is same-snapshot agreement, not accuracy on unseen results; only a later snapshot (the ledger, or `--final` once) measures that.
+- Pairwise agreement: among labeled URL pairs, how often the model scores the better Google position higher. This is the number to watch first. On the labeled file it is same-snapshot agreement, not accuracy on unseen results. A `--final` number is the same: the final queries are held out from the same frozen snapshot and were collected on the same day as the training queries. It is a same-snapshot holdout, not accuracy. Only a forward check against a later snapshot (the ledger) measures accuracy on unseen results.
 - NDCG at 10, with gain `max(0, 11 - position)` so a top-10 result has gain and a result past 10 has none.
 - Spearman correlation of predicted rank and labeled position. Constant scores make Spearman undefined, which is reported as n/a rather than zero.
 - Top-3 hit rate: the labeled position-1 URL appears in the model's top 3.

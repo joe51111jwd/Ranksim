@@ -39,6 +39,7 @@ class FetchResult:
     error: str | None = None
     fetch_ms: float | None = None
     source: str = "crawl"
+    final_url: str | None = None  # where redirects ended; None when unknown (saved HTML, drafts)
 
 
 @dataclass
@@ -69,8 +70,10 @@ def is_our_url(url: str) -> bool:
     return host == OUR_DOMAIN or host.endswith("." + OUR_DOMAIN)
 
 
-def page_from_html(url: str, html: str, *, fetch_ms: float | None = None, is_ours: bool | None = None) -> PageDoc:
-    extracted = extract_html(html or "", url)
+def page_from_html(
+    url: str, html: str, *, fetch_ms: float | None = None, is_ours: bool | None = None, extracted=None
+) -> PageDoc:
+    extracted = extracted if extracted is not None else extract_html(html or "", url)
     headings = " ".join(str(item.get("text") or "") for item in extracted.headings)
     schema_types = _schema_types(extracted.schema_objects)
     return PageDoc(
@@ -124,7 +127,8 @@ def store_fetched_page(session: Session, fetched: FetchResult) -> None:
             source=fetched.source,
         )
         return
-    doc = page_from_html(fetched.url, fetched.html, fetch_ms=fetched.fetch_ms)
+    extracted = extract_html(fetched.html, fetched.final_url or fetched.url)
+    doc = page_from_html(fetched.url, fetched.html, fetch_ms=fetched.fetch_ms, extracted=extracted)
     upsert_page(
         session,
         url=doc.url,
@@ -145,6 +149,8 @@ def store_fetched_page(session: Session, fetched: FetchResult) -> None:
         authority=None,
         authority_source="unavailable",
         source=fetched.source,
+        final_url=fetched.final_url,
+        canonical_url=extracted.canonical or None,
     )
 
 
@@ -541,7 +547,7 @@ def _can_normalize(url: str) -> bool:
 def reextract_pages(session: Session) -> tuple[int, int]:
     """Re-run extraction on every stored page's saved HTML. No network.
 
-    Only derived fields change (title, headings, body, counts, date label). fetched_at,
+    Only derived fields change (title, headings, body, counts, date label, canonical). fetched_at,
     html_sha256, source and the HTML itself stay as they were, because the snapshot did not
     change. Returns (pages re-extracted, pages whose word count changed).
     """
@@ -550,9 +556,11 @@ def reextract_pages(session: Session) -> tuple[int, int]:
     for row in rows:
         if not (row.raw_html or "").strip():
             continue
-        doc = page_from_html(row.url, row.raw_html, fetch_ms=row.fetch_ms)
+        extracted = extract_html(row.raw_html, row.final_url or row.url)
+        doc = page_from_html(row.url, row.raw_html, fetch_ms=row.fetch_ms, extracted=extracted)
         if doc.word_count != row.word_count:
             changed += 1
+        row.canonical_url = extracted.canonical or None
         row.title = doc.title
         row.h1 = doc.h1
         row.headings_text = doc.headings

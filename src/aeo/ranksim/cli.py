@@ -532,6 +532,10 @@ def _bench_corpus(database: str, labels, coverage_csv: str | None = None):
         coverage: dict[str, int] = {}
         for row in rows:
             coverage[row["reason"]] = coverage.get(row["reason"], 0) + 1
+        from aeo.ranksim.benchmark import coverage_flags
+
+        if coverage_flags(rows):
+            print(coverage_flags(rows))
         if coverage_csv:
             write_coverage_csv(rows, coverage_csv)
             print(f"Wrote per-label coverage to {coverage_csv}")
@@ -1373,7 +1377,7 @@ def _score_file(database: str, path: str, *, fit: bool, model_out: str | None, f
     print("\n".join(import_report.lines()))
     session = open_session(database)
     try:
-        from aeo.ranksim.benchmark import coverage_rows, render_coverage, write_coverage_csv
+        from aeo.ranksim.benchmark import coverage_flags, coverage_rows, render_coverage, write_coverage_csv
         from aeo.ranksim.corpus import load_corpus_docs
 
         pages = load_corpus_docs(session)
@@ -1384,6 +1388,8 @@ def _score_file(database: str, path: str, *, fit: bool, model_out: str | None, f
     for row in rows:
         counts[row["reason"]] = counts.get(row["reason"], 0) + 1
     print(render_coverage(counts))
+    if coverage_flags(rows):
+        print(coverage_flags(rows))
     if coverage_csv:
         write_coverage_csv(rows, coverage_csv)
         print(f"Wrote per-label coverage to {coverage_csv}")
@@ -1495,7 +1501,7 @@ def _fetch_one(settings, url: str) -> FetchResult:
         elapsed = (time.perf_counter() - started) * 1000
         if result.blocked or result.error or not result.html:
             return FetchResult(url=url, html="", status="error", error=result.error or result.robots_status, fetch_ms=elapsed)
-        return FetchResult(url=url, html=result.html, status="fetched", fetch_ms=elapsed)
+        return FetchResult(url=url, html=result.html, status="fetched", fetch_ms=elapsed, final_url=result.final_url)
     finally:
         crawler.close()
 
@@ -1521,7 +1527,7 @@ def _live_fetcher(settings):
             return FetchResult(url=url, html="", status="blocked", error=result.error, fetch_ms=elapsed)
         if result.error or not result.html:
             return FetchResult(url=url, html="", status="error", error=result.error or "empty response", fetch_ms=elapsed)
-        return FetchResult(url=url, html=result.html, status="fetched", fetch_ms=elapsed)
+        return FetchResult(url=url, html=result.html, status="fetched", fetch_ms=elapsed, final_url=result.final_url)
 
     return fetch, crawler.close
 

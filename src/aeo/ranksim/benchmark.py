@@ -637,7 +637,10 @@ def build_report(
 
 
 COVERAGE_REASONS = ("covered", "thin", "empty", "draft_only", "blocked", "error", "not_attempted")
-COVERAGE_COLUMNS = ("query", "url", "position", "reason", "stored_url", "status", "source", "word_count", "fetched_at", "error")
+COVERAGE_COLUMNS = (
+    "query", "url", "position", "reason", "stored_url", "status", "source", "word_count", "fetched_at", "error",
+    "final_url", "redirected", "canonical_url", "canonical_elsewhere",
+)
 
 
 def coverage_rows(labels, session) -> list[dict]:
@@ -647,14 +650,20 @@ def coverage_rows(labels, session) -> list[dict]:
     still used, but the 150-word rule decides its order. empty: fetched, no HTML. draft_only: the
     only stored HTML is an unpublished draft, which is not the page Google ranked. blocked: robots
     or URL safety refused it. error: the fetch failed (HTTP 403/404, timeout). not_attempted:
-    never stored.
+    never stored. Stored rows are matched by page identity (``urlkey.match_key``: www, scheme,
+    slash and tracking-tag variants are the same page). ``redirected`` is "yes" when the crawl of
+    the labeled URL ended on another page; ``canonical_elsewhere`` when the page names another
+    page as canonical. Either means the stored HTML may not be what Google ranked at that URL.
     """
     from aeo.ranksim.features import THIN_WORD_GATE
     from aeo.ranksim.store import EVALUATION_EXCLUDED_SOURCES, RsPage
 
+    from aeo.ranksim.urlkey import same_page
+
     rows = session.query(
-        RsPage.url, RsPage.status, RsPage.raw_html, RsPage.source, RsPage.word_count, RsPage.fetched_at, RsPage.error
-    ).all()
+        RsPage.url, RsPage.status, RsPage.raw_html, RsPage.source, RsPage.word_count, RsPage.fetched_at, RsPage.error,
+        RsPage.final_url, RsPage.canonical_url,
+    ).order_by(RsPage.url).all()
     by_key: dict[str, tuple] = {}
     for row in rows:
         by_key[row.url] = row
@@ -664,7 +673,10 @@ def coverage_rows(labels, session) -> list[dict]:
         found = by_key.get(label.url) or by_key.get(_url_key(label.url))
         record = {"query": label.query, "url": label.url, "position": label.position}
         if found is None:
-            out.append({**record, "reason": "not_attempted", "stored_url": "", "status": "", "source": "", "word_count": "", "fetched_at": "", "error": ""})
+            out.append(
+                {**record, "reason": "not_attempted", "stored_url": "", "status": "", "source": "", "word_count": "", "fetched_at": "",
+                 "error": "", "final_url": "", "redirected": "", "canonical_url": "", "canonical_elsewhere": ""}
+            )
             continue
         has_html = bool((found.raw_html or "").strip())
         source = found.source or "unknown"
@@ -688,9 +700,25 @@ def coverage_rows(labels, session) -> list[dict]:
                 "word_count": found.word_count if found.word_count is not None else "",
                 "fetched_at": found.fetched_at.isoformat() if found.fetched_at else "",
                 "error": found.error or "",
+                "final_url": found.final_url or "",
+                "redirected": "yes" if found.final_url and not same_page(found.final_url, label.url) else "",
+                "canonical_url": found.canonical_url or "",
+                "canonical_elsewhere": "yes" if found.canonical_url and not same_page(found.canonical_url, label.url) else "",
             }
         )
     return out
+
+
+def coverage_flags(rows: list[dict]) -> str:
+    """A sentence on labeled URLs whose stored page is not plainly the page at that URL, or ''."""
+    redirected = sum(1 for row in rows if row.get("redirected") == "yes")
+    canonical = sum(1 for row in rows if row.get("canonical_elsewhere") == "yes")
+    if not redirected and not canonical:
+        return ""
+    return (
+        f"{redirected} labeled URLs redirected to another page when crawled and {canonical} name another page as "
+        "canonical, so their stored HTML may not be what Google ranked at that URL (see --coverage-csv)."
+    )
 
 
 def labeled_coverage(labels, session) -> dict[str, int]:
@@ -923,10 +951,10 @@ def _by_query_index(rows: list[RankExample]) -> dict[str, list[int]]:
 
 
 def _url_key(url: str) -> str:
-    try:
-        return normalize_url(url)
-    except ValueError:
-        return url.strip()
+    """Page identity for joins, clusters and URL holdout: the same page under any spelling."""
+    from aeo.ranksim.urlkey import match_key
+
+    return match_key(url)
 
 
 def _interval(value: Interval, *, signed: bool = False) -> str:

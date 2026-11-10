@@ -108,8 +108,9 @@ fixed in advance.
   honour Retry-After with per-host backoff (P0-4 remainder).
 - [ ] B4. robots.txt RFC 9309 matcher (wildcards, longest match on 3.11/3.12); refuse a placeholder
   user agent for third-party crawls (P1-6).
-- [ ] B5. URL match key for joining labels to pages; persist final URL and canonical; flag labeled
-  URLs that redirect (P1-4).
+- [x] B5. URL match key for joining labels to pages; persist final URL and canonical; flag labeled
+  URLs that redirect (P1-4). Done: `urlkey.match_key` equals PR #2's `loose_key` on test vectors;
+  `normalize_url` unchanged; benchmark numbers on the snapshot dev split unchanged.
 - [ ] B6. Detect client-rendered (JS shell) pages and report them as a coverage reason (P1-5).
 - [x] B7. Per-label coverage table with thin/empty/JS-shell reasons (`--coverage-csv`); saved HTML
   and seeds found from the repo root, not the cwd (P1-9). Done: reasons covered, thin, empty,

@@ -55,13 +55,23 @@ class AccuracyReport:
 
 
 def _lookup_page(pages: dict[str, PageDoc], url: str) -> PageDoc | None:
+    """The stored page for a URL: exact, then normalize_url, then the same page under another
+    spelling (www, scheme, slash, tracking tags; ``urlkey.match_key``), first by stored URL."""
     if url in pages:
         return pages[url]
     try:
-        key = normalize_url(url)
+        found = pages.get(normalize_url(url))
     except ValueError:
-        return None
-    return pages.get(key)
+        found = None
+    if found is not None:
+        return found
+    from aeo.ranksim.urlkey import match_key
+
+    wanted = match_key(url)
+    for key in sorted(pages):
+        if match_key(key) == wanted:
+            return pages[key]
+    return None
 
 
 def relevance(position: float) -> float:

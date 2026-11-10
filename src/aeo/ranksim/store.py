@@ -75,6 +75,10 @@ class RsPage(Base):
     # erasing the last good snapshot.
     source: Mapped[str | None] = mapped_column(String(32), nullable=True, default="crawl")
     html_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # Where redirects ended when this page was fetched (None: not fetched by the crawler, or a row
+    # from before this column) and the page's own rel=canonical (None: none declared).
+    final_url: Mapped[str | None] = mapped_column(String(2000), nullable=True)
+    canonical_url: Mapped[str | None] = mapped_column(String(2000), nullable=True)
     last_attempt_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     last_attempt_status: Mapped[str | None] = mapped_column(String(32), nullable=True)
     last_attempt_error: Mapped[str | None] = mapped_column(Text, nullable=True)

@@ -16,6 +16,7 @@ from aeo.ranksim.keywords import load_sitemap_urls
 from aeo.ranksim.loop import FetchResult, store_fetched_page
 from aeo.ranksim.saved_html import load_saved_html
 from aeo.ranksim.serp import SerpHit
+from aeo.ranksim.urlkey import match_key
 from aeo.ranksim.store import EVALUATION_EXCLUDED_SOURCES, RsPage, open_session, replace_serp
 
 
@@ -50,7 +51,7 @@ def index_serp_csv(
         if url in saved and saved[url].strip():
             saved_used.append(url)
             continue
-        if url in already:
+        if match_key(url) in already:
             continue
         to_crawl.append(url)
     by_host: dict[str, list[str]] = defaultdict(list)
@@ -64,7 +65,7 @@ def index_serp_csv(
         for future in as_completed(futures):
             fetched.extend(future.result())
     session = open_session(database)
-    skipped = [url for url in urls if url in already and url not in saved]
+    skipped = [url for url in urls if match_key(url) in already and url not in saved]
     counts = {"fetched": 0, "blocked": 0, "error": 0, "saved_html": 0, "skipped": len(skipped)}
     try:
         for url in saved_used:
@@ -114,7 +115,7 @@ def _already_fetched(database: str) -> set[str]:
         # A draft stored under a live URL is not a crawl of that URL: crawl it so the live page
         # can replace the draft as the evaluation snapshot.
         return {
-            row.url
+            match_key(row.url)
             for row in rows
             if (row.raw_html or "").strip() and (row.source or "unknown") not in EVALUATION_EXCLUDED_SOURCES
         }
@@ -149,7 +150,7 @@ def _fetch_host(urls: list[str], settings: Settings, delay_seconds: float) -> li
                     (url, FetchResult(url=url, html="", status="error", error=result.error or "empty response", fetch_ms=elapsed))
                 )
             else:
-                out.append((url, FetchResult(url=url, html=result.html, status="fetched", fetch_ms=elapsed)))
+                out.append((url, FetchResult(url=url, html=result.html, status="fetched", fetch_ms=elapsed, final_url=result.final_url)))
     finally:
         crawler.close()
     return out

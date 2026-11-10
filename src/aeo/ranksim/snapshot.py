@@ -106,6 +106,7 @@ def freeze(
                     "source": row.source or "unknown",
                     "fetched_at": row.fetched_at.isoformat() if row.fetched_at else None,
                     "fetch_ms": row.fetch_ms,
+                    "final_url": row.final_url,
                     "authority": row.authority,
                     "authority_source": row.authority_source,
                     "html_sha256": hashlib.sha256((row.raw_html or "").encode("utf-8", "replace")).hexdigest(),
@@ -187,6 +188,7 @@ def materialize(snapshot_dir: str | Path, database: str) -> dict:
                         error=record.get("error"),
                         fetch_ms=record.get("fetch_ms"),
                         source=record.get("source") or "unknown",
+                        final_url=record.get("final_url"),
                     ),
                 )
                 row = session.get(RsPage, record["url"])

@@ -202,21 +202,33 @@ fixed in advance.
   catches glued digits. Every user-facing same-snapshot number now says agreement, not accuracy
   (`evaluate`, `train`, calibration notes, three-way and bundle output). Demo files owned by PR #2
   got requests instead (above).
-- [ ] B20. Review of the B17 fixes as merged (87511c0..15f23b2): multi-lens review with adversarial
-  verification; fix confirmed defects with regression tests. Review done: 7 lenses, 22 findings
-  verified, 20 confirmed (1 high, 7 medium, 12 low), 2 refuted. Fixes, one branch per area:
-  - [ ] F0 (high): `docs/accuracy.md` said a `--final` run measures accuracy on unseen results; it
-    is a same-snapshot holdout. F17 legacy final-run key, F19 damaged `results.jsonl` message.
-  - [ ] Crawler: F1 a redirect hop is fetched without its own robots.txt check; F8 an invalid
-    host escapes the robots path; F9 UTF-8 robots.txt read with a legacy charset header; F10 dot
-    segments pass a Disallow rule; F11 robots.txt requests ignore 429/503 backoff.
-  - [ ] SERP store: F3 Search Console averages stored by an older version stay Google lists; F6,
-    F7, F14 legacy dated label rows read or get marked as undated; F12 re-importing an earlier
-    version of an undated file is dropped; F13 a non-ISO `observed_on` silently makes a file
-    undated; F18 a draft at the slash twin blocks a recrawl.
-  - [ ] Observe: F2, F5 `ledger observe` ignores each row's own date and records old or undated
-    lists as observed today; F4 `noise FILE FILE` compares a list with itself; F15 keyword exports
-    with title rows send header and metric rows as paid queries.
+- [x] B20. Review of the B17 fixes as merged (87511c0..15f23b2): multi-lens review with adversarial
+  verification; fix confirmed defects with regression tests. Review: 7 lenses, 22 findings verified,
+  20 confirmed (1 high, 7 medium, 12 low), 2 refuted. Fixed on four area branches, each with an
+  independent reviewer and one follow-up round, and merged. Every new test fails on 15f23b2.
+  - [x] Evaluation (F0, F17, F19): `docs/accuracy.md` had listed the `--final` number among the
+    checks of unseen results; it now says a final run is a same-snapshot holdout from the same
+    frozen label file, so its number is agreement, not accuracy, and the `--final` printout says so.
+    A docs test reads README and docs for that claim. Final runs stored under the 87511c0 key are
+    found again from the snapshot folder they name, adding rows only. A damaged `results.jsonl`
+    line is named with its file and line number.
+  - [x] Crawler (F1, F8, F9, F10, F11): every redirect hop is checked against its own robots.txt
+    before any request to it; a robots.txt request waits out or defers on a 429/503 backoff
+    instead of caching the host as unreachable; robots.txt is read as UTF-8 first; dot segments
+    are removed before the robots check, as httpx removes them before sending (`normalize_url`
+    changes only for URLs that contain them); a host httpx cannot encode returns an error. Review
+    follow-up: a hop that resolves to a private address is reported as unsafe, not as robots.
+  - [x] SERP store (F3, F6, F7, F12, F13, F14, F18): Search Console averages that an older version
+    stored as a results list are marked as not Google (kept, not deleted) when the file is read
+    again, and no reader uses them as a results page. Rows from 87511c0 are read as dated when they
+    were stored at the observed day's midnight, and an undated import no longer marks them undated.
+    Re-importing an earlier version of an undated file makes it the latest again. A non-ISO
+    `observed_on` refuses the file before anything is stored. A draft at a label's slash twin no
+    longer blocks the recrawl, and a stored URL keeps its own page in the corpus join.
+  - [x] Observe (F2, F5, F4, F15): `ledger observe` refuses, and records nothing from, a file with
+    rows from another day, undated rows, unreadable dates or another provider. `noise FILE FILE`
+    pairs like with like and says what it left out. Keyword exports with title rows above the header
+    are read from the header down, and a titled metric table with no query column is refused.
   - [x] F16: the demo trains with a keywords-only intent map while its whole-site table uses the
     shared source. `serve.py` is PR #2's: README exception and the request above corrected.
 

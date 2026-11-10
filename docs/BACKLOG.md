@@ -40,7 +40,7 @@ Each item lists the problem, the change, acceptance criteria, dependencies, effo
   appends to a results log it never rewrites.
 - Acceptance: two machines produce identical numbers from the same snapshot; a second `--final` run
   for the same model id is refused. A `--final` number is a same-snapshot holdout (held-out queries
-  from the same day as the training queries), so it is reported as that and never as accuracy
+  from the same frozen label file as the training queries), so it is reported as that and never as accuracy
   (`docs/MISSION.md`). Accuracy claims come only from forward evaluation on a later snapshot.
 - Depends on: P0-1. Effort M.
 - Status 2026-11-05: built (`benchmark-freeze`, `benchmark --snapshot`, `--final`; E12). The split

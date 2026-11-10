@@ -383,8 +383,29 @@ def check_draft(
     return result
 
 
-def score_site(pages: dict, labels: list[SerpLabel], models: dict, queries: list[str], today: date) -> list[SiteRow]:
-    """Score each client page on the stored query it matches best."""
+def _shared_intents(labels: list[SerpLabel], intents: dict[str, str] | None) -> dict[str, str]:
+    """The intent source training uses (B8): the caller's map, else ``query_intents(labels)``."""
+    if intents is not None:
+        return intents
+    from aeo.ranksim.intents import query_intents
+
+    return query_intents(labels).intents
+
+
+def score_site(
+    pages: dict,
+    labels: list[SerpLabel],
+    models: dict,
+    queries: list[str],
+    today: date,
+    intents: dict[str, str] | None = None,
+) -> list[SiteRow]:
+    """Score each client page on the stored query it matches best, with the same query intents
+    training used (``intents``, else ``query_intents(labels)``); a fixed "commercial" made the
+    whole-site table score comparison queries differently from the model it used."""
+    from aeo.ranksim.intents import intent_for
+
+    intents = _shared_intents(labels, intents)
     ours = []
     seen = set()
     for url, doc in pages.items():
@@ -412,6 +433,7 @@ def score_site(pages: dict, labels: list[SerpLabel], models: dict, queries: list
             model=model,
             calibration=Calibration(None, None, None, ""),
             today=today,
+            intent=intent_for(query, intents),
             run_ai=False,
             draft_doc=doc,
         )
@@ -439,9 +461,14 @@ def suggest_links(
     our_domain: str = "smartcrewhq.com",
     today: date | None = None,
     limit: int = 5,
+    intents: dict[str, str] | None = None,
 ) -> list[LinkFix]:
-    """Keep a suggestion only when rescoring predicts a better rank."""
+    """Keep a suggestion only when rescoring predicts a better rank. Queries are scored with the
+    intents training used (``intents``, else ``query_intents(labels)``)."""
+    from aeo.ranksim.intents import intent_for
+
     today = today or date.today()
+    intents = _shared_intents(labels, intents)
     donors = [
         node.url
         for node in sorted(graph.nodes.values(), key=lambda item: item.pagerank, reverse=True)
@@ -472,6 +499,7 @@ def suggest_links(
                 model=model,
                 calibration=Calibration(None, None, None, ""),
                 today=today,
+                intent=intent_for(query, intents),
                 run_ai=False,
                 draft_doc=target,
             )
@@ -494,6 +522,7 @@ def suggest_links(
                 model=model,
                 calibration=Calibration(None, None, None, ""),
                 today=today,
+                intent=intent_for(query, intents),
                 run_ai=False,
                 draft_doc=clone,
             )

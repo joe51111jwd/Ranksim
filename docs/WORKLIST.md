@@ -106,6 +106,13 @@ Requests for other roles, drafted here and not posted (posting on another role's
   `check.check_scope` (the model learned only from pages that already rank, so it cannot say
   whether Google would show a new page at all), and the old `/check` in `demo.py` could show
   `CheckResult.scope` near the verdict (B18, P0-5).
+- PR #2 (UI owner), from the B17 review: `serve.py` builds its own intent map from keywords.csv
+  and `/check` passes `state.intent_for.get(query, "commercial")`, so it skips the label-file column and
+  the shared rule; use `intents.query_intents(labels).intents` with `intent_for` (they agree on the
+  SmartCrew labels today, checked on all 16 queries). `build_space` is called without `intents` or
+  `kinds`. `_fetch_html` swallows `ProviderConfigError`, so with the placeholder `CRAWL_USER_AGENT`
+  every URL check says only "Could not fetch"; show its message. `score_site` and `suggest_links`
+  now default to the shared intents in the backend, so the whole-site table needs no change.
 - PR #2 / PR #5 owners: `project.guess_intent` and `forward_eval.py` (hard-coded "commercial") can
   call `intents.query_intents(labels)` / `intent_for(query, intents)` so every path agrees.
 

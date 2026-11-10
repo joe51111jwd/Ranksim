@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from datetime import date
 
@@ -600,14 +601,37 @@ def _explain(llm: LlmClient | None, result: CheckResult) -> tuple[str, bool]:
         for row in result.competitors
     )
     gaps = "\n".join(f"{gap.feature}: {gap.detail} Fix: {gap.fix}" for gap in result.gaps)
-    reply = llm.complete(
-        EXPLAIN_SYSTEM,
-        f"Query: {result.query}\nPREDICTED rank {result.predicted_rank} of {result.predicted_of}\n{brief}\n{gaps}",
-    )
+    prompt = f"Query: {result.query}\nPREDICTED rank {result.predicted_rank} of {result.predicted_of}\n{brief}\n{gaps}"
+    reply = llm.complete(EXPLAIN_SYSTEM, prompt, validate=lambda text: not invented_numbers(text, prompt))
     if reply.stub or not reply.text.strip():
         prefix = f"Template, not an LLM ({reply.note}). " if reply.note else "Template, not an LLM. "
         return prefix + template, True
+    invented = invented_numbers(reply.text, prompt)
+    if invented:
+        return (
+            f"Template, not an LLM: the LLM's explanation named numbers that were not in the brief ({', '.join(invented[:5])}), "
+            "so it was not shown. " + template
+        ), True
     return "PREDICTED. " + reply.text.strip(), False
+
+
+_NUMBER = re.compile(r"(?<![\w.])\d+(?:[.,]\d+)*")
+
+
+def _number_key(text: str) -> str:
+    value = text.replace(",", "")
+    if "." in value:
+        value = value.rstrip("0").rstrip(".")
+    return value
+
+
+def invented_numbers(reply: str, brief: str) -> list[str]:
+    """Numbers in an LLM reply that do not appear in the brief it was given. The explanation may
+    restate the brief, never add to it. Limits: digits only (spelled-out numbers are not checked),
+    and a number present anywhere in the brief passes even if the reply attaches it to something
+    else (for example a rival's Google position restated as the page's own rank)."""
+    allowed = {_number_key(found) for found in _NUMBER.findall(brief)}
+    return sorted({found for found in _NUMBER.findall(reply) if _number_key(found) not in allowed})
 
 
 def _fix_loop(

@@ -414,17 +414,61 @@ def openrouter_key(settings: Settings) -> str | None:
     return None
 
 
-def resolve_llm(settings: Settings, *, cache_dir: Path | None = None, cost_log: Path | None = None, run_id: str = "run") -> LlmClient:
-    chosen = (settings.ranksim_llm_model or "").strip()
+LLM_PROVIDERS = ("auto", "openrouter", "openai", "anthropic")
+OPENAI_PUBLIC_BASE = "https://api.openai.com"
+
+
+def model_format_problem(provider: str, model: str, *, openai_base_url: str | None = None) -> str | None:
+    """Why this model name cannot be meant for this provider, or None. One name is no longer sent to
+    whichever provider has a key."""
+    if provider == "openrouter" and "/" not in model:
+        return "OpenRouter model names look like vendor/model, for example openai/gpt-4o-mini"
+    if provider == "openai" and "/" in model and (openai_base_url or OPENAI_PUBLIC_BASE).startswith(OPENAI_PUBLIC_BASE):
+        return "OpenAI model names have no vendor prefix, for example gpt-4o-mini (openai/... is an OpenRouter name)"
+    if provider == "anthropic" and not model.startswith("claude"):
+        return "Anthropic model names start with claude, for example claude-3-5-haiku-20241022"
+    return None
+
+
+def select_llm_provider(settings: Settings) -> tuple[str, str | None]:
+    """(provider, key). auto picks OpenRouter, then OpenAI, then Anthropic by which key is set; a
+    named provider without its key is a configuration error, not a silent switch."""
+    from aeo.errors import ProviderConfigError
+
+    wanted = (getattr(settings, "ranksim_llm_provider", "auto") or "auto").strip().lower()
+    if wanted not in LLM_PROVIDERS:
+        raise ProviderConfigError(f"RANKSIM_LLM_PROVIDER must be one of {', '.join(LLM_PROVIDERS)}, not {wanted!r}.")
     router = openrouter_key(settings)
-    if router:
-        inner: LlmClient = OpenRouterLlm(router, chosen or OPENROUTER_DEFAULT)
-    elif settings.openai_api_key:
-        inner = OpenAiLlm(settings.openai_api_key, chosen or OPENAI_DEFAULT, settings.openai_base_url)
-    elif settings.anthropic_api_key:
-        inner = AnthropicLlm(settings.anthropic_api_key, chosen or ANTHROPIC_DEFAULT)
-    else:
+    openai_key = settings.openai_api_key if settings.openai_api_key and not settings.openai_api_key.startswith("sk-or-") else None
+    keys = {"openrouter": router, "openai": openai_key, "anthropic": settings.anthropic_api_key}
+    if wanted == "auto":
+        for name in ("openrouter", "openai", "anthropic"):
+            if keys[name]:
+                return name, keys[name]
+        return "none", None
+    if not keys[wanted]:
+        needed = {"openrouter": "OPENROUTER_API_KEY (or an sk-or- key in OPENAI_API_KEY)", "openai": "OPENAI_API_KEY", "anthropic": "ANTHROPIC_API_KEY"}
+        raise ProviderConfigError(f"RANKSIM_LLM_PROVIDER={wanted} needs {needed[wanted]}.")
+    return wanted, keys[wanted]
+
+
+def resolve_llm(settings: Settings, *, cache_dir: Path | None = None, cost_log: Path | None = None, run_id: str = "run") -> LlmClient:
+    from aeo.errors import ProviderConfigError
+
+    chosen = (settings.ranksim_llm_model or "").strip()
+    provider, key = select_llm_provider(settings)
+    if provider == "none":
         return StubLlm()
+    model = chosen or {"openrouter": OPENROUTER_DEFAULT, "openai": OPENAI_DEFAULT, "anthropic": ANTHROPIC_DEFAULT}[provider]
+    problem = model_format_problem(provider, model, openai_base_url=settings.openai_base_url)
+    if problem:
+        raise ProviderConfigError(f"RANKSIM_LLM_MODEL={model!r} does not fit the {provider} provider: {problem}.")
+    if provider == "openrouter":
+        inner: LlmClient = OpenRouterLlm(key, model)
+    elif provider == "openai":
+        inner = OpenAiLlm(key, model, settings.openai_base_url)
+    else:
+        inner = AnthropicLlm(key, model)
     return CachingLlm(
         inner,
         cache_dir or Path("data/llm-cache"),

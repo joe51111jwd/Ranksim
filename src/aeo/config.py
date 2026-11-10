@@ -38,6 +38,9 @@ class Settings(BaseSettings):
     ranksim_max_pages: int = 1000
     ranksim_authority: str = "off"
     ranksim_llm_model: str | None = None
+    # Which LLM provider ranksim uses: auto (OpenRouter, then OpenAI, then Anthropic, by which key is
+    # set), openrouter, openai or anthropic. The model name is checked against the provider's format.
+    ranksim_llm_provider: str = "auto"
     # Per-process ceilings on fresh LLM calls and estimated dollars. Cache hits are free.
     ranksim_llm_max_calls: int = 200
     ranksim_llm_max_usd: float = 1.0
@@ -60,7 +63,7 @@ class Settings(BaseSettings):
             return None
         return value
 
-    @field_validator("search_provider", "llm_provider", "embedding_provider")
+    @field_validator("search_provider", "llm_provider", "embedding_provider", "ranksim_llm_provider")
     @classmethod
     def lower_name(cls, value: str) -> str:
         return value.strip().lower()

@@ -151,8 +151,10 @@ fixed in advance.
   accuracy from the label file (P1-10). Done: targets from the manifest `query` column or
   keywords.csv; no position for a query without stored competitors; the report and the bundle text
   call the number same-snapshot agreement, not accuracy (MISSION).
-- [ ] B14. LLM explanation numbers checked against the brief; provider selector and model-format
-  check (P1-11).
+- [x] B14. LLM explanation numbers checked against the brief; provider selector and model-format
+  check (P1-11). Done: a reply with a number not in its brief falls back to the template (limit:
+  a number present anywhere in the brief passes); `RANKSIM_LLM_PROVIDER`; model names checked.
+  No LLM was called (no key in this environment).
 - [x] B15. Site prior (content-blind) as one more benchmark baseline row (P1-12). Done: `site_prior`
   counts training queries that list the page's site; `persistence` (earlier Google position) is a
   row when labels carry `prior_position`. Dev split: site prior is the best row under every

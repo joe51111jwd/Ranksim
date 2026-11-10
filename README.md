@@ -224,7 +224,8 @@ python -m aeo.ranksim gaps
 | `OPENAI_API_KEY` | OpenAI, or OpenRouter when the key starts with `sk-or-`. |
 | `ANTHROPIC_API_KEY` | Anthropic Haiku when no OpenRouter or OpenAI key is set. |
 | `SERPER_API_KEY` | Google organic results via Serper. |
-| `RANKSIM_LLM_MODEL` | Optional model override. |
+| `RANKSIM_LLM_MODEL` | Optional model override, checked against the provider's name format (OpenRouter `vendor/model`, OpenAI without a prefix, Anthropic `claude-...`). Default OpenRouter `openai/gpt-4o-mini`. |
+| `RANKSIM_LLM_PROVIDER` | `auto` (OpenRouter, then OpenAI, then Anthropic, by which key is set), or `openrouter`, `openai`, `anthropic`. A named provider without its key is an error, not a silent switch. |
 | `RANKSIM_LLM_MAX_CALLS`, `RANKSIM_LLM_MAX_USD` | Per-process caps on LLM requests sent (retries included) and estimated spend (default 200, $1.00). The dollar cap needs a known rate for the model; for an unpriced model it stops after the first call unless set to 0. |
 | `RANKSIM_AUTHORITY=dataforseo` | Optional backlink rank on the same DataForSEO account. Off by default. |
 

@@ -7,10 +7,10 @@ from datetime import date
 
 from aeo.crawl.urls import domain_of, normalize_url
 from aeo.ranksim.attribution import LABELS
-from aeo.ranksim.confidence import Calibration
+from aeo.ranksim.confidence import Calibration, neighbor_gap
 from aeo.ranksim.features import MODEL_FEATURES, PageDoc, raw_features
 from aeo.ranksim.groundtruth import SerpLabel
-from aeo.ranksim.lambdamart import RankExample, predict_scores
+from aeo.ranksim.lambdamart import RankExample, gate_thin_pages, gated_rows, predict_scores
 from aeo.ranksim.linkgraph import LinkGraph
 from aeo.ranksim.llm import LlmClient
 from aeo.ranksim.loop import page_from_html
@@ -276,7 +276,10 @@ def check_draft(
         return result
     raw = raw_features(query, intent, docs, today)
     examples = [RankExample(query, doc.url, 0.0, row) for doc, row in zip(docs, raw)]
-    scores = predict_scores(model, examples)
+    # Gaps come from the model's own scores; the order from the scores after the 150-word rule.
+    raw_scores = predict_scores(model, examples, gate=False)
+    scores = gate_thin_pages(examples, raw_scores)
+    gated = gated_rows(examples)
     order = sorted(range(len(docs)), key=lambda index: (-scores[id(examples[index])], index))
     ranks = {index: place for place, index in enumerate(order, start=1)}
     ours = next(index for index, doc in enumerate(docs) if normalize_url(doc.url) == draft_key or doc.url == url)
@@ -284,15 +287,27 @@ def check_draft(
     result.predicted_of = len(docs)
     ordered_scores = [scores[id(example)] for example in examples]
     result.competitors = _competitors(docs, ranks, positions, ours, ordered_scores)
+    our_id = id(examples[ours])
+    by_url = {doc.url: index for index, doc in enumerate(docs)}
     for row in result.competitors:
-        if row.score_gap is not None:
-            row.confidence = calibration.label(abs(row.score_gap))
+        other = by_url.get(row.url)
+        if other is None or our_id in gated or id(examples[other]) in gated:
+            row.confidence = "UNSURE"  # the 150-word rule, not the model, decided this order
+            continue
+        row.confidence = calibration.label(abs(raw_scores[our_id] - raw_scores[id(examples[other])]))
     result.candidate_hashes = {doc.url: doc.html_sha256 for doc in docs}
     result.gaps = _top_gaps(raw, ours, ranks, model, docs)
     result.warnings = stuffing_warnings(query, docs[ours], [doc for index, doc in enumerate(docs) if index != ours])
-    neighbor = _neighbor_gap(scores, examples, order, ours)
-    result.confidence = calibration.label(neighbor)
-    result.confidence_note = calibration.note
+    raw_list = [raw_scores[id(example)] for example in examples]
+    neighbor, _used = neighbor_gap(raw_list, order, ours, gated, ids=lambda index: id(examples[index]))
+    result.confidence = calibration.label_adjacent(neighbor)
+    if our_id in gated:
+        result.confidence_note = (
+            "This page is under 150 words, so a fixed rule placed it behind every fuller page. "
+            "That placement is a rule, not a calibrated model call."
+        )
+    else:
+        result.confidence_note = calibration.adjacent_note or calibration.note
     if run_ai:
         result.explanation, result.explanation_stub = _explain(llm, result)
         rounds, stub, note = _fix_loop(llm, query, html, url, labels, pages, model, calibration, today, intent, result.predicted_rank, result.predicted_of, result.gaps)
@@ -525,17 +540,6 @@ def _top_gaps(raw, ours: int, ranks, model, docs=None, limit: int = 3) -> list[G
             )
         )
     return gaps
-
-
-def _neighbor_gap(scores, examples, order, ours: int) -> float:
-    place = order.index(ours)
-    our_score = scores[id(examples[ours])]
-    gaps = []
-    if place > 0:
-        gaps.append(abs(our_score - scores[id(examples[order[place - 1]])]))
-    if place + 1 < len(order):
-        gaps.append(abs(our_score - scores[id(examples[order[place + 1]])]))
-    return min(gaps) if gaps else 0.0
 
 
 def _explain(llm: LlmClient | None, result: CheckResult) -> tuple[str, bool]:

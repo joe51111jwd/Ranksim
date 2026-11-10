@@ -265,7 +265,11 @@ def model_id(feature_names: list[str] | tuple[str, ...], monotone_up: frozenset[
     return "lgbm-" + hashlib.sha256(body.encode()).hexdigest()[:16]
 
 
-def predict_scores(model, examples: list[RankExample], feature_names: list[str] | None = None) -> dict[int, float]:
+def predict_scores(
+    model, examples: list[RankExample], feature_names: list[str] | None = None, *, gate: bool = True
+) -> dict[int, float]:
+    """Model scores keyed by id(example). With ``gate`` (default) the 150-word rule then moves
+    thin pages below every fuller page; ``gate=False`` returns the model's own scores."""
     if not examples:
         return {}
     import numpy as np
@@ -277,7 +281,7 @@ def predict_scores(model, examples: list[RankExample], feature_names: list[str] 
     )
     values = model.predict(matrix)
     scores = {id(row): float(score) for row, score in zip(examples, values)}
-    return gate_thin_pages(examples, scores)
+    return gate_thin_pages(examples, scores) if gate else scores
 
 
 def gate_thin_pages(examples: list[RankExample], scores: dict[int, float]) -> dict[int, float]:
@@ -296,6 +300,21 @@ def gate_thin_pages(examples: list[RankExample], scores: dict[int, float]) -> di
         for offset, row in enumerate(ordered, start=1):
             adjusted[id(row)] = floor - offset
     return adjusted
+
+
+def gated_rows(examples: list[RankExample]) -> set[int]:
+    """ids of the rows whose score the 150-word rule replaces: thin pages in a query that also has
+    a fuller page. Their order against any page comes from the rule, and their score gaps are
+    synthetic offsets, so they say nothing about how sure the model is."""
+    grouped: dict[str, list[RankExample]] = {}
+    for example in examples:
+        grouped.setdefault(example.query, []).append(example)
+    gated: set[int] = set()
+    for group in grouped.values():
+        thin = [row for row in group if _is_thin(row)]
+        if thin and len(thin) < len(group):
+            gated.update(id(row) for row in thin)
+    return gated
 
 
 def _is_thin(example: RankExample) -> bool:

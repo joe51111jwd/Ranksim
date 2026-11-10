@@ -99,7 +99,7 @@ def test_cross_fitted_confidence_never_uses_a_folds_own_pairs():
     # Fold 0 has 40 large-gap pairs that are all wrong. Fold 1 has 40 large-gap pairs that are all right.
     wrong = QueryResult("a", 0, 0, 0, 0, 40, None, None, [PairMargin(5.0, False) for _ in range(40)])
     right = QueryResult("b", 1, 0, 40, 0, 40, None, None, [PairMargin(5.0, True) for _ in range(40)])
-    check = cross_fitted_confidence([wrong, right], {"a": 0, "b": 1}, 2)
+    check = cross_fitted_confidence([wrong, right], {"a": 0, "b": 1}, 2, kind="pairs")
     # Fold 0 borrows fold 1's threshold (fold 1 is accurate) and is then scored on its own wrong pairs.
     # Fold 1 borrows fold 0's pairs, which never reach 0.65, so fold 1 gets no threshold.
     assert check.folds_with_threshold == 1
@@ -247,19 +247,18 @@ def test_ndcg_and_top3_do_not_leak_label_order_through_ties():
     assert _top3_hit(rows, perfect) == 1.0
 
 
-def test_the_deployed_threshold_itself_must_hold_out_of_sample(monkeypatch):
+def test_the_deployed_threshold_itself_must_hold_out_of_sample():
     """Per-fold thresholds can look accurate while the threshold actually shipped does not."""
-    import aeo.ranksim.benchmark as bench
-    from aeo.ranksim.benchmark import ConfidenceCheck, Interval, ProtocolResult, QueryResult, ScorerResult
-    from aeo.ranksim.confidence import Calibration, validate_calibration
+    from aeo.ranksim.benchmark import QueryResult
+    from aeo.ranksim.confidence import Calibration, check_threshold
 
-    # The deployed gap 0.05 covers every held-out pair and is right on only 58 of 100.
-    margins = [PairMargin(0.06, index < 58) for index in range(100)]
-    fake_queries = [QueryResult("q", 0, 0, 58, 0, 100, None, None, margins)]
-    scorer = ScorerResult("lambdamart", Interval(0.58, None, None), None, None, None, 100, 0, 1, queries=fake_queries)
-    rosy = ConfidenceCheck(calls=40, correct=34, total_pairs=100, folds_with_threshold=2, folds=2, note="")
-    monkeypatch.setattr(bench, "run_protocol", lambda *a, **k: ProtocolResult("cluster-url", 2, 2, 0, [scorer], rosy))
-    examples = [_row(f"q{q}", f"https://x{q}{p}.example/", p, p) for q in range(2) for p in range(1, 4)]
-    checked = validate_calibration(Calibration(0.05, 0.9, 0.5, "in-sample"), examples, ["signal"])
+    # Each fold: 40 large-gap pairs, all right, and 60 small-gap pairs, 18 right. Thresholds chosen on
+    # the other fold land at 0.1 and look perfect (80 of 80); the deployed gap 0.05 covers every pair
+    # and is right on 116 of 200 (0.58).
+    def fold(name, cluster):
+        margins = [PairMargin(3.0, True) for _ in range(40)] + [PairMargin(0.06, index < 18) for index in range(60)]
+        return QueryResult(name, cluster, 0, 58, 0, 100, None, None, margins)
+
+    checked = check_threshold(Calibration(0.05, 0.9, 0.5, "in-sample"), [fold("a", 0), fold("b", 1)], "pairs")
     assert checked.threshold is None
-    assert "58 of 100" in checked.note and "34 of 40" in checked.note
+    assert "116 of 200" in checked.note and "80 of 80" in checked.note

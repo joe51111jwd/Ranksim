@@ -33,8 +33,9 @@ Legend: `[x]` done (commit noted), `[ ]` open, `[-]` blocked (reason given).
   `--final` runs once per model id and appends to a results log (BACKLOG P0-2). Done: snapshot
   module, dev/final split by query cluster, verdicts withheld below 10 scored clusters; first final
   run recorded in E12.
-- [ ] B2. Calibrate on the statistic the check uses: adjacent-page gaps, pre-gate scores, gated
-  pairs excluded (P1-13).
+- [x] B2. Calibrate on the statistic the check uses: adjacent-page gaps, pre-gate scores, gated
+  pairs excluded (P1-13). Done: separate head-to-head and predicted-rank thresholds, rule-placed
+  pages always UNSURE (E13).
 - [ ] B3. Crawler: connect to the vetted IP (DNS rebinding), deadline covers response headers,
   honour Retry-After with per-host backoff (P0-4 remainder).
 - [ ] B4. robots.txt RFC 9309 matcher (wildcards, longest match on 3.11/3.12); refuse a placeholder

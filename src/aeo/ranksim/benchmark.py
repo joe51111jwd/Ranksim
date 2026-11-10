@@ -44,9 +44,9 @@ from datetime import date, datetime, timezone
 from typing import Callable
 
 from aeo.crawl.urls import domain_of, normalize_url
-from aeo.ranksim.confidence import PairMargin, calibrate
+from aeo.ranksim.confidence import PairMargin, _kind_margins, adjacent_margins, calibrate, pair_margins
 from aeo.ranksim.features import FEATURE_NAMES, MODEL_FEATURES, normalize_rows
-from aeo.ranksim.lambdamart import RankExample, _ndcg, fit_lambdamart, predict_scores, relevance
+from aeo.ranksim.lambdamart import RankExample, _ndcg, fit_lambdamart, gated_rows, predict_scores, relevance
 from aeo.ranksim.metrics import spearman
 
 PROTOCOLS = ("loqo", "cluster", "cluster-url")
@@ -79,7 +79,8 @@ class QueryResult:
     total: int
     ndcg: float | None
     spearman: float | None
-    margins: list[PairMargin] = field(default_factory=list)
+    margins: list[PairMargin] = field(default_factory=list)  # every pair; not pages the 150-word rule placed
+    adjacent: list[PairMargin] = field(default_factory=list)  # each page's gap to its predicted neighbours
 
     @property
     def credit(self) -> float:
@@ -184,7 +185,7 @@ class BenchmarkReport:
     notes: list[str]
 
     def to_json(self) -> str:
-        return json.dumps(_drop_keys(asdict(self), {"margins"}), indent=2, sort_keys=True, default=_json_default)
+        return json.dumps(_drop_keys(asdict(self), {"margins", "adjacent"}), indent=2, sort_keys=True, default=_json_default)
 
 
 def query_clusters(examples, threshold: float = 0.3) -> dict[str, int]:
@@ -386,7 +387,7 @@ def run_protocol(
             row.diff_vs_model = paired_diff(per_scorer[row.name], per_scorer["lambdamart"], cluster_ids, bootstrap, seed)
     confidence = None
     if "lambdamart" in by_name:
-        confidence = cross_fitted_confidence(per_scorer["lambdamart"], fold_of, len(folds))
+        confidence = cross_fitted_confidence(per_scorer["lambdamart"], fold_of, len(folds), kind="adjacent")
     return ProtocolResult(
         protocol=protocol,
         n_folds=len(folds),
@@ -397,7 +398,12 @@ def run_protocol(
     )
 
 
-def cross_fitted_confidence(queries: list[QueryResult], fold_of: dict[str, int], n_folds: int) -> ConfidenceCheck:
+_KIND_LABEL = {"pairs": "head-to-head gaps", "adjacent": "gaps to the predicted neighbour"}
+
+
+def cross_fitted_confidence(
+    queries: list[QueryResult], fold_of: dict[str, int], n_folds: int, *, kind: str = "adjacent"
+) -> ConfidenceCheck:
     """Choose the score-gap threshold on the other folds' pairs, apply it to this fold's.
 
     ``confidence.calibrate`` picks a threshold on every backtest pair and then reports
@@ -406,14 +412,14 @@ def cross_fitted_confidence(queries: list[QueryResult], fold_of: dict[str, int],
     """
     by_fold: dict[int, list[PairMargin]] = defaultdict(list)
     for row in queries:
-        by_fold[fold_of[row.query]].extend(row.margins)
+        by_fold[fold_of[row.query]].extend(_kind_margins(row, kind))
     total = sum(len(values) for values in by_fold.values())
     calls = 0
     correct = 0
     with_threshold = 0
     for fold, margins in by_fold.items():
         others = [pair for other, values in by_fold.items() if other != fold for pair in values]
-        chosen = calibrate(others)
+        chosen = calibrate(others, kind=kind)
         if chosen.threshold is None:
             continue
         with_threshold += 1
@@ -421,10 +427,10 @@ def cross_fitted_confidence(queries: list[QueryResult], fold_of: dict[str, int],
         calls += len(confident)
         correct += sum(1 for pair in confident if pair.correct)
     if not calls:
-        note = "No cross-fitted threshold produced a confident call. Every pair stays UNSURE."
+        note = f"No cross-fitted threshold on {_KIND_LABEL[kind]} produced a confident call. Every call stays UNSURE."
     else:
         note = (
-            f"Cross-fitted: {calls} of {total} pairs got a confident call; "
+            f"Cross-fitted on {_KIND_LABEL[kind]}: {calls} of {total} cases got a confident call; "
             f"{correct} were right ({correct / calls:.3f}). Thresholds came from other folds."
         )
     return ConfidenceCheck(calls, correct, total, with_threshold, n_folds, note)
@@ -517,20 +523,20 @@ def dev_threshold_confidence(
     dev_protocol: str,
 ) -> ConfidenceCheck:
     """Pick the score-gap threshold from held-out dev pairs, report its accuracy on final pairs."""
-    total = sum(len(row.margins) for row in final_queries)
+    total = sum(len(row.adjacent) for row in final_queries)
     if len({clusters[row.query] for row in dev_rows}) < 2:
         return ConfidenceCheck(0, 0, total, 0, 1, "Dev split has one query cluster; no threshold could be chosen. Every final pair stays UNSURE.")
     dev = run_protocol(dev_rows, dev_protocol, clusters, {"lambdamart": scorer}, bootstrap=0)
-    dev_margins = [pair for row in dev.scorers[0].queries for pair in row.margins]
-    chosen = calibrate(dev_margins)
+    dev_margins = [pair for row in dev.scorers[0].queries for pair in row.adjacent]
+    chosen = calibrate(dev_margins, kind="adjacent")
     if chosen.threshold is None:
         return ConfidenceCheck(0, 0, total, 0, 1, "No threshold met the bar on held-out dev pairs. Every final pair stays UNSURE.")
-    confident = [pair for row in final_queries for pair in row.margins if pair.gap >= chosen.threshold]
+    confident = [pair for row in final_queries for pair in row.adjacent if pair.gap >= chosen.threshold]
     correct = sum(1 for pair in confident if pair.correct)
     if confident:
         note = (
             f"Threshold {chosen.threshold:.4f} chosen on held-out dev pairs ({dev_protocol}). "
-            f"On final: {len(confident)} of {total} pairs got a confident call; {correct} were right "
+            f"On final: {len(confident)} of {total} predicted-rank cases got a confident call; {correct} were right "
             f"({correct / len(confident):.3f})."
         )
     else:
@@ -739,7 +745,6 @@ def _verdict(left: str, right: str, diff: Interval, n_clusters: int | None = Non
 
 def _query_result(group: list[RankExample], scores: list[float], cluster: int) -> QueryResult:
     correct = ties = total = 0
-    margins: list[PairMargin] = []
     for left in range(len(group)):
         for right in range(len(group)):
             if group[left].position >= group[right].position:
@@ -749,7 +754,9 @@ def _query_result(group: list[RankExample], scores: list[float], cluster: int) -
                 correct += 1
             elif scores[left] == scores[right]:
                 ties += 1
-            margins.append(PairMargin(gap=abs(scores[left] - scores[right]), correct=scores[left] > scores[right]))
+    # Confidence margins leave out pages the 150-word rule placed (their gaps are synthetic).
+    # Only the gated LambdaMART scorer's margins are used.
+    gated = gated_rows(group)
     return QueryResult(
         query=group[0].query,
         cluster=cluster,
@@ -760,7 +767,8 @@ def _query_result(group: list[RankExample], scores: list[float], cluster: int) -
         ndcg=_ndcg(group, scores),
         # A scorer that gives every page the same score has no order: expected rank correlation 0.
         spearman=0.0 if len(set(scores)) == 1 else spearman(scores, [row.position for row in group]),
-        margins=margins,
+        margins=pair_margins(group, scores, gated),
+        adjacent=adjacent_margins(group, scores, gated),
     )
 
 

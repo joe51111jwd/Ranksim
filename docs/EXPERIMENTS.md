@@ -225,3 +225,20 @@ Conventions for every entry:
   on queries nobody tuned on; with 16 labeled queries it cannot show an effect of this size either way.
   It becomes useful when the label set grows (C1).
 
+## 2026-11-05 E13. Calibrating the statistic the check labels
+
+- Before: the threshold was chosen on every labeled pair, but the check labeled the predicted rank
+  from the gap to the adjacent page, and gaps came after the 150-word rule, which places a thin page
+  exactly 1.0 below the last full page (then 2.0, ...). With a 0.5 threshold a 100-word draft was
+  CLEARER against every competitor (reproduced on the previous commit with a fixed-score model).
+- Now: two statistics, each with its own threshold and both held-out checks (deployed threshold and
+  cross-fitted): head-to-head gaps label competitor rows; each page's smallest gap to its predicted
+  neighbours, counted right only if both neighbour orders are right, labels the predicted rank. Gaps
+  come from the model's own scores, and pages the rule placed are left out of calibration and are
+  always UNSURE in the check, with a note that a rule placed them.
+- On the fresh crawl (`freeze-src.db`, 16 queries): 443 head-to-head pairs and 126 adjacent cases
+  in leave-one-query-out. Head-to-head: a 1.00 gap looked accurate in-sample (0.665 on 53%) but was
+  right on 114 of 217 held-out cases, and cross-fitted 7 of 28. Adjacent: no threshold reaches 0.65
+  on 30 cases even in-sample. Dev split of the snapshot, all protocols: no cross-fitted adjacent
+  call. Every call stays UNSURE, as before; the change matters once the data supports a threshold.
+

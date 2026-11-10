@@ -8,8 +8,14 @@ matcher follows RFC 9309:
   user agent equals its product token (case-insensitive), merged, else every ``*`` group, else
   nothing is disallowed; rules before the first ``user-agent`` line belong to no group;
 - rules: ``allow``/``disallow`` patterns match from the start of the path and query, ``*`` matches
-  any characters and a final ``$`` anchors the end; an empty pattern matches nothing;
+  any characters and a final ``$`` anchors the end; an empty pattern matches nothing. Matching is
+  near-linear in the pattern and path, so a hostile rule with many ``*`` cannot stall a crawl;
+- percent-encoding (2.2.2): characters outside printable ASCII are encoded, encoded unreserved
+  characters (letters, digits, ``-._~``) are decoded and other escapes use upper-case hex, on both
+  the pattern and the path;
 - the longest matching pattern wins, and an allow wins a tie; ``/robots.txt`` is always allowed.
+
+A leading UTF-8 byte order mark is ignored, as Google's parser does.
 
 ``crawl-delay`` is not in RFC 9309; it is read from the selected group when present.
 A missing file allows the crawl (the caller passes an empty body).
@@ -75,7 +81,10 @@ def parse_robots(body: str) -> Robots:
     groups: list[_Group] = []
     current: _Group | None = None
     collecting_agents = False
-    for raw in (body or "").splitlines():
+    text = body or ""
+    if text.startswith("\ufeff"):
+        text = text[1:]  # a byte order mark would hide the first user-agent line
+    for raw in text.splitlines():
         line = raw.split("#", 1)[0].strip()
         if ":" not in line:
             continue
@@ -110,13 +119,44 @@ def crawl_delay_seconds(parser: Robots, user_agent: str, *, cap: float = 10.0) -
     return min(float(delay), cap)
 
 
+_UNRESERVED = frozenset("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~")
+_ESCAPE = re.compile(r"%([0-9A-Fa-f]{2})")
+
+
+def _normalise_escape(match: re.Match) -> str:
+    char = chr(int(match.group(1), 16))
+    return char if char in _UNRESERVED else "%" + match.group(1).upper()
+
+
 def _encode(text: str) -> str:
-    """Percent-encode characters outside printable ASCII so patterns and paths compare the same."""
-    return quote(text, safe=_SAFE)
+    """Percent-encode characters outside printable ASCII, decode escaped unreserved characters and
+    upper-case the hex of the rest, so patterns and paths compare the same (RFC 9309 2.2.2)."""
+    return _ESCAPE.sub(_normalise_escape, quote(text, safe=_SAFE))
 
 
 def _matches(pattern: str, target: str) -> bool:
+    """``*`` matches any run of characters and a final ``$`` anchors the end.
+
+    Each literal piece is found at its leftmost position after the previous one, which is exact
+    when ``*`` is the only wildcard and takes near-linear time. A regex here backtracked: a rule
+    with eight ``*`` against a 61-character path took 10 to 60 s.
+    """
     anchored = pattern.endswith("$")
     body = pattern[:-1] if anchored else pattern
-    regex = ".*".join(re.escape(piece) for piece in body.split("*"))
-    return re.match(regex + ("$" if anchored else ""), target) is not None
+    first, *rest = body.split("*")
+    if not target.startswith(first):
+        return False
+    if not rest:
+        return target == first if anchored else True
+    position, end = len(first), len(target)
+    if anchored:
+        last = rest.pop()
+        if not target.endswith(last) or end - len(last) < position:
+            return False
+        end -= len(last)
+    for piece in rest:
+        found = target.find(piece, position, end)
+        if found < 0:
+            return False
+        position = found + len(piece)
+    return True

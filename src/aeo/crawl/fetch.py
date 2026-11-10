@@ -60,7 +60,8 @@ class HostBackoff(Exception):
     """The host asked crawlers to wait longer than this crawl will wait."""
 
 
-PLACEHOLDER_DOMAINS = frozenset({"example.com", "example.org", "example.net", "localhost"})
+# yourdomain.com is the example in the refusal message below, so pasting it verbatim is refused too.
+PLACEHOLDER_DOMAINS = frozenset({"example.com", "example.org", "example.net", "localhost", "yourdomain.com"})
 PLACEHOLDER_SUFFIXES = (".example", ".test", ".invalid", ".localhost", ".example.com", ".example.org", ".example.net")
 
 
@@ -75,9 +76,17 @@ def user_agent_problem(user_agent: str) -> str | None:
     text = (user_agent or "").strip()
     if not text:
         return "the crawler user agent is empty"
-    hosts = [urlsplit(url).hostname or "" for url in re.findall(r"https?://[^\s)]+", text)]
+    # Punctuation after a URL ("https://example.com; bot@...") is not part of its host.
+    hosts = [urlsplit(url).hostname or "" for url in re.findall(r"https?://[^\s)\]<>\"',;]+", text)]
     hosts += [domain for domain in re.findall(r"[\w.+-]+@([\w-]+(?:\.[\w-]+)+)", text)]
-    real = [host.lower() for host in hosts if host and host.lower() not in PLACEHOLDER_DOMAINS and not host.lower().endswith(PLACEHOLDER_SUFFIXES)]
+    hosts = [host.lower().rstrip(".") for host in hosts]
+    real = [
+        host
+        for host in hosts
+        if re.fullmatch(r"[\w-]+(?:\.[\w-]+)+", host)
+        and host not in PLACEHOLDER_DOMAINS
+        and not host.endswith(PLACEHOLDER_SUFFIXES)
+    ]
     if real:
         return None
     if hosts:
@@ -172,9 +181,11 @@ class Crawler:
         except HostBackoff as exc:
             return Fetched(url=current, final_url=current, error=str(exc), robots_status=robots_status)
         try:
-            response, final_url = self._get_following_redirects(current)
+            response, final_url = self._get_following_redirects(current, polite=True)
         except UnsafeURL:
             raise
+        except HostBackoff as exc:
+            return Fetched(url=current, final_url=current, error=str(exc), robots_status=robots_status)
         except httpx.ConnectError as exc:
             if isinstance(exc.__cause__, guard.UnsafeConnect):
                 raise UnsafeURL(str(exc.__cause__)) from None
@@ -329,7 +340,8 @@ class Crawler:
 
     def _robots_for(self, origin: str):
         """RFC 9309: 4xx (unavailable) allows everything; 5xx, 429 or a network failure
-        (unreachable) means assume complete disallow. The result is cached for this crawler."""
+        (unreachable) means assume complete disallow. A file not read in full before the deadline
+        counts as unreachable. The result is cached for this crawler."""
         if origin in self._robots:
             return self._robots[origin]
         robots_url = origin + "/robots.txt"
@@ -339,10 +351,14 @@ class Crawler:
         except RedirectProblem:
             self._robots[origin] = None  # redirect loop: treat as unavailable
             return None
-        except (httpx.HTTPError, UnsafeURL, ValueError):
+        except (httpx.HTTPError, UnsafeURL, ValueError, DeadlineExceeded):
             self._robots[origin] = ROBOTS_UNREACHABLE
             return ROBOTS_UNREACHABLE
         if response.status_code == 429 or response.status_code >= 500:
+            self._robots[origin] = ROBOTS_UNREACHABLE
+            return ROBOTS_UNREACHABLE
+        if response.extensions.get("truncated") == "deadline":
+            # Rules after the cut are unknown, so a partial file is a network failure, not a file.
             self._robots[origin] = ROBOTS_UNREACHABLE
             return ROBOTS_UNREACHABLE
         if response.status_code >= 400:
@@ -382,10 +398,18 @@ class Crawler:
         self._backoff[origin] = (time.monotonic() + wait, count)
         return wait
 
-    def _get_following_redirects(self, url: str, *, any_type: bool = False) -> tuple[httpx.Response, str]:
+    def _get_following_redirects(
+        self, url: str, *, any_type: bool = False, polite: bool = False
+    ) -> tuple[httpx.Response, str]:
+        """``polite``: the caller waited for the first URL's origin; a hop to another origin waits
+        for that origin too, so a host in 429/503 backoff gets no request through a redirect."""
         current = url
+        previous = self._origin(url)
         for _ in range(MAX_REDIRECTS + 1):
             current = assert_safe_url(current, allow_private=self.allow_private, keep_trailing_slash=True)
+            if polite and self._origin(current) != previous:
+                self._polite_wait(current)
+                previous = self._origin(current)
             response = self._get_capped(current, any_type=any_type)
             if response.status_code not in {301, 302, 303, 307, 308}:
                 return response, current

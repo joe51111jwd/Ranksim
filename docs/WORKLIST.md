@@ -131,7 +131,10 @@ fixed in advance.
   accuracy from the label file (P1-10).
 - [ ] B14. LLM explanation numbers checked against the brief; provider selector and model-format
   check (P1-11).
-- [ ] B15. Site prior (content-blind) as one more benchmark baseline row (P1-12).
+- [x] B15. Site prior (content-blind) as one more benchmark baseline row (P1-12). Done: `site_prior`
+  counts training queries that list the page's site; `persistence` (earlier Google position) is a
+  row when labels carry `prior_position`. Dev split: site prior is the best row under every
+  protocol, 8 clusters, no verdict (E16).
 - [ ] B16. LambdaMART regularization and linear label gain, chosen a priori, measured on the
   benchmark and documented whatever the result (P1-3).
 - [ ] B17. Independent review of B1-B16 (multi-lens review with adversarial verification); fix

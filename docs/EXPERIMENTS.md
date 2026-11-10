@@ -289,3 +289,27 @@ benchmark counts a tie as half (what random tie-breaking scores), so the figures
   cleaning decision made from inspecting the crawl, not from any result; the model configuration
   and its id are unchanged, so the recorded final-split run (E12) is not repeated.
 
+## 2026-11-10 E16. A content-blind site prior on the frozen dev split
+
+- `site_prior` scores a page by how many training queries list its site (registrable domain) among
+  their labeled results. It is the web-UI branch's "site history" signal (PR #2 `site_history.py`)
+  without its fitted scale, with the direction fixed in advance. Held-out queries never count, and
+  under cluster-url the held-out URLs are dropped from training first, so only other pages of the
+  same site vote. Specified before this run; not tuned.
+- Frozen dev split (11 queries, 8 clusters, 337 pairs, 1000 resamples), same folds for every row:
+
+  | protocol | LambdaMART | BM25F | domain prior | site prior | random 95% band |
+  |---|---:|---:|---:|---:|---:|
+  | loqo | 0.632 | 0.487 | 0.642 | 0.656 (0.585 to 0.705) | 0.418 to 0.582 |
+  | cluster | 0.543 | 0.487 | 0.571 | 0.602 (0.545 to 0.682) | 0.418 to 0.582 |
+  | cluster-url | 0.528 | 0.487 | 0.568 | 0.614 (0.581 to 0.666) | 0.418 to 0.582 |
+
+- Reading: a signal that reads no page text is the best row under every protocol here, including
+  the one closest to scoring an unseen draft. With 8 clusters no verdict is given, and these are
+  same-snapshot numbers, not accuracy. It agrees with two independent results: PR #2's lab (site
+  history beat the content model) and PR #5's forward check (keeping the previous order beat the
+  content models, E14). For the product question "does my page beat these competitors", the site
+  a page is on may matter more than its text on this kind of query; a page edit cannot move this
+  signal, and the check must not suggest otherwise.
+- No persistence row: `smartcrew/serp.csv` has no `prior_position` column.
+

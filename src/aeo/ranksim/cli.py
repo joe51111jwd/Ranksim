@@ -642,6 +642,16 @@ def _run_benchmark_report(
         from aeo.ranksim.groundtruth import navboost_withhold_reason
 
         notes.append(f"navboost_prior was withheld: {navboost_withhold_reason(labels)}.")
+    from aeo.ranksim.benchmark import has_prior_positions
+
+    if not has_prior_positions(examples):
+        notes.append(
+            "No persistence row: the labels carry no earlier Google position (prior_position), so keeping the previous "
+            "order cannot be scored on this file."
+        )
+    notes.append(
+        "site_prior is content blind: it counts in how many training queries the page's site appears. A page edit cannot move it."
+    )
     if len({row.query for row in examples}) < 2:
         print("Benchmark not computed. Need at least 2 queries with 2 stored pages each.")
         from aeo.ranksim.benchmark import render_coverage
@@ -668,7 +678,7 @@ def _run_benchmark_report(
                 examples,
                 set(final_queries),
                 all_clusters,
-                default_scorers(names, args.seed),
+                default_scorers(names, args.seed, examples),
                 protocols=FINAL_PROTOCOLS,
                 bootstrap=args.bootstrap,
                 seed=args.seed,

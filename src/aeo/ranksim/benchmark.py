@@ -298,6 +298,43 @@ def domain_prior_scorer() -> Scorer:
     return score
 
 
+_SLD2 = frozenset({"co", "com", "org", "net", "gov", "ac", "edu"})
+
+
+def site_key(url: str) -> str:
+    """Registrable site: www and subdomains folded (learn.g2.com -> g2.com, a.example.co.uk ->
+    example.co.uk). The same rule as ``site_history.site_key`` on the web-UI branch (PR #2)."""
+    host = domain_of(url) or ""
+    labels = [part for part in host.lower().strip(".").split(".") if part]
+    if len(labels) >= 3 and len(labels[-1]) == 2 and labels[-2] in _SLD2:
+        return ".".join(labels[-3:])
+    return ".".join(labels[-2:])
+
+
+def site_prior_scorer() -> Scorer:
+    """Content-blind: in how many training queries the page's site appears among the labeled
+    results (the web-UI branch's "site history" signal, without its fitted scale). The direction
+    (more appearances rank higher) is fixed in advance, not learned. Held-out queries are never
+    counted, so a query does not vote for its own results."""
+
+    def score(train: list[RankExample], test: list[RankExample]) -> list[float]:
+        sites_by_query: dict[str, set[str]] = defaultdict(set)
+        for row in train:
+            sites_by_query[row.query].add(site_key(row.url))
+        counts: dict[str, int] = defaultdict(int)
+        for sites in sites_by_query.values():
+            for site in sites:
+                counts[site] += 1
+        return [float(counts.get(site_key(row.url), 0)) for row in test]
+
+    return score
+
+
+def has_prior_positions(examples: list[RankExample]) -> bool:
+    """True when some labeled row carries an earlier Google position (``prior_position``)."""
+    return any((row.features.get("navboost_prior") or 0.0) > 0 for row in examples)
+
+
 def random_scorer(seed: int) -> Scorer:
     def score(_train: list[RankExample], test: list[RankExample]) -> list[float]:
         rng = random.Random(f"{seed}:" + "|".join(sorted(row.query for row in test)))
@@ -306,13 +343,19 @@ def random_scorer(seed: int) -> Scorer:
     return score
 
 
-def default_scorers(feature_names: list[str], seed: int) -> dict[str, Scorer]:
-    return {
+def default_scorers(feature_names: list[str], seed: int, examples: list[RankExample] | None = None) -> dict[str, Scorer]:
+    """The model and its baselines. ``persistence`` (order by the earlier Google position; pages
+    without one tie below) is added only when the labels carry prior positions."""
+    scorers = {
         "lambdamart": lambdamart_scorer(feature_names),
         "bm25f_only": feature_scorer("bm25f"),
         "linear_prior": linear_prior_scorer(),
         "domain_prior": domain_prior_scorer(),
+        "site_prior": site_prior_scorer(),
     }
+    if examples is not None and has_prior_positions(examples):
+        scorers["persistence"] = feature_scorer("navboost_prior")
+    return scorers
 
 
 def random_band(examples: list[RankExample], *, seeds: int = 1000, seed: int = 0) -> NoiseBand:
@@ -460,7 +503,7 @@ def run_benchmark(
         remap.setdefault(all_clusters[query], len(remap))
     clusters = {query: remap[all_clusters[query]] for query in sorted(used)}
     names = list(feature_names or MODEL_FEATURES)
-    chosen = scorers or default_scorers(names, seed)
+    chosen = scorers or default_scorers(names, seed, usable)
     band = random_band(usable, seed=seed)
     results = []
     for protocol in protocols:

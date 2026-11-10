@@ -322,7 +322,13 @@ fixed in advance.
   URL fetches and a Vercel Blob store). Review both read-only: fetch safety against this branch's
   crawler guarantees, Studio auth, CSRF, SSRF and credit spend, deployment exposure, and the
   recovered check (reproduce, leakage, timeline, ties as half). Record E20 and draft requests (not
-  posted); report any live security or cost risk to James.
+  posted); report any live security or cost risk to James. PR #5 then moved to 87ff5ad (bb18150, 87ff5ad: an
+  import of a Serper scrape of 64 pages James supplied, captured Nov 10, after both SERP days; the
+  model on all pairs moves from 0.507 to 0.678 and nothing is adopted). Also review those two
+  commits: the comparison of new slices with the published ones, ties as half, the timeline of the
+  unknown-content rule against the Nov 9 breakdown, the browser user agent and challenge pages, and
+  that no scraped text is committed (checked: the longest string in `scrape_report.json` is 163
+  characters).
 
 - [x] B18. A check says which question it answers (P0-5, backend half): where the page would sit
   among the stored results, not whether Google would show a new page at all; the evidence it cites

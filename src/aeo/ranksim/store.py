@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from sqlalchemy import UniqueConstraint, Boolean, DateTime, Float, Integer, String, Text, create_engine, select
@@ -260,7 +260,9 @@ def append_serp(
     as its latest one). A live collect is its own observation unless its collection time is the
     same, so a re-collect that found the same list is kept. A label file matches on its date, or
     on its list alone when it has no date, so re-importing the same file adds nothing on any day,
-    even after a live collect of the query. An empty list is a real observation and is kept."""
+    even after a live collect of the query. Re-importing an earlier version of an undated file
+    makes its stored list the latest undated one again. An empty list is a real observation and
+    is kept."""
     import uuid
 
     first = hits[0] if hits else None
@@ -282,6 +284,8 @@ def append_serp(
     ).first()
     if seen is None and not dated:
         # A database from before the dated column signed an undated import with its import day.
+        # It signed a dated import the same way, so a row that can only be a dated import is left
+        # out: matching it would mark a real observation as undated.
         legacy = session.query(RsSerpCollection).filter(
             RsSerpCollection.query == query,
             RsSerpCollection.source == source,
@@ -289,12 +293,30 @@ def append_serp(
             RsSerpCollection.dated.is_(None),
         )
         seen = next(
-            (row for row in legacy if _collection_signature(source, provider, row.collected_at.date().isoformat(), body) == row.signature),
+            (
+                row for row in legacy
+                if not collection_dated(row)
+                and _collection_signature(source, provider, row.collected_at.date().isoformat(), body) == row.signature
+            ),
             None,
         )
+        if seen is not None:
+            seen.signature = signature  # so the next import of this list finds it directly
     if seen is not None:
-        if seen.dated is None and source != "live":
-            seen.dated = dated  # a re-import now says whether that older row carried a date
+        if source != "live":
+            if seen.dated is None:
+                seen.dated = dated  # a re-import now says whether that older row carried a date
+            if not dated:
+                # An undated list is ordered by its import time. Importing an earlier version of
+                # the file again makes its list the latest undated one again, without a second row.
+                undated = [
+                    c for c in session.query(RsSerpCollection).filter(
+                        RsSerpCollection.query == query, RsSerpCollection.source == source
+                    )
+                    if not collection_dated(c)
+                ]
+                if pick_latest(undated) is not seen:
+                    seen.collected_at = utcnow()
             session.commit()
         return None
     collection_id = uuid.uuid4().hex
@@ -376,11 +398,24 @@ def serp_collections(session: Session, query: str | None = None, *, include_synt
 
 def collection_dated(collection: RsSerpCollection) -> bool:
     """True when collected_at is when the list was observed. A live collect always is. A label
-    file is only when it carried a date; an older label_file row that did not record this is
-    treated as undated."""
+    file is only when it carried a date. An older label_file row that did not record this is
+    read from its times: that version stored a dated file at UTC midnight of its observed day,
+    and an undated file at its import time."""
     if collection.dated is not None:
         return bool(collection.dated)
-    return collection.source == "live"
+    if collection.source == "live":
+        return True
+    collected, recorded = _utc(collection.collected_at), _utc(collection.recorded_at)
+    if collected is None or (collected.hour, collected.minute, collected.second, collected.microsecond) != (0, 0, 0, 0):
+        return False
+    return recorded is None or abs(recorded - collected) > timedelta(seconds=1)
+
+
+def _utc(value: datetime | None) -> datetime | None:
+    """A stored time as naive UTC (SQLite returns naive UTC, other backends an aware time)."""
+    if value is None or value.tzinfo is None:
+        return value
+    return value.astimezone(timezone.utc).replace(tzinfo=None)
 
 
 def collection_hits(session: Session, collection_id: str) -> list[RsSerp]:

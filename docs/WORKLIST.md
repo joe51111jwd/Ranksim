@@ -232,6 +232,10 @@ fixed in advance.
   - [x] F16: the demo trains with a keywords-only intent map while its whole-site table uses the
     shared source. `serve.py` is PR #2's: README exception and the request above corrected.
 
+- [ ] B21. Review of the B20 fixes as merged (15f23b2..bc813d6), including the review follow-up
+  commits and the merge of the four area branches: multi-lens review with adversarial
+  verification; fix confirmed defects with regression tests.
+
 - [x] B18. A check says which question it answers (P0-5, backend half): where the page would sit
   among the stored results, not whether Google would show a new page at all; the evidence it cites
   is stated with its size (E14, E16, E18). Done: `CheckResult.scope`, printed by the CLI; the web UI

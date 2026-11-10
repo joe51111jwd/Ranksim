@@ -68,22 +68,25 @@ DATABASE = f"sqlite:///{DATA / 'rank.db'}"
 _deployment = os.environ.get("VERCEL_DEPLOYMENT_ID") or os.environ.get("VERCEL_GIT_COMMIT_SHA") or "ranksim-hosted"
 CSRF = hashlib.sha256(f"ranksim-csrf:{_deployment}:{os.environ.get('RANKSIM_SECRET', '')}".encode()).hexdigest()[:43]
 
-if PRIVATE:
-    from aeo.ranksim.cloud import CloudState
+def _build():
+    """The FastAPI app for this environment. Vercel looks for a top-level `app`, so it is assigned once below."""
+    if PRIVATE:
+        from aeo.ranksim.cloud import CloudState
 
-    settings = Settings(_env_file=None, ranksim_database_url=DATABASE)  # provider keys come from the environment
-    cloud = CloudState.from_env(DATA, DATA / "rank.db")
-    app = create_app(
-        settings=settings,
-        database=DATABASE,
-        projects_root=DATA / "projects",
-        public_demo=False,
-        csrf_token=CSRF,
-        access_password=PASSWORD,
-        access_secret=os.environ.get("RANKSIM_SECRET") or None,
-        cloud=cloud,
-        pull_options={"engines": [], "workers": 8, "delay_seconds": 0.25},
-    )
-else:
+        settings = Settings(_env_file=None, ranksim_database_url=DATABASE)  # provider keys come from the environment
+        return create_app(
+            settings=settings,
+            database=DATABASE,
+            projects_root=DATA / "projects",
+            public_demo=False,
+            csrf_token=CSRF,
+            access_password=PASSWORD,
+            access_secret=os.environ.get("RANKSIM_SECRET") or None,
+            cloud=CloudState.from_env(DATA, DATA / "rank.db"),
+            pull_options={"engines": [], "workers": 8, "delay_seconds": 0.25},
+        )
     settings = Settings(_env_file=None, ranksim_database_url=DATABASE, **{name: None for name in KEYS})
-    app = create_app(settings=settings, database=DATABASE, projects_root=DATA / "projects", public_demo=True, csrf_token=CSRF)
+    return create_app(settings=settings, database=DATABASE, projects_root=DATA / "projects", public_demo=True, csrf_token=CSRF)
+
+
+app = _build()

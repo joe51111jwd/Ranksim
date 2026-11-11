@@ -43,7 +43,7 @@ python -m aeo.ranksim forward-freeze \
   --out-dir evals/forward-2026-11-11
 ```
 
-Score that frozen file only after the prediction commit is pushed. It does not refit.
+Score that frozen file only after the prediction commit is pushed. It does not refit. The scored result is `evals/forward-2026-11-11/report.md`.
 
 ```bash
 python -m aeo.ranksim forward-score \

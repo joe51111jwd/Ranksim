@@ -1,4 +1,4 @@
-# Ranksim mission and handoff (as of Nov 10, 2026)
+# Ranksim mission and handoff (as of Nov 11, 2026)
 
 Owner: James Camarota (GitHub joe51111jwd). Any agent picking this up should read this file first.
 
@@ -127,9 +127,31 @@ The model was still fit only on the original 215 Nov 6 HTML rows. None of the sc
 
 Draft versus draft and the text-only version are the same 68/116. The scrape gave text to the drafts that used to have none, so the text slice is no longer 22 pairs. It is the full 116. The rate 0.586 does not clear the published text rate 0.545 by 0.05 (the bar is 0.595). The gain interval is [-0.038, 0.172]. The other three slices cleared their bars, including staying above BM25. The rule needs every slice. `ranker_change` is `none`.
 
+## Nov 11 fresh forward test (PREDICTED, ranker not changed)
+Predictions were frozen in `8365d68` before the Nov 11 file was opened. Details are in `evals/forward-2026-11-11/report.md`. The primary metric is overlap pairwise accuracy: ordered pairs whose URLs were in the candidate list and in the Nov 11 top 10. A tie is not correct. URLs new on Nov 11 are unpredicted. The Nov 10 scrape was not used. `ranker_change` is `none`.
+
+The supplied check is reproduced: Nov 9 order matches Nov 11 on 625/724 (0.863260), and 208 of 299 Nov 9 rows persisted. The table below is rounded to three decimals. The stored rates are in the report.
+
+| Window | Scorer | Overlap pairs | NDCG@10 | Spearman |
+| --- | --- | --- | --- | --- |
+| Nov 9 to Nov 11 | LambdaMART | 508/724 (0.702) | 0.860 | 0.486 |
+| Nov 9 to Nov 11 | BM25 | 321/724 (0.443) | 0.625 | -0.057 |
+| Nov 9 to Nov 11 | Persistence | 625/724 (0.863) | 0.935 | 0.714 |
+| Nov 9 to Nov 11 | Blend | 545/724 (0.753) | 0.851 | 0.542 |
+| Nov 9 to Nov 11 | History-aware, not eligible | 609/724 (0.841) | 0.933 | 0.692 |
+| Nov 6 to Nov 11 | LambdaMART | 396/583 (0.679) | 0.852 | 0.420 |
+| Nov 6 to Nov 11 | BM25 | 252/583 (0.432) | 0.666 | -0.025 |
+| Nov 6 to Nov 11 | Persistence | 483/583 (0.828) | 0.919 | 0.622 |
+| Nov 6 to Nov 11 | Blend | 417/583 (0.715) | 0.847 | 0.473 |
+| Nov 6 to Nov 11 | History-aware, not eligible | 461/583 (0.791) | 0.907 | 0.595 |
+
+Nov 9 to Nov 11 coverage: 88 of 296 Nov 11 rows were unpredicted, and 724 of 1314 pairs were scored. Nov 6 to Nov 11 coverage: 104 of 296 rows were unpredicted, and 583 of 1314 pairs were scored. Exact rates are in the report. These overlap rates are not the old 1,341-pair Nov 9 figure.
+
+Ledger: 2,965 PREDICTED rows, hashes unchanged from `8365d68`, plus 300 REAL outcome rows appended. The Nov 9 ledger file was not edited.
+
 ## The main gap and next work
-Ranksim's core use case, predicting where a new or draft page lands, is still open. With scrape text on the drafts, draft versus draft is 68/116 (0.586) and draft versus a page that already ranked is 184/281 (0.655). The text slice does not clear the gate. Next work:
-1. Take the next snapshot of the same 30 queries. Keep scoring new pages that have text as their own line.
+Ranksim's core use case, predicting where a new or draft page lands, is still open. With scrape text on the drafts, draft versus draft is 68/116 (0.586) and draft versus a page that already ranked is 184/281 (0.655). The text slice does not clear the gate. The Nov 11 test did not change that. Persistence still orders the URLs that stayed. Next work:
+1. On the next snapshot, pre-register an entrant line for URLs that were not on the previous list. Keep the overlap metric separate. Do not retune LambdaMART, the blend, or the history-aware scale on the Nov 11 labels.
 2. The Nov 10 scrape is later than the SERPs. A scrape from the same day as the SERP would remove that caveat.
 3. Use persistence for pages already ranking, and keep the 90% target measured on unseen data with coverage stated.
 4. Apple mockup: blocked on a Superdesign browser sign-in. Resume when that is done, then wait for James's approval.

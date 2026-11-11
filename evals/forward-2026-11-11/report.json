@@ -1,0 +1,515 @@
+{
+  "label": "PREDICTED",
+  "ledger": {
+    "chain": "2965 predictions, chain intact. Latest hash 738daf5722eb5861767e80d9843d93f4a38901ec8750105fcfd1ecc0865753b9.",
+    "forward-2026-11-11-2026-11-06_to_2026-11-11-blend": {
+      "accuracy": 0.715266,
+      "calls": 1296,
+      "correct": 417,
+      "no_outcome_yet": 0,
+      "predictions": 294,
+      "resolved": 583,
+      "unresolved": 713
+    },
+    "forward-2026-11-11-2026-11-06_to_2026-11-11-bm25": {
+      "accuracy": 0.439024,
+      "calls": 1282,
+      "correct": 252,
+      "no_outcome_yet": 0,
+      "predictions": 294,
+      "resolved": 574,
+      "unresolved": 708
+    },
+    "forward-2026-11-11-2026-11-06_to_2026-11-11-history_aware": {
+      "accuracy": 0.790738,
+      "calls": 1296,
+      "correct": 461,
+      "no_outcome_yet": 0,
+      "predictions": 294,
+      "resolved": 583,
+      "unresolved": 713
+    },
+    "forward-2026-11-11-2026-11-06_to_2026-11-11-lambdamart": {
+      "accuracy": 0.688696,
+      "calls": 1283,
+      "correct": 396,
+      "no_outcome_yet": 0,
+      "predictions": 294,
+      "resolved": 575,
+      "unresolved": 708
+    },
+    "forward-2026-11-11-2026-11-06_to_2026-11-11-persistence": {
+      "accuracy": 0.828473,
+      "calls": 1296,
+      "correct": 483,
+      "no_outcome_yet": 0,
+      "predictions": 294,
+      "resolved": 583,
+      "unresolved": 713
+    },
+    "forward-2026-11-11-2026-11-09_to_2026-11-11-blend": {
+      "accuracy": 0.752762,
+      "calls": 1341,
+      "correct": 545,
+      "no_outcome_yet": 0,
+      "predictions": 299,
+      "resolved": 724,
+      "unresolved": 617
+    },
+    "forward-2026-11-11-2026-11-09_to_2026-11-11-bm25": {
+      "accuracy": 0.447075,
+      "calls": 1326,
+      "correct": 321,
+      "no_outcome_yet": 0,
+      "predictions": 299,
+      "resolved": 718,
+      "unresolved": 608
+    },
+    "forward-2026-11-11-2026-11-09_to_2026-11-11-history_aware": {
+      "accuracy": 0.84116,
+      "calls": 1341,
+      "correct": 609,
+      "no_outcome_yet": 0,
+      "predictions": 299,
+      "resolved": 724,
+      "unresolved": 617
+    },
+    "forward-2026-11-11-2026-11-09_to_2026-11-11-lambdamart": {
+      "accuracy": 0.707521,
+      "calls": 1327,
+      "correct": 508,
+      "no_outcome_yet": 0,
+      "predictions": 299,
+      "resolved": 718,
+      "unresolved": 609
+    },
+    "forward-2026-11-11-2026-11-09_to_2026-11-11-persistence": {
+      "accuracy": 0.86326,
+      "calls": 1341,
+      "correct": 625,
+      "no_outcome_yet": 0,
+      "predictions": 299,
+      "resolved": 724,
+      "unresolved": 617
+    }
+  },
+  "ledger_json": "evals/forward-2026-11-11/ledger.json",
+  "outcome_observed_on": "2026-11-11",
+  "outcome_rows": 296,
+  "outcome_serp_sha256": "e4c76d7336febb64e7e54d62f00f7b0a90adfe92f7110934e82d5bd9ca51767b",
+  "outcome_unique_urls": 135,
+  "outcome_window": {
+    "params": {
+      "gl": "us",
+      "hl": "en",
+      "num": 10
+    },
+    "provider": "serper",
+    "request_end_max": "2026-11-11T09:35:31.358838-05:00",
+    "request_start_min": "2026-11-11T09:34:22.130475-05:00"
+  },
+  "primary_metric": "All ordered pairs among URLs that are in the pre-registered candidate list and also in the 2026-11-11 top 10 for the same query. A score tie is not correct. The denominator is correct plus wrong plus ties.",
+  "ranker_change": "none",
+  "windows": {
+    "2026-11-06_to_2026-11-11": {
+      "baseline_observed_on": "2026-11-06",
+      "churn_baseline": {
+        "agree": 483,
+        "baseline_rows": 294,
+        "mean_spearman": 0.621696,
+        "meaning": "Agreement of Nov 6 order with Nov 9 order on URLs that stayed in the same query. Entrants and exits are ignored. Not a model.",
+        "note": "Agreement of the candidate-day order with the outcome on URLs present both days. Not a model.",
+        "pairs": 583,
+        "pairwise": 0.828473,
+        "queries_with_two_shared_urls": 30,
+        "rows_reappeared": 192,
+        "spearman_queries": 30,
+        "ties": 0,
+        "wrong": 100
+      },
+      "coverage": {
+        "candidate_rows": 294,
+        "candidate_rows_in_outcome": 192,
+        "exits": 102,
+        "outcome_pairs": 1314,
+        "outcome_rows": 296,
+        "pair_coverage": 0.443683,
+        "row_coverage": 0.648649,
+        "scored_pairs": 583,
+        "unpredicted_outcome_pairs": 731,
+        "unpredicted_outcome_rows": 104
+      },
+      "label": "PREDICTED",
+      "primary_metric": "All ordered pairs among URLs that are in the pre-registered candidate list and also in the 2026-11-11 top 10 for the same query. A score tie is not correct. The denominator is correct plus wrong plus ties.",
+      "promotion": {
+        "any_scorer_clears_bar": false,
+        "ranker_change": "none",
+        "scorers": {
+          "blend": {
+            "applied": false,
+            "bm25": 0.432247,
+            "clears_bar": false,
+            "delta_vs_persistence_ci": [
+              -0.144207,
+              -0.077511
+            ],
+            "eligible": true,
+            "pairwise": 0.715266,
+            "persistence": 0.828473,
+            "reasons": [
+              "blend 0.715266 does not clear persistence 0.828473 plus 0.05.",
+              "blend gain interval is [-0.14420651970857465, -0.07751137739551581]."
+            ]
+          },
+          "bm25": {
+            "applied": false,
+            "bm25": 0.432247,
+            "clears_bar": false,
+            "delta_vs_persistence_ci": [
+              -0.465048,
+              -0.317588
+            ],
+            "eligible": true,
+            "pairwise": 0.432247,
+            "persistence": 0.828473,
+            "reasons": [
+              "bm25 0.432247 does not clear persistence 0.828473 plus 0.05.",
+              "bm25 gain interval is [-0.46504837274816524, -0.31758843362477857]."
+            ]
+          },
+          "history_aware": {
+            "applied": false,
+            "bm25": 0.432247,
+            "clears_bar": false,
+            "delta_vs_persistence_ci": [
+              -0.059394,
+              -0.017473
+            ],
+            "eligible": false,
+            "pairwise": 0.790738,
+            "persistence": 0.828473,
+            "reasons": [
+              "history_aware is not eligible."
+            ]
+          },
+          "lambdamart": {
+            "applied": false,
+            "bm25": 0.432247,
+            "clears_bar": false,
+            "delta_vs_persistence_ci": [
+              -0.208876,
+              -0.086869
+            ],
+            "eligible": true,
+            "pairwise": 0.679245,
+            "persistence": 0.828473,
+            "reasons": [
+              "lambdamart 0.679245 does not clear persistence 0.828473 plus 0.05.",
+              "lambdamart gain interval is [-0.20887572699281562, -0.08686866520412294]."
+            ]
+          },
+          "persistence": {
+            "applied": false,
+            "bm25": 0.432247,
+            "clears_bar": false,
+            "delta_vs_persistence_ci": [
+              0.0,
+              0.0
+            ],
+            "eligible": false,
+            "pairwise": 0.828473,
+            "persistence": 0.828473,
+            "reasons": [
+              "persistence is not eligible."
+            ]
+          }
+        }
+      },
+      "protocol_prediction_at": "2026-11-07T04:00:00+00:00",
+      "ranker_change": "none",
+      "scorers": {
+        "blend": {
+          "label": "PREDICTED",
+          "ndcg_at_10": 0.847186,
+          "ndcg_queries": 30,
+          "pairwise": {
+            "correct": 417,
+            "pairs": 583,
+            "pairwise": 0.715266,
+            "queries": 30,
+            "ties": 0,
+            "wrong": 166
+          },
+          "spearman": 0.473189,
+          "spearman_queries": 30
+        },
+        "bm25": {
+          "label": "PREDICTED",
+          "ndcg_at_10": 0.666012,
+          "ndcg_queries": 30,
+          "pairwise": {
+            "correct": 252,
+            "pairs": 583,
+            "pairwise": 0.432247,
+            "queries": 30,
+            "ties": 9,
+            "wrong": 322
+          },
+          "spearman": -0.02462,
+          "spearman_queries": 30
+        },
+        "history_aware": {
+          "label": "PREDICTED",
+          "ndcg_at_10": 0.907474,
+          "ndcg_queries": 30,
+          "pairwise": {
+            "correct": 461,
+            "pairs": 583,
+            "pairwise": 0.790738,
+            "queries": 30,
+            "ties": 0,
+            "wrong": 122
+          },
+          "spearman": 0.594675,
+          "spearman_queries": 30
+        },
+        "lambdamart": {
+          "label": "PREDICTED",
+          "ndcg_at_10": 0.8518,
+          "ndcg_queries": 30,
+          "pairwise": {
+            "correct": 396,
+            "pairs": 583,
+            "pairwise": 0.679245,
+            "queries": 30,
+            "ties": 8,
+            "wrong": 179
+          },
+          "spearman": 0.419675,
+          "spearman_queries": 30
+        },
+        "persistence": {
+          "label": "PREDICTED",
+          "ndcg_at_10": 0.918977,
+          "ndcg_queries": 30,
+          "pairwise": {
+            "correct": 483,
+            "pairs": 583,
+            "pairwise": 0.828473,
+            "queries": 30,
+            "ties": 0,
+            "wrong": 100
+          },
+          "spearman": 0.621696,
+          "spearman_queries": 30
+        }
+      },
+      "surviving_url_subset": {
+        "meaning": "URLs in the candidate list and in the outcome top 10. This is the primary pair set.",
+        "pairs": 583,
+        "rows": 192
+      },
+      "target_observed_on": "2026-11-11"
+    },
+    "2026-11-09_to_2026-11-11": {
+      "baseline_observed_on": "2026-11-09",
+      "churn_baseline": {
+        "agree": 625,
+        "baseline_rows": 299,
+        "mean_spearman": 0.714402,
+        "meaning": "Agreement of Nov 6 order with Nov 9 order on URLs that stayed in the same query. Entrants and exits are ignored. Not a model.",
+        "note": "Agreement of the candidate-day order with the outcome on URLs present both days. Not a model.",
+        "pairs": 724,
+        "pairwise": 0.86326,
+        "queries_with_two_shared_urls": 28,
+        "rows_reappeared": 208,
+        "spearman_queries": 28,
+        "ties": 0,
+        "wrong": 99
+      },
+      "coverage": {
+        "candidate_rows": 299,
+        "candidate_rows_in_outcome": 208,
+        "exits": 91,
+        "outcome_pairs": 1314,
+        "outcome_rows": 296,
+        "pair_coverage": 0.550989,
+        "row_coverage": 0.702703,
+        "scored_pairs": 724,
+        "unpredicted_outcome_pairs": 590,
+        "unpredicted_outcome_rows": 88
+      },
+      "label": "PREDICTED",
+      "primary_metric": "All ordered pairs among URLs that are in the pre-registered candidate list and also in the 2026-11-11 top 10 for the same query. A score tie is not correct. The denominator is correct plus wrong plus ties.",
+      "promotion": {
+        "any_scorer_clears_bar": false,
+        "ranker_change": "none",
+        "scorers": {
+          "blend": {
+            "applied": false,
+            "bm25": 0.44337,
+            "clears_bar": false,
+            "delta_vs_persistence_ci": [
+              -0.144976,
+              -0.075589
+            ],
+            "eligible": true,
+            "pairwise": 0.752762,
+            "persistence": 0.86326,
+            "reasons": [
+              "blend 0.752762 does not clear persistence 0.863260 plus 0.05.",
+              "blend gain interval is [-0.14497584389509355, -0.07558872893628858]."
+            ]
+          },
+          "bm25": {
+            "applied": false,
+            "bm25": 0.44337,
+            "clears_bar": false,
+            "delta_vs_persistence_ci": [
+              -0.489025,
+              -0.34521
+            ],
+            "eligible": true,
+            "pairwise": 0.44337,
+            "persistence": 0.86326,
+            "reasons": [
+              "bm25 0.443370 does not clear persistence 0.863260 plus 0.05.",
+              "bm25 gain interval is [-0.48902515292511384, -0.3452104844739309]."
+            ]
+          },
+          "history_aware": {
+            "applied": false,
+            "bm25": 0.44337,
+            "clears_bar": false,
+            "delta_vs_persistence_ci": [
+              -0.04348,
+              -0.001582
+            ],
+            "eligible": false,
+            "pairwise": 0.84116,
+            "persistence": 0.86326,
+            "reasons": [
+              "history_aware is not eligible."
+            ]
+          },
+          "lambdamart": {
+            "applied": false,
+            "bm25": 0.44337,
+            "clears_bar": false,
+            "delta_vs_persistence_ci": [
+              -0.217792,
+              -0.100118
+            ],
+            "eligible": true,
+            "pairwise": 0.701657,
+            "persistence": 0.86326,
+            "reasons": [
+              "lambdamart 0.701657 does not clear persistence 0.863260 plus 0.05.",
+              "lambdamart gain interval is [-0.21779151288506501, -0.10011824538615777]."
+            ]
+          },
+          "persistence": {
+            "applied": false,
+            "bm25": 0.44337,
+            "clears_bar": false,
+            "delta_vs_persistence_ci": [
+              0.0,
+              0.0
+            ],
+            "eligible": false,
+            "pairwise": 0.86326,
+            "persistence": 0.86326,
+            "reasons": [
+              "persistence is not eligible."
+            ]
+          }
+        }
+      },
+      "protocol_prediction_at": "2026-11-10T04:00:00+00:00",
+      "ranker_change": "none",
+      "scorers": {
+        "blend": {
+          "label": "PREDICTED",
+          "ndcg_at_10": 0.851061,
+          "ndcg_queries": 28,
+          "pairwise": {
+            "correct": 545,
+            "pairs": 724,
+            "pairwise": 0.752762,
+            "queries": 28,
+            "ties": 0,
+            "wrong": 179
+          },
+          "spearman": 0.54244,
+          "spearman_queries": 28
+        },
+        "bm25": {
+          "label": "PREDICTED",
+          "ndcg_at_10": 0.625496,
+          "ndcg_queries": 28,
+          "pairwise": {
+            "correct": 321,
+            "pairs": 724,
+            "pairwise": 0.44337,
+            "queries": 28,
+            "ties": 6,
+            "wrong": 397
+          },
+          "spearman": -0.056863,
+          "spearman_queries": 28
+        },
+        "history_aware": {
+          "label": "PREDICTED",
+          "ndcg_at_10": 0.933287,
+          "ndcg_queries": 28,
+          "pairwise": {
+            "correct": 609,
+            "pairs": 724,
+            "pairwise": 0.84116,
+            "queries": 28,
+            "ties": 0,
+            "wrong": 115
+          },
+          "spearman": 0.691512,
+          "spearman_queries": 28
+        },
+        "lambdamart": {
+          "label": "PREDICTED",
+          "ndcg_at_10": 0.860142,
+          "ndcg_queries": 28,
+          "pairwise": {
+            "correct": 508,
+            "pairs": 724,
+            "pairwise": 0.701657,
+            "queries": 28,
+            "ties": 6,
+            "wrong": 210
+          },
+          "spearman": 0.485835,
+          "spearman_queries": 28
+        },
+        "persistence": {
+          "label": "PREDICTED",
+          "ndcg_at_10": 0.935011,
+          "ndcg_queries": 28,
+          "pairwise": {
+            "correct": 625,
+            "pairs": 724,
+            "pairwise": 0.86326,
+            "queries": 28,
+            "ties": 0,
+            "wrong": 99
+          },
+          "spearman": 0.714402,
+          "spearman_queries": 28
+        }
+      },
+      "surviving_url_subset": {
+        "meaning": "URLs in the candidate list and in the outcome top 10. This is the primary pair set.",
+        "pairs": 724,
+        "rows": 208
+      },
+      "target_observed_on": "2026-11-11"
+    }
+  }
+}

@@ -227,6 +227,11 @@ def test_nov9_ledger_file_is_not_rewritten():
     assert digest == NOV9_LEDGER_SHA256
 
 
+PREDICTIONS_SHA256 = "dae9d00a413fca2b07978123e67fc24605338005ee6d5e3623b55ed1f4dc616c"
+PREREGISTRATION_SHA256 = "432c433e8ef34d9fa692940b0619b105618d7807367636bba8308a252039a1cf"
+FREEZE_CHAIN_HEAD = "738daf5722eb5861767e80d9843d93f4a38901ec8750105fcfd1ecc0865753b9"
+
+
 def test_published_freeze_is_still_closed():
     path = ROOT / "evals" / "forward-2026-11-11" / "predictions.json"
     payload = json.loads(path.read_text(encoding="utf-8"))
@@ -242,3 +247,59 @@ def test_published_freeze_is_still_closed():
         assert row["scores"]["persistence"] == -row["candidate_position"]
     text = (ROOT / "evals" / "forward-2026-11-11" / "preregistration.md").read_text(encoding="utf-8")
     assert "PREDICTED" in text and "0.05" in text
+    assert hashlib.sha256(path.read_bytes()).hexdigest() == PREDICTIONS_SHA256
+    assert hashlib.sha256((ROOT / "evals" / "forward-2026-11-11" / "preregistration.md").read_bytes()).hexdigest() == PREREGISTRATION_SHA256
+
+
+def test_scored_report_matches_the_frozen_rows(tmp_path: Path):
+    folder = ROOT / "evals" / "forward-2026-11-11"
+    payload = json.loads((folder / "predictions.json").read_text(encoding="utf-8"))
+    stored = json.loads((folder / "report.json").read_text(encoding="utf-8"))
+    outcome = tmp_path / "outcome"
+    outcome.mkdir()
+    with (folder / "outcome_serp.csv").open(newline="", encoding="utf-8") as handle, (outcome / "serp_serper_live.csv").open(
+        "w", newline="", encoding="utf-8"
+    ) as out:
+        reader = csv.DictReader(handle)
+        writer = csv.writer(out)
+        writer.writerow(["query", "position", "link", "request_start", "request_end"])
+        count = 0
+        for row in reader:
+            writer.writerow(
+                [
+                    row["query"],
+                    row["position"],
+                    row["link"],
+                    "2026-11-11T09:34:22.130475-05:00",
+                    "2026-11-11T09:35:31.358838-05:00",
+                ]
+            )
+            count += 1
+    assert count == 296
+    rescored = score_predictions(payload, outcome / "serp_serper_live.csv")
+    assert rescored["label"] == "PREDICTED"
+    assert rescored["ranker_change"] == "none"
+    assert rescored["outcome_rows"] == 296
+    assert rescored["outcome_unique_urls"] == 135
+    for name in (WINDOW_NOV6, WINDOW_NOV9):
+        left = rescored["windows"][name]
+        right = stored["windows"][name]
+        assert left["churn_baseline"]["agree"] == right["churn_baseline"]["agree"]
+        assert left["churn_baseline"]["pairs"] == right["churn_baseline"]["pairs"]
+        assert left["coverage"]["candidate_rows_in_outcome"] == right["coverage"]["candidate_rows_in_outcome"]
+        assert left["coverage"]["unpredicted_outcome_rows"] == right["coverage"]["unpredicted_outcome_rows"]
+        assert left["promotion"]["ranker_change"] == "none"
+        for scorer in ("lambdamart", "bm25", "persistence", "blend", "history_aware"):
+            assert left["scorers"][scorer]["pairwise"] == right["scorers"][scorer]["pairwise"]
+            assert left["scorers"][scorer]["ndcg_at_10"] == right["scorers"][scorer]["ndcg_at_10"]
+            assert left["scorers"][scorer]["spearman"] == right["scorers"][scorer]["spearman"]
+        if name == WINDOW_NOV9:
+            assert left["churn_baseline"]["agree"] == 625
+            assert left["churn_baseline"]["pairs"] == 724
+            assert left["coverage"]["candidate_rows_in_outcome"] == 208
+    ledger = json.loads((folder / "ledger.json").read_text(encoding="utf-8"))
+    assert len(ledger["predictions"]) == 2965
+    assert ledger["predictions"][-1]["row_hash"] == FREEZE_CHAIN_HEAD
+    assert len(ledger["outcomes"]) == 300
+    assert all(row["depth"] is None for row in ledger["outcomes"])
+    assert "2965 predictions, chain intact" in ledger["scores"]["chain"]

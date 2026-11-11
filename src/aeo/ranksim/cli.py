@@ -128,6 +128,23 @@ def main(argv: list[str] | None = None) -> None:
     forward_eval.add_argument("--ledger-json", default=None, help="Export the prediction chain and the later outcomes.")
     forward_eval.add_argument("--ledger-db", default=None, help="SQLite file for the ledger. Default is in memory.")
 
+    forward_freeze = sub.add_parser(
+        "forward-freeze",
+        help="Write 2026-11-11 predictions from the Nov 6 and Nov 9 snapshots. Does not read the Nov 11 outcome.",
+    )
+    forward_freeze.add_argument("--nov6", required=True)
+    forward_freeze.add_argument("--nov9", required=True)
+    forward_freeze.add_argument("--out-dir", required=True)
+
+    forward_score = sub.add_parser(
+        "forward-score",
+        help="Score a frozen 2026-11-11 prediction file. Does not refit the ranker.",
+    )
+    forward_score.add_argument("--predictions", required=True)
+    forward_score.add_argument("--outcome", required=True, help="2026-11-11 snapshot directory.")
+    forward_score.add_argument("--ledger-json", required=True)
+    forward_score.add_argument("--out", required=True)
+
     new_page = sub.add_parser(
         "new-page-eval",
         help="Score domain, URL, and blend rules for new pages. Nov 9 labels are not used to fit them.",
@@ -285,6 +302,27 @@ def main(argv: list[str] | None = None) -> None:
             if args.ledger_db:
                 forward_args.extend(["--ledger-db", args.ledger_db])
             raise SystemExit(forward_main(forward_args))
+        elif args.command == "forward-freeze":
+            from aeo.ranksim.forward_freeze import main_freeze
+
+            raise SystemExit(main_freeze(["--nov6", args.nov6, "--nov9", args.nov9, "--out-dir", args.out_dir]))
+        elif args.command == "forward-score":
+            from aeo.ranksim.forward_freeze import main_score
+
+            raise SystemExit(
+                main_score(
+                    [
+                        "--predictions",
+                        args.predictions,
+                        "--outcome",
+                        args.outcome,
+                        "--ledger-json",
+                        args.ledger_json,
+                        "--out",
+                        args.out,
+                    ]
+                )
+            )
         elif args.command == "new-page-eval":
             from aeo.ranksim.new_page import main as new_page_main
 

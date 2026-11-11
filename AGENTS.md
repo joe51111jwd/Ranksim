@@ -34,6 +34,25 @@ python -m aeo.ranksim forward-eval \
 
 The scored file already in git is `evals/forward-2026-11-09/report.json`. The new-page check that does not need the private HTML is `evals/forward-2026-11-09/new_page.md`. The Nov 10 recovered-content look is `evals/forward-2026-11-09/recovered.md`. The Serper scrape fill is `evals/forward-2026-11-09/scrape.md`. Read `docs/MISSION.md` before treating any rerun as a new accuracy claim.
 
+The 2026-11-11 predictions were frozen before that outcome was opened:
+
+```bash
+python -m aeo.ranksim forward-freeze \
+  --nov6 <2026-11-06 snapshot dir> \
+  --nov9 <2026-11-09 snapshot dir> \
+  --out-dir evals/forward-2026-11-11
+```
+
+Score that frozen file only after the prediction commit is pushed. It does not refit.
+
+```bash
+python -m aeo.ranksim forward-score \
+  --predictions evals/forward-2026-11-11/predictions.json \
+  --outcome <2026-11-11 snapshot dir> \
+  --ledger-json evals/forward-2026-11-11/ledger.json \
+  --out evals/forward-2026-11-11/report.json
+```
+
 A saved Serper scrape folder (manifest.csv plus raw JSON) is imported with no key:
 
 ```python

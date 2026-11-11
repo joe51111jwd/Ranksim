@@ -1,0 +1,41 @@
+{
+  "html_in_git": false,
+  "inputs": {
+    "2026-11-06": {
+      "html_saved": 97,
+      "organic_rows": 294,
+      "request_window": {
+        "params": {
+          "gl": "us",
+          "hl": "en",
+          "num": 10
+        },
+        "provider": "serper",
+        "request_end_max": "2026-11-06T22:14:29.890912-05:00",
+        "request_start_min": "2026-11-06T22:13:19.579494-05:00"
+      },
+      "serp_sha256": "c70ca9907a5243f092fe407d18ca002dc58a1bad301734fc56b6dad50e900a87"
+    },
+    "2026-11-09": {
+      "html_saved": 103,
+      "organic_rows": 299,
+      "request_window": {
+        "params": {
+          "gl": "us",
+          "hl": "en",
+          "num": 10
+        },
+        "provider": "serper",
+        "request_end_max": "2026-11-09T09:12:27.159595-05:00",
+        "request_start_min": "2026-11-09T09:11:15.348185-05:00"
+      },
+      "serp_sha256": "49a0c8d4b92bd1fd73a2f4fac507394200e724f6c76c611a9c14b9595b3607d0"
+    }
+  },
+  "label": "PREDICTED",
+  "ledger": "ledger.json",
+  "outcome_opened": false,
+  "predictions": "predictions.json",
+  "preregistration": "preregistration.md",
+  "purpose": "Frozen predictions for 2026-11-11. The outcome snapshot is not in this directory."
+}

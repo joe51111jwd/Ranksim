@@ -348,7 +348,12 @@ def test_code_commit_contains_the_frozen_scorer():
     manifest = json.loads((ROOT / MANIFEST_REL).read_text(encoding="utf-8"))
     sha = manifest["code_commit"]
     assert sha == "3ad26130b1d093d64b21c08f8907b789ed61f37e"
-    blob = subprocess.check_output(["git", "show", f"{sha}:src/aeo/ranksim/full_coverage.py"])
+    # Pull-request checkouts are shallow, so the freeze commit may not be present yet.
+    present = subprocess.run(["git", "cat-file", "-e", f"{sha}^{{commit}}"], cwd=ROOT, capture_output=True)
+    if present.returncode != 0:
+        fetched = subprocess.run(["git", "fetch", "--depth=1", "origin", sha], cwd=ROOT, capture_output=True, text=True)
+        assert fetched.returncode == 0, fetched.stderr
+    blob = subprocess.check_output(["git", "show", f"{sha}:src/aeo/ranksim/full_coverage.py"], cwd=ROOT)
     assert blob == (ROOT / "src/aeo/ranksim/full_coverage.py").read_bytes()
 
 

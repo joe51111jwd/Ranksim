@@ -145,6 +145,18 @@ def main(argv: list[str] | None = None) -> None:
     forward_score.add_argument("--ledger-json", required=True)
     forward_score.add_argument("--out", required=True)
 
+    score_next = sub.add_parser(
+        "score-next-snapshot",
+        help="Score a snapshot after 2026-11-11 with the frozen full-coverage line. Does not refit or edit frozen files.",
+    )
+    score_next.add_argument("--snapshot-csv", required=True, help="CSV with query, url or link, and position.")
+    score_next.add_argument("--observed-on", required=True, help="YYYY-MM-DD. Must be after 2026-11-11.")
+    score_next.add_argument("--html-dir", default="", help="Directory with html_manifest.csv. Omit when there is no HTML.")
+    score_next.add_argument("--ledger", default="", help="Append-only JSONL ledger. Default is the next-snapshot track record.")
+    score_next.add_argument("--tranco", default="", help="Optional Tranco file. The frozen weight is 0.")
+    score_next.add_argument("--majestic", default="", help="Optional Majestic Million file. The frozen weight is 0.")
+    score_next.add_argument("--report", default="", help="Optional JSON summary outside the frozen directory.")
+
     new_page = sub.add_parser(
         "new-page-eval",
         help="Score domain, URL, and blend rules for new pages. Nov 9 labels are not used to fit them.",
@@ -323,6 +335,21 @@ def main(argv: list[str] | None = None) -> None:
                     ]
                 )
             )
+        elif args.command == "score-next-snapshot":
+            from aeo.ranksim.full_coverage import main as score_next_main
+
+            forwarded = ["--snapshot-csv", args.snapshot_csv, "--observed-on", args.observed_on]
+            if args.html_dir:
+                forwarded.extend(["--html-dir", args.html_dir])
+            if args.ledger:
+                forwarded.extend(["--ledger", args.ledger])
+            if args.tranco:
+                forwarded.extend(["--tranco", args.tranco])
+            if args.majestic:
+                forwarded.extend(["--majestic", args.majestic])
+            if args.report:
+                forwarded.extend(["--report", args.report])
+            raise SystemExit(score_next_main(forwarded))
         elif args.command == "new-page-eval":
             from aeo.ranksim.new_page import main as new_page_main
 

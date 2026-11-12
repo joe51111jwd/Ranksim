@@ -1,0 +1,39 @@
+{
+  "code_commit": null,
+  "command": "python scripts/score_next_snapshot.py --snapshot-csv path/to/serp.csv --html-dir path/to/html --observed-on YYYY-MM-DD",
+  "gate": "Promotion gate for the next snapshot. This text was written before that snapshot existed.\n\nThe combined predictor clears the gate on that snapshot only when all three are true:\n\n1. On all ordered pairs among the new snapshot's top 10, pairwise accuracy is strictly greater than persistence-ranked-last on the same pairs. Pairwise accuracy is correct / (correct + wrong + ties). A score tie is not correct. Pairs whose outcome positions are equal are not in the denominator.\n\n2. On new-versus-surviving pairs, pairwise accuracy is strictly greater than 0.5.\n\n3. The new-versus-surviving denominator is at least 100 pairs.\n\nPersistence-ranked-last scores a URL that was in the immediately previous snapshot at the negative of that position. A URL that was absent from that snapshot scores -1000, tied with every other absent URL and below every survivor.\n\nA pass does not change the product ranker, the fitted parameters, or the frozen files. The command records the gate result on the track-record ledger. One snapshot of these 30 queries is not a general forecast of Google. This gate was not chosen by looking at the Nov 9 to Nov 11 backtest.",
+  "history": [
+    {
+      "day": "2026-11-06",
+      "path": "evals/forward-2026-11-09/baseline_serp.csv",
+      "role": "Fit features, and domain history for every later score.",
+      "sha256": "7ad4617418b65377a9ed72b68831e66a3b7ceee6a98c34adf05fb0230d0f8e3d"
+    },
+    {
+      "day": "2026-11-09",
+      "path": "evals/forward-2026-11-09/forward_serp.csv",
+      "role": "Labels for the new-URL fit. Domain history afterward. Not a 2026-11-11 feature.",
+      "sha256": "70f92176ab7cce1e12ef28728a9db6170680dc57d6d01418cf05eb18e5c13a71"
+    },
+    {
+      "day": "2026-11-11",
+      "path": "evals/forward-2026-11-11/outcome_serp.csv",
+      "role": "Previous snapshot when the next file is scored. Not used to fit coefficients.",
+      "sha256": "3bda2449a497fcb2ecaf0876a0eafe6c50de1a894f39c8b4733ec3d00d3b9fd0"
+    }
+  ],
+  "label": "PREDICTED",
+  "purpose": "Full-coverage predictor frozen before the next Serper snapshot after 2026-11-11. code_commit is the commit that contains these pinned bytes.",
+  "sha256": {
+    "evals/preregistered/next-snapshot/params.json": "caa475734e4dafdd3b929a66ca99f6f5283d29109876be31a016a49f354b0e13",
+    "evals/preregistered/next-snapshot/preregistration.md": "a8aa13b210ef5433d380ac1e23b0976b70a50063ea295a392d0036531f5df484",
+    "scripts/score_next_snapshot.py": "e0c5adf46029e5e231d9a5ebe44025605fb5905a59f393f544b9a1d77382564d",
+    "src/aeo/crawl/extract.py": "759b58ce5d2f438c89bf9c8e8b0f5f1f258386756a29636dacbfa29ca59c4534",
+    "src/aeo/crawl/urls.py": "0d715e4b2b88bf82f4518e296265b51bfb7478c2ce16c9beb37b999615bf42d0",
+    "src/aeo/ranksim/bm25f.py": "8ec9d4219b4ab8f360aa6b849d1e04b2b9d701367c738ad041c6975db2d42606",
+    "src/aeo/ranksim/full_coverage.py": "78ea55c93de65a364064f191ad9071caea7e8139f6a686ee89b422001af95f88",
+    "src/aeo/ranksim/metrics.py": "9b10e100332652bb12c962f8da9cb9d990c853586e35e7d5e8ce9a66274c3a2e",
+    "src/aeo/ranksim/snapshot_protocol.py": "4b809a41a41bd9c80157ce4a5d920b6673f7e17cdb47d209123299ffde96236d",
+    "src/aeo/textutil.py": "1d8503f9d2e909253d975bbbbf437061d1b5fd302a14be5ab91fcf619b368a00"
+  }
+}

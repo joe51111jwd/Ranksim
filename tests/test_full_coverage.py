@@ -342,6 +342,16 @@ def test_preregistration_contains_the_gate_text():
     assert "python scripts/score_next_snapshot.py" in text
 
 
+def test_code_commit_contains_the_frozen_scorer():
+    import subprocess
+
+    manifest = json.loads((ROOT / MANIFEST_REL).read_text(encoding="utf-8"))
+    sha = manifest["code_commit"]
+    assert sha == "3ad26130b1d093d64b21c08f8907b789ed61f37e"
+    blob = subprocess.check_output(["git", "show", f"{sha}:src/aeo/ranksim/full_coverage.py"])
+    assert blob == (ROOT / "src/aeo/ranksim/full_coverage.py").read_bytes()
+
+
 def test_frozen_files_match_the_manifest_and_the_literals():
     manifest = json.loads((ROOT / MANIFEST_REL).read_text(encoding="utf-8"))
     assert manifest["sha256"] == PINNED_SHA256

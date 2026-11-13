@@ -745,9 +745,9 @@
 
     const acc = P.model && P.model.pairwise != null ? P.model.pairwise : null;
     grid.append(h('section', { class: 'tile' },
-      h('div', { class: 'tile-k', text: 'Model accuracy' }),
-      ring(acc, acc != null ? pct(acc) : 'n/a', 'held out'),
-      h('div', { class: 'tile-sub', text: acc != null ? 'Page pairs ordered right on searches it never saw.' : 'Appears once rankings are pulled.' })));
+      h('div', { class: 'tile-k', text: 'Same-day backtest' }),
+      ring(acc, acc != null ? pct(acc) : 'n/a', 'pairs right'),
+      h('div', { class: 'tile-sub', text: acc != null ? 'Each search left out of training, same Google snapshot. 50% is a coin flip. Not forward accuracy.' : 'Appears once rankings are pulled.' })));
 
     const issues = h('div', { class: 'rows' });
     for (const issue of R.issues.slice(0, 6)) issues.append(issueRow(issue, true));

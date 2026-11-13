@@ -16,6 +16,9 @@ Examples:
   python -m aeo.ranksim project test smartcrew page.html --url https://www.smartcrewhq.com/all-in-one-dirt-work-software/
   python -m aeo.ranksim project engines smartcrew
   python -m aeo.ranksim serve            (the web UI on http://127.0.0.1:8765/)
+  python -m aeo.ranksim index build --snapshot /path/to/snapshot --offline
+  python -m aeo.ranksim index status
+  python -m aeo.ranksim index refresh --snapshot /path/to/snapshot
 """
 
 from __future__ import annotations
@@ -251,6 +254,7 @@ def main(argv: list[str] | None = None) -> None:
     optimize_cmd.add_argument("--serp", default="smartcrew/serp.csv", help="Labeled Google file")
 
     _add_project_parser(sub)
+    _add_index_parser(sub)
 
     serve = sub.add_parser("serve", help="Serve the web UI: projects, Pull now, Test a page. The old demo is at /demo.")
     serve.add_argument("--host", default="127.0.0.1", help="Default 127.0.0.1 (this computer only). 0.0.0.0 exposes it with no login.")
@@ -399,6 +403,59 @@ def main(argv: list[str] | None = None) -> None:
             code = _optimize(settings, database, args)
             if code:
                 raise SystemExit(code)
+        elif args.command == "index":
+            from aeo.ranksim.localindex.build import run_build, run_status
+            from aeo.ranksim.localindex.scope import project_index_dir, project_scope
+            from aeo.ranksim.project import ProjectError, load_project
+
+            try:
+                project = load_project(args.project, root=args.projects_dir) if args.project else None
+            except ProjectError as exc:
+                print(str(exc), file=sys.stderr)
+                raise SystemExit(2) from exc
+            index_dir = args.index_dir or (str(project_index_dir(project)) if project is not None else "data/index")
+            if args.index_command == "status":
+                raise SystemExit(run_status(index_dir))
+            tracked = None
+            seeds = None
+            only = None
+            if project is not None:
+                tracked, seeds = project_scope(project)
+                only = tracked
+                if not tracked:
+                    print(f"{project.name} has no searches. Add searches, then build the index.", file=sys.stderr)
+                    raise SystemExit(2)
+            if not settings.serper_api_key and not args.offline and not args.estimate_only:
+                print(
+                    "SERPER_API_KEY is not set. Serper search and Serper scrape are skipped. "
+                    "HTTP, the browser, Common Crawl, and Wayback still run.",
+                    file=sys.stderr,
+                )
+            raise SystemExit(
+                run_build(
+                    index_dir,
+                    snapshots=args.snapshot,
+                    queries_file=args.queries,
+                    num=args.num,
+                    depth=args.depth,
+                    credit_cap=args.credit_cap,
+                    offline=args.offline,
+                    estimate_only=args.estimate_only,
+                    refresh=args.index_command == "refresh",
+                    skip_search=args.skip_search,
+                    stale_days=args.stale_days,
+                    delay_seconds=args.delay,
+                    use_browser=not args.no_browser,
+                    max_internal=args.max_internal,
+                    allow_private=settings.crawl_allow_private,
+                    user_agent=settings.crawl_user_agent,
+                    api_key=settings.serper_api_key,
+                    timeout=settings.request_timeout_seconds,
+                    seed_candidates=seeds,
+                    tracked_queries=tracked,
+                    only_queries=only,
+                )
+            )
         elif args.command == "project":
             from aeo.ranksim.project import ProjectError
 
@@ -417,6 +474,37 @@ def main(argv: list[str] | None = None) -> None:
     except ValueError as exc:
         print(str(exc), file=sys.stderr)
         raise SystemExit(2) from exc
+
+
+def _add_index_parser(sub) -> None:
+    index = sub.add_parser("index", help="Local page index in data/index/. SQLite and parquet, outside git.")
+    commands = index.add_subparsers(dest="index_command", required=True)
+
+    def _shared(parser) -> None:
+        parser.add_argument("--project", default=None, help="Project name or slug. Uses that project's searches, pulls, and competitors.")
+        parser.add_argument("--projects-dir", default=None, help="Default data/projects, or RANKSIM_PROJECTS_DIR.")
+        parser.add_argument("--index-dir", default=None, help="Index directory. Default is the project index, or data/index when no project is set.")
+        parser.add_argument("--snapshot", action="append", default=[], help="Snapshot directory with a SERP CSV and optional html/. Repeatable. With --project, only that project's searches are kept.")
+        parser.add_argument("--queries", default=None, help="Text file of tracked queries, one per line. Snapshot queries are always included.")
+        parser.add_argument("--num", type=int, default=100, help="Serper organic results per query, up to 100. Positions 11-100 are labels.")
+        parser.add_argument("--depth", type=int, default=1, help="Internal-link hops from ranking pages. 0 keeps the SERP URLs only.")
+        parser.add_argument("--credit-cap", type=int, default=300, help="Hard Serper credit ceiling for this build. Default 300.")
+        parser.add_argument("--offline", action="store_true", help="Seed from snapshot HTML only. No Serper, fetch, browser, or archive call.")
+        parser.add_argument("--estimate-only", action="store_true", help="Print the credit estimate and write the local seed. Do not spend credits.")
+        parser.add_argument("--skip-search", action="store_true", help="Do not call Serper search. Still fetches URLs that are already candidates.")
+        parser.add_argument("--stale-days", type=int, default=14, help="On refresh, refetch full text older than this many days.")
+        parser.add_argument("--delay", type=float, default=1.0, help="Seconds between fetches to the same host.")
+        parser.add_argument("--no-browser", action="store_true", help="Skip the headless browser rung.")
+        parser.add_argument("--max-internal", type=int, default=50, help="Relevant internal URLs kept per ranking domain.")
+
+    build = commands.add_parser("build", help="Gather candidates, fetch the ladder, and write coverage.")
+    _shared(build)
+    refresh = commands.add_parser("refresh", help="Rebuild candidates and refetch missing or stale pages.")
+    _shared(refresh)
+    status = commands.add_parser("status", help="Print coverage for the index on disk.")
+    status.add_argument("--project", default=None, help="Project name or slug.")
+    status.add_argument("--projects-dir", default=None, help="Default data/projects, or RANKSIM_PROJECTS_DIR.")
+    status.add_argument("--index-dir", default=None, help="Index directory. Default is the project index, or data/index.")
 
 
 def _add_project_parser(sub) -> None:

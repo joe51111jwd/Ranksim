@@ -159,9 +159,32 @@ Surviving versus surviving is 518/605 (0.856198) for both the combined line and 
 
 216 of 298 rows had HTML (96 unique URLs). 82 rows had no text. Missing text adds no push. The Nov 11 ledger file was not edited.
 
+## Local page index
+Ranksim now keeps a local index of the pages it ranks. For a project the command is `python -m aeo.ranksim index build --project NAME` (also `status` and `refresh`). The index lives in that project's folder. It uses the project's searches, the URLs in its pulls, and the competitor domains saved on Setup. The same build is **Build page index** on the Setup page (`POST /p/<slug>/index`), with progress on the job and coverage at `GET /p/<slug>/index`. If `SERPER_API_KEY` is missing, the tool says so and still fetches with HTTP, the browser, Common Crawl, and Wayback. Serper search and scrape stay off until the key is set. The pool can also include a Serper search with num up to 100, so positions 11-100 are labels, and relevant internal links of ranking domains. The fetch ladder is HTTP (robots for our crawler), then a headless browser, then Serper scrape, then the newer of Common Crawl and Wayback. Each page stores source and capture date. Corpus PageRank, anchor text, and per-domain stats are computed from the stored pages. Details and the box command are in `docs/INDEX.md`.
+
+An offline seed of the Nov 13 snapshot spent 0 credits. Usable main text is on 210 of 298 top-10 rows (70.5%), 93 unique URLs. The snapshot file count was 216 rows and 96 URLs. 6 rows (3 URLs) were too thin to use. 59 unique top-10 URLs still have no usable text: 33 robots disallow, 11 challenge pages, 9 HTTP 403, 3 thin, 2 SSL errors, 1 HTTP 429. Depth 1 also listed 726 internal URLs and did not fetch them. The 95% top-10 target is not met by the seed.
+
+The frozen scorer from `3ad2613` is unchanged. The index is the feature source for BM25F retrieval (full text and anchors) when `data/index/index.sqlite` is present. No ranker was promoted.
+
+The live build, run on the box with `SERPER_API_KEY` set and never printed:
+
+```bash
+tar -xzf ranksim-live-snapshot-2026-11-13.tgz -C /tmp
+python -m aeo.ranksim index build \
+  --index-dir data/index \
+  --snapshot /tmp/ranksim-live-snapshot-2026-11-13 \
+  --num 100 \
+  --depth 1 \
+  --max-internal 50 \
+  --credit-cap 300 \
+  --delay 1
+```
+
+Estimate before spend: 60 credits if each of the 30 queries is one num=100 search (2 credits). Extra pages, if a response is only 10 long, stop so that 118 credits stay for scrapes. Those 118 are the 59 missing top-10 URLs at 2 credits each. The worst case is 10 credits a scrape (590), which the cap cannot cover in one run. The hard stop is 300. A run that pays 60 for search and 2 per scrape of those 59 URLs spends 178. HTTP, the browser, Common Crawl, and Wayback are free and run before scrape.
+
 ## The main gap and next work
 Ranksim's core use case, predicting where a new or draft page lands, is still short of the 90% target. On this one Nov 13 snapshot, new versus surviving is 354/522 (0.678161) and new versus new is 120/205 (0.585366). The earlier draft slices are unchanged: with scrape text, draft versus draft is 68/116 (0.586) and draft versus a page that already ranked is 184/281 (0.655). Persistence still orders the URLs that stayed. Next work:
-1. Leave the `3ad2613` freeze untouched. Do not retune the full-coverage coefficients, LambdaMART, the blend, or the history-aware scale on the Nov 11 or Nov 13 labels.
+1. Leave the `3ad2613` freeze untouched. Do not retune the full-coverage coefficients, LambdaMART, the blend, or the history-aware scale on the Nov 11 or Nov 13 labels. The next paid step is the index build in `docs/INDEX.md`, cap 300 credits, on the box. That run fills page text. It does not promote a ranker.
 2. Keep the 90% target on unseen data, with coverage stated. This gate was a point comparison on 30 queries, and a pass can be noise.
 3. Use the Nov 11 position for pages that already ranked. The combined survivor score on Nov 13 is that position.
 4. Apple mockup: blocked on a Superdesign browser sign-in. Resume when that is done, then wait for James's approval.

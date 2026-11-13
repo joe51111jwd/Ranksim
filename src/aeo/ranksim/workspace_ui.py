@@ -6,6 +6,8 @@ Routes (registered by serve.create_app)
   POST /demo/synthetic                    build the synthetic demo (no keys, no network)
   POST /demo/historical                   build the SmartCrew historical demo (loopback only)
   GET  /p/{slug}                          1. Setup: data source, coverage by query, competitors, import
+  POST /p/{slug}/index                    build this project's page index in the background
+  GET  /p/{slug}/index                    coverage of that index (JSON)
   POST /p/{slug}/competitors              save competitor domains
   GET  /p/{slug}/comparisons?q=&sel=      2. Comparisons: observed order next to PREDICTED order for one query
   GET  /p/{slug}/draft?q=&from=           3. Draft test form, and recent runs
@@ -18,10 +20,11 @@ Synthetic data is labeled SYNTHETIC on every page of a synthetic project.
 
 from __future__ import annotations
 
+import json
 from urllib.parse import quote, urlencode
 
 from fastapi import FastAPI, Query, Request
-from fastapi.responses import HTMLResponse, RedirectResponse, Response
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from starlette.concurrency import run_in_threadpool
 
 from aeo.ranksim import workspace as ws
@@ -322,7 +325,12 @@ def setup_body(ui, project, meta, *, running=None, message: str = "", error: str
     if running is not None:
         parts.append(serve._job_panel(ui, running, redirect=False))
     main = [_source_panel(ui, project, meta, google, pulls, engine_ready, csrf), _coverage_panel(project, meta, cov, engine_ready)]
-    side = [_competitor_panel(ui, project, meta, cov, csrf, competitor_problems), _import_panel(ui, project, meta, csrf), _keys_panel(ui)]
+    side = [
+        _competitor_panel(ui, project, meta, cov, csrf, competitor_problems),
+        _index_panel(ui, project, csrf),
+        _import_panel(ui, project, meta, csrf),
+        _keys_panel(ui),
+    ]
     parts.append(f'<div class="split"><div class="split-main">{"".join(main)}</div><aside class="split-side">{"".join(side)}</aside></div>')
     return "".join(parts)
 
@@ -512,6 +520,41 @@ def _import_panel(ui, project, meta, csrf: str) -> str:
         '<p class="hint" id="csv-date-h">Left empty, the data is shown as "pull date not recorded".</p></div>'
         '<label class="check"><input type="checkbox" name="add_searches" value="1" checked> Add queries from the file to this project</label>'
         '<div class="form-actions"><button type="submit" class="btn">Check and import</button></div></form></div></section>'
+    )
+
+
+def _index_panel(ui, project, csrf: str) -> str:
+    from aeo.ranksim.localindex.scope import project_index_dir
+
+    report_path = project_index_dir(project) / "coverage.json"
+    summary = "<p>No page index yet. A build stores the text of the pages that rank for this project's queries, plus competitor homepages.</p>"
+    if report_path.is_file():
+        try:
+            report = json.loads(report_path.read_text(encoding="utf-8"))
+            pct = float(report["top10_text_pct"])
+            summary = (
+                f"<p><b>{int(report['top10_with_text'])} of {int(report['top10_rows'])}</b> top-10 rows have usable text "
+                f"({pct:.0%}). <a href=\"/p/{e(project.slug)}/index\">Coverage detail</a></p>"
+            )
+        except (OSError, ValueError, KeyError):
+            summary = "<p>The index coverage file could not be read.</p>"
+    if ui.settings.serper_api_key:
+        key = "SERPER_API_KEY is set. The build prints the credit estimate before it spends anything."
+    else:
+        key = "SERPER_API_KEY is not set. Serper search and scrape stay off. HTTP, the browser, Common Crawl, and Wayback still run."
+    form = ""
+    if not ui.public_demo:
+        form = (
+            f'<form method="post" action="/p/{e(project.slug)}/index" class="form">'
+            + csrf
+            + '<div class="form-actions"><button type="submit" class="btn">Build page index</button></div></form>'
+        )
+    return (
+        '<section class="panel"><div class="panel-head"><h2>Page index</h2></div><div class="panel-body">'
+        + summary
+        + f'<p class="hint">{e(key)}</p>'
+        + form
+        + "</div></section>"
     )
 
 
@@ -1230,7 +1273,7 @@ def register(app: FastAPI, ui) -> None:
             project, meta = load(slug)
         except LookupError:
             return serve._not_found(ui)
-        running = ui.jobs.get(job) if job else ui.jobs.active(slug, "pull")
+        running = ui.jobs.get(job) if job else (ui.jobs.active(slug, "index") or ui.jobs.active(slug, "pull"))
         if running is not None and running.slug != slug:
             running = None
         message = _message_text(msg)
@@ -1254,6 +1297,64 @@ def register(app: FastAPI, ui) -> None:
             body = setup_body(ui, project, meta, message=f"Saved {len(found)} competitors.", competitor_problems=problems)
             return shell(ui, f"Setup: {project.name}", body, project=project, meta=meta, tab="setup")
         return RedirectResponse(f"/p/{slug}?msg=competitors-{len(found)}", status_code=303)
+
+    @app.post("/p/{slug}/index")
+    async def start_index(slug: str, request: Request) -> Response:
+        form = await request.form()
+        serve._check_csrf(ui, form)
+        try:
+            project, _meta = load(slug)
+        except LookupError:
+            return serve._not_found(ui)
+        if ui.public_demo:
+            return shell(ui, "Page index", setup_body(ui, project, _meta, error="This public demo does not build an index. Run Ranksim locally."), project=project, meta=_meta, tab="setup", status=403)
+        existing = ui.jobs.active(slug, "index")
+        if existing is not None:
+            return RedirectResponse(f"/p/{slug}?job={existing.id}", status_code=303)
+        job = ui.jobs.start("index", slug, f"Page index for {project.name}", lambda job: serve._index_work(ui, slug, job))
+        return RedirectResponse(f"/p/{slug}?job={job.id}", status_code=303)
+
+    @app.get("/p/{slug}/index")
+    def index_status(slug: str, request: Request, format: str = "") -> Response:
+        try:
+            project, meta = load(slug)
+        except LookupError:
+            return serve._not_found(ui)
+        if ui.public_demo:
+            return JSONResponse({"error": "Not available on the public demo."}, status_code=404)
+        from aeo.ranksim.localindex.scope import project_index_dir
+
+        folder = project_index_dir(project)
+        path = folder / "coverage.json"
+        if not path.is_file():
+            payload = {"error": "No page index yet. Build one from Setup.", "slug": project.slug, "queries": list(project.searches)}
+            accept = request.headers.get("accept", "")
+            if format == "json" or ("application/json" in accept and "text/html" not in accept):
+                return JSONResponse(payload, status_code=404)
+            return shell(ui, "Page index", f'<div class="page-head"><h1>Page index</h1><p>{e(payload["error"])}</p></div>', project=project, meta=meta, tab="setup", status=404)
+        try:
+            report = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return JSONResponse({"error": "The coverage file could not be read."}, status_code=500)
+        report["slug"] = project.slug
+        report["index_dir"] = str(folder)
+        accept = request.headers.get("accept", "")
+        if format == "json" or ("application/json" in accept and "text/html" not in accept):
+            return JSONResponse(report)
+        missing = report.get("missing") or []
+        items = "".join(
+            f"<li>{e(item.get('url'))} <span class=\"muted\">{e(item.get('reason') or '')}</span></li>" for item in missing[:50]
+        )
+        more = f"<p class=\"hint\">{len(missing) - 50} more are in the JSON.</p>" if len(missing) > 50 else ""
+        pct = float(report.get("top10_text_pct") or 0)
+        body = (
+            '<div class="page-head"><div><h1>Page index</h1>'
+            f'<p class="sub">{int(report.get("top10_with_text") or 0)} of {int(report.get("top10_rows") or 0)} '
+            f"top-10 rows have usable text ({pct:.0%}). Target is 95%.</p></div></div>"
+            f'<p><a href="/p/{e(project.slug)}/index?format=json">Coverage JSON</a></p>'
+            f"<ul>{items}</ul>{more}"
+        )
+        return shell(ui, "Page index", body, project=project, meta=meta, tab="setup")
 
     @app.get("/p/{slug}/comparisons", response_class=HTMLResponse)
     def comparisons_page(slug: str, q: str = "", sel: str = "", sort: str = "") -> Response:

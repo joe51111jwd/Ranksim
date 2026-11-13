@@ -109,6 +109,9 @@ STEP_LABELS = {
     "simulate": "AI answer simulation (PREDICTED)",
     "save": "Save this version",
     "done": "Finished",
+    "index_estimate": "Credit estimate",
+    "index_fetch": "Fetch page text",
+    "index_coverage": "Text coverage",
 }
 
 
@@ -412,6 +415,7 @@ class UiState:
         legacy_state: DemoState | None = None,
         legacy_factory: Callable[[], DemoState] | None = None,
         pull_options: dict | None = None,
+        index_options: dict | None = None,
         preview_fetch: Callable[[str], tuple[str, str]] | None = None,
         llm_factory: Callable[[], object] | None = None,
         max_upload_bytes: int = MAX_UPLOAD_BYTES,
@@ -429,6 +433,7 @@ class UiState:
         self.csrf = csrf_token or secrets.token_urlsafe(32)
         self.jobs = JobManager(self.scrub)
         self.pull_options = dict(pull_options or {})
+        self.index_options = dict(index_options or {})
         self.preview_fetch = preview_fetch or (lambda url: fetch_preview(settings, url))
         self.llm_factory = llm_factory or (lambda: resolve_llm(settings))
         self.max_upload_bytes = max_upload_bytes
@@ -642,6 +647,7 @@ def create_app(
     legacy_factory: Callable[[], DemoState] | None = None,
     allowed_hosts: list[str] | None = None,
     pull_options: dict | None = None,
+    index_options: dict | None = None,
     preview_fetch: Callable[[str], tuple[str, str]] | None = None,
     llm_factory: Callable[[], object] | None = None,
     max_upload_bytes: int = MAX_UPLOAD_BYTES,
@@ -665,6 +671,7 @@ def create_app(
         legacy_state=state,
         legacy_factory=legacy_factory,
         pull_options=pull_options,
+        index_options=index_options,
         preview_fetch=preview_fetch,
         llm_factory=llm_factory,
         max_upload_bytes=max_upload_bytes,
@@ -703,7 +710,7 @@ def create_app(
     from aeo.ranksim import workspace_ui
 
     if ui.public_demo:
-        public_blocked = re.compile(r"^/(api/jobs|p/[^/]+/(advanced|test|results|versions|compare|engines|jobs|searches|import|pull)(/|$|\.))")
+        public_blocked = re.compile(r"^/(api/jobs|p/[^/]+/(advanced|test|results|versions|compare|engines|jobs|searches|import|pull|index)(/|$|\.))")
 
         @app.middleware("http")
         async def _public_only_workspace(request: Request, call_next):
@@ -1119,6 +1126,40 @@ async def _import_csv(ui: UiState, project, form):
 # ---------------------------------------------------------------------------
 # Work done in background threads
 # ---------------------------------------------------------------------------
+
+
+def _index_work(ui: UiState, slug: str, job: Job) -> str:
+    """Build this project's page index. A missing Serper key skips the paid rungs and keeps going."""
+    from aeo.ranksim.localindex.build import run_build
+    from aeo.ranksim.localindex.scope import project_index_dir, project_scope
+
+    project = ui.project(slug)
+    queries, seeds = project_scope(project)
+    if not queries:
+        raise ValueError(f"{project.name} has no searches. Add searches, then build the index.")
+    key = (ui.settings.serper_api_key or "").strip() or None
+
+    def progress(step: str, message: str, done: int = 0, total: int = 0) -> None:
+        ui.jobs.event(job, step, message, done, total)
+
+    options = {
+        "user_agent": ui.settings.crawl_user_agent,
+        "timeout": ui.settings.request_timeout_seconds,
+        "allow_private": ui.settings.crawl_allow_private,
+        "delay_seconds": ui.settings.crawl_delay_seconds,
+    }
+    options.update(ui.index_options)
+    run_build(
+        project_index_dir(project),
+        seed_candidates=seeds,
+        tracked_queries=queries,
+        only_queries=queries,
+        api_key=key,
+        on_progress=progress,
+        emit=lambda line: progress("index_estimate", line, 1, 1) if line.startswith("SERPER_API_KEY is not set") else None,
+        **options,
+    )
+    return f"/p/{slug}/index"
 
 
 def _pull_work(ui: UiState, slug: str, job: Job) -> str:

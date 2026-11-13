@@ -595,7 +595,7 @@ def test_cli_project_flow(tmp_path, monkeypatch, capsys):
         cli.main([*base, "test", "dirt-crew", str(page), "--url", OUR_URL, "--projects-dir", root, "--json", "--fail-on-regression"])
     assert stopped.value.code == 1
     data = json.loads(capsys.readouterr().out)
-    assert data["topic_regressions"] and data["summary"]["off_topic"] == 4
+    assert data["topic_regressions"] and data["summary"]["off_topic"] == 3 and data["summary"]["uncertain"] == 1
     # A usage error is exit 2, never 1.
     with pytest.raises(SystemExit) as stopped:
         cli.main([*base, "test", "dirt-crew", str(page), "--projects-dir", root])

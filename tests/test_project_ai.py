@@ -160,10 +160,11 @@ def test_board_uses_the_site_history_slot_and_prints_its_accuracy(keyless):
     assert "YOUR PAGE (PREDICTED #" in text and not any(dash in text for dash in DASHES)
     # Content blind among on-topic pages: a weaker on-topic page gets the same headline slot, and the board says so.
     weak = proj.test_page(ctx, page_html("Hi", "Hi", paragraphs=2), OUR_URL, save=False)
-    assert all(row.topic.on_topic for row in weak.searches)
+    assert all(row.topic.status in {"on topic", "uncertain"} for row in weak.searches)
     assert [row.site_position for row in weak.searches] == [row.site_position for row in board.searches]
     lead = proj.plain_lead(board)
-    assert lead.startswith("PREDICTED: your page is on topic for 4 of your 4 key searches")
+    assert lead.startswith("PREDICTED: your page is on topic for 1 of your 4 key searches")
+    assert "UNSURE because the topic check is unvalidated" in lead
     assert "comes from your site, not the page text" in lead and "today" not in lead and "page one" not in lead
     assert proj.plain_lead_from_dict(board.to_dict()) == lead
 

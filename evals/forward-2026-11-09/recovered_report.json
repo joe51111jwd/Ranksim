@@ -1,0 +1,2231 @@
+{
+  "label": "PREDICTED",
+  "protocol_commit": "6a0910a68554421d3104040b2c65e07f8a77d5a1",
+  "browser_timeout_commit": "4391bb5",
+  "ranker_change": "none",
+  "adoption": {
+    "adopt": false,
+    "margin": 0.05,
+    "reason": "draft_vs_draft_with_content 0.581 does not clear 0.595. draft_vs_draft_with_content 0.581 is below BM25 0.613. draft_vs_draft_with_content interval includes no gain or a loss.",
+    "slices": {
+      "draft_vs_draft": {
+        "pairwise": 0.6551724137931034,
+        "pairs": 116,
+        "correct": 76,
+        "published": 0.29310344827586204,
+        "bm25": 0.5086206896551724,
+        "delta_vs_published_ci": [
+          0.09817438841554837,
+          0.4584678663289587
+        ],
+        "rate_ci": [
+          0.3912778366914104,
+          0.7515713146048207
+        ]
+      },
+      "draft_vs_draft_with_content": {
+        "pairwise": 0.5806451612903226,
+        "pairs": 31,
+        "correct": 18,
+        "published": 0.5454545454545454,
+        "bm25": 0.6129032258064516,
+        "delta_vs_published_ci": [
+          -0.2121212121212121,
+          0.18196969696969623
+        ],
+        "rate_ci": [
+          0.3333333333333333,
+          0.7274242424242416
+        ]
+      },
+      "draft_vs_returning": {
+        "pairwise": 0.6476868327402135,
+        "pairs": 281,
+        "correct": 182,
+        "published": 0.47686832740213525,
+        "bm25": 0.5302491103202847,
+        "delta_vs_published_ci": [
+          0.09719652430215864,
+          0.23259113205732418
+        ],
+        "rate_ci": [
+          0.5740648517042939,
+          0.7094594594594594
+        ]
+      },
+      "draft_vs_returning_with_content": {
+        "pairwise": 0.6306818181818182,
+        "pairs": 176,
+        "correct": 111,
+        "published": 0.5209580838323353,
+        "bm25": 0.4772727272727273,
+        "delta_vs_published_ci": [
+          0.032711710356526646,
+          0.17538797257705485
+        ],
+        "rate_ci": [
+          0.553669794188862,
+          0.6963460564093902
+        ]
+      }
+    },
+    "label": "PREDICTED"
+  },
+  "published_lambdamart": {
+    "draft_vs_draft": 0.29310344827586204,
+    "draft_vs_draft_with_content": 0.5454545454545454,
+    "draft_vs_returning": 0.47686832740213525,
+    "draft_vs_returning_with_content": 0.5209580838323353
+  },
+  "recovery": {
+    "2026-11-06": {
+      "missing": 46,
+      "recovered": 3,
+      "still_missing": 43,
+      "by_method": {
+        "http": 2,
+        "browser": 1
+      }
+    },
+    "2026-11-09": {
+      "missing": 52,
+      "recovered": 4,
+      "still_missing": 48,
+      "by_method": {
+        "browser": 2,
+        "http": 2
+      }
+    }
+  },
+  "unique_missing": 65,
+  "recovered_pages": 5,
+  "signal_coverage": {
+    "domains": 84,
+    "majestic_refsubnets": 52,
+    "tranco_popularity": 50,
+    "cc_pagerank": 0,
+    "open_pagerank": 0
+  },
+  "clicks": "Clicks, impressions, and on-site behavior are not available.",
+  "offpage_notes": {
+    "majestic_million": "Free CSV, no key. CC BY 3.0. https://downloads.majestic.com/majestic_million.csv",
+    "tranco": "Free top list, no key. Popularity, not a backlink count. https://tranco-list.eu/top-1m.csv.zip",
+    "common_crawl": "The domain-rank file is free and keyless and is multiple gigabytes. It was not downloaded, so cc_pagerank added nothing.",
+    "open_pagerank": "Free signup key at https://www.domcop.com/openpagerank/. Not requested. OPEN_PAGERANK_API_KEY was unset.",
+    "moz": "Moz Link API needs a free signup token at https://moz.com/products/api. Not requested and not wired.",
+    "majestic_api": "The Majestic API beyond the Million CSV needs a key at https://developer.majestic.com/. Not requested."
+  },
+  "coverage": {
+    "baseline_rows": 294,
+    "forward_rows": 299,
+    "returning_rows": 202,
+    "entrant_rows": 97,
+    "exits": 92,
+    "html_baseline": 183,
+    "html_forward_fetch_only": 35,
+    "html_missing": 71,
+    "html_recovered": 10,
+    "content_missing": 71,
+    "queries": 30,
+    "training_examples": 215,
+    "training_queries": 30
+  },
+  "scorers": {
+    "lambdamart": {
+      "all": {
+        "correct": 885,
+        "wrong": 448,
+        "ties": 8,
+        "pairs": 1341,
+        "queries": 30,
+        "pairwise": 0.6599552572706935,
+        "ci": [
+          0.6235785813206715,
+          0.6911111111111111
+        ]
+      },
+      "draft_vs_draft": {
+        "correct": 76,
+        "wrong": 39,
+        "ties": 1,
+        "pairs": 116,
+        "queries": 16,
+        "pairwise": 0.6551724137931034,
+        "ci": [
+          0.3927918118466899,
+          0.759506329113924
+        ]
+      },
+      "draft_vs_draft_with_content": {
+        "correct": 18,
+        "wrong": 13,
+        "ties": 0,
+        "pairs": 31,
+        "queries": 9,
+        "pairwise": 0.5806451612903226,
+        "ci": [
+          0.35294117647058826,
+          0.7272727272727273
+        ]
+      },
+      "draft_vs_returning": {
+        "correct": 182,
+        "wrong": 98,
+        "ties": 1,
+        "pairs": 281,
+        "queries": 23,
+        "pairwise": 0.6476868327402135,
+        "ci": [
+          0.5782976527624442,
+          0.7132479232150875
+        ]
+      },
+      "draft_vs_returning_with_content": {
+        "correct": 111,
+        "wrong": 65,
+        "ties": 0,
+        "pairs": 176,
+        "queries": 19,
+        "pairwise": 0.6306818181818182,
+        "ci": [
+          0.555541012216405,
+          0.697152557319224
+        ]
+      },
+      "ndcg_at_10": 0.7774979475006955,
+      "spearman": 0.4131735539041791
+    },
+    "bm25": {
+      "all": {
+        "correct": 678,
+        "wrong": 654,
+        "ties": 9,
+        "pairs": 1341,
+        "queries": 30,
+        "pairwise": 0.5055928411633109,
+        "ci": [
+          0.46560489060489063,
+          0.5466228624186438
+        ]
+      },
+      "draft_vs_draft": {
+        "correct": 59,
+        "wrong": 55,
+        "ties": 2,
+        "pairs": 116,
+        "queries": 16,
+        "pairwise": 0.5086206896551724,
+        "ci": [
+          0.42718193770226537,
+          0.6111394557823128
+        ]
+      },
+      "draft_vs_draft_with_content": {
+        "correct": 19,
+        "wrong": 11,
+        "ties": 1,
+        "pairs": 31,
+        "queries": 9,
+        "pairwise": 0.6129032258064516,
+        "ci": [
+          0.4821263227513228,
+          0.8670588235294096
+        ]
+      },
+      "draft_vs_returning": {
+        "correct": 149,
+        "wrong": 131,
+        "ties": 1,
+        "pairs": 281,
+        "queries": 23,
+        "pairwise": 0.5302491103202847,
+        "ci": [
+          0.4663990315570073,
+          0.5978279872301612
+        ]
+      },
+      "draft_vs_returning_with_content": {
+        "correct": 84,
+        "wrong": 92,
+        "ties": 0,
+        "pairs": 176,
+        "queries": 19,
+        "pairwise": 0.4772727272727273,
+        "ci": [
+          0.40107142857142863,
+          0.5605170855568945
+        ]
+      },
+      "ndcg_at_10": 0.6261303213441697,
+      "spearman": 0.028640206728498527
+    },
+    "persistence": {
+      "all": {
+        "correct": 931,
+        "wrong": 215,
+        "ties": 195,
+        "pairs": 1341,
+        "queries": 30,
+        "pairwise": 0.6942580164056674,
+        "ci": [
+          0.6051666666666667,
+          0.7733512304250558
+        ]
+      },
+      "draft_vs_draft": {
+        "correct": 0,
+        "wrong": 0,
+        "ties": 116,
+        "pairs": 116,
+        "queries": 16,
+        "pairwise": 0.0,
+        "ci": [
+          0.0,
+          0.0
+        ]
+      },
+      "draft_vs_draft_with_content": {
+        "correct": 0,
+        "wrong": 0,
+        "ties": 31,
+        "pairs": 31,
+        "queries": 9,
+        "pairwise": 0.0,
+        "ci": [
+          0.0,
+          0.0
+        ]
+      },
+      "draft_vs_returning": {
+        "correct": 200,
+        "wrong": 81,
+        "ties": 0,
+        "pairs": 281,
+        "queries": 23,
+        "pairwise": 0.7117437722419929,
+        "ci": [
+          0.6222749073468498,
+          0.801985638124252
+        ]
+      },
+      "draft_vs_returning_with_content": {
+        "correct": 138,
+        "wrong": 38,
+        "ties": 0,
+        "pairs": 176,
+        "queries": 19,
+        "pairwise": 0.7840909090909091,
+        "ci": [
+          0.6971428571428572,
+          0.870199158031088
+        ]
+      },
+      "ndcg_at_10": 0.9023166517472718,
+      "spearman": 0.6487139666714468
+    },
+    "blend": {
+      "all": {
+        "correct": 934,
+        "wrong": 387,
+        "ties": 20,
+        "pairs": 1341,
+        "queries": 30,
+        "pairwise": 0.6964951528709918,
+        "ci": [
+          0.6554790948666788,
+          0.738255033557047
+        ]
+      },
+      "draft_vs_draft": {
+        "correct": 57,
+        "wrong": 39,
+        "ties": 20,
+        "pairs": 116,
+        "queries": 16,
+        "pairwise": 0.49137931034482757,
+        "ci": [
+          0.4236064189189189,
+          0.7073170731707317
+        ]
+      },
+      "draft_vs_draft_with_content": {
+        "correct": 19,
+        "wrong": 11,
+        "ties": 1,
+        "pairs": 31,
+        "queries": 9,
+        "pairwise": 0.6129032258064516,
+        "ci": [
+          0.4821263227513228,
+          0.8670588235294096
+        ]
+      },
+      "draft_vs_returning": {
+        "correct": 195,
+        "wrong": 86,
+        "ties": 0,
+        "pairs": 281,
+        "queries": 23,
+        "pairwise": 0.693950177935943,
+        "ci": [
+          0.6122355791631721,
+          0.7751684355652672
+        ]
+      },
+      "draft_vs_returning_with_content": {
+        "correct": 132,
+        "wrong": 44,
+        "ties": 0,
+        "pairs": 176,
+        "queries": 19,
+        "pairwise": 0.75,
+        "ci": [
+          0.6614562665343916,
+          0.824686856858988
+        ]
+      },
+      "ndcg_at_10": 0.8355032141946769,
+      "spearman": 0.5353824138797628
+    },
+    "history_aware": {
+      "all": {
+        "correct": 1009,
+        "wrong": 312,
+        "ties": 20,
+        "pairs": 1341,
+        "queries": 30,
+        "pairwise": 0.7524235645041014,
+        "ci": [
+          0.700963708675118,
+          0.799851598173516
+        ]
+      },
+      "draft_vs_draft": {
+        "correct": 57,
+        "wrong": 39,
+        "ties": 20,
+        "pairs": 116,
+        "queries": 16,
+        "pairwise": 0.49137931034482757,
+        "ci": [
+          0.4236064189189189,
+          0.7073170731707317
+        ]
+      },
+      "draft_vs_draft_with_content": {
+        "correct": 19,
+        "wrong": 11,
+        "ties": 1,
+        "pairs": 31,
+        "queries": 9,
+        "pairwise": 0.6129032258064516,
+        "ci": [
+          0.4821263227513228,
+          0.8670588235294096
+        ]
+      },
+      "draft_vs_returning": {
+        "correct": 200,
+        "wrong": 81,
+        "ties": 0,
+        "pairs": 281,
+        "queries": 23,
+        "pairwise": 0.7117437722419929,
+        "ci": [
+          0.619347158218126,
+          0.8021592616017077
+        ]
+      },
+      "draft_vs_returning_with_content": {
+        "correct": 138,
+        "wrong": 38,
+        "ties": 0,
+        "pairs": 176,
+        "queries": 19,
+        "pairwise": 0.7840909090909091,
+        "ci": [
+          0.6972805952019435,
+          0.864409513395298
+        ]
+      },
+      "ndcg_at_10": 0.8789947150735167,
+      "spearman": 0.6252751772311147
+    }
+  },
+  "forward_report_scorers": {
+    "lambdamart": {
+      "pairwise": {
+        "queries": 30,
+        "pairs": 1341,
+        "correct": 885,
+        "wrong": 448,
+        "ties": 8,
+        "pairwise": 0.659955
+      },
+      "returning_only": {
+        "queries": 28,
+        "pairs": 667,
+        "correct": 457,
+        "wrong": 204,
+        "ties": 6,
+        "pairwise": 0.685157
+      },
+      "entrant_vs_returning": {
+        "queries": 28,
+        "pairs": 479,
+        "correct": 310,
+        "wrong": 168,
+        "ties": 1,
+        "pairwise": 0.647182
+      },
+      "entrant_vs_entrant": {
+        "queries": 23,
+        "pairs": 195,
+        "correct": 118,
+        "wrong": 76,
+        "ties": 1,
+        "pairwise": 0.605128
+      },
+      "draft_vs_returning": {
+        "queries": 23,
+        "pairs": 281,
+        "correct": 182,
+        "wrong": 98,
+        "ties": 1,
+        "pairwise": 0.647687
+      },
+      "draft_vs_draft": {
+        "queries": 16,
+        "pairs": 116,
+        "correct": 76,
+        "wrong": 39,
+        "ties": 1,
+        "pairwise": 0.655172
+      },
+      "ndcg_at_10": 0.777498,
+      "spearman": 0.413174,
+      "spearman_queries": 30,
+      "ndcg_queries": 30
+    },
+    "bm25": {
+      "pairwise": {
+        "queries": 30,
+        "pairs": 1341,
+        "correct": 678,
+        "wrong": 654,
+        "ties": 9,
+        "pairwise": 0.505593
+      },
+      "returning_only": {
+        "queries": 28,
+        "pairs": 667,
+        "correct": 318,
+        "wrong": 343,
+        "ties": 6,
+        "pairwise": 0.476762
+      },
+      "entrant_vs_returning": {
+        "queries": 28,
+        "pairs": 479,
+        "correct": 259,
+        "wrong": 219,
+        "ties": 1,
+        "pairwise": 0.54071
+      },
+      "entrant_vs_entrant": {
+        "queries": 23,
+        "pairs": 195,
+        "correct": 101,
+        "wrong": 92,
+        "ties": 2,
+        "pairwise": 0.517949
+      },
+      "draft_vs_returning": {
+        "queries": 23,
+        "pairs": 281,
+        "correct": 149,
+        "wrong": 131,
+        "ties": 1,
+        "pairwise": 0.530249
+      },
+      "draft_vs_draft": {
+        "queries": 16,
+        "pairs": 116,
+        "correct": 59,
+        "wrong": 55,
+        "ties": 2,
+        "pairwise": 0.508621
+      },
+      "ndcg_at_10": 0.62613,
+      "spearman": 0.02864,
+      "spearman_queries": 30,
+      "ndcg_queries": 30
+    },
+    "persistence": {
+      "pairwise": {
+        "queries": 30,
+        "pairs": 1341,
+        "correct": 931,
+        "wrong": 215,
+        "ties": 195,
+        "pairwise": 0.694258
+      },
+      "returning_only": {
+        "queries": 28,
+        "pairs": 667,
+        "correct": 594,
+        "wrong": 73,
+        "ties": 0,
+        "pairwise": 0.890555
+      },
+      "entrant_vs_returning": {
+        "queries": 28,
+        "pairs": 479,
+        "correct": 337,
+        "wrong": 142,
+        "ties": 0,
+        "pairwise": 0.703549
+      },
+      "entrant_vs_entrant": {
+        "queries": 23,
+        "pairs": 195,
+        "correct": 0,
+        "wrong": 0,
+        "ties": 195,
+        "pairwise": 0.0
+      },
+      "draft_vs_returning": {
+        "queries": 23,
+        "pairs": 281,
+        "correct": 200,
+        "wrong": 81,
+        "ties": 0,
+        "pairwise": 0.711744
+      },
+      "draft_vs_draft": {
+        "queries": 16,
+        "pairs": 116,
+        "correct": 0,
+        "wrong": 0,
+        "ties": 116,
+        "pairwise": 0.0
+      },
+      "ndcg_at_10": 0.902317,
+      "spearman": 0.648714,
+      "spearman_queries": 29,
+      "ndcg_queries": 30
+    },
+    "blend": {
+      "pairwise": {
+        "queries": 30,
+        "pairs": 1341,
+        "correct": 934,
+        "wrong": 387,
+        "ties": 20,
+        "pairwise": 0.696495
+      },
+      "returning_only": {
+        "queries": 28,
+        "pairs": 667,
+        "correct": 506,
+        "wrong": 161,
+        "ties": 0,
+        "pairwise": 0.758621
+      },
+      "entrant_vs_returning": {
+        "queries": 28,
+        "pairs": 479,
+        "correct": 332,
+        "wrong": 147,
+        "ties": 0,
+        "pairwise": 0.693111
+      },
+      "entrant_vs_entrant": {
+        "queries": 23,
+        "pairs": 195,
+        "correct": 96,
+        "wrong": 79,
+        "ties": 20,
+        "pairwise": 0.492308
+      },
+      "draft_vs_returning": {
+        "queries": 23,
+        "pairs": 281,
+        "correct": 195,
+        "wrong": 86,
+        "ties": 0,
+        "pairwise": 0.69395
+      },
+      "draft_vs_draft": {
+        "queries": 16,
+        "pairs": 116,
+        "correct": 57,
+        "wrong": 39,
+        "ties": 20,
+        "pairwise": 0.491379
+      },
+      "ndcg_at_10": 0.835503,
+      "spearman": 0.535382,
+      "spearman_queries": 30,
+      "ndcg_queries": 30
+    },
+    "history_aware": {
+      "pairwise": {
+        "queries": 30,
+        "pairs": 1341,
+        "correct": 1009,
+        "wrong": 312,
+        "ties": 20,
+        "pairwise": 0.752424
+      },
+      "returning_only": {
+        "queries": 28,
+        "pairs": 667,
+        "correct": 574,
+        "wrong": 93,
+        "ties": 0,
+        "pairwise": 0.86057
+      },
+      "entrant_vs_returning": {
+        "queries": 28,
+        "pairs": 479,
+        "correct": 339,
+        "wrong": 140,
+        "ties": 0,
+        "pairwise": 0.707724
+      },
+      "entrant_vs_entrant": {
+        "queries": 23,
+        "pairs": 195,
+        "correct": 96,
+        "wrong": 79,
+        "ties": 20,
+        "pairwise": 0.492308
+      },
+      "draft_vs_returning": {
+        "queries": 23,
+        "pairs": 281,
+        "correct": 200,
+        "wrong": 81,
+        "ties": 0,
+        "pairwise": 0.711744
+      },
+      "draft_vs_draft": {
+        "queries": 16,
+        "pairs": 116,
+        "correct": 57,
+        "wrong": 39,
+        "ties": 20,
+        "pairwise": 0.491379
+      },
+      "ndcg_at_10": 0.878995,
+      "spearman": 0.625275,
+      "spearman_queries": 30,
+      "ndcg_queries": 30,
+      "adopted": false,
+      "adoption_reason": "No fair split exists that scores a prior position without using the 2026-11-09 labels. Family-out on 2026-11-06 would train on the same positions it would call history. The rule was pre-registered and is scored once. It is not adopted."
+    }
+  },
+  "attempts": [
+    {
+      "url": "https://help.hcss.com/s/article/VIDEO-How-to-Setup-Package-Alternates-in-HeavyBid",
+      "method": null,
+      "attempts": [
+        {
+          "method": "http",
+          "ok": false,
+          "reason": "challenge_page"
+        },
+        {
+          "method": "browser",
+          "ok": false,
+          "reason": "challenge_page"
+        },
+        {
+          "method": "serper",
+          "ok": false,
+          "reason": "SERPER_API_KEY is not set"
+        }
+      ],
+      "title": "",
+      "word_count": 0
+    },
+    {
+      "url": "https://help.hcss.com/s/article/How-to-create-a-Single-Alternate",
+      "method": null,
+      "attempts": [
+        {
+          "method": "http",
+          "ok": false,
+          "reason": "challenge_page"
+        },
+        {
+          "method": "browser",
+          "ok": false,
+          "reason": "challenge_page"
+        },
+        {
+          "method": "serper",
+          "ok": false,
+          "reason": "SERPER_API_KEY is not set"
+        }
+      ],
+      "title": "",
+      "word_count": 0
+    },
+    {
+      "url": "https://www.g2.com/products/heavyjob/competitors/alternatives",
+      "method": null,
+      "attempts": [
+        {
+          "method": "http",
+          "ok": false,
+          "reason": "HTTP 403"
+        },
+        {
+          "method": "browser",
+          "ok": false,
+          "reason": "challenge_page"
+        },
+        {
+          "method": "serper",
+          "ok": false,
+          "reason": "SERPER_API_KEY is not set"
+        }
+      ],
+      "title": "",
+      "word_count": 0
+    },
+    {
+      "url": "https://www.facebook.com/fb-answers/hcss-software-alternative/",
+      "method": null,
+      "attempts": [
+        {
+          "method": "http",
+          "ok": false,
+          "reason": "Blocked by robots.txt"
+        },
+        {
+          "method": "browser",
+          "ok": false,
+          "reason": "Blocked by robots.txt"
+        },
+        {
+          "method": "serper",
+          "ok": false,
+          "reason": "SERPER_API_KEY is not set"
+        }
+      ],
+      "title": "",
+      "word_count": 0
+    },
+    {
+      "url": "https://www.reddit.com/r/estimators/comments/11jjop2/estimating_software_options/",
+      "method": null,
+      "attempts": [
+        {
+          "method": "http",
+          "ok": false,
+          "reason": "Blocked by robots.txt"
+        },
+        {
+          "method": "browser",
+          "ok": false,
+          "reason": "Blocked by robots.txt"
+        },
+        {
+          "method": "serper",
+          "ok": false,
+          "reason": "SERPER_API_KEY is not set"
+        }
+      ],
+      "title": "",
+      "word_count": 0
+    },
+    {
+      "url": "https://www.reddit.com/r/estimators/comments/1twtuwz/what_is_some_good_earthwork_estimating_software/",
+      "method": null,
+      "attempts": [
+        {
+          "method": "http",
+          "ok": false,
+          "reason": "Blocked by robots.txt"
+        },
+        {
+          "method": "browser",
+          "ok": false,
+          "reason": "Blocked by robots.txt"
+        },
+        {
+          "method": "serper",
+          "ok": false,
+          "reason": "SERPER_API_KEY is not set"
+        }
+      ],
+      "title": "",
+      "word_count": 0
+    },
+    {
+      "url": "https://www.reddit.com/r/estimators/comments/1nyalj7/best_sitework_takeoff_programs_for_an_earthmover/",
+      "method": null,
+      "attempts": [
+        {
+          "method": "http",
+          "ok": false,
+          "reason": "Blocked by robots.txt"
+        },
+        {
+          "method": "browser",
+          "ok": false,
+          "reason": "Blocked by robots.txt"
+        },
+        {
+          "method": "serper",
+          "ok": false,
+          "reason": "SERPER_API_KEY is not set"
+        }
+      ],
+      "title": "",
+      "word_count": 0
+    },
+    {
+      "url": "https://www.reddit.com/r/estimators/comments/155p2il/what_take_off_software_do_you_use_for_civil/",
+      "method": null,
+      "attempts": [
+        {
+          "method": "http",
+          "ok": false,
+          "reason": "Blocked by robots.txt"
+        },
+        {
+          "method": "browser",
+          "ok": false,
+          "reason": "Blocked by robots.txt"
+        },
+        {
+          "method": "serper",
+          "ok": false,
+          "reason": "SERPER_API_KEY is not set"
+        }
+      ],
+      "title": "",
+      "word_count": 0
+    },
+    {
+      "url": "https://thedigitalprojectmanager.com/tools/best-construction-project-management-software/",
+      "method": "http",
+      "attempts": [
+        {
+          "method": "http",
+          "ok": true,
+          "reason": "fetched"
+        },
+        {
+          "method": "browser",
+          "ok": false,
+          "reason": "not tried: http succeeded"
+        },
+        {
+          "method": "serper",
+          "ok": false,
+          "reason": "not tried: http succeeded"
+        }
+      ],
+      "title": "Top Construction Project Management Software In 2026",
+      "word_count": 6691,
+      "file": "b6ac00a96ba0d273.html"
+    },
+    {
+      "url": "https://www.reddit.com/r/ConstructionManagers/comments/1cklw28/which_software_is_essential_for_a_construction/",
+      "method": null,
+      "attempts": [
+        {
+          "method": "http",
+          "ok": false,
+          "reason": "Blocked by robots.txt"
+        },
+        {
+          "method": "browser",
+          "ok": false,
+          "reason": "Blocked by robots.txt"
+        },
+        {
+          "method": "serper",
+          "ok": false,
+          "reason": "SERPER_API_KEY is not set"
+        }
+      ],
+      "title": "",
+      "word_count": 0
+    },
+    {
+      "url": "https://www.quora.com/What-is-the-best-software-for-a-construction-company-to-use-that-utilizes-cost-estimation-and-project-management",
+      "method": null,
+      "attempts": [
+        {
+          "method": "http",
+          "ok": false,
+          "reason": "Blocked by robots.txt"
+        },
+        {
+          "method": "browser",
+          "ok": false,
+          "reason": "Blocked by robots.txt"
+        },
+        {
+          "method": "serper",
+          "ok": false,
+          "reason": "SERPER_API_KEY is not set"
+        }
+      ],
+      "title": "",
+      "word_count": 0
+    },
+    {
+      "url": "https://www.quora.com/Which-is-the-best-construction-project-management-software-for-Builders",
+      "method": null,
+      "attempts": [
+        {
+          "method": "http",
+          "ok": false,
+          "reason": "Blocked by robots.txt"
+        },
+        {
+          "method": "browser",
+          "ok": false,
+          "reason": "Blocked by robots.txt"
+        },
+        {
+          "method": "serper",
+          "ok": false,
+          "reason": "SERPER_API_KEY is not set"
+        }
+      ],
+      "title": "",
+      "word_count": 0
+    },
+    {
+      "url": "https://www.sage.com/en-us/sage-construction/heavy-civil/",
+      "method": "browser",
+      "attempts": [
+        {
+          "method": "http",
+          "ok": false,
+          "reason": "HTTP 403"
+        },
+        {
+          "method": "browser",
+          "ok": true,
+          "reason": "rendered"
+        },
+        {
+          "method": "serper",
+          "ok": false,
+          "reason": "not tried: browser succeeded"
+        }
+      ],
+      "title": "Heavy Civil Construction Software | Sage US",
+      "word_count": 2165,
+      "file": "8ed5108895519723.html"
+    },
+    {
+      "url": "https://www.facebook.com/fb-answers/hcss-heavyjob-alternatives/",
+      "method": null,
+      "attempts": [
+        {
+          "method": "http",
+          "ok": false,
+          "reason": "Blocked by robots.txt"
+        },
+        {
+          "method": "browser",
+          "ok": false,
+          "reason": "Blocked by robots.txt"
+        },
+        {
+          "method": "serper",
+          "ok": false,
+          "reason": "SERPER_API_KEY is not set"
+        }
+      ],
+      "title": "",
+      "word_count": 0
+    },
+    {
+      "url": "https://www.fieldwire.com/blog/best-construction-management-software/",
+      "method": null,
+      "attempts": [
+        {
+          "method": "http",
+          "ok": false,
+          "reason": "challenge_page"
+        },
+        {
+          "method": "browser",
+          "ok": false,
+          "reason": "challenge_page"
+        },
+        {
+          "method": "serper",
+          "ok": false,
+          "reason": "SERPER_API_KEY is not set"
+        }
+      ],
+      "title": "",
+      "word_count": 0
+    },
+    {
+      "url": "https://www.softwareadvice.com/construction/b2w-estimating-and-bidding-profile/alternatives/",
+      "method": null,
+      "attempts": [
+        {
+          "method": "http",
+          "ok": false,
+          "reason": "HTTP 403"
+        },
+        {
+          "method": "browser",
+          "ok": false,
+          "reason": "challenge_page"
+        },
+        {
+          "method": "serper",
+          "ok": false,
+          "reason": "SERPER_API_KEY is not set"
+        }
+      ],
+      "title": "",
+      "word_count": 0
+    },
+    {
+      "url": "https://www.reddit.com/r/estimators/comments/1ldsr0l/estimating_software_options_not_b2w/",
+      "method": null,
+      "attempts": [
+        {
+          "method": "http",
+          "ok": false,
+          "reason": "Blocked by robots.txt"
+        },
+        {
+          "method": "browser",
+          "ok": false,
+          "reason": "Blocked by robots.txt"
+        },
+        {
+          "method": "serper",
+          "ok": false,
+          "reason": "SERPER_API_KEY is not set"
+        }
+      ],
+      "title": "",
+      "word_count": 0
+    },
+    {
+      "url": "https://www.g2.com/products/b2w-schedule/competitors/alternatives",
+      "method": null,
+      "attempts": [
+        {
+          "method": "http",
+          "ok": false,
+          "reason": "HTTP 403"
+        },
+        {
+          "method": "browser",
+          "ok": false,
+          "reason": "challenge_page"
+        },
+        {
+          "method": "serper",
+          "ok": false,
+          "reason": "SERPER_API_KEY is not set"
+        }
+      ],
+      "title": "",
+      "word_count": 0
+    },
+    {
+      "url": "https://www.capterra.com/p/183197/B2W-Estimate/alternatives/",
+      "method": null,
+      "attempts": [
+        {
+          "method": "http",
+          "ok": false,
+          "reason": "HTTP 403"
+        },
+        {
+          "method": "browser",
+          "ok": false,
+          "reason": "challenge_page"
+        },
+        {
+          "method": "serper",
+          "ok": false,
+          "reason": "SERPER_API_KEY is not set"
+        }
+      ],
+      "title": "",
+      "word_count": 0
+    },
+    {
+      "url": "https://www.trustradius.com/products/b2w-estimate/competitors",
+      "method": null,
+      "attempts": [
+        {
+          "method": "http",
+          "ok": false,
+          "reason": "HTTP 403"
+        },
+        {
+          "method": "browser",
+          "ok": false,
+          "reason": "challenge_page"
+        },
+        {
+          "method": "serper",
+          "ok": false,
+          "reason": "SERPER_API_KEY is not set"
+        }
+      ],
+      "title": "",
+      "word_count": 0
+    },
+    {
+      "url": "https://www.linkedin.com/products/b2wsoftware-b2w-track/",
+      "method": null,
+      "attempts": [
+        {
+          "method": "http",
+          "ok": false,
+          "reason": "Blocked by robots.txt"
+        },
+        {
+          "method": "browser",
+          "ok": false,
+          "reason": "Blocked by robots.txt"
+        },
+        {
+          "method": "serper",
+          "ok": false,
+          "reason": "SERPER_API_KEY is not set"
+        }
+      ],
+      "title": "",
+      "word_count": 0
+    },
+    {
+      "url": "https://www.facebook.com/groups/bluecollarmillionaire/posts/1619267673540368/",
+      "method": null,
+      "attempts": [
+        {
+          "method": "http",
+          "ok": false,
+          "reason": "Blocked by robots.txt"
+        },
+        {
+          "method": "browser",
+          "ok": false,
+          "reason": "Blocked by robots.txt"
+        },
+        {
+          "method": "serper",
+          "ok": false,
+          "reason": "SERPER_API_KEY is not set"
+        }
+      ],
+      "title": "",
+      "word_count": 0
+    },
+    {
+      "url": "https://www.reddit.com/r/Accounting/comments/1gl64qs/best_accountingproject_management_software_for/",
+      "method": null,
+      "attempts": [
+        {
+          "method": "http",
+          "ok": false,
+          "reason": "Blocked by robots.txt"
+        },
+        {
+          "method": "browser",
+          "ok": false,
+          "reason": "Blocked by robots.txt"
+        },
+        {
+          "method": "serper",
+          "ok": false,
+          "reason": "SERPER_API_KEY is not set"
+        }
+      ],
+      "title": "",
+      "word_count": 0
+    },
+    {
+      "url": "https://www.reddit.com/r/ConstructionManagers/comments/1aocj9c/construction_management_software_recommendations/",
+      "method": null,
+      "attempts": [
+        {
+          "method": "http",
+          "ok": false,
+          "reason": "Blocked by robots.txt"
+        },
+        {
+          "method": "browser",
+          "ok": false,
+          "reason": "Blocked by robots.txt"
+        },
+        {
+          "method": "serper",
+          "ok": false,
+          "reason": "SERPER_API_KEY is not set"
+        }
+      ],
+      "title": "",
+      "word_count": 0
+    },
+    {
+      "url": "https://www.fieldwire.com/blog/construction-and-project-management-software/",
+      "method": null,
+      "attempts": [
+        {
+          "method": "http",
+          "ok": false,
+          "reason": "challenge_page"
+        },
+        {
+          "method": "browser",
+          "ok": false,
+          "reason": "challenge_page"
+        },
+        {
+          "method": "serper",
+          "ok": false,
+          "reason": "SERPER_API_KEY is not set"
+        }
+      ],
+      "title": "",
+      "word_count": 0
+    },
+    {
+      "url": "https://help.hcss.com/s/article/Overview-How-to-Set-Up-and-Use-Package-Alternates",
+      "method": null,
+      "attempts": [
+        {
+          "method": "http",
+          "ok": false,
+          "reason": "challenge_page"
+        },
+        {
+          "method": "browser",
+          "ok": false,
+          "reason": "challenge_page"
+        },
+        {
+          "method": "serper",
+          "ok": false,
+          "reason": "SERPER_API_KEY is not set"
+        }
+      ],
+      "title": "",
+      "word_count": 0
+    },
+    {
+      "url": "https://www.reddit.com/r/estimators/comments/tk3uuc/looking_into_using_heavybid_or_similar/",
+      "method": null,
+      "attempts": [
+        {
+          "method": "http",
+          "ok": false,
+          "reason": "Blocked by robots.txt"
+        },
+        {
+          "method": "browser",
+          "ok": false,
+          "reason": "Blocked by robots.txt"
+        },
+        {
+          "method": "serper",
+          "ok": false,
+          "reason": "SERPER_API_KEY is not set"
+        }
+      ],
+      "title": "",
+      "word_count": 0
+    },
+    {
+      "url": "https://www.softwareadvice.com/construction/hcss-profile/alternatives/",
+      "method": null,
+      "attempts": [
+        {
+          "method": "http",
+          "ok": false,
+          "reason": "HTTP 403"
+        },
+        {
+          "method": "browser",
+          "ok": false,
+          "reason": "challenge_page"
+        },
+        {
+          "method": "serper",
+          "ok": false,
+          "reason": "SERPER_API_KEY is not set"
+        }
+      ],
+      "title": "",
+      "word_count": 0
+    },
+    {
+      "url": "https://www.facebook.com/HCSS4Construction/posts/our-software-is-built-for-heavy-civil-construction-so-it-supports-all-your-needs/1781353413994988/",
+      "method": null,
+      "attempts": [
+        {
+          "method": "http",
+          "ok": false,
+          "reason": "Blocked by robots.txt"
+        },
+        {
+          "method": "browser",
+          "ok": false,
+          "reason": "Blocked by robots.txt"
+        },
+        {
+          "method": "serper",
+          "ok": false,
+          "reason": "SERPER_API_KEY is not set"
+        }
+      ],
+      "title": "",
+      "word_count": 0
+    },
+    {
+      "url": "https://www.capterra.com/earthwork-estimating-excavation-software/",
+      "method": null,
+      "attempts": [
+        {
+          "method": "http",
+          "ok": false,
+          "reason": "HTTP 403"
+        },
+        {
+          "method": "browser",
+          "ok": false,
+          "reason": "challenge_page"
+        },
+        {
+          "method": "serper",
+          "ok": false,
+          "reason": "SERPER_API_KEY is not set"
+        }
+      ],
+      "title": "",
+      "word_count": 0
+    },
+    {
+      "url": "https://buildertrend.com/",
+      "method": null,
+      "attempts": [
+        {
+          "method": "http",
+          "ok": false,
+          "reason": "HTTP 403"
+        },
+        {
+          "method": "browser",
+          "ok": false,
+          "reason": "challenge_page"
+        },
+        {
+          "method": "serper",
+          "ok": false,
+          "reason": "SERPER_API_KEY is not set"
+        }
+      ],
+      "title": "",
+      "word_count": 0
+    },
+    {
+      "url": "https://topconsolutions.com/dirt-logic/",
+      "method": "http",
+      "attempts": [
+        {
+          "method": "http",
+          "ok": true,
+          "reason": "fetched"
+        },
+        {
+          "method": "browser",
+          "ok": false,
+          "reason": "not tried: http succeeded"
+        },
+        {
+          "method": "serper",
+          "ok": false,
+          "reason": "not tried: http succeeded"
+        }
+      ],
+      "title": "Dirt Logic - Topcon Solutions Store",
+      "word_count": 311,
+      "file": "77f919425bd112fa.html"
+    },
+    {
+      "url": "https://www.reddit.com/r/estimators/comments/1toaoe4/best_software_for_cut_and_fill_take_offs/",
+      "method": null,
+      "attempts": [
+        {
+          "method": "http",
+          "ok": false,
+          "reason": "Blocked by robots.txt"
+        },
+        {
+          "method": "browser",
+          "ok": false,
+          "reason": "Blocked by robots.txt"
+        },
+        {
+          "method": "serper",
+          "ok": false,
+          "reason": "SERPER_API_KEY is not set"
+        }
+      ],
+      "title": "",
+      "word_count": 0
+    },
+    {
+      "url": "https://www.fieldwire.com/",
+      "method": null,
+      "attempts": [
+        {
+          "method": "http",
+          "ok": false,
+          "reason": "challenge_page"
+        },
+        {
+          "method": "browser",
+          "ok": false,
+          "reason": "challenge_page"
+        },
+        {
+          "method": "serper",
+          "ok": false,
+          "reason": "SERPER_API_KEY is not set"
+        }
+      ],
+      "title": "",
+      "word_count": 0
+    },
+    {
+      "url": "https://www.reddit.com/r/TimeTrackingSoftware/comments/1oxu7es/what_are_the_best_software_landscaping_and/",
+      "method": null,
+      "attempts": [
+        {
+          "method": "http",
+          "ok": false,
+          "reason": "Blocked by robots.txt"
+        },
+        {
+          "method": "browser",
+          "ok": false,
+          "reason": "Blocked by robots.txt"
+        },
+        {
+          "method": "serper",
+          "ok": false,
+          "reason": "SERPER_API_KEY is not set"
+        }
+      ],
+      "title": "",
+      "word_count": 0
+    },
+    {
+      "url": "https://www.reddit.com/r/smallbusiness/comments/1bhxadw/looking_for_allinone_software_for_a_small/",
+      "method": null,
+      "attempts": [
+        {
+          "method": "http",
+          "ok": false,
+          "reason": "Blocked by robots.txt"
+        },
+        {
+          "method": "browser",
+          "ok": false,
+          "reason": "Blocked by robots.txt"
+        },
+        {
+          "method": "serper",
+          "ok": false,
+          "reason": "SERPER_API_KEY is not set"
+        }
+      ],
+      "title": "",
+      "word_count": 0
+    },
+    {
+      "url": "https://www.quora.com/What-is-the-best-all-in-one-project-management-software-that-is-free-or-up-to-5",
+      "method": null,
+      "attempts": [
+        {
+          "method": "http",
+          "ok": false,
+          "reason": "Blocked by robots.txt"
+        },
+        {
+          "method": "browser",
+          "ok": false,
+          "reason": "Blocked by robots.txt"
+        },
+        {
+          "method": "serper",
+          "ok": false,
+          "reason": "SERPER_API_KEY is not set"
+        }
+      ],
+      "title": "",
+      "word_count": 0
+    },
+    {
+      "url": "https://www.reddit.com/r/CRM/comments/1vie4j1/excavationdemolition_contractors_is_there/",
+      "method": null,
+      "attempts": [
+        {
+          "method": "http",
+          "ok": false,
+          "reason": "Blocked by robots.txt"
+        },
+        {
+          "method": "browser",
+          "ok": false,
+          "reason": "Blocked by robots.txt"
+        },
+        {
+          "method": "serper",
+          "ok": false,
+          "reason": "SERPER_API_KEY is not set"
+        }
+      ],
+      "title": "",
+      "word_count": 0
+    },
+    {
+      "url": "https://www.reddit.com/r/estimators/comments/1u523jn/what_is_the_most_common_estimatingtakeoff/",
+      "method": null,
+      "attempts": [
+        {
+          "method": "http",
+          "ok": false,
+          "reason": "Blocked by robots.txt"
+        },
+        {
+          "method": "browser",
+          "ok": false,
+          "reason": "Blocked by robots.txt"
+        },
+        {
+          "method": "serper",
+          "ok": false,
+          "reason": "SERPER_API_KEY is not set"
+        }
+      ],
+      "title": "",
+      "word_count": 0
+    },
+    {
+      "url": "https://www.facebook.com/61590479262574/posts/running-your-dirt-company-off-of-text-messages-sticky-notes-and-3-apps-that-dont/122156726283349308/",
+      "method": null,
+      "attempts": [
+        {
+          "method": "http",
+          "ok": false,
+          "reason": "Blocked by robots.txt"
+        },
+        {
+          "method": "browser",
+          "ok": false,
+          "reason": "Blocked by robots.txt"
+        },
+        {
+          "method": "serper",
+          "ok": false,
+          "reason": "SERPER_API_KEY is not set"
+        }
+      ],
+      "title": "",
+      "word_count": 0
+    },
+    {
+      "url": "https://www.reddit.com/r/crmmarketplace/comments/1vj8gf7/excavationdemolition_contractors_is_there/",
+      "method": null,
+      "attempts": [
+        {
+          "method": "http",
+          "ok": false,
+          "reason": "Blocked by robots.txt"
+        },
+        {
+          "method": "browser",
+          "ok": false,
+          "reason": "Blocked by robots.txt"
+        },
+        {
+          "method": "serper",
+          "ok": false,
+          "reason": "SERPER_API_KEY is not set"
+        }
+      ],
+      "title": "",
+      "word_count": 0
+    },
+    {
+      "url": "https://www.facebook.com/groups/excavatingconstruction/posts/1404273224168243/",
+      "method": null,
+      "attempts": [
+        {
+          "method": "http",
+          "ok": false,
+          "reason": "Blocked by robots.txt"
+        },
+        {
+          "method": "browser",
+          "ok": false,
+          "reason": "Blocked by robots.txt"
+        },
+        {
+          "method": "serper",
+          "ok": false,
+          "reason": "SERPER_API_KEY is not set"
+        }
+      ],
+      "title": "",
+      "word_count": 0
+    },
+    {
+      "url": "https://www.facebook.com/groups/745270033403382/posts/1115357049728010/",
+      "method": null,
+      "attempts": [
+        {
+          "method": "http",
+          "ok": false,
+          "reason": "Blocked by robots.txt"
+        },
+        {
+          "method": "browser",
+          "ok": false,
+          "reason": "Blocked by robots.txt"
+        },
+        {
+          "method": "serper",
+          "ok": false,
+          "reason": "SERPER_API_KEY is not set"
+        }
+      ],
+      "title": "",
+      "word_count": 0
+    },
+    {
+      "url": "https://www.reddit.com/r/estimators/comments/1gpuro1/excavation_estimating/",
+      "method": null,
+      "attempts": [
+        {
+          "method": "http",
+          "ok": false,
+          "reason": "Blocked by robots.txt"
+        },
+        {
+          "method": "browser",
+          "ok": false,
+          "reason": "Blocked by robots.txt"
+        },
+        {
+          "method": "serper",
+          "ok": false,
+          "reason": "SERPER_API_KEY is not set"
+        }
+      ],
+      "title": "",
+      "word_count": 0
+    },
+    {
+      "url": "https://www.deepexcavation.com/products",
+      "method": null,
+      "attempts": [
+        {
+          "method": "http",
+          "ok": false,
+          "reason": "challenge_page"
+        },
+        {
+          "method": "browser",
+          "ok": false,
+          "reason": "challenge_page"
+        },
+        {
+          "method": "serper",
+          "ok": false,
+          "reason": "SERPER_API_KEY is not set"
+        }
+      ],
+      "title": "",
+      "word_count": 0
+    },
+    {
+      "url": "https://www.reddit.com/r/estimators/comments/14mnesk/earthwork_software_recommendations/",
+      "method": null,
+      "attempts": [
+        {
+          "method": "http",
+          "ok": false,
+          "reason": "Blocked by robots.txt"
+        },
+        {
+          "method": "browser",
+          "ok": false,
+          "reason": "Blocked by robots.txt"
+        },
+        {
+          "method": "serper",
+          "ok": false,
+          "reason": "SERPER_API_KEY is not set"
+        }
+      ],
+      "title": "",
+      "word_count": 0
+    },
+    {
+      "url": "https://www.trustradius.com/products/hcss/competitors",
+      "method": null,
+      "attempts": [
+        {
+          "method": "http",
+          "ok": false,
+          "reason": "HTTP 403"
+        },
+        {
+          "method": "browser",
+          "ok": false,
+          "reason": "challenge_page"
+        },
+        {
+          "method": "serper",
+          "ok": false,
+          "reason": "SERPER_API_KEY is not set"
+        }
+      ],
+      "title": "",
+      "word_count": 0
+    },
+    {
+      "url": "https://www.itqlick.com/b2w-estimate/competitors",
+      "method": null,
+      "attempts": [
+        {
+          "method": "http",
+          "ok": false,
+          "reason": "HTTP 403"
+        },
+        {
+          "method": "browser",
+          "ok": false,
+          "reason": "challenge_page"
+        },
+        {
+          "method": "serper",
+          "ok": false,
+          "reason": "SERPER_API_KEY is not set"
+        }
+      ],
+      "title": "",
+      "word_count": 0
+    },
+    {
+      "url": "https://www.softwareadvice.com/construction/hcss-profile/",
+      "method": null,
+      "attempts": [
+        {
+          "method": "http",
+          "ok": false,
+          "reason": "HTTP 403"
+        },
+        {
+          "method": "browser",
+          "ok": false,
+          "reason": "challenge_page"
+        },
+        {
+          "method": "serper",
+          "ok": false,
+          "reason": "SERPER_API_KEY is not set"
+        }
+      ],
+      "title": "",
+      "word_count": 0
+    },
+    {
+      "url": "https://x.com/Dirtwork?lang=en",
+      "method": null,
+      "attempts": [
+        {
+          "method": "http",
+          "ok": false,
+          "reason": "Blocked by robots.txt"
+        },
+        {
+          "method": "browser",
+          "ok": false,
+          "reason": "Blocked by robots.txt"
+        },
+        {
+          "method": "serper",
+          "ok": false,
+          "reason": "SERPER_API_KEY is not set"
+        }
+      ],
+      "title": "",
+      "word_count": 0
+    },
+    {
+      "url": "https://www.reddit.com/r/WorkBoots/comments/1jfcnyk/best_boots_for_dirt_work/",
+      "method": null,
+      "attempts": [
+        {
+          "method": "http",
+          "ok": false,
+          "reason": "Blocked by robots.txt"
+        },
+        {
+          "method": "browser",
+          "ok": false,
+          "reason": "Blocked by robots.txt"
+        },
+        {
+          "method": "serper",
+          "ok": false,
+          "reason": "SERPER_API_KEY is not set"
+        }
+      ],
+      "title": "",
+      "word_count": 0
+    },
+    {
+      "url": "http://www.christinebyl.com/dirt-work.html",
+      "method": null,
+      "attempts": [
+        {
+          "method": "http",
+          "ok": false,
+          "reason": "challenge_page"
+        },
+        {
+          "method": "browser",
+          "ok": false,
+          "reason": "challenge_page"
+        },
+        {
+          "method": "serper",
+          "ok": false,
+          "reason": "SERPER_API_KEY is not set"
+        }
+      ],
+      "title": "",
+      "word_count": 0
+    },
+    {
+      "url": "https://meanjin.com.au/fiction/dirt-work/",
+      "method": "http",
+      "attempts": [
+        {
+          "method": "http",
+          "ok": true,
+          "reason": "fetched"
+        },
+        {
+          "method": "browser",
+          "ok": false,
+          "reason": "not tried: http succeeded"
+        },
+        {
+          "method": "serper",
+          "ok": false,
+          "reason": "not tried: http succeeded"
+        }
+      ],
+      "title": "Dirt Work",
+      "word_count": 252,
+      "file": "879fb89492edb7b5.html"
+    },
+    {
+      "url": "https://www.dirtworks.us/",
+      "method": null,
+      "attempts": [
+        {
+          "method": "http",
+          "ok": false,
+          "reason": "challenge_page"
+        },
+        {
+          "method": "browser",
+          "ok": false,
+          "reason": "challenge_page"
+        },
+        {
+          "method": "serper",
+          "ok": false,
+          "reason": "SERPER_API_KEY is not set"
+        }
+      ],
+      "title": "",
+      "word_count": 0
+    },
+    {
+      "url": "https://jonifreeser.com/about",
+      "method": null,
+      "attempts": [
+        {
+          "method": "http",
+          "ok": false,
+          "reason": "challenge_page"
+        },
+        {
+          "method": "browser",
+          "ok": false,
+          "reason": "challenge_page"
+        },
+        {
+          "method": "serper",
+          "ok": false,
+          "reason": "SERPER_API_KEY is not set"
+        }
+      ],
+      "title": "",
+      "word_count": 0
+    },
+    {
+      "url": "https://www.reddit.com/r/ConstructionManagers/comments/1l6gos4/best_task_management_software/",
+      "method": null,
+      "attempts": [
+        {
+          "method": "http",
+          "ok": false,
+          "reason": "Blocked by robots.txt"
+        },
+        {
+          "method": "browser",
+          "ok": false,
+          "reason": "Blocked by robots.txt"
+        },
+        {
+          "method": "serper",
+          "ok": false,
+          "reason": "SERPER_API_KEY is not set"
+        }
+      ],
+      "title": "",
+      "word_count": 0
+    },
+    {
+      "url": "https://www.reddit.com/r/Construction/comments/1opceie/business_softwareapp_recommendations/",
+      "method": null,
+      "attempts": [
+        {
+          "method": "http",
+          "ok": false,
+          "reason": "Blocked by robots.txt"
+        },
+        {
+          "method": "browser",
+          "ok": false,
+          "reason": "Blocked by robots.txt"
+        },
+        {
+          "method": "serper",
+          "ok": false,
+          "reason": "SERPER_API_KEY is not set"
+        }
+      ],
+      "title": "",
+      "word_count": 0
+    },
+    {
+      "url": "https://www.fieldwire.com/construction-management-software/",
+      "method": null,
+      "attempts": [
+        {
+          "method": "http",
+          "ok": false,
+          "reason": "challenge_page"
+        },
+        {
+          "method": "browser",
+          "ok": false,
+          "reason": "challenge_page"
+        },
+        {
+          "method": "serper",
+          "ok": false,
+          "reason": "SERPER_API_KEY is not set"
+        }
+      ],
+      "title": "",
+      "word_count": 0
+    },
+    {
+      "url": "https://www.reddit.com/r/projectmanagement/comments/1v9o78x/looking_for_simple_allinone_software_for_a/",
+      "method": null,
+      "attempts": [
+        {
+          "method": "http",
+          "ok": false,
+          "reason": "Blocked by robots.txt"
+        },
+        {
+          "method": "browser",
+          "ok": false,
+          "reason": "Blocked by robots.txt"
+        },
+        {
+          "method": "serper",
+          "ok": false,
+          "reason": "SERPER_API_KEY is not set"
+        }
+      ],
+      "title": "",
+      "word_count": 0
+    },
+    {
+      "url": "https://www.quickbase.com/blog/best-it-project-management-software",
+      "method": null,
+      "attempts": [
+        {
+          "method": "http",
+          "ok": false,
+          "reason": "challenge_page"
+        },
+        {
+          "method": "browser",
+          "ok": false,
+          "reason": "challenge_page"
+        },
+        {
+          "method": "serper",
+          "ok": false,
+          "reason": "SERPER_API_KEY is not set"
+        }
+      ],
+      "title": "",
+      "word_count": 0
+    },
+    {
+      "url": "https://www.facebook.com/groups/bluecollarmillionaire/posts/1460367736097030/",
+      "method": null,
+      "attempts": [
+        {
+          "method": "http",
+          "ok": false,
+          "reason": "Blocked by robots.txt"
+        },
+        {
+          "method": "browser",
+          "ok": false,
+          "reason": "Blocked by robots.txt"
+        },
+        {
+          "method": "serper",
+          "ok": false,
+          "reason": "SERPER_API_KEY is not set"
+        }
+      ],
+      "title": "",
+      "word_count": 0
+    },
+    {
+      "url": "https://www.reddit.com/r/cscareerquestions/comments/10neh8f/why_being_a_crm_developer_is_considered_a_bad/",
+      "method": null,
+      "attempts": [
+        {
+          "method": "http",
+          "ok": false,
+          "reason": "Blocked by robots.txt"
+        },
+        {
+          "method": "browser",
+          "ok": false,
+          "reason": "Blocked by robots.txt"
+        },
+        {
+          "method": "serper",
+          "ok": false,
+          "reason": "SERPER_API_KEY is not set"
+        }
+      ],
+      "title": "",
+      "word_count": 0
+    },
+    {
+      "url": "https://www.linkedin.com/posts/boristsibelman_crmtruth-crmsetup-axisconsulting-activity-7343510875636424704-lflz",
+      "method": null,
+      "attempts": [
+        {
+          "method": "http",
+          "ok": false,
+          "reason": "Blocked by robots.txt"
+        },
+        {
+          "method": "browser",
+          "ok": false,
+          "reason": "Blocked by robots.txt"
+        },
+        {
+          "method": "serper",
+          "ok": false,
+          "reason": "SERPER_API_KEY is not set"
+        }
+      ],
+      "title": "",
+      "word_count": 0
+    },
+    {
+      "url": "https://www.glassdoor.com/Reviews/Employee-Review-Method-CRM-E923386-RVW7287726.htm",
+      "method": null,
+      "attempts": [
+        {
+          "method": "http",
+          "ok": false,
+          "reason": "HTTP 403"
+        },
+        {
+          "method": "browser",
+          "ok": false,
+          "reason": "challenge_page"
+        },
+        {
+          "method": "serper",
+          "ok": false,
+          "reason": "SERPER_API_KEY is not set"
+        }
+      ],
+      "title": "",
+      "word_count": 0
+    },
+    {
+      "url": "https://www.zoho.com/crm/customers/dirt-rocks.html",
+      "method": "browser",
+      "attempts": [
+        {
+          "method": "http",
+          "ok": false,
+          "reason": "challenge_page"
+        },
+        {
+          "method": "browser",
+          "ok": true,
+          "reason": "rendered"
+        },
+        {
+          "method": "serper",
+          "ok": false,
+          "reason": "not tried: browser succeeded"
+        }
+      ],
+      "title": "With Zoho CRM, Dirt Rocks unifies sales, accounting, and dispatch\u2014boosting efficiency across $200M projects",
+      "word_count": 892,
+      "file": "de9e6c68512e6c89.html"
+    }
+  ]
+}

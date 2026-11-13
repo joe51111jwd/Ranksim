@@ -1,0 +1,435 @@
+{
+  "baseline_observed_on": "2026-11-06",
+  "coverage": {
+    "baseline_rows": 294,
+    "entrant_rows": 97,
+    "exits": 92,
+    "forward_rows": 299,
+    "html_baseline": 183,
+    "html_forward_fetch_only": 35,
+    "html_missing": 81,
+    "queries": 30,
+    "returning_rows": 202,
+    "training_examples": 215,
+    "training_queries": 30
+  },
+  "entrant_note": "A page with no 2026-11-06 position on that query has no persistence signal. Persistence ranks every previously seen URL above every unseen URL and does not order the unseen URLs. entrant_vs_returning is the pairs between those two groups. entrant_vs_entrant is the pairs among unseen URLs. A user's draft is an unseen URL that this crawl did not already store. draft_vs_returning and draft_vs_draft count those pages. Persistence does not tell one draft from another.",
+  "feature_names": [
+    "bm25f",
+    "bm25_title",
+    "bm25_h1",
+    "bm25_headings",
+    "bm25_body",
+    "has_headings",
+    "has_body",
+    "bm25_url",
+    "bm25_anchor",
+    "embedding",
+    "site_focus",
+    "site_radius",
+    "pagerank",
+    "domain_rank",
+    "homepage_authority",
+    "intent_match",
+    "freshness",
+    "topic_coverage",
+    "has_table",
+    "has_faq",
+    "word_count",
+    "content_effort",
+    "originality",
+    "thin_content",
+    "readability",
+    "ad_density",
+    "links",
+    "speed",
+    "authority",
+    "url_exact",
+    "navboost_prior",
+    "orphan",
+    "link_depth",
+    "crawl_inlinks"
+  ],
+  "feature_today": "2026-11-07",
+  "files": {
+    "baseline_html_saved": 97,
+    "baseline_serp_sha256": "c70ca9907a5243f092fe407d18ca002dc58a1bad301734fc56b6dad50e900a87",
+    "baseline_window": {
+      "params": {
+        "gl": "us",
+        "hl": "en",
+        "num": 10
+      },
+      "provider": "serper",
+      "request_end_max": "2026-11-06T22:14:29.890912-05:00",
+      "request_start_min": "2026-11-06T22:13:19.579494-05:00"
+    },
+    "forward_html_saved": 103,
+    "forward_serp_sha256": "49a0c8d4b92bd1fd73a2f4fac507394200e724f6c76c611a9c14b9595b3607d0",
+    "forward_window": {
+      "params": {
+        "gl": "us",
+        "hl": "en",
+        "num": 10
+      },
+      "provider": "serper",
+      "request_end_max": "2026-11-09T09:12:27.159595-05:00",
+      "request_start_min": "2026-11-09T09:11:15.348185-05:00"
+    },
+    "html_in_git": false
+  },
+  "forward_observed_on": "2026-11-09",
+  "generated_at_meaning": "The scored file may be written later. Prediction rows use the protocol time, not this clock.",
+  "label": "PREDICTED",
+  "ledger": {
+    "blend": {
+      "accuracy": 0.717988,
+      "calls": 1312,
+      "correct": 942,
+      "no_outcome_yet": 0,
+      "predictions": 299,
+      "resolved": 1312,
+      "unresolved": 0
+    },
+    "bm25": {
+      "accuracy": 0.482201,
+      "calls": 1236,
+      "correct": 596,
+      "no_outcome_yet": 0,
+      "predictions": 299,
+      "resolved": 1236,
+      "unresolved": 0
+    },
+    "chain": "1495 predictions, chain intact. Latest hash 0da77b555e86baaa3f5d91f98b7ecd107fe07aaf07ca749d256cbe925af8205c.",
+    "history_aware": {
+      "accuracy": 0.76753,
+      "calls": 1312,
+      "correct": 1007,
+      "no_outcome_yet": 0,
+      "predictions": 299,
+      "resolved": 1312,
+      "unresolved": 0
+    },
+    "lambdamart": {
+      "accuracy": 0.549717,
+      "calls": 1237,
+      "correct": 680,
+      "no_outcome_yet": 0,
+      "predictions": 299,
+      "resolved": 1237,
+      "unresolved": 0
+    },
+    "persistence": {
+      "accuracy": 0.812391,
+      "calls": 1146,
+      "correct": 931,
+      "no_outcome_yet": 0,
+      "predictions": 299,
+      "resolved": 1146,
+      "unresolved": 0
+    }
+  },
+  "ledger_json": "evals/forward-2026-11-09/ledger.json",
+  "not_a_general_forecast": true,
+  "protocol_prediction_at": "2026-11-07T04:00:00+00:00",
+  "ranker_change": "none",
+  "rules": {
+    "blend": "Within a query, z-score the position base (observed position, or 11 for an entrant) and z-score bm25f (missing HTML adds 0). Score is 1 * position z + 1 * bm25 z. Weights are not fit.",
+    "bm25": "Score is bm25f on the HTML rule above. No HTML scores -1e+09.",
+    "candidate_set": "The candidate set is the 2026-11-09 organic list for that query. This scores order among pages that were on the later top list. It does not score whether a page enters the list.",
+    "history_aware": "Score is -(prior position) + 1 * bm25 z. An entrant uses prior position 11. Missing HTML adds 0. The scale is pre-registered. It is not adopted.",
+    "html": "A URL stored on 2026-11-06 uses that HTML and that link graph. A URL with no 2026-11-06 HTML uses the 2026-11-09 fetch as the page text a user would paste, and pagerank 0. A URL with neither has no content score.",
+    "lambdamart": "The frozen Nov 6 model scores the same HTML. No HTML uses the same missing-content score as BM25.",
+    "limit": "One interval, 2026-11-06 to 2026-11-09, about 2.5 days, the fixed 30-query list. Not a forecast beyond that.",
+    "persistence": "Score is the negative of the 2026-11-06 position on the same query. A URL absent from that query scores -1000, tied with every other absent URL and below every URL that was present.",
+    "training": "LambdaMART is fit on every 2026-11-06 query with stored HTML, using FEATURE_NAMES only. The link graph is the 2026-11-06 saved pages. 2026-11-09 positions are not labels, features, or thresholds.",
+    "uncertainty": "Every ledger call is PREDICTED and UNSURE. The same-snapshot content order was near a coin flip, and this interval is the first forward look."
+  },
+  "scorers": {
+    "blend": {
+      "draft_vs_draft": {
+        "correct": 54,
+        "pairs": 116,
+        "pairwise": 0.465517,
+        "queries": 16,
+        "ties": 29,
+        "wrong": 33
+      },
+      "draft_vs_returning": {
+        "correct": 198,
+        "pairs": 281,
+        "pairwise": 0.704626,
+        "queries": 23,
+        "ties": 0,
+        "wrong": 83
+      },
+      "entrant_vs_entrant": {
+        "correct": 93,
+        "pairs": 195,
+        "pairwise": 0.476923,
+        "queries": 23,
+        "ties": 29,
+        "wrong": 73
+      },
+      "entrant_vs_returning": {
+        "correct": 335,
+        "pairs": 479,
+        "pairwise": 0.699374,
+        "queries": 28,
+        "ties": 0,
+        "wrong": 144
+      },
+      "ndcg_at_10": 0.840881,
+      "ndcg_queries": 30,
+      "pairwise": {
+        "correct": 942,
+        "pairs": 1341,
+        "pairwise": 0.702461,
+        "queries": 30,
+        "ties": 29,
+        "wrong": 370
+      },
+      "returning_only": {
+        "correct": 514,
+        "pairs": 667,
+        "pairwise": 0.770615,
+        "queries": 28,
+        "ties": 0,
+        "wrong": 153
+      },
+      "spearman": 0.555164,
+      "spearman_queries": 30
+    },
+    "bm25": {
+      "draft_vs_draft": {
+        "correct": 37,
+        "pairs": 116,
+        "pairwise": 0.318966,
+        "queries": 16,
+        "ties": 29,
+        "wrong": 50
+      },
+      "draft_vs_returning": {
+        "correct": 118,
+        "pairs": 281,
+        "pairwise": 0.419929,
+        "queries": 23,
+        "ties": 29,
+        "wrong": 134
+      },
+      "entrant_vs_entrant": {
+        "correct": 79,
+        "pairs": 195,
+        "pairwise": 0.405128,
+        "queries": 23,
+        "ties": 29,
+        "wrong": 87
+      },
+      "entrant_vs_returning": {
+        "correct": 226,
+        "pairs": 479,
+        "pairwise": 0.471816,
+        "queries": 28,
+        "ties": 29,
+        "wrong": 224
+      },
+      "ndcg_at_10": 0.603883,
+      "ndcg_queries": 30,
+      "pairwise": {
+        "correct": 596,
+        "pairs": 1341,
+        "pairwise": 0.444444,
+        "queries": 30,
+        "ties": 105,
+        "wrong": 640
+      },
+      "returning_only": {
+        "correct": 291,
+        "pairs": 667,
+        "pairwise": 0.436282,
+        "queries": 28,
+        "ties": 47,
+        "wrong": 329
+      },
+      "spearman": -0.044925,
+      "spearman_queries": 30
+    },
+    "history_aware": {
+      "adopted": false,
+      "adoption_reason": "No fair split exists that scores a prior position without using the 2026-11-09 labels. Family-out on 2026-11-06 would train on the same positions it would call history. The rule was pre-registered and is scored once. It is not adopted.",
+      "draft_vs_draft": {
+        "correct": 54,
+        "pairs": 116,
+        "pairwise": 0.465517,
+        "queries": 16,
+        "ties": 29,
+        "wrong": 33
+      },
+      "draft_vs_returning": {
+        "correct": 200,
+        "pairs": 281,
+        "pairwise": 0.711744,
+        "queries": 23,
+        "ties": 0,
+        "wrong": 81
+      },
+      "entrant_vs_entrant": {
+        "correct": 93,
+        "pairs": 195,
+        "pairwise": 0.476923,
+        "queries": 23,
+        "ties": 29,
+        "wrong": 73
+      },
+      "entrant_vs_returning": {
+        "correct": 339,
+        "pairs": 479,
+        "pairwise": 0.707724,
+        "queries": 28,
+        "ties": 0,
+        "wrong": 140
+      },
+      "ndcg_at_10": 0.88477,
+      "ndcg_queries": 30,
+      "pairwise": {
+        "correct": 1007,
+        "pairs": 1341,
+        "pairwise": 0.750932,
+        "queries": 30,
+        "ties": 29,
+        "wrong": 305
+      },
+      "returning_only": {
+        "correct": 575,
+        "pairs": 667,
+        "pairwise": 0.862069,
+        "queries": 28,
+        "ties": 0,
+        "wrong": 92
+      },
+      "spearman": 0.631312,
+      "spearman_queries": 30
+    },
+    "lambdamart": {
+      "draft_vs_draft": {
+        "correct": 34,
+        "pairs": 116,
+        "pairwise": 0.293103,
+        "queries": 16,
+        "ties": 28,
+        "wrong": 54
+      },
+      "draft_vs_returning": {
+        "correct": 134,
+        "pairs": 281,
+        "pairwise": 0.476868,
+        "queries": 23,
+        "ties": 29,
+        "wrong": 118
+      },
+      "entrant_vs_entrant": {
+        "correct": 78,
+        "pairs": 195,
+        "pairwise": 0.4,
+        "queries": 23,
+        "ties": 28,
+        "wrong": 89
+      },
+      "entrant_vs_returning": {
+        "correct": 251,
+        "pairs": 479,
+        "pairwise": 0.524008,
+        "queries": 28,
+        "ties": 29,
+        "wrong": 199
+      },
+      "ndcg_at_10": 0.714956,
+      "ndcg_queries": 30,
+      "pairwise": {
+        "correct": 680,
+        "pairs": 1341,
+        "pairwise": 0.507084,
+        "queries": 30,
+        "ties": 104,
+        "wrong": 557
+      },
+      "returning_only": {
+        "correct": 351,
+        "pairs": 667,
+        "pairwise": 0.526237,
+        "queries": 28,
+        "ties": 47,
+        "wrong": 269
+      },
+      "spearman": 0.095871,
+      "spearman_queries": 30
+    },
+    "persistence": {
+      "draft_vs_draft": {
+        "correct": 0,
+        "pairs": 116,
+        "pairwise": 0.0,
+        "queries": 16,
+        "ties": 116,
+        "wrong": 0
+      },
+      "draft_vs_returning": {
+        "correct": 200,
+        "pairs": 281,
+        "pairwise": 0.711744,
+        "queries": 23,
+        "ties": 0,
+        "wrong": 81
+      },
+      "entrant_vs_entrant": {
+        "correct": 0,
+        "pairs": 195,
+        "pairwise": 0.0,
+        "queries": 23,
+        "ties": 195,
+        "wrong": 0
+      },
+      "entrant_vs_returning": {
+        "correct": 337,
+        "pairs": 479,
+        "pairwise": 0.703549,
+        "queries": 28,
+        "ties": 0,
+        "wrong": 142
+      },
+      "ndcg_at_10": 0.902317,
+      "ndcg_queries": 30,
+      "pairwise": {
+        "correct": 931,
+        "pairs": 1341,
+        "pairwise": 0.694258,
+        "queries": 30,
+        "ties": 195,
+        "wrong": 215
+      },
+      "returning_only": {
+        "correct": 594,
+        "pairs": 667,
+        "pairwise": 0.890555,
+        "queries": 28,
+        "ties": 0,
+        "wrong": 73
+      },
+      "spearman": 0.648714,
+      "spearman_queries": 29
+    }
+  },
+  "snapshot_agreement_overlap_only": {
+    "agree": 594,
+    "baseline_rows": 294,
+    "mean_spearman": 0.816327,
+    "meaning": "Agreement of Nov 6 order with Nov 9 order on URLs that stayed in the same query. Entrants and exits are ignored. Not a model.",
+    "pairs": 667,
+    "pairwise": 0.890555,
+    "queries_with_two_shared_urls": 28,
+    "rows_reappeared": 202,
+    "spearman_queries": 28,
+    "ties": 0,
+    "wrong": 73
+  }
+}

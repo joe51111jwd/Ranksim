@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from datetime import date
 
@@ -37,6 +38,8 @@ class FetchResult:
     status: str
     error: str | None = None
     fetch_ms: float | None = None
+    method: str = ""
+    attempts: list | None = None
 
 
 @dataclass
@@ -106,7 +109,14 @@ def page_from_row(row: RsPage) -> PageDoc:
     )
 
 
+def _fetch_log(fetched: FetchResult) -> str:
+    attempts = getattr(fetched, "attempts", None) or []
+    return json.dumps(attempts)
+
+
 def store_fetched_page(session: Session, fetched: FetchResult) -> None:
+    method = getattr(fetched, "method", "") or ""
+    log = _fetch_log(fetched)
     if fetched.status != "fetched" or not fetched.html:
         upsert_page(
             session,
@@ -117,6 +127,8 @@ def store_fetched_page(session: Session, fetched: FetchResult) -> None:
             raw_html=fetched.html or "",
             fetch_ms=fetched.fetch_ms,
             authority_source="unavailable",
+            fetch_method=method,
+            fetch_log=log,
         )
         return
     doc = page_from_html(fetched.url, fetched.html, fetch_ms=fetched.fetch_ms)
@@ -139,6 +151,8 @@ def store_fetched_page(session: Session, fetched: FetchResult) -> None:
         updated_label=doc.updated,
         authority=None,
         authority_source="unavailable",
+        fetch_method=method,
+        fetch_log=log,
     )
 
 

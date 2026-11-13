@@ -1,0 +1,46 @@
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12", "3.13"]
+        # The suite must not change when a developer has provider keys exported.
+        # These are fake values; the conftest network guard fails any real call.
+        provider-env: ["none", "fake-keys"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+      - name: Fake provider keys
+        if: matrix.provider-env == 'fake-keys'
+        run: |
+          {
+            echo "OPENROUTER_API_KEY=sk-or-ci-fake"
+            echo "OPENAI_API_KEY=sk-ci-fake"
+            echo "ANTHROPIC_API_KEY=ci-fake"
+            echo "SERPER_API_KEY=ci-fake"
+            echo "SERPAPI_KEY=ci-fake"
+            echo "BRAVE_API_KEY=ci-fake"
+            echo "DATAFORSEO_LOGIN=ci-fake"
+            echo "DATAFORSEO_PASSWORD=ci-fake"
+          } >> "$GITHUB_ENV"
+      - name: Test
+        run: python -m pytest -p no:cacheprovider
+      - name: Tests must not write into the checkout
+        run: test ! -e data

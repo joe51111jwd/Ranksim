@@ -172,6 +172,7 @@ def check_draft(
     intent: str = "commercial",
     llm: LlmClient | None = None,
     run_ai: bool = True,
+    synthetic: bool = False,
 ) -> CheckResult:
     today = today or date.today()
     result = CheckResult(query=query, url=url, predicted_rank=None, predicted_of=0, confidence="UNSURE", confidence_note=calibration.note)
@@ -197,11 +198,10 @@ def check_draft(
     result.competitors = _competitors(docs, ranks, positions, ours)
     result.gaps = _top_gaps(raw, ours, ranks, model)
     neighbor = _neighbor_gap(scores, examples, order, ours)
-    result.confidence = calibration.label(neighbor)
-    result.confidence_note = calibration.note
+    result.confidence, result.confidence_note = calibration.product_label(neighbor, synthetic=synthetic)
     if run_ai:
         result.explanation, result.explanation_stub = _explain(llm, result)
-        rounds, stub, note = _fix_loop(llm, query, html, url, labels, pages, model, calibration, today, intent, result.predicted_rank, result.predicted_of, result.gaps)
+        rounds, stub, note = _fix_loop(llm, query, html, url, labels, pages, model, calibration, today, intent, result.predicted_rank, result.predicted_of, result.gaps, synthetic=synthetic)
         result.fix_rounds = rounds
         result.fix_stub = stub
         result.fix_note = note
@@ -478,7 +478,7 @@ def _explain(llm: LlmClient | None, result: CheckResult) -> tuple[str, bool]:
     return "PREDICTED. " + reply.text.strip(), False
 
 
-def _fix_loop(llm, query, html, url, labels, pages, model, calibration, today, intent, before_rank, before_of, gaps) -> tuple[list[FixRound], bool, str]:
+def _fix_loop(llm, query, html, url, labels, pages, model, calibration, today, intent, before_rank, before_of, gaps, synthetic: bool = False) -> tuple[list[FixRound], bool, str]:
     if before_rank is None:
         return [], True, "No starting rank, so the rewrite loop did not run."
     start = FixRound(0, before_rank, before_of, "Draft as submitted.")
@@ -504,6 +504,7 @@ def _fix_loop(llm, query, html, url, labels, pages, model, calibration, today, i
             today=today,
             intent=intent,
             run_ai=False,
+            synthetic=synthetic,
         )
         if checked.predicted_rank is None:
             return rounds, False, "A rewrite could not be scored. The loop stopped."

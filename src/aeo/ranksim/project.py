@@ -712,6 +712,7 @@ class BoardSummary:
     on_topic: int = 0
     off_topic: int = 0
     not_checked: int = 0
+    uncertain: int = 0
 
 
 @dataclass
@@ -1057,6 +1058,7 @@ def import_serp_csv(
     *,
     add_searches: bool = False,
     now: datetime | None = None,
+    label_source: str = "imported_serp",
 ) -> ImportReport:
     """Seed a REAL Google pull from a query,url,position file. Nothing is fetched or invented.
 
@@ -1130,6 +1132,10 @@ def import_serp_csv(
     )
     folder = project.dir / "pulls" / pull_id
     _write_json(folder / "google.json", clean(snapshot.to_dict()))
+    from aeo.ranksim.groundtruth import write_label_set
+
+    kept = [row for row in labels if spelling.get(_fold(row.query)) is not None]
+    write_label_set(project.dir / "label.json", label_source, pulled_at, kept)
     imported = [item.search for item in searches]
     missing = [search for search in project.searches if search not in imported]
     report = PullReport(
@@ -1332,6 +1338,17 @@ def pull(
         save_engines(folder, engines_snapshot)
     _save_engine_atomic(folder / "engine", engine)
     _write_json(folder / "google.json", clean(snapshot.to_dict()))
+    if snapshot.kind == "api":
+        from aeo.ranksim.groundtruth import SerpLabel, write_label_set
+
+        api_rows = [
+            SerpLabel(entry.search, item.url, float(item.position), None, "google_auto")
+            for entry in snapshot.searches
+            for item in entry.results
+        ]
+        if api_rows:
+            pulled = next((entry.pulled_at for entry in snapshot.searches if entry.pulled_at), None)
+            write_label_set(project.dir / "label.json", "google_auto", pulled, api_rows)
     steps.append(StepTiming("save", _round(time.perf_counter() - step_start), f"Saved to {folder}."))
     finished_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
     sources = sorted({item.source for item in snapshot.searches if item.results})
@@ -1741,34 +1758,37 @@ def classify_fetch(result: FetchResult) -> tuple[str, str]:
 
 
 def _crawler_batch(settings: Settings, delay_seconds: float) -> FetchBatch:
-    """Polite, robots-respecting, SSRF-safe fetch of URLs on one host."""
-    from aeo.crawl.fetch import Crawler
+    """Polite, robots-respecting, SSRF-safe fetch. HTTP, then a browser, then Serper if the cap allows."""
+    from aeo.crawl.layered import LayeredFetcher
 
     def fetch(urls: list[str]) -> list[FetchResult]:
-        crawler = Crawler(
+        layer = LayeredFetcher(
             user_agent=settings.crawl_user_agent,
             delay_seconds=delay_seconds,
             allow_private=settings.crawl_allow_private,
             timeout=min(settings.request_timeout_seconds, 20.0),
+            serper_api_key=settings.serper_api_key,
+            serper_credit_cap=settings.serper_scrape_credit_cap,
+            use_browser=True,
         )
         out: list[FetchResult] = []
         try:
             for url in urls:
-                began = time.perf_counter()
                 try:
-                    got = crawler.fetch(url)
+                    got = layer.fetch(url)
                 except UnsafeURL as exc:
-                    out.append(FetchResult(url=url, html="", status="blocked", error=str(exc)))
+                    out.append(FetchResult(url=url, html="", status="blocked", error=str(exc), attempts=[{"method": "http", "ok": False, "reason": str(exc)}]))
                     continue
-                elapsed = (time.perf_counter() - began) * 1000
-                if got.blocked:
-                    out.append(FetchResult(url=url, html="", status="blocked", error=got.error or "Blocked by robots.txt", fetch_ms=elapsed))
-                elif got.error or not got.html:
-                    out.append(FetchResult(url=url, html="", status="error", error=got.error or "empty response", fetch_ms=elapsed))
+                attempts = got.attempt_dicts()
+                reason = "; ".join(f"{item['method']}: {item['reason']}" for item in attempts if not item["ok"])
+                if got.method and got.html:
+                    out.append(FetchResult(url=url, html=got.html, status="fetched", fetch_ms=got.fetch_ms, method=got.method, attempts=attempts))
+                elif any("robots" in (item.get("reason") or "").lower() for item in attempts):
+                    out.append(FetchResult(url=url, html="", status="blocked", error=reason or "Blocked by robots.txt", fetch_ms=got.fetch_ms, attempts=attempts))
                 else:
-                    out.append(FetchResult(url=url, html=got.html, status="fetched", fetch_ms=elapsed))
+                    out.append(FetchResult(url=url, html="", status="error", error=reason or "empty response", fetch_ms=got.fetch_ms, attempts=attempts))
         finally:
-            crawler.close()
+            layer.close()
         return out
 
     return fetch
@@ -2590,7 +2610,7 @@ def _score_search(ctx: ProjectContext, search: str, base: PageDoc, url: str, ins
         return board
     if ctx.topic is not None:
         board.topic = ctx.topic.check(search, base)
-        if board.topic.on_topic is not True:
+        if board.topic.on_topic is False or board.topic.status == "not checked":
             board.error = board.topic.text
             return board
     _site_slot(ctx, board, search, url, incumbents, base, compare)
@@ -2633,6 +2653,9 @@ def _score_search(ctx: ProjectContext, search: str, base: PageDoc, url: str, ins
     if position - 1 < len(incumbents):
         board.below = _neighbor(incumbents[position - 1])
     board.confidence, board.confidence_note = _confidence(ctx, values, board.thin)
+    if board.topic is not None and board.topic.status == "uncertain":
+        board.confidence = "UNSURE"
+        board.confidence_note = board.topic.text
     scaled = normalize_rows(raw)
     linear = [dot(HAND_WEIGHTS, row) for row in scaled]
     board.linear_position = 1 + sum(1 for value in linear[:-1] if value > linear[-1])
@@ -2842,8 +2865,7 @@ def _confidence(ctx: ProjectContext, values: list[float], thin: bool) -> tuple[s
         gaps.append(abs(values[ours] - values[order[place - 1]]))
     if place + 1 < len(order):
         gaps.append(abs(values[ours] - values[order[place + 1]]))
-    label = ctx.fit.calibration.label(min(gaps) if gaps else 0.0)
-    note = ctx.fit.calibration.note
+    label, note = ctx.fit.calibration.product_label(min(gaps) if gaps else 0.0, synthetic=_is_synthetic(ctx.project))
     if thin and label != "UNSURE":
         return "UNSURE", "Fewer than half of the REAL results are stored, so this stays UNSURE. " + note
     return label, note
@@ -3019,7 +3041,8 @@ def _summary(ctx: ProjectContext, rows: list[SearchBoard], url: str) -> BoardSum
     site10 = sum(1 for row in rows if row.real_site_position is not None and row.real_site_position <= 10)
     on = sum(1 for row in rows if row.topic is not None and row.topic.on_topic is True)
     off = sum(1 for row in rows if row.topic is not None and row.topic.on_topic is False)
-    unchecked = sum(1 for row in rows if row.topic is not None and row.topic.on_topic is None)
+    unchecked = sum(1 for row in rows if row.topic is not None and row.topic.status == "not checked")
+    uncertain = sum(1 for row in rows if row.topic is not None and row.topic.status == "uncertain")
     pulled = _pulled_text([item for item in ctx.google.searches if item.results and item.search in set(ctx.project.searches)])
     text = (
         f"PREDICTED top 3 on {top3} of {total} searches, top 10 on {top10} of {total}. "
@@ -3030,6 +3053,8 @@ def _summary(ctx: ProjectContext, rows: list[SearchBoard], url: str) -> BoardSum
         text += f" PREDICTED off topic on {off} of {total}, so not in the top 10 there."
     if unchecked:
         text += f" {unchecked} could not be checked (no readable text)."
+    if uncertain:
+        text += f" {uncertain} stay UNSURE: the topic check is unvalidated, not an on-topic or off-topic verdict."
     rest = total - len(scored) - off - unchecked
     if rest > 0:
         text += f" {rest} searches got no PREDICTED position (see each search)."
@@ -3048,6 +3073,7 @@ def _summary(ctx: ProjectContext, rows: list[SearchBoard], url: str) -> BoardSum
         on_topic=on,
         off_topic=off,
         not_checked=unchecked,
+        uncertain=uncertain,
     )
 
 
@@ -3075,13 +3101,16 @@ def plain_lead_from_dict(data: dict) -> str:
     on = int(summary.get("on_topic") or 0)
     off = int(summary.get("off_topic") or 0)
     unchecked = int(summary.get("not_checked") or 0)
-    if not summary.get("scored") and not off and not unchecked:
+    uncertain = int(summary.get("uncertain") or 0)
+    if not summary.get("scored") and not off and not unchecked and not uncertain:
         return f"No PREDICTED positions yet: none of the {total} searches has REAL Google results to compare with." + (real if summary.get("real_top10") or summary.get("real_site_top10") else "")
     lead = f"PREDICTED: your page is on topic for {on} of your {total} key searches"
     if off:
         lead += f" and off topic for {off}, where it is PREDICTED not to make the top 10"
     if unchecked:
         lead += f"; {unchecked} could not be checked because the page has almost no readable text"
+    if uncertain:
+        lead += f"; {uncertain} stay UNSURE because the topic check is unvalidated"
     lead += "."
     if on and summary.get("scored"):
         lead += (

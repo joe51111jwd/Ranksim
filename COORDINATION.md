@@ -102,6 +102,140 @@ James moved the UI and end-to-end web flow to Claude at about 3:30pm Eastern and
 - Blockers: none for local use. For a durable public deployment, project data and draft runs need storage outside `/tmp` (a database or Blob), which needs a decision from James.
 - Next: wait for review on PR #2. If James approves, merge order can be PR #1 then PR #2, or PR #2 alone (it contains PR #1).
 
+### 2026-11-06 — SEO Tool Builder, public demo copy
+
+- Branch: `cursor/integration-review-175f` (based on PR #2 at `7fc7d0f`, not a merge of PR #3). Pull request: https://github.com/joe51111jwd/Ranksim/pull/5
+- Claimed: public draft copy, synthetic fixture wording, and a regression that the public host does not store pasted drafts
+- Files: `src/aeo/ranksim/workspace_ui.py`, `tests/test_workspace.py`
+- Not claimed: Claude UI redesign, PR #3 ledger, crawler, or benchmark files
+- Tests: `python3 -m pytest` with provider keys unset: 288 passed, 1 warning, 11.90s. The same suite with dummy provider keys fails 2 existing PR #2 tests (`test_stub_llm_and_unmeasured_relevance`, `test_auto_serp_refuses_to_invent_results_without_keys`) because this branch does not yet have PR #1's env isolation.
+- PR #3 CI: workflow run 42120308109 at `eff6162e75c10022889904462f67862657fe5841` completed success for all 6 pytest jobs (Python 3.11, 3.12, 3.13, each with keys unset and with fake keys).
+- Not done: merging PR #3 into PR #2. A trial merge stops on 9 files (`README.md`, `fetch.py`, `urls.py`, `check.py`, `cli.py`, `demo.py`, `groundtruth.py`, `serve.py`, `test_product_layer.py`). `serve.py` must keep PR #2's project app. PR #3's side of that conflict is the older single-page demo.
+- Topic gate: a 117-word plain draft about vinyl fence installation cost scores about 0.13 against a floor of 0.403 and is not placed. Parsing is not the cause (`_as_html` sets title, H1, and paragraphs, and all four query words are found). The floor is half the lowest match among the generated pages, which match each other near 0.81. No scoring change in this commit.
+- CLEARER on the synthetic comparison is still the in-sample label. Held-out calibration from PR #3 is not in this branch.
+- Next: do not merge. Do not deploy this branch.
+
+### 2026-11-06 — SEO Tool Builder, calibration, ledger, topic uncertainty
+
+- Branch: `cursor/integration-review-175f`. Pull request: https://github.com/joe51111jwd/Ranksim/pull/5
+- Provider isolation from PR #1 is in `tests/conftest.py`. The PR #1 CSV track-record ledger was not added.
+- Confidence uses `validate_calibration` from the audit (cluster and URL holdout in `benchmark.py`). Product labels use `product_label`: synthetic data and any threshold that did not pass that holdout stay UNSURE. `Calibration.label` can still say CLEARER for the in-sample description. It is not the user-facing call.
+- Draft saves on a non-synthetic project append to the database ledger. Dated CSV imports append outcomes. Synthetic drafts are not recorded. The public demo still does not save pasted text.
+- Topic: a page under the clone-similarity floor keeps a PREDICTED slot only when it matches this search more than every other stored search and the score is at least 0.02. The text says low cosine, unvalidated, not off topic. A near-zero score, a missing query word, a repetitive page, and an empty page still get no slot. The stored original page is unchanged when its cosine stays above the floor.
+- Tests: `python3 -m pytest` 293 passed, 1 warning, about 12.4s with keys unset, and the same 293 passed with dummy provider keys.
+- Still not merged and not deployed. PR #3 was not merged as a whole. `serve.py` on that branch is still the older demo.
+
+### 2026-11-06 — SEO Tool Builder, CI workflow and one record store
+
+- Branch: `cursor/integration-review-175f`. Pull request: https://github.com/joe51111jwd/Ranksim/pull/5
+- Claimed: carry `.github/workflows/tests.yml` from PR #3 at `eff6162e75c10022889904462f67862657fe5841`. The job matrix, install, fake keys, and `test ! -e data` step are unchanged.
+- Trigger: `pull_request` has no base-branch filter, so it runs for this pull request into `claude/ranksim-mvp-eod-ifjitw`. `push` is limited to `main`, so a push to this branch starts CI only because the pull request is open.
+- Record store on this branch: one active store, the database ledger in `src/aeo/ranksim/ledger.py`. PR #1's CSV track-record ledger is not in this tree. It stays on the unmerged PR #1 branch.
+- Local check before the workflow file was committed: `python3 -m pytest -p no:cacheprovider` on Python 3.12 with keys unset, 293 passed, 1 warning, 12.21s, and no `data/` directory was created. That is not the GitHub matrix.
+- Not claimed: a separate review of confidence, ledger, and topic fixtures. This handoff does not say that review passed.
+- Next: do not merge. Do not deploy.
+
+### 2026-11-06 — SEO Tool Builder, review fixes on the same pull request
+
+- Branch: `cursor/integration-review-175f`. Pull request: https://github.com/joe51111jwd/Ranksim/pull/5
+- This branch has one active prediction record store: the database ledger. PR #1's CSV track-record ledger is not in this tree.
+- `ledger.record_check` had no callers. It was removed. It was the path that could label a call with the in-sample `calibration.label`. The three-screen comparison and draft use `product_label`.
+- A non-synthetic project that does not pass `validate_calibration` shows UNSURE on Comparisons and on the saved draft, and the ledger row stores that same UNSURE plus the calibration note. Candidate `html_sha256` is the stored fetched HTML. It stays empty when that HTML is absent.
+- A dated CSV is recorded only for a project whose dataset is already `observed`, and not on the public demo. A `none` project's first file, and synthetic or historical demos, are not new observations. The outcome stores project, file name, sha256, and upload time. The note says it is not a live Google pull.
+- One stored search: a draft under the clone floor with the query words present was off topic (measured cosine 0.172, floor 0.50). It is now unvalidated, `on_topic` is unset, and a slot can still be shown as UNSURE. A page that misses the query-word minimum stays off topic. `TOPIC_MARGIN` is still 0.5.
+- `fit_lambdamart(monotone_up=None)` still uses `MONOTONE_UP`. A passed set is applied. On a 6-row toy set, omitting the argument and passing `MONOTONE_UP` produced the same scores. That is not an accuracy result.
+- No provider module constructs `httpx.AsyncClient`. The test guard now blocks `AsyncClient.send` to paid hosts the same way, and the test does not call a provider.
+- GitHub Actions run 42287478698 on `5e4dae264ec4bb143dae2ddc5993fc530914bc00`: 6 jobs, conclusion failure. Python 3.12 and 3.13, keys unset and fake keys, succeeded (4). Python 3.11, both key modes, failed `test_fast_loop_moves_predicted_position_when_the_page_gets_stronger` because a float tie already placed the weak page first. The fixture rival is longer so the weak page starts behind it. Ranker code was not changed for that.
+- Local: Python 3.12 keys unset 303 passed, 1 warning, 13.12s; dummy keys 303 passed, 13.40s. Python 3.11 keys unset 303 passed, 14.68s; fake keys matching the workflow 303 passed, 13.45s.
+- Not claimed: the separate review of these fixtures, or a correct evaluation of the 35 of 135 labeled rows that have HTML.
+- Next: do not merge. Do not deploy.
+
+### 2026-11-06 — SEO Tool Builder, topic identity and one label
+
+- Branch: `cursor/integration-review-175f`. Pull request: https://github.com/joe51111jwd/Ranksim/pull/5
+- A page that clears the clone floor is not on topic when another stored search matches it as well or better. Query words with a cosine under the floor stay unvalidated. A stored page of the query that clears the floor stays on topic. Missing query words, repetition, and an empty page still get no slot. `TOPIC_MARGIN` is still 0.5. No extra gap was added.
+- An uncertain draft stores that topic sentence as the ledger note and shows the same sentence. It does not keep the holdout calibration note.
+- Predictions carry a project slug. Scoring matches a query only when the prediction and the outcome name the same project. Blank legacy rows are not assigned to a named project. A dated CSV on a `none` project is recorded once as `imported_csv` and the project becomes observed. That is an import, not a live Google capture. Synthetic, historical, and the public demo are not recorded into that track record.
+- `check_draft` uses `product_label`. The tester CLI prints that stored label. An in-sample threshold prints UNSURE.
+- Local: Python 3.12 keys unset 307 passed, 1 warning, 14.24s; dummy keys 307 passed, 13.82s. Python 3.11.18 keys unset 307 passed, 13.73s; fake keys 307 passed, 14.41s.
+- One active record store: the database ledger. PR #1's CSV file ledger is not on this branch.
+- Not a correct evaluation of the 35 of 135 labeled rows that have HTML. Not merged. Not deployed.
+
+### 2026-11-06 — SEO Tool Builder, ledger hash and project scoring
+
+- Branch: `cursor/integration-review-175f`. Pull request: https://github.com/joe51111jwd/Ranksim/pull/5
+- New predictions are hash version 2 and include the stored project slug, including an empty one. Older rows stay on the original hash and are reported as legacy. Their slug is not rewritten into the chain.
+- Scoring still requires the same named project and a later observation date. A blank project is not matched to a named outcome.
+- Candidate hashes are `sha256` of the HTML `stored_html` returns. A missing page stays empty. Pages are stored on the page row, not in a separate shard.
+- The tester CLI uses an explicit synthetic flag on the loaded label set. A held-out calibration on synthetic data still prints UNSURE. Host names are not treated as synthetic.
+- Local: Python 3.12 keys unset 310 passed, 1 warning, 13.47s; dummy keys 310 passed, 13.58s. Python 3.11.18 keys unset 310 passed, 13.67s; fake keys 310 passed, 13.70s.
+- Not merged. Not deployed. 35 of 135 labeled rows have HTML.
+
+### 2026-11-06 — SEO Tool Builder, label source for CLI confidence
+
+- Branch: `cursor/integration-review-175f`. Pull request: https://github.com/joe51111jwd/Ranksim/pull/5
+- `label.json` records `source`. The synthetic demo writes `synthetic`. A dated import writes `imported_serp`. A Google API pull writes `google_auto`.
+- The tester and `ai-eval` set synthetic only when that loaded source is `synthetic`. `google_auto` and `imported_serp` are not synthetic. An import is not a live Google pull. A missing source or a broken file raises and makes no confidence call.
+- Local: Python 3.12 keys unset 312 passed, 1 warning, 14.11s; dummy keys 312 passed, 14.90s. Python 3.11.18 keys unset 312 passed, 14.62s; fake keys 312 passed, 14.54s.
+- Not merged. Not deployed. The isolated preview stays on the previous head.
+
+### 2026-11-06 — SEO Tool Builder, explicit CSV rows
+
+- Branch: `cursor/integration-review-175f`. Pull request: https://github.com/joe51111jwd/Ranksim/pull/5
+- An explicit CSV is scored from its own rows. `project/label.json` from a later import does not replace an older file under `imports/`.
+- A named `label.json` still supplies source. `synthetic` stays UNSURE under a held-out calibration. `imported_serp` is not a live Google pull. A CSV with no label file is not synthetic and not live Google. A broken or sourceless `label.json` still makes no confidence call.
+- Local: Python 3.12 keys unset 313 passed, 1 warning, 14.04s; fake keys 313 passed, 14.50s. Python 3.11.18 keys unset 313 passed, 14.48s; fake keys 313 passed, 14.56s.
+- Not merged. Not deployed. The isolated preview stays on `ad8020f`.
+
+### 2026-11-07 — SEO Tool Builder, Serper link column
+
+- Branch: `cursor/integration-review-175f`. Pull request: https://github.com/joe51111jwd/Ranksim/pull/5
+- A Serper export names the URL column `link`. `load_serp_file` and the CSV check now accept that header. Query, url, page, and landing page still work.
+- One new regression. No other product change. The captured HTML and the snapshot database stay private and are not in git.
+- Local: Python 3.12 keys unset 314 passed, 1 warning, 14.01s; fake keys 314 passed, 1 warning, 17.84s. Python 3.11.18 keys unset 314 passed, 1 warning, 18.31s; fake keys 314 passed, 1 warning, 14.26s.
+- Not merged. Not deployed. The isolated preview stays on `ad8020f`.
+
+### 2026-11-07 — SEO Tool Builder, snapshot protocol, no ranker change
+
+- Branch: `cursor/integration-review-175f`. Pull request: https://github.com/joe51111jwd/Ranksim/pull/5
+- The published 10-query holdout stays a reference. Training decisions use the other 20 queries, with near-duplicate queries held out as a family. A candidate is kept only when that family-out pairwise clears both BM25 and the current model by 0.05.
+- On this snapshot the family-out model is about 0.525 pairwise and BM25 is about 0.514, on 469 stored training pairs. Nothing cleared the bar. The ranker is unchanged.
+- The same frozen model, scored once on the published holdout, is 121 of 222 pairs (0.545). BM25 is 124 of 222 (0.559). Keeping the largest half of the score gaps is 0.559 at 0.50 coverage. That is not 90 percent, and it is not a later Google result.
+- Query leave-one-out on the training queries is about 0.588. 70 of 190 training query pairs share a URL, and 36 of 63 holdout URLs also appear in training, so that higher number is not family-held-out.
+- Local: Python 3.12 keys unset 320 passed, 1 warning, 14.11s; fake keys 320 passed, 1 warning, 18.99s. Python 3.11.18 keys unset 320 passed, 1 warning, 18.61s; fake keys 320 passed, 1 warning, 14.42s.
+- Not merged. Not deployed. The isolated preview stays on `ad8020f`.
+
+### 2026-11-07 — SEO Tool Builder, three outside signals, none adopted
+
+- Branch: `cursor/integration-review-175f`. Pull request: https://github.com/joe51111jwd/Ranksim/pull/5
+- Family-out on the 20 training queries only. The published 10-query holdout was not scored.
+- Page type from the URL and schema.org: family-out pairwise 0.505 versus the current model 0.525. Query-mean change -0.035. Not adopted.
+- Tranco top-1M popularity, labeled as popularity and not as backlinks: family-out 0.522. The popularity score alone orders 0.392 of 469 pairs. 79 of 144 stored training rows are in the list. Not adopted. The zip is not in git. The default list includes Cloudflare Radar under CC BY-NC 4.0.
+- Common Crawl domain PageRank and harmonic centrality, release cc-main-2025-oct-nov-dec: 39 of 45 training domains matched, 134 of 144 stored rows. Family-out pairwise 0.501. PageRank alone is 0.420 and harmonic centrality alone is 0.377, so the global link ranks point the wrong way inside these top 10s. Not adopted. The rank file is not in git.
+- The ranker is unchanged.
+- Local: Python 3.12 keys unset 324 passed, 1 warning, 14.38s; fake keys 324 passed, 1 warning, 19.33s. Python 3.11.18 keys unset 324 passed, 1 warning, 19.02s; fake keys 324 passed, 1 warning, 14.23s.
+- Not merged. Not deployed. The isolated preview stays on `ad8020f`.
+
+### 2026-11-09 — SEO Tool Builder, first forward score of the Nov 9 snapshot
+
+- Branch: `cursor/integration-review-175f`. Pull request: https://github.com/joe51111jwd/Ranksim/pull/5
+- The Nov 9 Serper snapshot is scored once. Training, features, and thresholds use the Nov 6 snapshot only. Nov 9 positions are the outcome. HTML stays out of git. `evals/forward-2026-11-09/` holds the position lists, the manifest, the report, and the ledger chain.
+- Overlap, not a model: 594/667 pairs (0.891), mean Spearman 0.816, 202 of 294 Nov 6 rows returned. Full Nov 9 list, ties counted and not treated as correct: LambdaMART 680/1341 (0.507), BM25 596/1341 (0.444), persistence 931/1341 (0.694), blend 942/1341 (0.702), history-aware 1007/1341 (0.751). History-aware is not adopted. On URLs in both snapshots it is 575/667 against persistence 594/667. The ranker is unchanged.
+- Ledger: 1495 PREDICTED rows, protocol time 2026-11-07T04:00:00Z, confidence UNSURE, chain head `0da77b555e86baaa3f5d91f98b7ecd107fe07aaf07ca749d256cbe925af8205c`. Persistence resolved calls, ties omitted: 931/1146. One interval, about 2.5 days, 30 queries. Not a general forecast.
+- Local: Python 3.12 keys unset 330 passed, 1 warning, 15.31s; fake keys 330 passed, 1 warning, 18.71s. Python 3.11.18 keys unset 330 passed, 1 warning, 21.06s; fake keys 330 passed, 1 warning, 18.89s. Python 3.13.18 keys unset 330 passed, 1 warning, 20.40s. No `data/` directory was created.
+- Not merged. Not deployed.
+
+### 2026-11-10, SEO Tool Builder, new-page scores, none adopted
+
+- Branch: `cursor/integration-review-175f`. Pull request: https://github.com/joe51111jwd/Ranksim/pull/5
+- The Nov 9 draft miss was checked before any new score was treated as a result. LambdaMART draft versus draft is 34/116 (28 ties, 54 wrong). 28 ties are both pages missing HTML. 44 of 66 mixed pairs put the fetched page above the page with no HTML, and the pages with no HTML have the better mean position (5.448 on 29 rows, 7.441 on 34 fetched drafts). Both-have-text is 12/22. Full list is 680 right and 557 wrong. The largest query is 10/45; dropping it leaves 24/71. Six queries with at least 3 pairs are all under half.
+- Protocol was committed before the Nov 9 look. Family holdout, three scorers, margin 0.05, bootstrap 2000, seed 20261110. Report: `evals/forward-2026-11-09/new_page.md`.
+- Held-out draft versus draft: domain prior 46/116, content and query match 60/116, blend 62/116, LambdaMART 34/116, BM25 37/116. Draft versus an already ranking page: 124/281, 121/281, 135/281, against LambdaMART 134/281. Text-only draft versus draft: 9/22, 14/22, 14/22, against LambdaMART 12/22 and BM25 15/22. All three are rejected. The content rule's draft-versus-draft gain interval is above zero, and its draft-versus-ranking rate falls to 121/281, so the both-slices gate fails.
+- Ledger: new file `evals/forward-2026-11-09/new_page_ledger.json`, 897 PREDICTED rows, UNSURE, protocol time 2026-11-07T04:00:00Z, chain head `d6e51fedbecba9485fd37db13587b996b3efeef99043c466977a126c91877f8c`. The Nov 9 ledger file was not rewritten.
+- Local: Python 3.12 keys unset, 341 passed, 1 warning, 19.0s; fake keys, 341 passed, 1 warning, 18.2s. No `data/` directory was created. Python 3.11 and 3.13 are the GitHub matrix.
+- Ranker unchanged. No merge. No deploy. No new SERP pull.
+- Next: the same 30 queries, next snapshot, and score pages that have text as their own line.
+
 ### Template
 
 Copy this block. Do not delete earlier handoffs.

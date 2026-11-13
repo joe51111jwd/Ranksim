@@ -67,6 +67,8 @@ class RsPage(Base):
     updated_label: Mapped[str | None] = mapped_column(String(64), nullable=True)
     authority: Mapped[float | None] = mapped_column(Float, nullable=True)
     authority_source: Mapped[str] = mapped_column(String(64), default="unavailable")
+    fetch_method: Mapped[str] = mapped_column(String(32), default="")
+    fetch_log: Mapped[str] = mapped_column(Text, default="")
     fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
@@ -125,11 +127,48 @@ def database_url(url: str) -> str:
     return url
 
 
+def _ensure_ledger_columns(engine) -> None:
+    """Add ledger columns that older databases were created without. Existing rows stay blank."""
+    from sqlalchemy import inspect, text
+
+    inspector = inspect(engine)
+    tables = set(inspector.get_table_names())
+    statements = []
+    if "rs_outcomes" in tables:
+        have = {column["name"] for column in inspector.get_columns("rs_outcomes")}
+        for name, ddl in (
+            ("project_slug", "VARCHAR(200) DEFAULT ''"),
+            ("source_file", "VARCHAR(500) DEFAULT ''"),
+            ("source_sha256", "VARCHAR(64) DEFAULT ''"),
+            ("uploaded_at", "VARCHAR(40) DEFAULT ''"),
+        ):
+            if name not in have:
+                statements.append(f"ALTER TABLE rs_outcomes ADD COLUMN {name} {ddl}")
+    if "rs_predictions" in tables:
+        have = {column["name"] for column in inspector.get_columns("rs_predictions")}
+        if "project_slug" not in have:
+            statements.append("ALTER TABLE rs_predictions ADD COLUMN project_slug VARCHAR(200) DEFAULT ''")
+    if "rs_pages" in tables:
+        have = {column["name"] for column in inspector.get_columns("rs_pages")}
+        if "fetch_method" not in have:
+            statements.append("ALTER TABLE rs_pages ADD COLUMN fetch_method VARCHAR(32) DEFAULT ''")
+        if "fetch_log" not in have:
+            statements.append("ALTER TABLE rs_pages ADD COLUMN fetch_log TEXT DEFAULT ''")
+    if not statements:
+        return
+    with engine.begin() as connection:
+        for statement in statements:
+            connection.execute(text(statement))
+
+
 def session_factory(url: str) -> sessionmaker:
     url = database_url(url)
     if url not in _factories:
+        from aeo.ranksim import ledger  # noqa: F401  (registers ledger tables)
+
         engine = create_engine(url, future=True)
         Base.metadata.create_all(engine)
+        _ensure_ledger_columns(engine)
         _factories[url] = sessionmaker(bind=engine, expire_on_commit=False, future=True)
     return _factories[url]
 

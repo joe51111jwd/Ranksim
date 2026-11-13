@@ -1,0 +1,810 @@
+{
+  "adopted_scorer": null,
+  "adopted_scorers": [],
+  "adoption": {
+    "calibrated_blend": {
+      "pasted_draft_path": {
+        "adopt": false,
+        "content_required": true,
+        "margin": 0.05,
+        "reason": "draft_vs_draft_with_content 0.636 is below BM25 0.682. draft_vs_draft_with_content interval includes no gain or a loss. draft_vs_returning_with_content 0.497 does not clear 0.571. draft_vs_returning_with_content interval includes no gain or a loss."
+      },
+      "published_draft_slices": {
+        "adopt": false,
+        "content_required": false,
+        "margin": 0.05,
+        "reason": "draft_vs_returning 0.480 does not clear 0.527. draft_vs_returning interval includes no gain or a loss."
+      }
+    },
+    "content_query": {
+      "pasted_draft_path": {
+        "adopt": false,
+        "content_required": true,
+        "margin": 0.05,
+        "reason": "draft_vs_draft_with_content 0.636 is below BM25 0.682. draft_vs_draft_with_content interval includes no gain or a loss. draft_vs_returning_with_content 0.419 does not clear 0.571. draft_vs_returning_with_content 0.419 is below BM25 0.425. draft_vs_returning_with_content interval includes no gain or a loss."
+      },
+      "published_draft_slices": {
+        "adopt": false,
+        "content_required": false,
+        "margin": 0.05,
+        "reason": "draft_vs_returning 0.431 does not clear 0.527. draft_vs_returning interval includes no gain or a loss."
+      }
+    },
+    "domain_prior": {
+      "pasted_draft_path": {
+        "adopt": false,
+        "content_required": true,
+        "margin": 0.05,
+        "reason": "draft_vs_draft_with_content 0.409 does not clear 0.595. draft_vs_draft_with_content 0.409 is below BM25 0.682. draft_vs_draft_with_content interval includes no gain or a loss. draft_vs_returning_with_content 0.473 does not clear 0.571. draft_vs_returning_with_content interval includes no gain or a loss."
+      },
+      "published_draft_slices": {
+        "adopt": false,
+        "content_required": false,
+        "margin": 0.05,
+        "reason": "draft_vs_draft interval includes no gain or a loss. draft_vs_returning 0.441 does not clear 0.527. draft_vs_returning interval includes no gain or a loss."
+      }
+    }
+  },
+  "diagnosis": {
+    "both_missing_ties": 28,
+    "candidates": 299,
+    "draft_vs_draft": {
+      "correct": 34,
+      "pairs": 116,
+      "pairwise": 0.293103,
+      "queries": 16,
+      "ties": 28,
+      "wrong": 54
+    },
+    "draft_vs_draft_with_content": {
+      "correct": 12,
+      "pairs": 22,
+      "pairwise": 0.545455,
+      "queries": 8,
+      "ties": 0,
+      "wrong": 10
+    },
+    "drafts_domain_absent_on_nov6": 26,
+    "drafts_domain_only_on_this_query": 0,
+    "drafts_domain_seen_on_another_nov6_query": 37,
+    "fetched_draft_mean_position": 7.441176,
+    "fetched_drafts": 34,
+    "forward_csv_mismatches": 0,
+    "label": "diagnosis of the frozen LambdaMART scores, not a new prediction",
+    "largest_query": "all in one dirtwork software",
+    "largest_query_loo_pairwise": 0.338028,
+    "largest_query_pairs": 45,
+    "missing_draft_mean_position": 5.448276,
+    "missing_drafts": 29,
+    "mixed_correct": 22,
+    "mixed_wrong": 44,
+    "orientation_correct": 680,
+    "orientation_ties": 104,
+    "orientation_wrong": 557,
+    "per_query": {
+      "all in one dirt work management software": {
+        "correct": 0,
+        "pairs": 1,
+        "ties": 0,
+        "wrong": 1
+      },
+      "all in one dirtwork software": {
+        "correct": 10,
+        "pairs": 45,
+        "ties": 15,
+        "wrong": 20
+      },
+      "all-in-one heavy civil construction software": {
+        "correct": 1,
+        "pairs": 3,
+        "ties": 0,
+        "wrong": 2
+      },
+      "b2w alternative": {
+        "correct": 1,
+        "pairs": 1,
+        "ties": 0,
+        "wrong": 0
+      },
+      "best all in one dirt work management software": {
+        "correct": 3,
+        "pairs": 10,
+        "ties": 1,
+        "wrong": 6
+      },
+      "best all in one excavation software": {
+        "correct": 1,
+        "pairs": 1,
+        "ties": 0,
+        "wrong": 0
+      },
+      "best all in one heavy civil software": {
+        "correct": 0,
+        "pairs": 1,
+        "ties": 1,
+        "wrong": 0
+      },
+      "best all-in-one dirt work management software": {
+        "correct": 1,
+        "pairs": 6,
+        "ties": 1,
+        "wrong": 4
+      },
+      "best all-in-one dirtworks software": {
+        "correct": 1,
+        "pairs": 1,
+        "ties": 0,
+        "wrong": 0
+      },
+      "best heavy civil construction software": {
+        "correct": 0,
+        "pairs": 1,
+        "ties": 0,
+        "wrong": 1
+      },
+      "best heavy construction software": {
+        "correct": 0,
+        "pairs": 1,
+        "ties": 0,
+        "wrong": 1
+      },
+      "dirt work software with crm": {
+        "correct": 13,
+        "pairs": 36,
+        "ties": 10,
+        "wrong": 13
+      },
+      "excavation company software": {
+        "correct": 1,
+        "pairs": 1,
+        "ties": 0,
+        "wrong": 0
+      },
+      "hcss alternative": {
+        "correct": 1,
+        "pairs": 6,
+        "ties": 0,
+        "wrong": 5
+      },
+      "hcss heavyjob alternative": {
+        "correct": 0,
+        "pairs": 1,
+        "ties": 0,
+        "wrong": 1
+      },
+      "heavy civil field management software": {
+        "correct": 1,
+        "pairs": 1,
+        "ties": 0,
+        "wrong": 0
+      }
+    },
+    "queries": 30,
+    "queries_with_at_least_3_pairs_under_half": 6,
+    "score_gap_mismatches": 0
+  },
+  "folds": [
+    {
+      "blend_weight": 0.75,
+      "family": "family-1",
+      "queries": [
+        "all in 1 dirt work software",
+        "all in one dirt work management software",
+        "all in one dirt work software",
+        "all in one dirtwork software",
+        "best all in 1 dirt work software",
+        "best all in one dirt work management software",
+        "best all in one dirt work software",
+        "best all-in-one dirt work and excavation software",
+        "best all-in-one dirt work management software",
+        "best all-in-one dirtworks software",
+        "best dirt work software",
+        "dirt work contractor software",
+        "dirt work management software",
+        "dirt work software with crm"
+      ],
+      "test_queries": [
+        "all in 1 dirt work software",
+        "all in one dirt work management software",
+        "all in one dirt work software",
+        "all in one dirtwork software",
+        "best all in 1 dirt work software",
+        "best all in one dirt work management software",
+        "best all in one dirt work software",
+        "best all-in-one dirt work and excavation software",
+        "best all-in-one dirt work management software",
+        "best all-in-one dirtworks software",
+        "best dirt work software",
+        "dirt work contractor software",
+        "dirt work management software",
+        "dirt work software with crm"
+      ],
+      "training_rows": 158
+    },
+    {
+      "blend_weight": 0.5,
+      "family": "family-2",
+      "queries": [
+        "all in one excavation software",
+        "best all in one excavation software",
+        "best excavation software",
+        "excavation company software",
+        "excavation contractor software",
+        "excavation software"
+      ],
+      "test_queries": [
+        "all in one excavation software",
+        "best all in one excavation software",
+        "best excavation software",
+        "excavation company software",
+        "excavation contractor software",
+        "excavation software"
+      ],
+      "training_rows": 235
+    },
+    {
+      "blend_weight": 0.5,
+      "family": "family-3",
+      "queries": [
+        "all in one heavy civil software",
+        "all-in-one heavy civil construction software",
+        "best all in one heavy civil software",
+        "best heavy civil construction software",
+        "best heavy construction software",
+        "heavy civil field management software"
+      ],
+      "test_queries": [
+        "all in one heavy civil software",
+        "all-in-one heavy civil construction software",
+        "best all in one heavy civil software",
+        "best heavy civil construction software",
+        "best heavy construction software",
+        "heavy civil field management software"
+      ],
+      "training_rows": 235
+    },
+    {
+      "blend_weight": 0.75,
+      "family": "family-4",
+      "queries": [
+        "b2w alternative",
+        "hcss alternative",
+        "hcss heavybid alternative",
+        "hcss heavyjob alternative"
+      ],
+      "test_queries": [
+        "b2w alternative",
+        "hcss alternative",
+        "hcss heavybid alternative",
+        "hcss heavyjob alternative"
+      ],
+      "training_rows": 254
+    }
+  ],
+  "label": "PREDICTED",
+  "ledger_json": "evals/forward-2026-11-09/new_page_ledger.json",
+  "metrics": {
+    "bm25": {
+      "all": {
+        "ci": [
+          0.393326,
+          0.50076
+        ],
+        "correct": 596,
+        "delta_vs_lambdamart": -0.06264,
+        "delta_vs_lambdamart_ci": [
+          -0.095569,
+          -0.029078
+        ],
+        "pairs": 1341,
+        "pairwise": 0.444444,
+        "queries": 30,
+        "ties": 105,
+        "wrong": 640
+      },
+      "draft_vs_draft": {
+        "ci": [
+          0.238365,
+          0.489796
+        ],
+        "correct": 37,
+        "delta_vs_lambdamart": 0.025862,
+        "delta_vs_lambdamart_ci": [
+          -0.02685,
+          0.161312
+        ],
+        "pairs": 116,
+        "pairwise": 0.318966,
+        "queries": 16,
+        "ties": 29,
+        "wrong": 50
+      },
+      "draft_vs_draft_with_content": {
+        "ci": [
+          0.454545,
+          0.916667
+        ],
+        "correct": 15,
+        "delta_vs_lambdamart": 0.136364,
+        "delta_vs_lambdamart_ci": [
+          -0.130435,
+          0.555556
+        ],
+        "pairs": 22,
+        "pairwise": 0.681818,
+        "queries": 8,
+        "ties": 1,
+        "wrong": 6
+      },
+      "draft_vs_returning": {
+        "ci": [
+          0.350339,
+          0.504091
+        ],
+        "correct": 118,
+        "delta_vs_lambdamart": -0.05694,
+        "delta_vs_lambdamart_ci": [
+          -0.112729,
+          0.0
+        ],
+        "pairs": 281,
+        "pairwise": 0.419929,
+        "queries": 23,
+        "ties": 29,
+        "wrong": 134
+      },
+      "draft_vs_returning_with_content": {
+        "ci": [
+          0.348101,
+          0.51726
+        ],
+        "correct": 71,
+        "delta_vs_lambdamart": -0.095808,
+        "delta_vs_lambdamart_ci": [
+          -0.18244,
+          0.005817
+        ],
+        "pairs": 167,
+        "pairwise": 0.42515,
+        "queries": 19,
+        "ties": 0,
+        "wrong": 96
+      },
+      "ndcg_at_10": 0.6038828522401848,
+      "ndcg_ci": [
+        0.5558651889461453,
+        0.6558333721737888
+      ],
+      "ndcg_queries": 30,
+      "spearman": -0.04492465941322374,
+      "spearman_ci": [
+        -0.15694943866716737,
+        0.07786301870923386
+      ],
+      "spearman_queries": 30
+    },
+    "calibrated_blend": {
+      "all": {
+        "ci": [
+          0.499627,
+          0.572593
+        ],
+        "correct": 719,
+        "delta_vs_lambdamart": 0.029083,
+        "delta_vs_lambdamart_ci": [
+          -0.027037,
+          0.084459
+        ],
+        "pairs": 1341,
+        "pairwise": 0.536167,
+        "queries": 30,
+        "ties": 24,
+        "wrong": 598
+      },
+      "draft_vs_draft": {
+        "ci": [
+          0.439024,
+          0.671518
+        ],
+        "correct": 62,
+        "delta_vs_lambdamart": 0.241379,
+        "delta_vs_lambdamart_ci": [
+          0.084167,
+          0.4
+        ],
+        "pairs": 116,
+        "pairwise": 0.534483,
+        "queries": 16,
+        "ties": 4,
+        "wrong": 50
+      },
+      "draft_vs_draft_with_content": {
+        "ci": [
+          0.4,
+          0.863667
+        ],
+        "correct": 14,
+        "delta_vs_lambdamart": 0.090909,
+        "delta_vs_lambdamart_ci": [
+          -0.150096,
+          0.294118
+        ],
+        "pairs": 22,
+        "pairwise": 0.636364,
+        "queries": 8,
+        "ties": 0,
+        "wrong": 8
+      },
+      "draft_vs_returning": {
+        "ci": [
+          0.41463,
+          0.544002
+        ],
+        "correct": 135,
+        "delta_vs_lambdamart": 0.003559,
+        "delta_vs_lambdamart_ci": [
+          -0.091242,
+          0.09622
+        ],
+        "pairs": 281,
+        "pairwise": 0.480427,
+        "queries": 23,
+        "ties": 8,
+        "wrong": 138
+      },
+      "draft_vs_returning_with_content": {
+        "ci": [
+          0.409447,
+          0.5811
+        ],
+        "correct": 83,
+        "delta_vs_lambdamart": -0.023952,
+        "delta_vs_lambdamart_ci": [
+          -0.133345,
+          0.085531
+        ],
+        "pairs": 167,
+        "pairwise": 0.497006,
+        "queries": 19,
+        "ties": 0,
+        "wrong": 84
+      },
+      "ndcg_at_10": 0.5921541057886813,
+      "ndcg_ci": [
+        0.5526434111967332,
+        0.6367366241449065
+      ],
+      "ndcg_queries": 30,
+      "spearman": 0.12672717792878477,
+      "spearman_ci": [
+        0.026721160541158015,
+        0.23167596653675912
+      ],
+      "spearman_queries": 30
+    },
+    "content_query": {
+      "all": {
+        "ci": [
+          0.460725,
+          0.543464
+        ],
+        "correct": 672,
+        "delta_vs_lambdamart": -0.005966,
+        "delta_vs_lambdamart_ci": [
+          -0.062648,
+          0.051053
+        ],
+        "pairs": 1341,
+        "pairwise": 0.501119,
+        "queries": 30,
+        "ties": 58,
+        "wrong": 611
+      },
+      "draft_vs_draft": {
+        "ci": [
+          0.442851,
+          0.666667
+        ],
+        "correct": 60,
+        "delta_vs_lambdamart": 0.224138,
+        "delta_vs_lambdamart_ci": [
+          0.068172,
+          0.378699
+        ],
+        "pairs": 116,
+        "pairwise": 0.517241,
+        "queries": 16,
+        "ties": 9,
+        "wrong": 47
+      },
+      "draft_vs_draft_with_content": {
+        "ci": [
+          0.4,
+          0.857143
+        ],
+        "correct": 14,
+        "delta_vs_lambdamart": 0.090909,
+        "delta_vs_lambdamart_ci": [
+          -0.173913,
+          0.434783
+        ],
+        "pairs": 22,
+        "pairwise": 0.636364,
+        "queries": 8,
+        "ties": 1,
+        "wrong": 7
+      },
+      "draft_vs_returning": {
+        "ci": [
+          0.343327,
+          0.515534
+        ],
+        "correct": 121,
+        "delta_vs_lambdamart": -0.046263,
+        "delta_vs_lambdamart_ci": [
+          -0.147731,
+          0.049619
+        ],
+        "pairs": 281,
+        "pairwise": 0.430605,
+        "queries": 23,
+        "ties": 15,
+        "wrong": 145
+      },
+      "draft_vs_returning_with_content": {
+        "ci": [
+          0.306659,
+          0.525341
+        ],
+        "correct": 70,
+        "delta_vs_lambdamart": -0.101796,
+        "delta_vs_lambdamart_ci": [
+          -0.22917,
+          0.00562
+        ],
+        "pairs": 167,
+        "pairwise": 0.419162,
+        "queries": 19,
+        "ties": 0,
+        "wrong": 97
+      },
+      "ndcg_at_10": 0.5613270604182916,
+      "ndcg_ci": [
+        0.5279869323030357,
+        0.5995399343394489
+      ],
+      "ndcg_queries": 30,
+      "spearman": 0.06528858129900011,
+      "spearman_ci": [
+        -0.04129310485362182,
+        0.1733806534866753
+      ],
+      "spearman_queries": 30
+    },
+    "domain_prior": {
+      "all": {
+        "ci": [
+          0.448172,
+          0.554074
+        ],
+        "correct": 671,
+        "delta_vs_lambdamart": -0.006711,
+        "delta_vs_lambdamart_ci": [
+          -0.083914,
+          0.058567
+        ],
+        "pairs": 1341,
+        "pairwise": 0.500373,
+        "queries": 30,
+        "ties": 197,
+        "wrong": 473
+      },
+      "draft_vs_draft": {
+        "ci": [
+          0.333333,
+          0.62965
+        ],
+        "correct": 46,
+        "delta_vs_lambdamart": 0.103448,
+        "delta_vs_lambdamart_ci": [
+          -0.005913,
+          0.34625
+        ],
+        "pairs": 116,
+        "pairwise": 0.396552,
+        "queries": 16,
+        "ties": 46,
+        "wrong": 24
+      },
+      "draft_vs_draft_with_content": {
+        "ci": [
+          0.210526,
+          0.590909
+        ],
+        "correct": 9,
+        "delta_vs_lambdamart": -0.136364,
+        "delta_vs_lambdamart_ci": [
+          -0.353046,
+          0.210526
+        ],
+        "pairs": 22,
+        "pairwise": 0.409091,
+        "queries": 8,
+        "ties": 10,
+        "wrong": 3
+      },
+      "draft_vs_returning": {
+        "ci": [
+          0.370956,
+          0.519308
+        ],
+        "correct": 124,
+        "delta_vs_lambdamart": -0.035587,
+        "delta_vs_lambdamart_ci": [
+          -0.149654,
+          0.072166
+        ],
+        "pairs": 281,
+        "pairwise": 0.441281,
+        "queries": 23,
+        "ties": 53,
+        "wrong": 104
+      },
+      "draft_vs_returning_with_content": {
+        "ci": [
+          0.389222,
+          0.579318
+        ],
+        "correct": 79,
+        "delta_vs_lambdamart": -0.047904,
+        "delta_vs_lambdamart_ci": [
+          -0.158228,
+          0.078805
+        ],
+        "pairs": 167,
+        "pairwise": 0.473054,
+        "queries": 19,
+        "ties": 32,
+        "wrong": 56
+      },
+      "ndcg_at_10": 0.6171802775350659,
+      "ndcg_ci": [
+        0.5929871225869192,
+        0.6413094723093496
+      ],
+      "ndcg_queries": 30,
+      "spearman": 0.21428677941289012,
+      "spearman_ci": [
+        0.09933638066397224,
+        0.33648847484464633
+      ],
+      "spearman_queries": 30
+    },
+    "lambdamart": {
+      "all": {
+        "ci": [
+          0.448148,
+          0.568148
+        ],
+        "correct": 680,
+        "delta_vs_lambdamart": 0.0,
+        "delta_vs_lambdamart_ci": [
+          0.0,
+          0.0
+        ],
+        "pairs": 1341,
+        "pairwise": 0.507084,
+        "queries": 30,
+        "ties": 104,
+        "wrong": 557
+      },
+      "draft_vs_draft": {
+        "ci": [
+          0.228571,
+          0.389487
+        ],
+        "correct": 34,
+        "delta_vs_lambdamart": 0.0,
+        "delta_vs_lambdamart_ci": [
+          0.0,
+          0.0
+        ],
+        "pairs": 116,
+        "pairwise": 0.293103,
+        "queries": 16,
+        "ties": 28,
+        "wrong": 54
+      },
+      "draft_vs_draft_with_content": {
+        "ci": [
+          0.285714,
+          0.777778
+        ],
+        "correct": 12,
+        "delta_vs_lambdamart": 0.0,
+        "delta_vs_lambdamart_ci": [
+          0.0,
+          0.0
+        ],
+        "pairs": 22,
+        "pairwise": 0.545455,
+        "queries": 8,
+        "ties": 0,
+        "wrong": 10
+      },
+      "draft_vs_returning": {
+        "ci": [
+          0.408433,
+          0.554327
+        ],
+        "correct": 134,
+        "delta_vs_lambdamart": 0.0,
+        "delta_vs_lambdamart_ci": [
+          0.0,
+          0.0
+        ],
+        "pairs": 281,
+        "pairwise": 0.476868,
+        "queries": 23,
+        "ties": 29,
+        "wrong": 118
+      },
+      "draft_vs_returning_with_content": {
+        "ci": [
+          0.452828,
+          0.601098
+        ],
+        "correct": 87,
+        "delta_vs_lambdamart": 0.0,
+        "delta_vs_lambdamart_ci": [
+          0.0,
+          0.0
+        ],
+        "pairs": 167,
+        "pairwise": 0.520958,
+        "queries": 19,
+        "ties": 0,
+        "wrong": 80
+      },
+      "ndcg_at_10": 0.7149562047284849,
+      "ndcg_ci": [
+        0.6552233926840328,
+        0.778619877091618
+      ],
+      "ndcg_queries": 30,
+      "spearman": 0.09587100914646589,
+      "spearman_ci": [
+        -0.02037361466725272,
+        0.21481072138877014
+      ],
+      "spearman_queries": 30
+    }
+  },
+  "protocol": {
+    "adoption_margin": 0.05,
+    "blend_weights": [
+      0.0,
+      0.25,
+      0.5,
+      0.75,
+      1.0
+    ],
+    "bootstrap_draws": 2000,
+    "bootstrap_seed": 20261110,
+    "content": "BM25 of stored or pasted text. Missing text is left out of the z-score and adds 0. The missing-page sentinel is not used.",
+    "content_weight": 1.0,
+    "labels": "Nov 9 positions are metrics only. They are not features and they are not the blend-weight labels.",
+    "split": "Query families from assign_families on the sorted query list. Each family is scored by a domain prior and a blend weight fit on the other families' Nov 6 rows only.",
+    "uncertainty": "PREDICTED and UNSURE. One interval, 30 queries."
+  },
+  "random": {
+    "draws": 2000,
+    "ndcg_at_10": 0.589831,
+    "ndcg_queries": 30,
+    "pairwise": 0.5,
+    "pairwise_note": "A random order with no ties is right on half of the pairs in expectation. A model tie is not counted as correct, so ties lower the model against this 0.5.",
+    "spearman": 0.0,
+    "spearman_note": "Expected Spearman of a random score with the labeled positions is 0."
+  },
+  "ranker_change": "none"
+}

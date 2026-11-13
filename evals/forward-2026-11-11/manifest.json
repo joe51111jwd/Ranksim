@@ -1,0 +1,63 @@
+{
+  "freeze_commit": "8365d686a86abd41130a63e128047828f0fa8394",
+  "html_in_git": false,
+  "inputs": {
+    "2026-11-06": {
+      "html_saved": 97,
+      "organic_rows": 294,
+      "request_window": {
+        "params": {
+          "gl": "us",
+          "hl": "en",
+          "num": 10
+        },
+        "provider": "serper",
+        "request_end_max": "2026-11-06T22:14:29.890912-05:00",
+        "request_start_min": "2026-11-06T22:13:19.579494-05:00"
+      },
+      "serp_sha256": "c70ca9907a5243f092fe407d18ca002dc58a1bad301734fc56b6dad50e900a87"
+    },
+    "2026-11-09": {
+      "html_saved": 103,
+      "organic_rows": 299,
+      "request_window": {
+        "params": {
+          "gl": "us",
+          "hl": "en",
+          "num": 10
+        },
+        "provider": "serper",
+        "request_end_max": "2026-11-09T09:12:27.159595-05:00",
+        "request_start_min": "2026-11-09T09:11:15.348185-05:00"
+      },
+      "serp_sha256": "49a0c8d4b92bd1fd73a2f4fac507394200e724f6c76c611a9c14b9595b3607d0"
+    }
+  },
+  "label": "PREDICTED",
+  "ledger": "ledger.json",
+  "outcome": {
+    "full_serp_sha256": "e4c76d7336febb64e7e54d62f00f7b0a90adfe92f7110934e82d5bd9ca51767b",
+    "html_in_git": false,
+    "html_saved": 91,
+    "observed_on": "2026-11-11",
+    "organic_rows": 296,
+    "positions_file": "outcome_serp.csv",
+    "positions_sha256": "3bda2449a497fcb2ecaf0876a0eafe6c50de1a894f39c8b4733ec3d00d3b9fd0",
+    "request_window": {
+      "params": {
+        "gl": "us",
+        "hl": "en",
+        "num": 10
+      },
+      "provider": "serper",
+      "request_end_max": "2026-11-11T09:35:31.358838-05:00",
+      "request_start_min": "2026-11-11T09:34:22.130475-05:00"
+    },
+    "unique_urls": 135
+  },
+  "predictions": "predictions.json",
+  "predictions_outcome_opened": false,
+  "preregistration": "preregistration.md",
+  "purpose": "Nov 11 forward test. Predictions were frozen in 8365d68. HTML is not in git.",
+  "report": "report.md"
+}

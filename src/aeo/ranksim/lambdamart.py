@@ -217,7 +217,18 @@ def cross_validate(examples: list[RankExample], *, real_google: bool, folds_mode
     )
 
 
-def fit_lambdamart(examples: list[RankExample], feature_names: tuple[str, ...] | list[str] | None = None):
+def fit_lambdamart(
+    examples: list[RankExample],
+    feature_names: tuple[str, ...] | list[str] | None = None,
+    monotone_up: frozenset[str] | None = None,
+):
+    """Train LambdaMART.
+
+    ``monotone_up`` None uses the product set ``MONOTONE_UP``. A passed set is applied,
+    including an empty set (no monotone constraints). Callers that omit the argument
+    keep the same constraints as before.
+    """
+    constraints = MONOTONE_UP if monotone_up is None else frozenset(monotone_up)
     import lightgbm as lgb
 
     names = list(feature_names or FEATURE_NAMES)
@@ -253,7 +264,7 @@ def fit_lambdamart(examples: list[RankExample], feature_names: tuple[str, ...] |
         "min_data_in_leaf": 1,
         "verbose": -1,
         "num_threads": 1,
-        "monotone_constraints": [1 if name in MONOTONE_UP else 0 for name in names],
+        "monotone_constraints": [1 if name in constraints else 0 for name in names],
         "monotone_constraints_method": "advanced",
     }
     return lgb.train(params, dataset, num_boost_round=40)

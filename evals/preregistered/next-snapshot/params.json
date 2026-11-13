@@ -1,0 +1,44 @@
+{
+  "bm25f_z_weight": 1.0,
+  "coef_content_missing": 0.0,
+  "coef_domain_prior": -0.18266683430311184,
+  "coef_url_overlap": -0.1304703142102412,
+  "fit_window": "2026-11-06_to_2026-11-09",
+  "formula": "position_hat = intercept + coef_domain_prior * domain_prior + coef_url_overlap * url_overlap + coef_content_missing * content_missing - bm25f_z_weight * bm25f_z - tranco_z_weight * tranco_z - majestic_z_weight * majestic_z. New-URL score = -position_hat. Survivor score = -((1 - survivor_history_weight) * last_position + survivor_history_weight * mean of earlier positions). With survivor_history_weight 0 this is -last_position.",
+  "in_sample": {
+    "estimated": [
+      "intercept",
+      "domain_prior",
+      "url_overlap"
+    ],
+    "in_sample_rmse": 2.666466569820093,
+    "label": "IN-SAMPLE fit diagnostics on 2026-11-06 to 2026-11-09 new URLs. Not a forward test.",
+    "n_new_urls": 97,
+    "n_queries": 29,
+    "not_estimated": {
+      "bm25f_z_weight": "Precommitted at 1. One within-query BM25F standard deviation moves the predicted position by one. Same scale as HISTORY_CONTENT_SCALE, fixed before the Nov 9 labels were scored. Not estimated here, because the fit rows have no page text in git.",
+      "content_missing": "No HTML is in git, so this column does not vary on the fit rows. Weight stays 0. Missing text adds no push and is not a penalty.",
+      "majestic_z_weight": "No Majestic Million file is in the repo. Weight stays 0. A file passed at score time is recorded and does not move the rank.",
+      "survivor_history_weight": "The fit window has one previous snapshot, so a blend of earlier positions is not identified. Survivor score is the negative of the latest position.",
+      "tranco_z_weight": "No Tranco file is in the repo. Weight stays 0. A file passed at score time is recorded and does not move the rank."
+    },
+    "predicted_position_max": 7.3838530594886596,
+    "predicted_position_min": 5.857283227958645
+  },
+  "inputs": {
+    "files_read": [
+      "evals/forward-2026-11-09/baseline_serp.csv",
+      "evals/forward-2026-11-09/forward_serp.csv"
+    ],
+    "history_day": "2026-11-06",
+    "history_sha256": "7ad4617418b65377a9ed72b68831e66a3b7ceee6a98c34adf05fb0230d0f8e3d",
+    "label_day": "2026-11-09",
+    "label_sha256": "70f92176ab7cce1e12ef28728a9db6170680dc57d6d01418cf05eb18e5c13a71",
+    "not_read": "evals/forward-2026-11-11/outcome_serp.csv"
+  },
+  "intercept": 7.566519893791772,
+  "label": "FIT. Coefficients estimated on new URLs from 2026-11-06 to 2026-11-09 only. 2026-11-11 positions were not used.",
+  "majestic_z_weight": 0.0,
+  "survivor_history_weight": 0.0,
+  "tranco_z_weight": 0.0
+}

@@ -6,6 +6,8 @@ Routes (registered by serve.create_app)
   POST /demo/synthetic                    build the synthetic demo (no keys, no network)
   POST /demo/historical                   build the SmartCrew historical demo (loopback only)
   GET  /p/{slug}                          1. Setup: data source, coverage by query, competitors, import
+  POST /p/{slug}/index                    build this project's page index in the background
+  GET  /p/{slug}/index                    coverage of that index (JSON)
   POST /p/{slug}/competitors              save competitor domains
   GET  /p/{slug}/comparisons?q=&sel=      2. Comparisons: observed order next to PREDICTED order for one query
   GET  /p/{slug}/draft?q=&from=           3. Draft test form, and recent runs
@@ -18,10 +20,11 @@ Synthetic data is labeled SYNTHETIC on every page of a synthetic project.
 
 from __future__ import annotations
 
+import json
 from urllib.parse import quote, urlencode
 
 from fastapi import FastAPI, Query, Request
-from fastapi.responses import HTMLResponse, RedirectResponse, Response
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from starlette.concurrency import run_in_threadpool
 
 from aeo.ranksim import workspace as ws
@@ -322,7 +325,12 @@ def setup_body(ui, project, meta, *, running=None, message: str = "", error: str
     if running is not None:
         parts.append(serve._job_panel(ui, running, redirect=False))
     main = [_source_panel(ui, project, meta, google, pulls, engine_ready, csrf), _coverage_panel(project, meta, cov, engine_ready)]
-    side = [_competitor_panel(ui, project, meta, cov, csrf, competitor_problems), _import_panel(ui, project, meta, csrf), _keys_panel(ui)]
+    side = [
+        _competitor_panel(ui, project, meta, cov, csrf, competitor_problems),
+        _index_panel(ui, project, csrf),
+        _import_panel(ui, project, meta, csrf),
+        _keys_panel(ui),
+    ]
     parts.append(f'<div class="split"><div class="split-main">{"".join(main)}</div><aside class="split-side">{"".join(side)}</aside></div>')
     return "".join(parts)
 
@@ -370,7 +378,9 @@ def _source_panel(ui, project, meta, google, pulls, engine_ready: bool, csrf: st
     if counts:
         stored = counts.get("stored", 0) + counts.get("fetched_now", 0) + counts.get("kept_stored", 0)
         failed = sum(value for key, value in counts.items() if key not in {"stored", "fetched_now", "kept_stored"})
-        if meta.dataset == ws.DATASET_HISTORICAL:
+        if meta.dataset == ws.DATASET_SYNTHETIC:
+            rows.append(("Page HTML", f"{stored} generated fixture pages, {failed} left blank on purpose. Those blanks are fictional (a made-up robots block and a made-up HTTP error). No network request was sent."))
+        elif meta.dataset == ws.DATASET_HISTORICAL:
             rows.append(("Page HTML", f"{stored} saved in this repository, {failed} have no saved copy (nothing is fetched in this demo)"))
         else:
             rows.append(("Page HTML", f"{stored} stored, {failed} could not be fetched" + _fail_detail(counts)))
@@ -396,7 +406,9 @@ def _build_form(ui, project, meta, csrf: str, *, engine_ready: bool, has_google:
         return (
             '<form method="post" action="/demo/synthetic" class="inline-form" data-busy="Rebuilding...">' + csrf
             + '<button type="submit" class="btn">Rebuild demo</button>'
-            '<span class="hint">Re-imports the synthetic positions and pages. Your draft tests are kept.</span></form>'
+            '<span class="hint">Re-imports the fictional positions and generated pages. '
+            + ("Pasted drafts are not stored." if ui.public_demo else "Saved draft tests are kept.")
+            + "</span></form>"
         )
     if meta.dataset == ws.DATASET_HISTORICAL:
         if not historical_allowed(ui):
@@ -508,6 +520,41 @@ def _import_panel(ui, project, meta, csrf: str) -> str:
         '<p class="hint" id="csv-date-h">Left empty, the data is shown as "pull date not recorded".</p></div>'
         '<label class="check"><input type="checkbox" name="add_searches" value="1" checked> Add queries from the file to this project</label>'
         '<div class="form-actions"><button type="submit" class="btn">Check and import</button></div></form></div></section>'
+    )
+
+
+def _index_panel(ui, project, csrf: str) -> str:
+    from aeo.ranksim.localindex.scope import project_index_dir
+
+    report_path = project_index_dir(project) / "coverage.json"
+    summary = "<p>No page index yet. A build stores the text of the pages that rank for this project's queries, plus competitor homepages.</p>"
+    if report_path.is_file():
+        try:
+            report = json.loads(report_path.read_text(encoding="utf-8"))
+            pct = float(report["top10_text_pct"])
+            summary = (
+                f"<p><b>{int(report['top10_with_text'])} of {int(report['top10_rows'])}</b> top-10 rows have usable text "
+                f"({pct:.0%}). <a href=\"/p/{e(project.slug)}/index\">Coverage detail</a></p>"
+            )
+        except (OSError, ValueError, KeyError):
+            summary = "<p>The index coverage file could not be read.</p>"
+    if ui.settings.serper_api_key:
+        key = "SERPER_API_KEY is set. The build prints the credit estimate before it spends anything."
+    else:
+        key = "SERPER_API_KEY is not set. Serper search and scrape stay off. HTTP, the browser, Common Crawl, and Wayback still run."
+    form = ""
+    if not ui.public_demo:
+        form = (
+            f'<form method="post" action="/p/{e(project.slug)}/index" class="form">'
+            + csrf
+            + '<div class="form-actions"><button type="submit" class="btn">Build page index</button></div></form>'
+        )
+    return (
+        '<section class="panel"><div class="panel-head"><h2>Page index</h2></div><div class="panel-body">'
+        + summary
+        + f'<p class="hint">{e(key)}</p>'
+        + form
+        + "</div></section>"
     )
 
 
@@ -793,6 +840,11 @@ def draft_body(ui, project, meta, ctx, query: str, *, values=None, error: str = 
     )
     original_text = values.get("original_html", "")
     draft_text = values.get("draft_html", "")
+    draft_hint = (
+        "Paste full HTML, or plain text: the first line becomes the title and H1. Max 2 MB. Nothing you paste is stored."
+        if ui.public_demo
+        else "Paste full HTML, or plain text: the first line becomes the title and H1. Max 2 MB. The original is saved unchanged next to the draft."
+    )
     form = (
         f'<form method="post" action="/p/{e(project.slug)}/draft" class="form draft-form" data-busy="Scoring...">' + serve._csrf_input(ui)
         + '<div class="form-grid">'
@@ -811,7 +863,7 @@ def draft_body(ui, project, meta, ctx, query: str, *, values=None, error: str = 
         f'<div class="field" data-show-when="paste"><label for="d-orig">Original HTML or text</label><textarea id="d-orig" name="original_html" rows="7" spellcheck="false">{e(original_text)}</textarea></div>'
         "</fieldset>"
         f'<div class="field"><label for="d-draft">Draft HTML or text</label><textarea id="d-draft" name="draft_html" rows="12" required spellcheck="false" aria-describedby="d-draft-h">{e(draft_text)}</textarea>'
-        '<p class="hint" id="d-draft-h">Paste full HTML, or plain text: the first line becomes the title and H1. Max 2 MB. The original is saved unchanged next to the draft.</p></div>'
+        f'<p class="hint" id="d-draft-h">{e(draft_hint)}</p></div>'
         f"{ai_field}"
         '<div class="form-actions"><button type="submit" class="btn btn-primary">Run PREDICTED test</button>'
         f'<span class="hint">Ranks only the {len(stored_all)} candidates above, not Google\'s index.</span></div></form>'
@@ -879,7 +931,11 @@ def draft_result_body(ui, project, meta, run: dict) -> str:
                 return f'<div class="ba-col {cls}"><span class="ba-k">{e(label)}</span><span class="ba-v ba-none">not placed</span><span class="chip chip-bad">off topic</span></div>'
             return f'<div class="ba-col {cls}"><span class="ba-k">{e(label)}</span><span class="ba-v">#{result["position"]}</span><span class="ba-of">of {of}</span>{_confidence_chip(result["confidence"])}</div>'
 
-        reasons = " ".join(e(item.get("unplaced", "")) for item in (before, after) if item and item.get("position") is None)
+        reasons = " ".join(
+            e(_topic_words(item.get("unplaced", ""), run.get("dataset") or ""))
+            for item in (before, after)
+            if item and item.get("position") is None
+        )
         tiles = (
             '<div class="ba">'
             + (col("Original", before) + '<div class="ba-arrow" aria-hidden="true"></div>' if before is not None else "")
@@ -932,13 +988,21 @@ def draft_result_body(ui, project, meta, run: dict) -> str:
             f'<p class="small">{len(run["missing_candidates"])} observed result{"s" if len(run["missing_candidates"]) != 1 else ""} in this set {"have" if len(run["missing_candidates"]) != 1 else "has"} no stored HTML, so {"they were" if len(run["missing_candidates"]) != 1 else "it was"} not scored. The effect on the order is unknown, not zero.</p>'
             f'<ul class="urls">{links}</ul></div></section>'
         )
-    sources = (
-        '<section class="panel panel-quiet"><div class="panel-head"><h2>Saved inputs</h2></div><div class="panel-body small">'
-        f'<p>Original: {e(run.get("original_label") or "none")}. Draft and original HTML are saved with this run and are not changed by later runs.</p>'
-        f'<p><a href="/p/{slug}/draft/{e(run["id"])}/draft.txt">View draft source</a>'
-        + (f' <span class="sep" aria-hidden="true">|</span> <a href="/p/{slug}/draft/{e(run["id"])}/original.txt">View original source</a>' if run.get("has_original") and run.get("original_label", "").startswith(("pasted", "stored")) else "")
-        + f'</p><p class="muted">Positions source: {e(run.get("source") or "n/a")} Seen: {e(_seen(meta, run.get("pulled") or ""))}.</p></div></section>'
-    )
+    saved = (not ui.public_demo) and bool(run.get("id"))
+    if saved:
+        sources = (
+            '<section class="panel panel-quiet"><div class="panel-head"><h2>Saved inputs</h2></div><div class="panel-body small">'
+            f'<p>Original: {e(run.get("original_label") or "none")}. Draft and original HTML are saved with this run and are not changed by later runs.</p>'
+            f'<p><a href="/p/{slug}/draft/{e(run["id"])}/draft.txt">View draft source</a>'
+            + (f' <span class="sep" aria-hidden="true">|</span> <a href="/p/{slug}/draft/{e(run["id"])}/original.txt">View original source</a>' if run.get("has_original") and run.get("original_label", "").startswith(("pasted", "stored")) else "")
+            + f'</p><p class="muted">Positions source: {e(run.get("source") or "n/a")} Seen: {e(_seen(meta, run.get("pulled") or ""))}.</p></div></section>'
+        )
+    else:
+        sources = (
+            '<section class="panel panel-quiet"><div class="panel-head"><h2>Inputs</h2></div><div class="panel-body small">'
+            "<p>This result was not saved. There is no stored draft, no stored original, and no source link.</p>"
+            f'<p class="muted">Positions source: {e(run.get("source") or "n/a")} Seen: {e(_seen(meta, run.get("pulled") or ""))}.</p></div></section>'
+        )
     return head + summary + f'<div class="grid-2 grid-top">{orders}{diff}</div>' + f'<div class="grid-2 grid-top">{topic}{ai}</div>' + missing + sources
 
 
@@ -1021,7 +1085,7 @@ def _topic_panel(run: dict) -> str:
         cls = "chip-ok" if topic.get("on_topic") is True else ("chip-na" if topic.get("on_topic") is None else "chip-bad")
         missing = topic.get("missing") or []
         words = f'<p class="small">Query words not found: {e(", ".join(missing))}</p>' if missing else ""
-        return f'<div class="topic"><h3>{e(label)} <span class="chip {cls}">{e(status)}</span></h3><p class="small">{e(ws._observed_text(topic.get("text") or ""))}</p>{words}</div>'
+        return f'<div class="topic"><h3>{e(label)} <span class="chip {cls}">{e(status)}</span></h3><p class="small">{e(_topic_words(topic.get("text") or "", run.get("dataset") or ""))}</p>{words}</div>'
 
     parts = []
     if run.get("has_original"):
@@ -1031,6 +1095,22 @@ def _topic_panel(run: dict) -> str:
         '<section class="panel"><div class="panel-head"><h2>On-topic check</h2>'
         f'<p class="panel-note">{_pred()} A separate check that the page covers the query and does not repeat itself.</p></div>'
         f'<div class="panel-body">{"".join(parts)}</div></section>'
+    )
+
+
+def _topic_words(text: str, dataset: str) -> str:
+    """Synthetic results must not call the fixture Google or a REAL top 10."""
+    text = ws._observed_text(text)
+    if dataset != ws.DATASET_SYNTHETIC:
+        return text
+    return (
+        text.replace("any REAL top 10 page", "any generated example page")
+        .replace("REAL top 10", "generated example pages")
+        .replace("the observed pages here", "the generated example pages")
+        .replace("observed page in this project", "generated example page in this demo")
+        .replace("Every readable observed page here", "Every readable generated example page")
+        .replace("some observed page here", "some generated example page")
+        .replace("observed pages", "generated example pages")
     )
 
 
@@ -1193,7 +1273,7 @@ def register(app: FastAPI, ui) -> None:
             project, meta = load(slug)
         except LookupError:
             return serve._not_found(ui)
-        running = ui.jobs.get(job) if job else ui.jobs.active(slug, "pull")
+        running = ui.jobs.get(job) if job else (ui.jobs.active(slug, "index") or ui.jobs.active(slug, "pull"))
         if running is not None and running.slug != slug:
             running = None
         message = _message_text(msg)
@@ -1217,6 +1297,64 @@ def register(app: FastAPI, ui) -> None:
             body = setup_body(ui, project, meta, message=f"Saved {len(found)} competitors.", competitor_problems=problems)
             return shell(ui, f"Setup: {project.name}", body, project=project, meta=meta, tab="setup")
         return RedirectResponse(f"/p/{slug}?msg=competitors-{len(found)}", status_code=303)
+
+    @app.post("/p/{slug}/index")
+    async def start_index(slug: str, request: Request) -> Response:
+        form = await request.form()
+        serve._check_csrf(ui, form)
+        try:
+            project, _meta = load(slug)
+        except LookupError:
+            return serve._not_found(ui)
+        if ui.public_demo:
+            return shell(ui, "Page index", setup_body(ui, project, _meta, error="This public demo does not build an index. Run Ranksim locally."), project=project, meta=_meta, tab="setup", status=403)
+        existing = ui.jobs.active(slug, "index")
+        if existing is not None:
+            return RedirectResponse(f"/p/{slug}?job={existing.id}", status_code=303)
+        job = ui.jobs.start("index", slug, f"Page index for {project.name}", lambda job: serve._index_work(ui, slug, job))
+        return RedirectResponse(f"/p/{slug}?job={job.id}", status_code=303)
+
+    @app.get("/p/{slug}/index")
+    def index_status(slug: str, request: Request, format: str = "") -> Response:
+        try:
+            project, meta = load(slug)
+        except LookupError:
+            return serve._not_found(ui)
+        if ui.public_demo:
+            return JSONResponse({"error": "Not available on the public demo."}, status_code=404)
+        from aeo.ranksim.localindex.scope import project_index_dir
+
+        folder = project_index_dir(project)
+        path = folder / "coverage.json"
+        if not path.is_file():
+            payload = {"error": "No page index yet. Build one from Setup.", "slug": project.slug, "queries": list(project.searches)}
+            accept = request.headers.get("accept", "")
+            if format == "json" or ("application/json" in accept and "text/html" not in accept):
+                return JSONResponse(payload, status_code=404)
+            return shell(ui, "Page index", f'<div class="page-head"><h1>Page index</h1><p>{e(payload["error"])}</p></div>', project=project, meta=meta, tab="setup", status=404)
+        try:
+            report = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return JSONResponse({"error": "The coverage file could not be read."}, status_code=500)
+        report["slug"] = project.slug
+        report["index_dir"] = str(folder)
+        accept = request.headers.get("accept", "")
+        if format == "json" or ("application/json" in accept and "text/html" not in accept):
+            return JSONResponse(report)
+        missing = report.get("missing") or []
+        items = "".join(
+            f"<li>{e(item.get('url'))} <span class=\"muted\">{e(item.get('reason') or '')}</span></li>" for item in missing[:50]
+        )
+        more = f"<p class=\"hint\">{len(missing) - 50} more are in the JSON.</p>" if len(missing) > 50 else ""
+        pct = float(report.get("top10_text_pct") or 0)
+        body = (
+            '<div class="page-head"><div><h1>Page index</h1>'
+            f'<p class="sub">{int(report.get("top10_with_text") or 0)} of {int(report.get("top10_rows") or 0)} '
+            f"top-10 rows have usable text ({pct:.0%}). Target is 95%.</p></div></div>"
+            f'<p><a href="/p/{e(project.slug)}/index?format=json">Coverage JSON</a></p>'
+            f"<ul>{items}</ul>{more}"
+        )
+        return shell(ui, "Page index", body, project=project, meta=meta, tab="setup")
 
     @app.get("/p/{slug}/comparisons", response_class=HTMLResponse)
     def comparisons_page(slug: str, q: str = "", sel: str = "", sort: str = "") -> Response:
@@ -1345,7 +1483,7 @@ def register(app: FastAPI, ui) -> None:
             # Never store or list what an anonymous visitor pasted: the result is rendered once and not saved.
             note = _alert("Public demo: this result is not saved. Nothing you paste here is stored or shown to anyone else.", "info")
             return shell(ui, f"Draft test: {run['search']}", note + draft_result_body(ui, project, meta, run), project=project, meta=meta, tab="draft", query=run["search"])
-        run_id = await run_in_threadpool(ws.save_draft_run, project, run, original_html, values["draft_html"])
+        run_id = await run_in_threadpool(ws.save_draft_run, project, run, original_html, values["draft_html"], ui.database)
         return RedirectResponse(f"/p/{slug}/draft/{run_id}", status_code=303)
 
     def _draft_form_response(slug: str, q: str, values, *, error: str = "", status: int = 200, from_run: bool = False) -> Response:
@@ -1390,6 +1528,8 @@ def _import_bytes(ui, project, data: bytes, snapshot: str, add: bool):
         report = import_serp_csv(project, path, snapshot or None, f"uploaded CSV ({when})", add_searches=add)
     except (ProjectError, ValueError, KeyError) as exc:
         return f"Import failed: {exc}"
+    if snapshot:
+        ws.record_observed_import(ui.database, project, ws.load_meta(project), data, path.name, snapshot, public_demo=ui.public_demo)
     meta = ws.load_meta(project)
     if meta.dataset == ws.DATASET_NONE:
         meta.dataset = ws.DATASET_OBSERVED

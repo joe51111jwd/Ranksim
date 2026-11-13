@@ -1,0 +1,282 @@
+{
+  "baseline_match": {
+    "frozen_surviving_unmatched": 0,
+    "persistence_score_disagreements": 0
+  },
+  "coverage": {
+    "content_missing_rows": 296,
+    "html_rows": 0,
+    "new_rows": 88,
+    "new_with_domain_seen": 75,
+    "outcome_rows": 296,
+    "queries": 30,
+    "scored_rows": 296,
+    "surviving_rows": 208
+  },
+  "fit_sample_nov6_to_nov9": {
+    "coverage": {
+      "content_missing_rows": 299,
+      "html_rows": 0,
+      "new_rows": 97,
+      "new_with_domain_seen": 71,
+      "outcome_rows": 299,
+      "queries": 30,
+      "scored_rows": 299,
+      "surviving_rows": 202
+    },
+    "label": "IN-SAMPLE. These pairs are the fit window. They are not a test and not a gate.",
+    "scorers": {
+      "full_coverage": {
+        "all": {
+          "correct": 1037,
+          "pairs": 1341,
+          "pairwise": 0.773304,
+          "queries": 30,
+          "ties": 22,
+          "wrong": 282
+        },
+        "mean_spearman": 0.67716,
+        "ndcg_at_10": 0.914548,
+        "ndcg_queries": 30,
+        "new_vs_new": {
+          "correct": 96,
+          "pairs": 195,
+          "pairwise": 0.492308,
+          "queries": 23,
+          "ties": 22,
+          "wrong": 77
+        },
+        "new_vs_surviving": {
+          "correct": 347,
+          "pairs": 479,
+          "pairwise": 0.724426,
+          "queries": 28,
+          "ties": 0,
+          "wrong": 132
+        },
+        "spearman_queries": 30,
+        "surviving_surviving": {
+          "correct": 594,
+          "pairs": 667,
+          "pairwise": 0.890555,
+          "queries": 28,
+          "ties": 0,
+          "wrong": 73
+        }
+      },
+      "persistence_ranked_last": {
+        "all": {
+          "correct": 931,
+          "pairs": 1341,
+          "pairwise": 0.694258,
+          "queries": 30,
+          "ties": 195,
+          "wrong": 215
+        },
+        "mean_spearman": 0.648714,
+        "ndcg_at_10": 0.902317,
+        "ndcg_queries": 30,
+        "new_vs_new": {
+          "correct": 0,
+          "pairs": 195,
+          "pairwise": 0.0,
+          "queries": 23,
+          "ties": 195,
+          "wrong": 0
+        },
+        "new_vs_surviving": {
+          "correct": 337,
+          "pairs": 479,
+          "pairwise": 0.703549,
+          "queries": 28,
+          "ties": 0,
+          "wrong": 142
+        },
+        "spearman_queries": 29,
+        "surviving_surviving": {
+          "correct": 594,
+          "pairs": 667,
+          "pairwise": 0.890555,
+          "queries": 28,
+          "ties": 0,
+          "wrong": 73
+        }
+      }
+    }
+  },
+  "gate_if_this_were_the_next_snapshot": {
+    "chance": 0.5,
+    "checks": {
+      "beats_chance_on_new_vs_surviving": true,
+      "beats_persistence_ranked_last_on_all_pairs": true,
+      "new_vs_surviving_pairs_at_least_minimum": true
+    },
+    "combined_all_pairwise": 0.78691,
+    "label": "NOT A PROMOTION. Computed so the backtest can be read against the frozen rule. The rule was not edited after this number.",
+    "min_new_vs_surviving_pairs": 100,
+    "new_vs_surviving_pairs": 404,
+    "new_vs_surviving_pairwise": 0.742574,
+    "pass": true,
+    "persistence_all_pairwise": 0.696347,
+    "ranker_change": "none"
+  },
+  "html": "No snapshot HTML is in git. content_missing is 1 on every backtest row. bm25f_z is 0. The precommitted BM25F weight was not exercised.",
+  "label": "BACKTEST",
+  "not_a_forward_test": true,
+  "offpage": "Tranco and Majestic Million files are not in the repo. Their frozen weights are 0.",
+  "reason": "The 2026-11-11 outcome was opened in commit 55a695c, before this scorer existed. Coefficients were fit on 2026-11-06 to 2026-11-09 new URLs only and were not changed after these numbers were computed. This is not the promotion gate.",
+  "scorers": {
+    "bm25_ranked_last": {
+      "all": {
+        "correct": 611,
+        "pairs": 1314,
+        "pairwise": 0.464992,
+        "queries": 30,
+        "ties": 192,
+        "wrong": 511
+      },
+      "mean_spearman": 0.111018,
+      "ndcg_at_10": 0.61466,
+      "ndcg_queries": 30,
+      "new_vs_new": {
+        "correct": 0,
+        "pairs": 186,
+        "pairwise": 0.0,
+        "queries": 18,
+        "ties": 186,
+        "wrong": 0
+      },
+      "new_vs_surviving": {
+        "correct": 290,
+        "pairs": 404,
+        "pairwise": 0.717822,
+        "queries": 26,
+        "ties": 0,
+        "wrong": 114
+      },
+      "spearman_queries": 29,
+      "surviving_surviving": {
+        "correct": 321,
+        "pairs": 724,
+        "pairwise": 0.44337,
+        "queries": 28,
+        "ties": 6,
+        "wrong": 397
+      }
+    },
+    "full_coverage": {
+      "all": {
+        "correct": 1034,
+        "pairs": 1314,
+        "pairwise": 0.78691,
+        "queries": 30,
+        "ties": 4,
+        "wrong": 276
+      },
+      "mean_spearman": 0.672776,
+      "ndcg_at_10": 0.896326,
+      "ndcg_queries": 30,
+      "new_vs_new": {
+        "correct": 109,
+        "pairs": 186,
+        "pairwise": 0.586022,
+        "queries": 18,
+        "ties": 4,
+        "wrong": 73
+      },
+      "new_vs_surviving": {
+        "correct": 300,
+        "pairs": 404,
+        "pairwise": 0.742574,
+        "queries": 26,
+        "ties": 0,
+        "wrong": 104
+      },
+      "spearman_queries": 30,
+      "surviving_surviving": {
+        "correct": 625,
+        "pairs": 724,
+        "pairwise": 0.86326,
+        "queries": 28,
+        "ties": 0,
+        "wrong": 99
+      }
+    },
+    "lambdamart_ranked_last": {
+      "all": {
+        "correct": 798,
+        "pairs": 1314,
+        "pairwise": 0.607306,
+        "queries": 30,
+        "ties": 192,
+        "wrong": 324
+      },
+      "mean_spearman": 0.476683,
+      "ndcg_at_10": 0.822425,
+      "ndcg_queries": 30,
+      "new_vs_new": {
+        "correct": 0,
+        "pairs": 186,
+        "pairwise": 0.0,
+        "queries": 18,
+        "ties": 186,
+        "wrong": 0
+      },
+      "new_vs_surviving": {
+        "correct": 290,
+        "pairs": 404,
+        "pairwise": 0.717822,
+        "queries": 26,
+        "ties": 0,
+        "wrong": 114
+      },
+      "spearman_queries": 29,
+      "surviving_surviving": {
+        "correct": 508,
+        "pairs": 724,
+        "pairwise": 0.701657,
+        "queries": 28,
+        "ties": 6,
+        "wrong": 210
+      }
+    },
+    "persistence_ranked_last": {
+      "all": {
+        "correct": 915,
+        "pairs": 1314,
+        "pairwise": 0.696347,
+        "queries": 30,
+        "ties": 186,
+        "wrong": 213
+      },
+      "mean_spearman": 0.649894,
+      "ndcg_at_10": 0.886654,
+      "ndcg_queries": 30,
+      "new_vs_new": {
+        "correct": 0,
+        "pairs": 186,
+        "pairwise": 0.0,
+        "queries": 18,
+        "ties": 186,
+        "wrong": 0
+      },
+      "new_vs_surviving": {
+        "correct": 290,
+        "pairs": 404,
+        "pairwise": 0.717822,
+        "queries": 26,
+        "ties": 0,
+        "wrong": 114
+      },
+      "spearman_queries": 29,
+      "surviving_surviving": {
+        "correct": 625,
+        "pairs": 724,
+        "pairwise": 0.86326,
+        "queries": 28,
+        "ties": 0,
+        "wrong": 99
+      }
+    }
+  }
+}

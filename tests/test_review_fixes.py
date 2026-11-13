@@ -56,12 +56,20 @@ def pulled(tmp_path_factory):
 
 def test_off_topic_page_gets_no_slot_and_no_top10_claim(pulled):
     board = proj.test_page(pulled["ctx"], OFF_TOPIC_HTML, "https://www.dirtcrew.example/new-page/", save=False, ai=False)
-    assert all(row.topic is not None and row.topic.status == "off topic" for row in board.searches)
-    assert all(row.headline() is None and row.predicted_position is None for row in board.searches)
-    assert board.summary.off_topic == 4 and board.summary.on_topic == 0
-    assert board.summary.predicted_top3 == 0 and board.summary.predicted_top10 == 0
+    by_status = {row.search: row.topic.status for row in board.searches}
+    assert by_status["excavation crew app"] == "off topic"
+    assert by_status["grading job costing"] == "off topic"
+    assert by_status["paving crew scheduling"] == "off topic"
+    # This search's stored pages include one that uses none of the query words, so the word
+    # minimum is 0. The low cosine is unvalidated, not an off-topic verdict.
+    assert by_status["dirt work software"] == "uncertain"
+    assert all(row.headline() is None for row in board.searches if row.topic.status == "off topic")
+    assert any(row.headline() is not None for row in board.searches if row.topic.status == "uncertain")
+    assert board.summary.off_topic == 3 and board.summary.on_topic == 0 and board.summary.uncertain == 1
+    assert board.summary.predicted_top3 == 0
     lead = proj.plain_lead(board)
-    assert lead.startswith("PREDICTED: your page is on topic for 0 of your 4 key searches and off topic for 4")
+    assert lead.startswith("PREDICTED: your page is on topic for 0 of your 4 key searches and off topic for 3")
+    assert "UNSURE because the topic check is unvalidated" in lead
     assert "page one" not in lead and "today" not in lead
     assert board.todo and board.todo[0].kind == "off_topic_vocab"  # a page about something else is told so first
     assert "about something else" in board.todo[0].text
@@ -72,7 +80,8 @@ def test_off_topic_page_gets_no_slot_and_no_top10_claim(pulled):
 def test_on_topic_page_is_placed_and_off_topic_page_differs(pulled):
     on = proj.test_page(pulled["ctx"], STRONG, "https://www.dirtcrew.example/new-page/", save=False, ai=False)
     off = proj.test_page(pulled["ctx"], OFF_TOPIC_HTML, "https://www.dirtcrew.example/new-page/", save=False, ai=False)
-    assert on.summary.on_topic == 4 and all(row.headline() is not None for row in on.searches)
+    assert on.summary.on_topic == 1 and on.summary.uncertain == 3 and on.summary.off_topic == 0
+    assert all(row.headline() is not None for row in on.searches)
     assert [row.headline() for row in on.searches] != [row.headline() for row in off.searches]
     assert on.schema == 2 and "cannot say whether a page makes page one" in on.top10_note
 
@@ -534,9 +543,9 @@ def test_board_page_shows_on_topic_tiles_todo_and_no_page_one_claim(web):
     job = wait(web["app"], started.headers["location"])
     assert job["status"] == "done", job["error"]
     text = web["client"].get(job["result_url"]).text
-    assert "On topic" in text and "0 of 4" in text and "What to change first" in text
+    assert "0 of 4" in text and "What to change first" in text
+    assert "off topic for 3" in text and "topic check is unvalidated" in text
     assert "Page one" not in text and "REAL today" not in text and "Today this URL" not in text
-    assert 'class="you"' not in text  # an off-topic page is not placed in any list
     assert not any(dash in text for dash in DASHES)
 
 
@@ -554,7 +563,8 @@ def test_page_url_is_required_and_a_bare_host_is_accepted(web):
 def test_versions_page_labels_every_model_column(web, pulled):
     proj.test_page(pulled["ctx"], STRONG, "https://www.dirtcrew.example/versions/", ai=False)
     page = web["client"].get(f"/p/{web['slug']}/versions", params={"url": "https://www.dirtcrew.example/versions/"}).text
-    assert "On topic then" in page and "content model, unvalidated" in page and "4 of 4" in page
+    assert "On topic then" in page and "content model, unvalidated" in page
+    assert "on topic for 4 of 4" not in page.lower()
 
 
 def test_pull_progress_marks_google_and_engines_not_run(web):

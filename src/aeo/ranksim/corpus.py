@@ -15,7 +15,7 @@ from aeo.ranksim.loop import page_from_row
 from aeo.ranksim.store import RsPage
 
 
-def load_corpus_docs(session: Session, urls: Iterable[str] | None = None) -> dict[str, object]:
+def load_corpus_docs(session: Session, urls: Iterable[str] | None = None, index_dir: str | None = None) -> dict[str, object]:
     """PageDoc map keyed by stored URL and by normalized URL.
 
     With urls, only stored rows whose URL (or normalized URL) is in that set are
@@ -80,6 +80,17 @@ def load_corpus_docs(session: Session, urls: Iterable[str] | None = None) -> dic
         except ValueError:
             continue
         docs[key] = doc
+    resolved = index_dir
+    if resolved is None:
+        from aeo.ranksim.localindex.features import default_index_dir
+
+        found = default_index_dir()
+        resolved = str(found) if found is not None else None
+    if resolved:
+        from aeo.ranksim.localindex.features import overlay_index
+
+        wanted = None if urls is None else set(urls)
+        overlay_index(docs, resolved, urls=wanted)
     return docs
 
 

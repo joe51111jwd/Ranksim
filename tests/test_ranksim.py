@@ -143,7 +143,7 @@ def test_fast_loop_moves_predicted_position_when_the_page_gets_stronger(tmp_path
         html = {
             "https://rival.example/plants": "<html><title>Office plants</title><body><h1>Ferns</h1><p>Lobby ferns.</p></body></html>",
             our: "<html><title>Hello</title><body><p>Hello there.</p></body></html>",
-            "https://rival.example/tax": "<html><title>Tax notes</title><body><p>Quarterly tax filing.</p></body></html>",
+            "https://rival.example/tax": "<html><title>Tax notes</title><body><p>Quarterly tax filing for a crew. " + ("Forms, payroll, and invoices. " * 40) + "</p></body></html>",
         }[page_url]
         return FetchResult(url=page_url, html=html, status="fetched", fetch_ms=100)
 

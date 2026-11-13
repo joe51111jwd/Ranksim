@@ -16,6 +16,9 @@ Examples:
   python -m aeo.ranksim project test smartcrew page.html --url https://www.smartcrewhq.com/all-in-one-dirt-work-software/
   python -m aeo.ranksim project engines smartcrew
   python -m aeo.ranksim serve            (the web UI on http://127.0.0.1:8765/)
+  python -m aeo.ranksim index build --snapshot /path/to/snapshot --offline
+  python -m aeo.ranksim index status
+  python -m aeo.ranksim index refresh --snapshot /path/to/snapshot
 """
 
 from __future__ import annotations
@@ -118,6 +121,66 @@ def main(argv: list[str] | None = None) -> None:
     noise = sub.add_parser("noise", help="Compare two Google snapshots. One file is not enough.")
     noise.add_argument("snapshots", nargs="+")
 
+    forward_eval = sub.add_parser(
+        "forward-eval",
+        help="Freeze on the 2026-11-06 snapshot and score the 2026-11-09 order once. Does not train on the later day.",
+    )
+    forward_eval.add_argument("--baseline", required=True, help="2026-11-06 snapshot directory. HTML stays out of git.")
+    forward_eval.add_argument("--forward", required=True, help="2026-11-09 snapshot directory.")
+    forward_eval.add_argument("--out", required=True, help="JSON report path.")
+    forward_eval.add_argument("--ledger-json", default=None, help="Export the prediction chain and the later outcomes.")
+    forward_eval.add_argument("--ledger-db", default=None, help="SQLite file for the ledger. Default is in memory.")
+
+    forward_freeze = sub.add_parser(
+        "forward-freeze",
+        help="Write 2026-11-11 predictions from the Nov 6 and Nov 9 snapshots. Does not read the Nov 11 outcome.",
+    )
+    forward_freeze.add_argument("--nov6", required=True)
+    forward_freeze.add_argument("--nov9", required=True)
+    forward_freeze.add_argument("--out-dir", required=True)
+
+    forward_score = sub.add_parser(
+        "forward-score",
+        help="Score a frozen 2026-11-11 prediction file. Does not refit the ranker.",
+    )
+    forward_score.add_argument("--predictions", required=True)
+    forward_score.add_argument("--outcome", required=True, help="2026-11-11 snapshot directory.")
+    forward_score.add_argument("--ledger-json", required=True)
+    forward_score.add_argument("--out", required=True)
+
+    score_next = sub.add_parser(
+        "score-next-snapshot",
+        help="Score a snapshot after 2026-11-11 with the frozen full-coverage line. Does not refit or edit frozen files.",
+    )
+    score_next.add_argument("--snapshot-csv", required=True, help="CSV with query, url or link, and position.")
+    score_next.add_argument("--observed-on", required=True, help="YYYY-MM-DD. Must be after 2026-11-11.")
+    score_next.add_argument("--html-dir", default="", help="Directory with html_manifest.csv. Omit when there is no HTML.")
+    score_next.add_argument("--ledger", default="", help="Append-only JSONL ledger. Default is the next-snapshot track record.")
+    score_next.add_argument("--tranco", default="", help="Optional Tranco file. The frozen weight is 0.")
+    score_next.add_argument("--majestic", default="", help="Optional Majestic Million file. The frozen weight is 0.")
+    score_next.add_argument("--report", default="", help="Optional JSON summary outside the frozen directory.")
+
+    new_page = sub.add_parser(
+        "new-page-eval",
+        help="Score domain, URL, and blend rules for new pages. Nov 9 labels are not used to fit them.",
+    )
+    new_page.add_argument("--ledger", required=True, help="Frozen forward ledger.json. It is read, not rewritten.")
+    new_page.add_argument("--baseline-csv", required=True, help="Nov 6 positions. HTML is not required.")
+    new_page.add_argument("--forward-csv", required=True, help="Nov 9 positions, used as the outcome only.")
+    new_page.add_argument("--out", required=True)
+    new_page.add_argument("--ledger-json", default=None, help="New append-only ledger for these PREDICTED rows.")
+    new_page.add_argument("--ledger-db", default=None)
+    new_page.add_argument("--draws", type=int, default=2000)
+
+    refetch = sub.add_parser(
+        "refetch-missing",
+        help="Fetch snapshot URLs that have no stored HTML. HTTP, then a headless browser. Serper stays off unless the credit cap is set.",
+    )
+    refetch.add_argument("snapshot", help="Snapshot directory with serp_serper_live.csv and html_manifest.csv")
+    refetch.add_argument("--out", required=True, help="JSON report. Recovered HTML is written beside it and is not committed.")
+    refetch.add_argument("--delay", type=float, default=1.0, help="Seconds between fetches to the same host.")
+    refetch.add_argument("--serper-credit-cap", type=int, default=0, help="Hard Serper scrape credit cap. 0 leaves scrape off.")
+
     competitors = sub.add_parser("competitors", help="Import competitor domains")
     comp_sub = competitors.add_subparsers(dest="competitors_command", required=True)
     comp_import = comp_sub.add_parser("import", help="Save a competitor list, optionally from the labeled top 10")
@@ -191,6 +254,7 @@ def main(argv: list[str] | None = None) -> None:
     optimize_cmd.add_argument("--serp", default="smartcrew/serp.csv", help="Labeled Google file")
 
     _add_project_parser(sub)
+    _add_index_parser(sub)
 
     serve = sub.add_parser("serve", help="Serve the web UI: projects, Pull now, Test a page. The old demo is at /demo.")
     serve.add_argument("--host", default="127.0.0.1", help="Default 127.0.0.1 (this computer only). 0.0.0.0 exposes it with no login.")
@@ -245,6 +309,84 @@ def main(argv: list[str] | None = None) -> None:
             _graph_eval(database, args)
         elif args.command == "noise":
             _noise(args)
+        elif args.command == "forward-eval":
+            from aeo.ranksim.forward_eval import main as forward_main
+
+            forward_args = ["--baseline", args.baseline, "--forward", args.forward, "--out", args.out]
+            if args.ledger_json:
+                forward_args.extend(["--ledger-json", args.ledger_json])
+            if args.ledger_db:
+                forward_args.extend(["--ledger-db", args.ledger_db])
+            raise SystemExit(forward_main(forward_args))
+        elif args.command == "forward-freeze":
+            from aeo.ranksim.forward_freeze import main_freeze
+
+            raise SystemExit(main_freeze(["--nov6", args.nov6, "--nov9", args.nov9, "--out-dir", args.out_dir]))
+        elif args.command == "forward-score":
+            from aeo.ranksim.forward_freeze import main_score
+
+            raise SystemExit(
+                main_score(
+                    [
+                        "--predictions",
+                        args.predictions,
+                        "--outcome",
+                        args.outcome,
+                        "--ledger-json",
+                        args.ledger_json,
+                        "--out",
+                        args.out,
+                    ]
+                )
+            )
+        elif args.command == "score-next-snapshot":
+            from aeo.ranksim.full_coverage import main as score_next_main
+
+            forwarded = ["--snapshot-csv", args.snapshot_csv, "--observed-on", args.observed_on]
+            if args.html_dir:
+                forwarded.extend(["--html-dir", args.html_dir])
+            if args.ledger:
+                forwarded.extend(["--ledger", args.ledger])
+            if args.tranco:
+                forwarded.extend(["--tranco", args.tranco])
+            if args.majestic:
+                forwarded.extend(["--majestic", args.majestic])
+            if args.report:
+                forwarded.extend(["--report", args.report])
+            raise SystemExit(score_next_main(forwarded))
+        elif args.command == "new-page-eval":
+            from aeo.ranksim.new_page import main as new_page_main
+
+            new_page_args = [
+                "--ledger",
+                args.ledger,
+                "--baseline-csv",
+                args.baseline_csv,
+                "--forward-csv",
+                args.forward_csv,
+                "--out",
+                args.out,
+                "--draws",
+                str(args.draws),
+            ]
+            if args.ledger_json:
+                new_page_args.extend(["--ledger-json", args.ledger_json])
+            if args.ledger_db:
+                new_page_args.extend(["--ledger-db", args.ledger_db])
+            raise SystemExit(new_page_main(new_page_args))
+        elif args.command == "refetch-missing":
+            from aeo.ranksim.refetch import main as refetch_main
+
+            raise SystemExit(
+                refetch_main(
+                    args.snapshot,
+                    args.out,
+                    delay_seconds=args.delay,
+                    serper_credit_cap=args.serper_credit_cap,
+                    serper_api_key=settings.serper_api_key,
+                    user_agent=settings.crawl_user_agent,
+                )
+            )
         elif args.command == "serve":
             _serve(settings, database, args)
         elif args.command == "ai-eval":
@@ -261,6 +403,59 @@ def main(argv: list[str] | None = None) -> None:
             code = _optimize(settings, database, args)
             if code:
                 raise SystemExit(code)
+        elif args.command == "index":
+            from aeo.ranksim.localindex.build import run_build, run_status
+            from aeo.ranksim.localindex.scope import project_index_dir, project_scope
+            from aeo.ranksim.project import ProjectError, load_project
+
+            try:
+                project = load_project(args.project, root=args.projects_dir) if args.project else None
+            except ProjectError as exc:
+                print(str(exc), file=sys.stderr)
+                raise SystemExit(2) from exc
+            index_dir = args.index_dir or (str(project_index_dir(project)) if project is not None else "data/index")
+            if args.index_command == "status":
+                raise SystemExit(run_status(index_dir))
+            tracked = None
+            seeds = None
+            only = None
+            if project is not None:
+                tracked, seeds = project_scope(project)
+                only = tracked
+                if not tracked:
+                    print(f"{project.name} has no searches. Add searches, then build the index.", file=sys.stderr)
+                    raise SystemExit(2)
+            if not settings.serper_api_key and not args.offline and not args.estimate_only:
+                print(
+                    "SERPER_API_KEY is not set. Serper search and Serper scrape are skipped. "
+                    "HTTP, the browser, Common Crawl, and Wayback still run.",
+                    file=sys.stderr,
+                )
+            raise SystemExit(
+                run_build(
+                    index_dir,
+                    snapshots=args.snapshot,
+                    queries_file=args.queries,
+                    num=args.num,
+                    depth=args.depth,
+                    credit_cap=args.credit_cap,
+                    offline=args.offline,
+                    estimate_only=args.estimate_only,
+                    refresh=args.index_command == "refresh",
+                    skip_search=args.skip_search,
+                    stale_days=args.stale_days,
+                    delay_seconds=args.delay,
+                    use_browser=not args.no_browser,
+                    max_internal=args.max_internal,
+                    allow_private=settings.crawl_allow_private,
+                    user_agent=settings.crawl_user_agent,
+                    api_key=settings.serper_api_key,
+                    timeout=settings.request_timeout_seconds,
+                    seed_candidates=seeds,
+                    tracked_queries=tracked,
+                    only_queries=only,
+                )
+            )
         elif args.command == "project":
             from aeo.ranksim.project import ProjectError
 
@@ -279,6 +474,37 @@ def main(argv: list[str] | None = None) -> None:
     except ValueError as exc:
         print(str(exc), file=sys.stderr)
         raise SystemExit(2) from exc
+
+
+def _add_index_parser(sub) -> None:
+    index = sub.add_parser("index", help="Local page index in data/index/. SQLite and parquet, outside git.")
+    commands = index.add_subparsers(dest="index_command", required=True)
+
+    def _shared(parser) -> None:
+        parser.add_argument("--project", default=None, help="Project name or slug. Uses that project's searches, pulls, and competitors.")
+        parser.add_argument("--projects-dir", default=None, help="Default data/projects, or RANKSIM_PROJECTS_DIR.")
+        parser.add_argument("--index-dir", default=None, help="Index directory. Default is the project index, or data/index when no project is set.")
+        parser.add_argument("--snapshot", action="append", default=[], help="Snapshot directory with a SERP CSV and optional html/. Repeatable. With --project, only that project's searches are kept.")
+        parser.add_argument("--queries", default=None, help="Text file of tracked queries, one per line. Snapshot queries are always included.")
+        parser.add_argument("--num", type=int, default=100, help="Serper organic results per query, up to 100. Positions 11-100 are labels.")
+        parser.add_argument("--depth", type=int, default=1, help="Internal-link hops from ranking pages. 0 keeps the SERP URLs only.")
+        parser.add_argument("--credit-cap", type=int, default=300, help="Hard Serper credit ceiling for this build. Default 300.")
+        parser.add_argument("--offline", action="store_true", help="Seed from snapshot HTML only. No Serper, fetch, browser, or archive call.")
+        parser.add_argument("--estimate-only", action="store_true", help="Print the credit estimate and write the local seed. Do not spend credits.")
+        parser.add_argument("--skip-search", action="store_true", help="Do not call Serper search. Still fetches URLs that are already candidates.")
+        parser.add_argument("--stale-days", type=int, default=14, help="On refresh, refetch full text older than this many days.")
+        parser.add_argument("--delay", type=float, default=1.0, help="Seconds between fetches to the same host.")
+        parser.add_argument("--no-browser", action="store_true", help="Skip the headless browser rung.")
+        parser.add_argument("--max-internal", type=int, default=50, help="Relevant internal URLs kept per ranking domain.")
+
+    build = commands.add_parser("build", help="Gather candidates, fetch the ladder, and write coverage.")
+    _shared(build)
+    refresh = commands.add_parser("refresh", help="Rebuild candidates and refetch missing or stale pages.")
+    _shared(refresh)
+    status = commands.add_parser("status", help="Print coverage for the index on disk.")
+    status.add_argument("--project", default=None, help="Project name or slug.")
+    status.add_argument("--projects-dir", default=None, help="Default data/projects, or RANKSIM_PROJECTS_DIR.")
+    status.add_argument("--index-dir", default=None, help="Index directory. Default is the project index, or data/index.")
 
 
 def _add_project_parser(sub) -> None:
@@ -685,14 +911,17 @@ def _ai_eval(settings, database: str, args) -> None:
     from aeo.ranksim.check import check_draft
     from aeo.ranksim.confidence import loo_fit
     from aeo.ranksim.corpus import load_corpus_docs
-    from aeo.ranksim.groundtruth import load_serp_file
     from aeo.ranksim.judge import collect_judge_scores, relevance_experiment
     from aeo.ranksim.keywords import build_keywords
     from aeo.ranksim.lambdamart import build_examples
     from aeo.ranksim.llm import resolve_llm
 
     print(seed_corpus_if_empty(database))
-    labels = load_serp_file(args.serp)
+    from aeo.ranksim.tester import _labels_for_scoring
+
+    labels, label_synthetic, label_note = _labels_for_scoring(args.serp)
+    if label_note:
+        print(label_note)
     intents = {row.query: row.intent for row in build_keywords()}
     session = open_session(database)
     try:
@@ -730,6 +959,7 @@ def _ai_eval(settings, database: str, args) -> None:
             intent=intents.get(args.query, "commercial"),
             llm=llm,
             run_ai=True,
+            synthetic=label_synthetic,
         )
         print(f"Fix loop. Query: {args.query}")
         print(f"URL: {args.url}")

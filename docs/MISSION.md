@@ -1,4 +1,4 @@
-# Ranksim mission and handoff (as of Nov 11, 2026)
+# Ranksim mission and handoff (as of Nov 13, 2026)
 
 Owner: James Camarota (GitHub joe51111jwd). Any agent picking this up should read this file first.
 
@@ -25,6 +25,7 @@ Scope: Google SEO only. The AI search (AEO) track is parked.
 ## Repo state
 - Repo: https://github.com/joe51111jwd/Ranksim. Main is unchanged at ae6012b.
 - Integration PR: https://github.com/joe51111jwd/Ranksim/pull/5 (branch cursor/integration-review-175f, base claude/ranksim-mvp-eod-ifjitw). The first forward-eval commit is f76f7f1. The fetch fallback and the unknown-content gate are commit 6a0910a, written before the recovered Nov 9 scores were read. The browser wait cap is 4391bb5. CI on f76f7f1 was green (run 42635653671, six pytest jobs on Python 3.11, 3.12, and 3.13, keys unset and fake keys).
+- Nov 13 score: `evals/forward-2026-11-13/report.md`. Ledger `evals/preregistered/next-snapshot/track-record.jsonl`. Freeze commit `3ad2613`. The product ranker is unchanged.
 - Stack: Python package aeo.ranksim. BM25F retrieval plus LightGBM LambdaMART reranker with Google-leak-informed features. Entry point: `python -m aeo.ranksim` (console script `ranksim`). There is no onboard command. Commands include collect, evaluate, train, test, track, report, forward-eval, serve, and `project create`.
 - Ledger: append-only, hash-chained. Records PREDICTED rows and later outcomes. Calls stay UNSURE until held-out calibration passes.
 - LLM layer: OpenRouter with a cheap model (gpt-4o-mini). The key is an env var, never in git.
@@ -149,11 +150,20 @@ Nov 9 to Nov 11 coverage: 88 of 296 Nov 11 rows were unpredicted, and 724 of 131
 
 Ledger: 2,965 PREDICTED rows, hashes unchanged from `8365d68`, plus 300 REAL outcome rows appended. The Nov 9 ledger file was not edited.
 
+## Nov 13 full-coverage gate (PREDICTED, ranker not changed)
+The frozen full-coverage line from `3ad2613` was scored once on a REAL Serper snapshot taken 2026-11-13, 15:45 to 15:46 ET (`gl=us`, `hl=en`, `num=10`, 30 queries, 298 organic rows). HTML from that same capture was passed, so BM25F is on for new URLs at the frozen weight of 1. Details, the pair table, and the ledger chain head are in `evals/forward-2026-11-13/report.md`. One snapshot of these 30 queries is not a general forecast of Google.
+
+The gate passed on all three frozen checks. Combined all-pairs accuracy is 992/1332 (0.744745), above persistence-ranked-last at 862/1332 (0.647147). New versus surviving is 354/522 (0.678161), above 0.5, with 522 pairs. `ranker_change` is `none`. A pass does not change the product ranker, the coefficients, or the frozen files.
+
+Surviving versus surviving is 518/605 (0.856198) for both the combined line and persistence-ranked-last. The survivor score is the Nov 11 position. 194 of 296 Nov 11 rows stayed in the Nov 13 top 10. 102 exited. 104 of 298 Nov 13 rows are new. The all-pairs gap is 120 new-versus-new pairs plus 10 new-versus-surviving pairs. New versus new is 120/205 (0.585366), with 3 ties. Persistence-ranked-last ties all 205 of those pairs. Frozen LambdaMART was not scored. The booster is not in git. BM25F alone is 543/1332 (0.407658).
+
+216 of 298 rows had HTML (96 unique URLs). 82 rows had no text. Missing text adds no push. The Nov 11 ledger file was not edited.
+
 ## The main gap and next work
-Ranksim's core use case, predicting where a new or draft page lands, is still open. With scrape text on the drafts, draft versus draft is 68/116 (0.586) and draft versus a page that already ranked is 184/281 (0.655). The text slice does not clear the gate. The Nov 11 test did not change that. Persistence still orders the URLs that stayed. Next work:
-1. On the next snapshot, pre-register an entrant line for URLs that were not on the previous list. Keep the overlap metric separate. Do not retune LambdaMART, the blend, or the history-aware scale on the Nov 11 labels.
-2. The Nov 10 scrape is later than the SERPs. A scrape from the same day as the SERP would remove that caveat.
-3. Use persistence for pages already ranking, and keep the 90% target measured on unseen data with coverage stated.
+Ranksim's core use case, predicting where a new or draft page lands, is still short of the 90% target. On this one Nov 13 snapshot, new versus surviving is 354/522 (0.678161) and new versus new is 120/205 (0.585366). The earlier draft slices are unchanged: with scrape text, draft versus draft is 68/116 (0.586) and draft versus a page that already ranked is 184/281 (0.655). Persistence still orders the URLs that stayed. Next work:
+1. Leave the `3ad2613` freeze untouched. Do not retune the full-coverage coefficients, LambdaMART, the blend, or the history-aware scale on the Nov 11 or Nov 13 labels.
+2. Keep the 90% target on unseen data, with coverage stated. This gate was a point comparison on 30 queries, and a pass can be noise.
+3. Use the Nov 11 position for pages that already ranked. The combined survivor score on Nov 13 is that position.
 4. Apple mockup: blocked on a Superdesign browser sign-in. Resume when that is done, then wait for James's approval.
 
 ## Coordination

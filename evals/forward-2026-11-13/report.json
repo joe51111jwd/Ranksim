@@ -1,0 +1,143 @@
+{
+  "metrics": {
+    "full_coverage": {
+      "all": {
+        "queries": 30,
+        "pairs": 1332,
+        "correct": 992,
+        "wrong": 337,
+        "ties": 3,
+        "pairwise": 0.744745
+      },
+      "surviving_surviving": {
+        "queries": 28,
+        "pairs": 605,
+        "correct": 518,
+        "wrong": 87,
+        "ties": 0,
+        "pairwise": 0.856198
+      },
+      "new_vs_surviving": {
+        "queries": 29,
+        "pairs": 522,
+        "correct": 354,
+        "wrong": 168,
+        "ties": 0,
+        "pairwise": 0.678161
+      },
+      "new_vs_new": {
+        "queries": 26,
+        "pairs": 205,
+        "correct": 120,
+        "wrong": 82,
+        "ties": 3,
+        "pairwise": 0.585366
+      },
+      "ndcg_at_10": 0.855685,
+      "mean_spearman": 0.586086,
+      "ndcg_queries": 30,
+      "spearman_queries": 30
+    },
+    "persistence_ranked_last": {
+      "all": {
+        "queries": 30,
+        "pairs": 1332,
+        "correct": 862,
+        "wrong": 265,
+        "ties": 205,
+        "pairwise": 0.647147
+      },
+      "surviving_surviving": {
+        "queries": 28,
+        "pairs": 605,
+        "correct": 518,
+        "wrong": 87,
+        "ties": 0,
+        "pairwise": 0.856198
+      },
+      "new_vs_surviving": {
+        "queries": 29,
+        "pairs": 522,
+        "correct": 344,
+        "wrong": 178,
+        "ties": 0,
+        "pairwise": 0.659004
+      },
+      "new_vs_new": {
+        "queries": 26,
+        "pairs": 205,
+        "correct": 0,
+        "wrong": 0,
+        "ties": 205,
+        "pairwise": 0.0
+      },
+      "ndcg_at_10": 0.853605,
+      "mean_spearman": 0.556366,
+      "ndcg_queries": 30,
+      "spearman_queries": 29
+    },
+    "bm25": {
+      "all": {
+        "queries": 30,
+        "pairs": 1332,
+        "correct": 543,
+        "wrong": 679,
+        "ties": 110,
+        "pairwise": 0.407658
+      },
+      "surviving_surviving": {
+        "queries": 28,
+        "pairs": 605,
+        "correct": 248,
+        "wrong": 296,
+        "ties": 61,
+        "pairwise": 0.409917
+      },
+      "new_vs_surviving": {
+        "queries": 29,
+        "pairs": 522,
+        "correct": 210,
+        "wrong": 281,
+        "ties": 31,
+        "pairwise": 0.402299
+      },
+      "new_vs_new": {
+        "queries": 26,
+        "pairs": 205,
+        "correct": 85,
+        "wrong": 102,
+        "ties": 18,
+        "pairwise": 0.414634
+      },
+      "ndcg_at_10": 0.562746,
+      "mean_spearman": -0.13944,
+      "ndcg_queries": 30,
+      "spearman_queries": 30
+    }
+  },
+  "gate": {
+    "pass": true,
+    "checks": {
+      "beats_persistence_ranked_last_on_all_pairs": true,
+      "beats_chance_on_new_vs_surviving": true,
+      "new_vs_surviving_pairs_at_least_minimum": true
+    },
+    "chance": 0.5,
+    "min_new_vs_surviving_pairs": 100,
+    "combined_all_pairwise": 0.744745,
+    "persistence_all_pairwise": 0.647147,
+    "new_vs_surviving_pairwise": 0.678161,
+    "new_vs_surviving_pairs": 522,
+    "ranker_change": "none"
+  },
+  "coverage": {
+    "outcome_rows": 298,
+    "queries": 30,
+    "new_rows": 104,
+    "surviving_rows": 194,
+    "new_with_domain_seen": 81,
+    "content_missing_rows": 82,
+    "html_rows": 216,
+    "scored_rows": 298
+  }
+}

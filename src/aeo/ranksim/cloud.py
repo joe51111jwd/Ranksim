@@ -257,7 +257,9 @@ class CloudState:
             if not meta_file.is_file():
                 raise KeyError(f"{slug} missing from {name}")
             meta = json.loads(meta_file.read_text("utf-8"))
-            base = self._installed.get(slug, {}).get("files", {})
+            mine = self._installed.get(slug, {})
+            # While our own save is not listed yet, the common ancestor is the version it was based on.
+            base = mine.get("base_files", mine.get("files", {})) if "base" in mine else mine.get("files", {})
             changed = _merge_files(self._scope(slug), base, folder / "p" / slug, meta.get("files", {}), self._hash_cache)
         self._installed[slug] = {"version": name, "files": meta.get("files", {}), "deleted": bool(meta.get("deleted"))}
         self._version = name
@@ -347,7 +349,8 @@ class CloudState:
         return self.db_file.is_file() and not self._db_is_clean()
 
     def _commit(self) -> str | None:
-        etag = self.store.head(POINTER)
+        fresh = self._checked is not None and self._seen is not None and self.clock() - self._checked < 2.0
+        etag = self._seen if fresh else self.store.head(POINTER)  # the write's own check a moment ago is enough
         if etag is None and self._seen is None and not self._manifest.get("stamp"):
             self._bootstrap()  # a first save on an empty store still checks for older formats first
             if not self._dirty():
@@ -428,7 +431,13 @@ class CloudState:
             body = buffer.getvalue()
             self.store.put(name, body, content_type="application/gzip")
             for slug, (files, meta) in projects.items():
-                self._installed[slug] = {"version": name, "files": files, "deleted": meta["deleted"], "base": meta["base"]}
+                before = self._installed.get(slug, {})
+                ancestor = before.get("base_files", before.get("files", {})) if "base" in before else before.get("files", {})
+                self._installed[slug] = {
+                    "version": name, "files": files, "deleted": meta["deleted"],
+                    "base": before.get("base", meta["base"]) if "base" in before else meta["base"],
+                    "base_files": ancestor,  # what both sides started from, for a merge before the manifest lists us
+                }
             if db_kind is not None:
                 _copy_db(snap, self._base_db)
                 self._db_clean = sig_before
@@ -473,6 +482,7 @@ class CloudState:
         self._pending_db = []
         for info in self._installed.values():
             info.pop("base", None)
+            info.pop("base_files", None)
         self._checked = self.clock()
         return True
 
@@ -509,7 +519,7 @@ class CloudState:
                 manifest = json.loads(json.dumps(self._manifest))
                 auth = manifest.setdefault("auth", {"epoch": 0, "lock_until": 0})
                 for key, value in changes.items():
-                    auth[key] = max(auth.get(key) or 0, value) if key in {"epoch", "lock_until"} else value
+                    auth[key] = max(auth.get(key) or 0, value) if key in {"epoch", "lock_until", "revoked_ms"} else value
                 if self.store.head(POINTER) != etag:
                     continue
                 self._seen = self._write_pointer(manifest)
@@ -554,6 +564,9 @@ class CloudState:
                 self._put_manifest(name)
             else:
                 self._seen = self._write_pointer(manifest)
+        else:
+            self._manifest = _empty_manifest()
+            self._seen = self._write_pointer(self._manifest)  # an empty store: written once, so nobody lists again
         return changed
 
     def _import_phase_a(self, names: list[str]) -> bool:

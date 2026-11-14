@@ -158,6 +158,7 @@ class JobRegistry:
         instance: str | None = None,
         safety_seconds: float = SAFETY_SECONDS,
         lock_settle_seconds: float | None = None,
+        frugal: bool | None = None,
     ) -> None:
         self.store = store if store is not None else MemoryStore()
         self.prefix = prefix
@@ -170,15 +171,25 @@ class JobRegistry:
         self.budget_seconds = float(budget_seconds)
         self.safety_seconds = float(safety_seconds)
         self.clock = clock
+        # Frugal mode (a remote store, which on Vercel Hobby has a small monthly operation cap): persist plain events
+        # every 30 s, heartbeat every 45 s, call a runner stalled after 150 s, sweep once a day, and skip the lock
+        # settle re-list (two starts of one site in the same instant may then both run; nothing is lost).
+        if frugal is None:
+            frugal = not isinstance(self.store, (MemoryStore, DirStore))
+        self.frugal = bool(frugal)
+        self.stale_seconds = 150.0 if self.frugal else STALE_SECONDS
+        self.heartbeat_seconds = 45.0 if self.frugal else HEARTBEAT_SECONDS
+        self.persist_every_seconds = 30.0 if self.frugal else PERSIST_EVERY_SECONDS
+        self.prune_every_seconds = 24 * 3600.0 if self.frugal else PRUNE_EVERY_SECONDS
         if lock_settle_seconds is None:
-            # Local stores write in microseconds; a remote store (Blob) can take a few hundred milliseconds per put.
-            lock_settle_seconds = 0.02 if isinstance(self.store, (MemoryStore, DirStore)) else 0.75
+            lock_settle_seconds = 0.0 if self.frugal else 0.02
         self.lock_settle_seconds = float(lock_settle_seconds)
         self.instance = instance or f"{os.getpid()}-{secrets.token_hex(4)}"
         self.last_error = ""
         self._mutex = threading.Lock()
         self._key_locks: dict[str, threading.Lock] = {}
         self._runs: dict[str, _Run] = {}  # job id -> the latest attempt run by this process
+        self._lock_names: dict[str, str] = {}  # job id -> the lock entry this process wrote for it
         self._swept = clock()  # first sweep an hour after start, not on the first request
 
     # -- names -----------------------------------------------------------------------------------
@@ -213,7 +224,7 @@ class JobRegistry:
         status = record.get("status")
         age = self.clock() - float(record.get("updated") or 0)
         if status in LIVE:
-            return age <= STALE_SECONDS
+            return age <= self.stale_seconds
         if status == "paused":
             return age <= PAUSED_HOLD_SECONDS
         return False
@@ -230,7 +241,7 @@ class JobRegistry:
         """A copy of record plus the derived stalled/resumable flags."""
         out = copy.deepcopy(record)
         status = out.get("status")
-        stalled = (not local) and status in LIVE and self.clock() - float(out.get("updated") or 0) > STALE_SECONDS
+        stalled = (not local) and status in LIVE and self.clock() - float(out.get("updated") or 0) > self.stale_seconds
         out["stalled"] = bool(stalled)
         out["resumable"] = bool((status == "paused" or stalled) and int(out.get("attempts") or 0) < MAX_ATTEMPTS)
         return out
@@ -255,6 +266,11 @@ class JobRegistry:
         if run is not None:
             with run.lock:
                 return copy.deepcopy(run.record), True
+        with self._mutex:
+            done = self._runs.get(job_id)
+        if done is not None and done.finished.is_set() and not done.superseded:
+            with done.lock:  # finished here: memory holds the final record, no storage read needed
+                return copy.deepcopy(done.record), False
         record, _ = self._stored(job_id)
         if record is None:
             with self._mutex:
@@ -344,7 +360,7 @@ class JobRegistry:
         with run.lock:
             if run.superseded:
                 return False
-            if not force and self.clock() - run.last_persist < PERSIST_EVERY_SECONDS:
+            if not force and self.clock() - run.last_persist < self.persist_every_seconds:
                 run.dirty = True
                 return False
         with run.io_lock:
@@ -371,7 +387,19 @@ class JobRegistry:
         return True
 
     def _after_write(self, run: _Run, attempts: int) -> None:
-        """List the job's snapshots: step aside if a later attempt runs elsewhere, else prune to KEEP_SNAPSHOTS."""
+        """List the job's snapshots: step aside if a later attempt runs elsewhere, else prune to KEEP_SNAPSHOTS.
+
+        Frugal mode lists at most once per half stale interval (a takeover only happens after a stall that long) and
+        prunes its own older snapshots in between without listing (deletes cost nothing)."""
+        if self.frugal:
+            now = self.clock()
+            if now - getattr(run, "super_checked", -1e18) < self.stale_seconds / 2:
+                old = run.written[: max(0, len(run.written) - KEEP_SNAPSHOTS)]
+                if old:
+                    self.store.delete(old)
+                    run.written = run.written[len(old):]
+                return
+            run.super_checked = now
         names = [n for n in self.store.list(self._job_dir(run.record["id"])) if n.endswith(".json")]
         first = stamp_of(run.written[0]) if run.written else 0
         mine = set(run.written)
@@ -453,6 +481,9 @@ class JobRegistry:
                 raise
             winner, more = self._scan(names, mine, job_id, attempt)
             dead = sorted(set(dead) | set(more))
+        if winner is None:
+            with self._mutex:
+                self._lock_names[job_id] = mine  # released by name later, without a list
         try:
             if winner is not None:
                 self.store.delete([mine])
@@ -498,7 +529,12 @@ class JobRegistry:
 
     def _release(self, key: str, job_id: str) -> None:
         """Delete every lock entry of job_id for key (best effort)."""
+        with self._mutex:
+            known = self._lock_names.pop(job_id, None)
         try:
+            if known is not None and self.frugal:
+                self.store.delete([known])  # deletes are free; a list is not
+                return
             folder = self._lock_dir(key)
             names = [n for n in self.store.list(folder) if (self._parse_lock(n) or ("",))[0] == job_id]
             if names:
@@ -551,6 +587,7 @@ class JobRegistry:
                 "checkpoint": {},
             }
             run = _Run(record, started=now)
+            run.super_checked = self.clock()  # a new run was just checked (frugal mode lists later)
             # The record lands before the lock entry, so anyone who sees our entry can also read our record.
             if not self._persist(run, force=True):
                 raise StoreError(self.last_error or "could not save job")
@@ -610,6 +647,7 @@ class JobRegistry:
             record.update({"attempts": attempt, "instance": self.instance, "error": None, "result": None})
             # Our snapshots must sort after every earlier one, even if this machine's clock is behind.
             run = _Run(record, started=now, min_stamp=max([stamp_of(n) for n in names] + [0]))
+            run.super_checked = self.clock()  # a new run was just checked (frugal mode lists later)
             with self._mutex:
                 self._runs[job_id] = run
             self._emit(run, {"type": "resumed", "attempt": attempt})
@@ -673,7 +711,7 @@ class JobRegistry:
                 if run.finished.is_set() or run.superseded:
                     return
                 since = self.clock() - run.last_persist
-                due = (run.dirty and since >= PERSIST_EVERY_SECONDS) or since >= HEARTBEAT_SECONDS
+                due = (run.dirty and since >= self.persist_every_seconds) or since >= self.heartbeat_seconds
             if due:
                 self._persist(run, force=True)
 
@@ -723,7 +761,7 @@ class JobRegistry:
     # -- pruning ---------------------------------------------------------------------------------
 
     def _maybe_sweep(self) -> None:
-        if self.clock() - self._swept < PRUNE_EVERY_SECONDS:
+        if self.clock() - self._swept < self.prune_every_seconds:
             return
         self._swept = self.clock()
         threading.Thread(target=self._sweep_quietly, name="ranksim-job-prune", daemon=True).start()

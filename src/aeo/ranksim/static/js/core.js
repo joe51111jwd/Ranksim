@@ -224,6 +224,12 @@ export const post = (path, body) => request('POST', path, body);
 /* The API client: api.get(path), api.post(path, body), api.request(method, path, body), api.stream(path, body, onEvent). */
 export const api = { request, get, post, stream };
 
+/* A job's last line names the newest save (sync); the rs_sync cookie lets the next request on any server see it. */
+function syncHint(event) {
+  if (event && /^[0-9]{1,20}$/.test(event.sync || '')) document.cookie = `rs_sync=${event.sync}; path=/; max-age=2592000; samesite=lax`;
+  return event;
+}
+
 /* Lines of JSON from a streaming POST. onEvent gets each object as it arrives. Errors carry .status. */
 export async function stream(path, body, onEvent) {
   const response = await fetch(path, {
@@ -255,10 +261,10 @@ export async function stream(path, body, onEvent) {
     while ((cut = buffer.indexOf('\n')) >= 0) {
       const line = buffer.slice(0, cut).trim();
       buffer = buffer.slice(cut + 1);
-      if (line) onEvent(JSON.parse(line));
+      if (line) onEvent(syncHint(JSON.parse(line)));
     }
   }
-  if (buffer.trim()) onEvent(JSON.parse(buffer.trim()));
+  if (buffer.trim()) onEvent(syncHint(JSON.parse(buffer.trim())));
 }
 
 /* ------------------------------------------------------------------ state */

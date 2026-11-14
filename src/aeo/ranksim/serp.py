@@ -191,14 +191,21 @@ class SerperProvider(SerpProvider):
         if self._owns:
             self.client.close()
 
-    def search(self, query: str, count: int = 10) -> list[SerpHit]:
+    def raw_search(self, query: str, count: int = 10) -> dict:
+        """The Serper JSON body. num at most 10 is 1 credit. The key stays in the header."""
         response = self.client.post(
             SERPER_ENDPOINT,
             headers={"X-API-KEY": self.api_key, "Content-Type": "application/json"},
             json={"q": query, "num": min(max(count, 1), 20), "gl": "us", "hl": "en"},
         )
         response.raise_for_status()
-        return parse_serper(response.json(), count)
+        payload = response.json()
+        if not isinstance(payload, dict):
+            raise ProviderConfigError("Serper returned a response that was not a JSON object.")
+        return payload
+
+    def search(self, query: str, count: int = 10) -> list[SerpHit]:
+        return parse_serper(self.raw_search(query, count), count)
 
 
 class BraveFallbackProvider(SerpProvider):

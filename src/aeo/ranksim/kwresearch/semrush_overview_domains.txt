@@ -1,0 +1,7 @@
+# Optional Semrush public overview domains, one per line.
+# Ranksim fetches https://www.semrush.com/website/<domain>/overview/
+# and reads the US organic keyword table when the page loads without a captcha.
+# A captcha or login wall is skipped. It is never solved.
+# Lines starting with # are ignored.
+# Example:
+# procore.com

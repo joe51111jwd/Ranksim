@@ -186,3 +186,18 @@ replace the `crons` key with this, and nothing else:
 
 Even if both run by mistake, the route is safe: a project re-checked in the last 20 hours is skipped, so a second
 call on the same day spends nothing.
+
+## 10. Phase C notes
+
+- Usage counter: `usage/<YYYY-MM>/<instance>.json` per process, summed on read (section 2 had one file). Proven
+  against infra's real `cloud.py` with two instances saving at once (`test_counts_from_two_instances_survive_the_real_cloud_merge`).
+- Saves: `after_pull` and the cron call `cloud.save_project` for `_plugins` and the re-checked project only.
+- Cron pulls run as `JobRegistry` "pull" jobs keyed `site:<domain>` (api.sites), so they share the Studio's lock,
+  pause before the time limit, and resume a paused job. A busy site is deferred and is not an attempt.
+- Provider hook for replayed answers: a provider may define `replayed(query, count) -> str | None`. A string (the
+  original fetch time, or "" when unknown) means the answer comes from a checkpoint: `pull()` does not count it
+  against the cap, leaves it out of the cap check, and stamps it with that time. `api.sites._CheckpointedSerp`
+  (infra) needs to implement it, and `search_with_features`, so job pulls keep SERP features.
+- Rank change alerts: Overview tile `track-alert` and the Searches column compare with the last check seen in this
+  browser (`localStorage` key `ranksim.track.seen.<slug>`, read once per page load). Without storage they compare
+  the last two checks.

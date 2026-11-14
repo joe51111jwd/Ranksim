@@ -1073,3 +1073,31 @@ def test_recheck_stops_when_storage_cannot_be_read(tmp_path):
     _project(ui.root, slug="p", searches=["one"])
     result = tracking.recheck(ui, now=NOW, run_pull=lambda *_: pytest.fail("must not pull"), limit_seconds=600)
     assert result["storage_error"] == "RuntimeError" and result["ran"] == [] and "nothing was pulled" in result["note"]
+
+
+class ReplayingGoogle(FakeGoogle):
+    """Like api.sites._CheckpointedSerp on a resumed job: some answers come from the checkpoint, free."""
+
+    def __init__(self, held: dict[str, str]):
+        super().__init__()
+        self.held = held  # search -> when it was really fetched
+
+    def replayed(self, query, count=10):
+        return self.held.get(query)
+
+
+def test_replayed_checkpoint_answers_are_free_and_keep_their_date(tmp_path):
+    settings = _settings(tmp_path)
+    project = _project(tmp_path / "projects", searches=SEARCHES[:2])
+    budget = tracking.Budget(tmp_path / "projects", cap=1, fresh_hours=0)
+    fetched = "2026-11-14T08:00:00+00:00"
+    google = ReplayingGoogle({SEARCHES[0]: fetched})
+    proj.pull(project, settings, serp_provider=google, fetcher=FakeCrawler(), today=TODAY, budget=budget, engines=[])
+    assert budget.used() == 1  # only the search Google really answered now
+    snapshot = proj.latest_google(project).by_search()
+    assert snapshot[SEARCHES[0]].pulled_at == fetched and snapshot[SEARCHES[0]].results
+    assert snapshot[SEARCHES[1]].results and not snapshot[SEARCHES[1]].error
+    # at the cap, a resume that only replays is not refused
+    again = ReplayingGoogle({SEARCHES[0]: fetched, SEARCHES[1]: ""})
+    report = proj.pull(project, settings, serp_provider=again, fetcher=FakeCrawler(), today=TODAY, budget=budget, engines=[])
+    assert report.google_kind == "api" and budget.used() == 1

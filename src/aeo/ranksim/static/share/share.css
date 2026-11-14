@@ -152,3 +152,19 @@ tr.you td { background: var(--blue-wash); }
   .week { border: 1px solid var(--line); }
   .week-list li { border: 1px solid var(--line); break-inside: avoid; }
 }
+
+/* Phones: tables become one card per row, each value with its label. No sideways scrolling. */
+@media screen and (max-width: 640px) {
+  table.stack, table.stack tbody, table.stack tr, table.stack td { display: block; width: 100%; }
+  table.stack thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+  table.stack tr { padding: 12px 14px; border-bottom: 1px solid var(--line); }
+  table.stack tbody tr:last-child { border-bottom: 0; }
+  table.stack td { border: 0; padding: 3px 0; text-align: left; white-space: normal; display: flex; justify-content: space-between; gap: 12px; }
+  table.stack td { justify-content: flex-end; align-items: baseline; gap: 8px; }
+  table.stack td::before { content: attr(data-label); color: var(--ink-2); font-size: 12px; flex: none; margin-right: auto; font-weight: 400; }
+  table.stack td.q .muted { font-weight: 400; }
+  table.stack td.q { display: grid; gap: 2px; min-width: 0; font-weight: 550; }
+  table.stack td.q::before { content: none; }
+  table.stack td.num { font-variant-numeric: tabular-nums; }
+  .table-wrap { overflow-x: visible; }
+}

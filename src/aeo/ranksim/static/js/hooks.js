@@ -38,12 +38,12 @@
    registerEditorPanel({ key, order, render(ctx) })
      Adds a tile to the editor's side column. Panels repaint whenever the draft changes, except the panel that holds
      keyboard focus: it stays as it is, and stays still on screen while the panels around it change height. Built-in
-     keys and orders: open-progress 5 (while a new site is analyzed), test 10, changes 15, snippet 20, outline 25,
-     fields 30, stats 40, versions 50.
+     keys and orders: open-progress 5 (while a new site is analyzed), test 10, editor-changes 15, snippet 20,
+     editor-outline 25, fields 30, stats 40, editor-versions 50.
 
    registerEditorTool({ key, order, render(ctx) })
-     Adds a control to the editor toolbar (right side). Built-in keys and orders: history 20 (undo, redo), block 30 (Text, H2, H3),
-     insert 40, mode 50, device 60.
+     Adds a control to the editor toolbar (right side). Built-in keys and orders: editor-history 20 (undo, redo), editor-block 30
+     (Text, H2, H3), editor-insert 40, mode 50, device 60.
 
    The editor ctx (panels, tools, and the editor events below):
      url           the address of the page being edited (the draft's own URL once loaded)

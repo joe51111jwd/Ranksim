@@ -48,7 +48,7 @@ function refreshHistory() {
 }
 
 registerEditorTool({
-  key: 'history',
+  key: 'editor-history',
   order: 20,
   render(ctx) {
     const mac = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent || '');
@@ -81,7 +81,7 @@ function refreshBlock() {
 }
 
 registerEditorTool({
-  key: 'block',
+  key: 'editor-block',
   order: 30,
   render() {
     blockSeg = h('div', { class: 'seg seg-sm', role: 'group', 'aria-label': 'Block type', title: 'Click a line in the page, then pick its type' });
@@ -210,7 +210,7 @@ document.addEventListener('click', (event) => {
 });
 
 registerEditorTool({
-  key: 'insert',
+  key: 'editor-insert',
   order: 40,
   render(ctx) {
     const wrap = h('div', { class: 'ed-insert' });
@@ -340,7 +340,7 @@ export function moveByIndex(from, to, place) {
   return moved;
 }
 
-registerEditorPanel({ key: 'outline', order: 25, render: (ctx) => outlinePanel(ctx) });
+registerEditorPanel({ key: 'editor-outline', order: 25, render: (ctx) => outlinePanel(ctx) });
 
 /* ------------------------------------------------------------------ what changed */
 
@@ -428,7 +428,7 @@ function changesPanel(ctx) {
   return tile;
 }
 
-registerEditorPanel({ key: 'changes', order: 15, render: (ctx) => changesPanel(ctx) });
+registerEditorPanel({ key: 'editor-changes', order: 15, render: (ctx) => changesPanel(ctx) });
 
 /* ------------------------------------------------------------------ saved versions (plugins/drafts.py) */
 
@@ -538,7 +538,7 @@ function versionsPanel(ctx) {
   return tile;
 }
 
-registerEditorPanel({ key: 'versions', order: 50, render: (ctx) => versionsPanel(ctx) });
+registerEditorPanel({ key: 'editor-versions', order: 50, render: (ctx) => versionsPanel(ctx) });
 
 /* ------------------------------------------------------------------ keep the tools in step */
 

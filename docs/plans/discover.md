@@ -50,7 +50,11 @@ keyword searches that pop up... that needs to auto-pull. Needs to be really simp
    review blogs, `.gov`, `.edu`). Known lists first, then transparent heuristics (domain words like "review" or
    "best", listicle titles on every page, Article only schema vs Product or SoftwareApplication schema). Each row has
    a `reason`. Competitors rank by visibility: sum over searches of `(11 - position) / 10`.
-   Directories are reported as their own group because their listicles rank.
+   Directories are reported as their own group because their listicles rank. A business's subdomains
+   (`help.hcss.com`, `hcss.com`) merge into one competitor row with a `hosts` list; forum and app store subdomains
+   stay separate. Country versions of known sites (`amazon.co.uk`, `capterra.ca`) match by name.
+   Phase B note: once rows merge by registrable domain, `report["rankings"][...]["top"][...]["competitor"]` must
+   compare `base_domain(item.domain)` to the competitor list, not the raw host.
 
 3. **Competitor profiles**: per competitor, the searches they rank for (position, page, title), best pages, average
    position, title patterns (separator, brand suffix, year, number, common words, average length), word counts
@@ -59,7 +63,9 @@ keyword searches that pop up... that needs to auto-pull. Needs to be really simp
 4. **Content gaps**: per search, compare the user's page (the ranking page, else the best matching page) with the
    pages above it (or the top 10 when not ranking). Report headings topics, terms (one and two word) and structured
    data types that at least 2 pages and at least 40% of those pages share but the user's page lacks. Every gap lists
-   the pages that have it.
+   the pages that have it. Footer, nav, aside and header headings are ignored, word forms match ("schedule crews"
+   covers "crew scheduling"), the user's own brand is never a gap, and when the user's page is not stored the gap
+   says `checked: false` with a note.
 
 ## API
 

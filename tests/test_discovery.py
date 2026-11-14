@@ -383,3 +383,120 @@ def test_report_sections_read_the_store(tmp_path):
     assert gap["page_stored"] is False or gap["page"]
     assert len(gap["compared"]) >= 2 and (gap["topics"] or gap["terms"])
     json.dumps(sections)  # the report is JSON
+
+
+# -- regressions from adversarial review ------------------------------------------------------------------
+
+
+def _titles(titles, brand, host, **kwargs):
+    pages = [autopilot.SitePage(url=f"https://{host}/p{i}/", status="fetched", title=t) for i, t in enumerate(titles)]
+    return dn.discover(pages, brand, host=host, **kwargs)
+
+
+def test_brand_affixes_never_block_ordinary_words():
+    assert _titles(["Roof repair services | Roof Co"], "Roof Co", "roofco.com").queries == ["roof repair services"]
+    assert _titles(["Man and van services | Mango"], "Mango", "mango.com").queries == ["man and van services"]
+    assert _titles(["Law professional liability insurance | Law Pro"], "Law Pro", "lawpro.com").queries == ["law professional liability insurance"]
+    assert _titles(["3M safety products | 3M"], "3M", "3m.com").queries == []
+    assert _titles(["Monday CRM software | monday.com"], "monday.com", "").queries == []
+    assert _titles(["Smith Plumbing and Heating | Smith Plumbing & Heating"], "Smith Plumbing & Heating", "smithph.com").queries == []
+
+
+def test_real_searches_are_not_mistaken_for_labels_or_taglines():
+    kept = set(_titles(
+        ["Contact center software | Acme", "All season tires | Acme", "Browser testing tool | Acme", "Power washing services | Acme",
+         "Work order software | Acme", "Austin Plumber / Drain Cleaning | Acme", "Klempner München | Acme"],
+        "Acme", "acme.com",
+        plugin_rows=[{"q": "plumber near me", "weight": 50}, {"q": "us immigration lawyer", "weight": 50}, "24 hour plumber", 5, None],
+    ).queries)
+    assert {"contact center software", "all season tires", "browser testing tool", "power washing services", "work order software",
+            "austin plumber", "drain cleaning", "klempner munchen", "plumber near me", "us immigration lawyer", "24 hour plumber"} <= kept
+    dropped = _titles(["What We Do | Acme", "How can we help you? | Acme", "Meet the Team | Acme"], "Acme", "acme.com")
+    assert dropped.queries == []
+
+
+def test_intent_respects_products_and_weak_question_words():
+    for phrase in ("customer service software", "will writing service", "criminal trial lawyer", "emergency plumber austin", "virtual phone number service"):
+        assert dn.classify_intent(phrase)[0] == "commercial", phrase
+    assert dn.classify_intent("can i deduct software costs")[0] == "transactional"  # "costs" wins before the question rule
+    assert dn.classify_intent("is it worth hiring a roofer")[0] == "informational"
+
+
+def test_dedupe_keeps_direction_and_place_names():
+    assert not dn.same_search("pdf to word converter", "word to pdf converter")
+    assert not dn.same_search("york plumber", "new york plumber")
+    assert dn.same_search("mens shoes", "men's shoes")
+    pooled = _titles(["x | Acme"], "Acme", "acme.com")
+    assert pooled.queries == []
+    pages = [autopilot.SitePage(url="https://acme.com/a/", status="fetched", title="Acme", h2s=["Drain cleaning tips"]),
+             autopilot.SitePage(url="https://acme.com/b/", status="fetched", title="Acme", h2s=["Drain Cleaning Tip"])]
+    found = dn.discover(pages, "Acme", host="acme.com").queries
+    assert len(found) == 1 and dn.same_search(found[0], "drain cleaning tips")  # two H2s together pass
+
+
+def test_bad_inputs_do_not_crash_discovery():
+    google = GoogleSnapshot("p", "", "import", [SearchResults("q", [SerpResult(1, "http://[bad/x", "", "Bad title here")], "import", "csv", None)])
+    assert dn.discover(_smartcrew_pages(), "SmartCrew", host=SC, google=google, extras=["not", "a", "dict"], plugin_rows=["excavation pond software", 3, None]).queries
+    assert dn.serp_extras(["x"]) == {} and dn.serp_extras({"searches": ["x", None]}) == {}
+    assert dn.slug_phrase("https://x.com/en-gb/") is None and dn.slug_phrase("https://x.com/p/3f2b9c1e-ab12-cd34/") is None
+
+
+def test_classification_handles_country_sites_names_and_subdomains():
+    assert cp.classify_domain("www.amazon.co.uk")[0] == "marketplace"
+    assert cp.classify_domain("capterra.ca")[0] == "directory"
+    assert cp.classify_domain("unimelb.edu.au")[0] == "publisher"
+    assert cp.classify_domain("fieldwire.com")[0] == "competitor"
+    assert cp.classify_domain("newstore.com")[0] == "competitor"
+    assert cp.classify_domain("useinsider.com")[0] == "competitor"
+    assert cp.classify_domain("reviewtrackers.com")[0] == "competitor"
+    assert cp.classify_domain("www.bbc.co.uk")[0] == "publisher" and cp.classify_domain("techcrunch.com")[0] == "publisher"
+    assert cp.classify_domain("news.ycombinator.com")[0] == "forum"
+    kind, reason = cp.classify_domain("play.google.com")
+    assert kind == "marketplace" and "play.google.com" in reason
+    rows = {row["domain"]: row for row in cp.classify_domains(_google(), SC)}
+    assert "hcss.example" in rows or "help.hcss.example" in rows  # one host alone keeps its name
+    two = GoogleSnapshot("p", "", "import", [
+        SearchResults("a", [_result(1, "https://hcss.example/x", "HCSS"), _result(2, "https://help.hcss.example/y", "Help")], "import", "csv", None),
+    ])
+    merged = {row["domain"]: row for row in cp.classify_domains(two, SC)}
+    assert list(merged) == ["hcss.example"] and merged["hcss.example"]["hosts"] == ["hcss.example", "help.hcss.example"]
+
+
+def test_list_articles_that_mention_pricing_are_still_publishers():
+    article = _page("", "Top 7 HCSS Alternatives", "Top 7", ["1. Mitti"], "Mitti pricing starts at $50. Free trial available. " * 10, {"@type": "BlogPosting"})
+    pages = [cp.page_profile("https://bids.example/a", article), cp.page_profile("https://bids.example/b", article)]
+    assert cp.classify_domain("bids.example", titles=["Top 7 HCSS Alternatives", "10 Best Excavation Software"], pages=pages)[0] == "publisher"
+
+
+def test_gaps_ignore_chrome_brand_word_forms_and_duplicates():
+    body = "Smartcrew is slower. Crew scheduling and estimating for every job. Crew scheduling made easy. Estimating tools. " * 8
+    footer = "<footer><h3>Company</h3><h3>Resources</h3><h3>Subscribe to our newsletter</h3></footer>"
+    a = _page("", "A", "A", ["Crew scheduling", "Estimating"], body).replace("</body>", footer + "</body>")
+    b = _page("", "B", "B", ["Crew scheduling tips", "Estimating jobs"], body).replace("</body>", footer + "</body>")
+    mine = _page("", "Mine", "Mine", ["Schedule your crew", "Estimate jobs"], "We schedule crews and estimate every job for smartcrew users. " * 10)
+    rows = [{"q": "crew scheduling software", "position": 5, "url": f"{SC_HOME}x/", "top": [
+        {"position": 1, "url": "https://a.example/1", "you": False},
+        {"position": 2, "url": "https://a.example/1", "you": False},
+        {"position": 3, "url": "https://b.example/2", "you": False},
+        {"position": None, "url": "https://c.example/3", "you": False},
+        {"position": 5, "url": f"{SC_HOME}x/", "you": True},
+    ]}]
+    gap = cp.content_gaps(rows, {"https://a.example/1": a, "https://b.example/2": b, f"{SC_HOME}x/": mine}, own_domain=SC)[0]
+    assert gap["compared"] == ["https://a.example/1", "https://b.example/2"]
+    topics = {item["topic"].lower() for item in gap["topics"]}
+    assert not topics & {"company", "resources", "subscribe to our newsletter"}
+    assert not any("scheduling" in topic or "estimating" in topic for topic in topics), topics
+    terms = {item["term"] for item in gap["terms"]}
+    assert not any("smartcrew" in term for term in terms), terms
+    assert not any(term in {"crew scheduling", "estimating", "made easy"} for term in terms), terms
+    unstored = cp.content_gaps([{**rows[0], "url": None, "position": None}], {"https://a.example/1": a, "https://b.example/2": b})[0]
+    assert unstored["checked"] is False and unstored["note"]
+
+
+def test_one_bad_page_never_breaks_the_report():
+    deep = '<script type="application/ld+json">' + "[" * 100000 + "]" * 100000 + "</script>"
+    nested = '<script type="application/ld+json">' + '{"a":' * 1500 + "1" + "}" * 1500 + "</script>"
+    for html in (deep, nested):
+        profile = cp.page_profile("https://bad.example/", f"<html><head>{html}</head><body><h1>x</h1></body></html>")
+        assert isinstance(profile["schema"], list)
+    json.dumps(cp.competitor_profiles(_google(), SC, {"https://mitti.example/excavation": deep}), default=list)

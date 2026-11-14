@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import math
 import re
+import unicodedata
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from urllib.parse import unquote, urlsplit
@@ -58,16 +59,17 @@ GENERIC = {
 LABEL_STARTS = (
     "questions", "frequently asked", "common questions", "articles", "guides", "resources", "related", "latest", "more ",
     "why choose", "how it works", "what our", "what people", "get in touch", "ready to", "trusted by", "join ",
-    "see how", "learn ", "explore", "read ", "browse", "all ", "featured", "popular", "recent", "head to head",
-    "built for", "made for", "everything you", "start ", "try ", "talk to", "contact", "our ", "meet ", "about ",
-    "see ", "watch ", "download", "sign ", "book ", "request ", "schedule ", "plans", "table of contents",
+    "see how", "learn ", "explore", "read ", "browse ", "featured", "popular", "recent", "head to head",
+    "built for", "made for", "everything you", "start ", "try ", "talk to", "contact ", "our ", "meet ", "about ",
+    "see ", "watch ", "download ", "request ", "schedule a", "plans", "table of contents",
     "in this article", "key takeaways", "conclusion", "final thoughts", "summary", "next steps", "share this",
     "subscribe", "follow us", "stay ", "thanks", "hear from", "loved by", "customer stories",
 )
-LABEL_ENDS = (" us", " here", " today", " now", " facts", " below", " more")
+LABEL_ENDS = (" us", " here", " today", " now", " below", " more")
 LEADING = ("the ", "a ", "an ", "our ", "your ", "welcome to ", "meet ", "introducing ")
 # Words that make a sentence a tagline, not a search.
-PRONOUNS = {"you", "your", "you're", "we", "we're", "our", "us", "i", "my", "me", "yours", "ours"}
+PRONOUNS = {"you", "your", "youre", "we", "were", "our", "us", "i", "my", "me", "yours", "ours"}
+SITE_VOICE = {"we", "our", "us", "ours", "were"}  # a question in the site's own voice ("what we do") is site copy
 TAGLINE_VERBS = {
     "run", "get", "build", "grow", "stop", "save", "make", "start", "take", "keep", "see", "meet", "discover", "join",
     "simplify", "streamline", "power", "transform", "unlock", "boost", "spend", "win", "never", "say", "work", "do",
@@ -79,6 +81,13 @@ HEADS = {
     "program", "programs", "crm", "erp", "service", "services", "company", "companies", "contractor", "contractors",
     "agency", "agencies", "consultant", "consultants", "provider", "providers", "alternative", "alternatives",
     "template", "templates", "calculator", "tracker", "management", "estimating", "scheduling", "dispatch",
+} | {
+    "plumber", "plumbers", "plumbing", "lawyer", "lawyers", "attorney", "attorneys", "dentist", "dentists",
+    "electrician", "electricians", "roofer", "roofers", "roofing", "builder", "builders", "cleaner", "cleaners",
+    "cleaning", "repair", "repairs", "installation", "installer", "installers", "mechanic", "doctor", "clinic",
+    "therapist", "accountant", "accountants", "realtor", "realtors", "insurance", "firm", "firms", "studio",
+    "shop", "store", "supplier", "suppliers", "manufacturer", "manufacturers", "rental", "rentals", "course",
+    "courses", "school", "lessons", "kit", "kits", "products", "equipment",
 }
 CONNECTORS = re.compile(r",|;|\s(?:for|with|that|to|and|or|by|from|which|so|built|designed|made|without|will|actually|in a|is|are)\s")
 # A phrase with one of these reads like a sentence, so it is cut into its product phrases even when it is short.
@@ -88,22 +97,29 @@ STOP = {
     "its", "this", "that", "as", "your", "you", "our", "we", "us", "how", "what", "why", "when", "who", "which",
     "do", "does", "can", "vs", "versus", "best", "top", "new", "free", "online", "near", "me", "i", "my", "all", "one",
 }
-MODIFIERS = {"best", "top", "good", "great", "free", "online", "cheap", "the", "a", "an", "new", "latest"}
-SPLIT = re.compile(r"\s*[|•·»]\s*|\s+[-–—:]\s+|:\s+")
+MODIFIERS = {"best", "top", "good", "great", "free", "online", "cheap", "the", "a", "an", "latest"}
+SPLIT = re.compile(r"\s*[|•·»]\s*|\s+[-–—:/]\s+|:\s+")
+DIRECTION = {"to", "from", "vs", "versus", "into", "for"}  # word order matters: "pdf to word" is not "word to pdf"
 YEAR = re.compile(r"\b(19|20)\d\d\b")
 
 # Intent rules, checked in order. Each rule is (intent, words); a phrase matches when it contains one of the words.
-NAVIGATIONAL = ("login", "log in", "sign in", "signin", "sign up", "my account", "account", "customer service",
+NAVIGATIONAL = ("login", "log in", "sign in", "signin", "my account", "account login", "customer service number",
                 "phone number", "customer support", "contact number", "headquarters", "careers", "jobs at")
 TRANSACTIONAL = ("buy", "price", "prices", "pricing", "cost", "costs", "quote", "quotes", "demo", "free trial",
-                 "trial", "near me", "hire", "order", "coupon", "discount", "for sale", "download", "subscription",
-                 "cheap", "affordable", "rates", "book", "sign up for")
-QUESTION_START = ("how", "what", "why", "when", "where", "who", "which", "is", "are", "can", "does", "do", "should",
-                  "will", "could")
+                 "near me", "hire", "order", "coupon", "discount", "for sale", "download", "subscription",
+                 "cheap", "affordable", "rates", "book online", "sign up for")
+# Strong question words always start a question; weak ones ("will writing service") only with "?" or a subject next.
+QUESTION_START = ("how", "what", "why", "when", "where", "who", "which")
+WEAK_QUESTION_START = ("is", "are", "can", "does", "do", "should", "will", "could", "would")
+QUESTION_SUBJECT = {"i", "you", "we", "it", "a", "an", "the", "my", "your", "they", "there", "this", "that"}
 COMMERCIAL_WORDS = ("best", "top", "vs", "versus", "alternative", "alternatives", "compare", "comparison", "review",
                     "reviews", "software", "app", "apps", "tool", "tools", "platform", "system", "systems", "company",
                     "companies", "contractor", "contractors", "service", "services", "solution", "solutions",
-                    "program", "provider", "providers", "crm", "erp", "agency", "agencies", "consultant")
+                    "program", "provider", "providers", "crm", "erp", "agency", "agencies", "consultant") + tuple(
+    sorted({"plumber", "plumbers", "lawyer", "lawyers", "attorney", "attorneys", "dentist", "dentists", "electrician",
+            "electricians", "roofer", "roofers", "builder", "builders", "cleaner", "cleaners", "repair", "repairs",
+            "installation", "installer", "mechanic", "clinic", "therapist", "accountant", "realtor", "insurance",
+            "firm", "shop", "store", "supplier", "rental", "rentals", "course", "courses"}))
 INFORMATIONAL = ("guide", "tips", "ideas", "examples", "example", "meaning", "definition", "tutorial", "checklist",
                  "ways", "steps", "template", "templates", "history", "types", "explained", "learn", "process")
 BRAND_AFFIXES = ("hq", "app", "inc", "co", "get", "try", "use", "the", "my", "go", "io")
@@ -114,14 +130,20 @@ BRAND_AFFIXES = ("hq", "app", "inc", "co", "get", "try", "use", "the", "my", "go
 
 def clean(text: str) -> str:
     """Lowercase words only: "All-in-1 Dirt Work Software!" gives "all in one dirt work software"."""
-    value = (text or "").lower().replace("’", "'").replace("&amp;", "&")
-    value = re.sub(r"[^a-z0-9&' ]+", " ", value)
-    value = re.sub(r"\s+", " ", value).strip(" '")
+    value = unicodedata.normalize("NFKD", (text or "").lower())
+    value = "".join(char for char in value if not unicodedata.combining(char))  # "münchen" gives "munchen"
+    value = value.replace("&amp;", "&").replace("’", "").replace("'", "").replace("&", " and ")
+    value = re.sub(r"[^\w ]+|_", " ", value)
+    value = re.sub(r"\s+", " ", value).strip()
     value = re.sub(r"\ball in 1\b", "all in one", value)
-    for lead in LEADING:
-        if value.startswith(lead):
-            value = value[len(lead):]
-    return value.strip()
+    changed = True
+    while changed:  # "meet the team" loses "meet " and then "the "
+        changed = False
+        for lead in LEADING:
+            if value.startswith(lead) and len(value) > len(lead):
+                value = value[len(lead):].strip()
+                changed = True
+    return value
 
 
 def stem(word: str) -> str:
@@ -147,13 +169,17 @@ def _jaccard(a: set, b: set) -> float:
 def same_search(a: str, b: str) -> bool:
     """Near duplicates: plural s, word order, "dirtwork" vs "dirt work", and "best" or "top" in front."""
     sa, sb = stems(a), stems(b)
-    if "".join(sa) == "".join(sb) or sorted(sa) == sorted(sb):
+    if "".join(sa) == "".join(sb):
+        return True
+    if sorted(sa) == sorted(sb) and not (set(sa) & DIRECTION):
         return True
     core_a = [word for word in sa if word not in MODIFIERS and not YEAR.fullmatch(word)]
     core_b = [word for word in sb if word not in MODIFIERS and not YEAR.fullmatch(word)]
     if core_a and "".join(core_a) == "".join(core_b):
         return True
     set_a, set_b = set(sa), set(sb)
+    if set_a & DIRECTION and set_a == set_b:
+        return False  # same words, different direction
     return min(len(set_a), len(set_b)) >= 4 and _jaccard(set_a, set_b) >= 0.8
 
 
@@ -162,17 +188,28 @@ def same_search(a: str, b: str) -> bool:
 
 def host_tokens(host: str) -> set[str]:
     """The domain name as search words: smartcrewhq.com gives {"smartcrewhq", "smartcrew"}."""
-    label = (host or "").lower().removeprefix("www.").split(".")[0]
+    label = base_domain(host).split(".")[0]
     if not label:
         return set()
     tokens = {label, label.replace("-", "")}
-    for affix in BRAND_AFFIXES:
-        if label.endswith(affix) and len(label) - len(affix) >= 3:
+    for affix in BRAND_AFFIXES:  # only when a real name is left: "smartcrewhq" gives "smartcrew", "roofco" keeps "roofco"
+        if label.endswith(affix) and len(label) - len(affix) >= 5:
             tokens.add(label[: -len(affix)])
-        if label.startswith(affix) and len(label) - len(affix) >= 3:
+        if label.startswith(affix) and len(label) - len(affix) >= 5:
             tokens.add(label[len(affix):])
-    tokens.update(part for part in label.split("-") if len(part) > 2)
-    return {token for token in tokens if len(token) > 2}
+    tokens.update(part for part in label.split("-") if len(part) > 3)
+    return {token for token in tokens if len(token) >= 2}
+
+
+SECOND_LEVEL = {"co", "com", "org", "net", "ac", "gov", "edu", "ne", "or", "go", "gob", "nic", "ltd", "plc", "sch"}
+
+
+def base_domain(domain: str) -> str:
+    """The registrable domain: help.hcss.com gives hcss.com, blog.mitti.co.uk gives mitti.co.uk."""
+    parts = (domain or "").lower().strip(".").removeprefix("www.").split(".")
+    if len(parts) >= 3 and parts[-2] in SECOND_LEVEL and len(parts[-1]) == 2:
+        return ".".join(parts[-3:])
+    return ".".join(parts[-2:]) if len(parts) >= 2 else (domain or "").lower()
 
 
 @dataclass(frozen=True)
@@ -184,24 +221,28 @@ class Brand:
 
     @classmethod
     def of(cls, brand: str, host: str = "") -> "Brand":
-        phrase = clean(brand)
+        phrase = clean(re.sub(r"\.(com|net|org|io|co|ai|app|dev|us|uk)\b", "", brand or "", flags=re.I))
         phrases = {phrase} if phrase and " " in phrase else set()
+        if " and " in f" {phrase} ":
+            phrases.add(phrase.replace(" and ", " "))
         words = set(host_tokens(host)) if host else set()
         if phrase:
             words.add(phrase.replace(" ", ""))
-        return cls(tuple(sorted(phrases)), tuple(sorted(word for word in words if len(word) > 2)))
+        return cls(tuple(sorted(phrases)), tuple(sorted(word for word in words if len(word) >= 2)))
 
     def in_phrase(self, phrase: str) -> bool:
         text = f" {clean(phrase)} "
         if any(f" {item} " in text for item in self.phrases):
             return True
-        squashed = text.replace(" ", "")
+        words = text.split()
+        runs = {"".join(words[i:j]) for i in range(len(words)) for j in range(i + 2, min(len(words), i + 4) + 1)}
         for word in self.words:
             if f" {word} " in text:
                 return True
-            if len(word) >= 6 and word in squashed:  # "dirt crew" written "dirtcrew" or the reverse
+            if len(word) >= 5 and word in runs:  # "dirt crew" written "dirtcrew", whole words only
                 return True
-        return False
+        squashed_phrases = {item.replace(" ", "") for item in self.phrases}
+        return bool(squashed_phrases & set(words))
 
 
 # -- intent -----------------------------------------------------------------------------------------
@@ -220,14 +261,14 @@ def classify_intent(phrase: str, *, brands: set[str] | None = None) -> tuple[str
     text = clean(phrase)
     if not text:
         return "informational", "empty"
-    hit = _has(text, NAVIGATIONAL)
+    product = text.split()[-1] in HEADS  # "customer service software" is a product, not a way to reach a company
+    hit = None if product else _has(text, NAVIGATIONAL)
     if hit:
         return "navigational", f'has "{hit}"'
     hit = _has(text, TRANSACTIONAL)
     if hit:
         return "transactional", f'has "{hit}"'
-    first = text.split()[0]
-    if first in QUESTION_START or phrase.strip().endswith("?"):
+    if _question(text) or phrase.strip().endswith("?"):
         return "informational", "a question"
     hit = _has(text, COMMERCIAL_WORDS)
     if hit:
@@ -337,22 +378,29 @@ class Discovery:
 def _label_reason(phrase: str) -> str | None:
     if phrase in GENERIC:
         return "a page label"
-    if (phrase.startswith(LABEL_STARTS) and not phrase.startswith("all in one")) or phrase.endswith(LABEL_ENDS):
+    if phrase.split()[-1:] and phrase.split()[-1] in HEADS:
+        return None  # "contact center software" names a product
+    if phrase.startswith(LABEL_STARTS) or phrase.endswith(LABEL_ENDS):
         return "a section label"
     return None
 
 
 def _question(phrase: str) -> bool:
-    return bool(phrase) and phrase.split()[0] in QUESTION_START
+    words = phrase.split()
+    if not words:
+        return False
+    if words[0] in QUESTION_START:
+        return True
+    return words[0] in WEAK_QUESTION_START and len(words) > 1 and words[1] in QUESTION_SUBJECT
 
 
 def _tagline_reason(phrase: str) -> str | None:
-    words = phrase.split()
+    words = re.sub(r"\bnear me\b", "", phrase).split()
     if _question(phrase):
-        return None
-    if any(word in PRONOUNS for word in words):
+        return "a tagline" if any(word in SITE_VOICE for word in words) else None
+    if any(word in PRONOUNS and not (word == "us" and index == 0) for index, word in enumerate(words)):
         return "a tagline"
-    if words and words[0] in TAGLINE_VERBS:
+    if words and words[0] in TAGLINE_VERBS and words[-1] not in HEADS:
         return "a tagline"
     return None
 
@@ -403,7 +451,7 @@ def _gather(text: str, source: str, weight: float, page: str | None, *, max_word
         words = piece.split()
         if not reason and not 2 <= len(words) <= max_words:
             reason = "too long" if len(words) > max_words else "one word"
-        if not reason and sum(1 for word in words if word.isdigit()) and not YEAR.search(piece) and not re.search(r"\btop \d+\b|\b\d+ best\b", piece):
+        if not reason and sum(1 for word in words if word.isdigit()) and not YEAR.search(piece) and not re.search(r"\btop \d+\b|\b\d+ best\b|\b24 (?:7|hour|hours)\b|\b\d+ (?:hour|day|minute|week)\b", piece):
             reason = "a number or price"
         if reason:
             out.append((None, {"q": piece, "reason": reason, "source": source}))
@@ -422,8 +470,10 @@ def slug_phrase(url: str) -> str | None:
     if re.fullmatch(r"[\d\-_]+|p=?\d+|page\d*", last):
         return None
     words = [word for word in re.split(r"[-_+]+", last.lower()) if word]
-    if len(words) < 2 or any(len(word) > 20 for word in words):
-        return None
+    if len(words) < 2 or any(len(word) > 20 for word in words) or all(len(word) <= 2 for word in words):
+        return None  # "en-gb" is a locale, not a search
+    if any(re.search(r"[a-z]", word) and re.search(r"\d", word) for word in words):
+        return None  # ids and hashes: "3f2b9c1e-ab12"
     if sum(1 for word in words if word.isdigit()) and not YEAR.search(" ".join(words)):
         return None
     return " ".join(words)
@@ -454,12 +504,20 @@ def relevance(phrase: str, vocab: Counter) -> float:
     return hits / len(words)
 
 
-def _serp_brands(google) -> set[str]:
+def _safe_domain(item) -> str:
+    try:
+        return (getattr(item, "domain", "") or domain_of(item.url) or "").lower()
+    except (ValueError, TypeError, AttributeError):
+        return ""
+
+
+def _serp_brands(google, vocab: Counter) -> set[str]:
+    """Other sites' names. A name that is also a word the site uses ("roofing") is a topic, not a brand."""
     brands: set[str] = set()
     for entry in getattr(google, "searches", None) or []:
         for item in entry.results:
-            brands |= host_tokens(item.domain or domain_of(item.url))
-    return brands
+            brands |= host_tokens(_safe_domain(item))
+    return {brand for brand in brands if stem(brand) not in vocab}
 
 
 # -- the main function --------------------------------------------------------------------------------
@@ -486,7 +544,10 @@ def discover(
     host_bare = (host or "").lower().removeprefix("www.")
     if is_ours is None:
         def is_ours(url: str) -> bool:  # noqa: E306 - small default
-            found = (urlsplit(url).hostname or "").lower().removeprefix("www.")
+            try:
+                found = (urlsplit(url).hostname or "").lower().removeprefix("www.")
+            except ValueError:
+                return False
             return bool(host_bare) and (found == host_bare or found.endswith("." + host_bare))
 
     raw: dict[str, Found] = {}
@@ -519,7 +580,9 @@ def discover(
         if slug:
             add(_gather(slug, "slug", WEIGHTS["slug"], page.url, detail=urlsplit(page.url).path))
 
-    for search, found in (extras or {}).items():
+    for search, found in (extras or {}).items() if isinstance(extras, dict) else []:
+        if not isinstance(found, dict):
+            continue
         for text in _texts(found.get("related")):
             add(_gather(text, "related", WEIGHTS["related"], None, detail=f'related to "{search}"'))
         for text in _texts(found.get("paa")):
@@ -530,11 +593,16 @@ def discover(
         sightings: dict[str, list[Sighting]] = defaultdict(list)
         for entry in google.searches:
             for result in entry.results:
-                if not 1 <= result.position <= 10 or is_ours(result.url) or not result.title:
+                domain = _safe_domain(result)
+                try:
+                    ours = is_ours(result.url)
+                except ValueError:
+                    ours = False
+                if not 1 <= (result.position or 0) <= 10 or ours or not result.title or not domain:
                     continue
-                their = Brand.of("", result.domain or domain_of(result.url))
+                their = Brand.of("", domain)
                 for part in SPLIT.split(result.title):
-                    for phrase, item in _gather(part, "competitor", WEIGHTS["competitor"], None, detail=result.domain or domain_of(result.url)):
+                    for phrase, item in _gather(part, "competitor", WEIGHTS["competitor"], None, detail=domain):
                         if phrase is None or their.in_phrase(phrase) or result.url in seen_pages[phrase]:
                             continue
                         seen_pages[phrase].add(result.url)
@@ -544,6 +612,10 @@ def discover(
                 add([(phrase, item) for item in items])
 
     for row in plugin_rows or []:
+        if isinstance(row, str):
+            row = {"q": row}
+        if not isinstance(row, dict):
+            continue
         text = str(row.get("q") or row.get("query") or "")
         source = str(row.get("source") or "plugin")[:24]
         try:
@@ -553,9 +625,19 @@ def discover(
         add(_gather(text, source, 1.5 + math.log10(1.0 + amount), None, max_words=8, detail=f"weight {amount:g}"))
 
     vocab = _vocabulary(readable)
-    brands = _serp_brands(google) | set(own_brand.words)
+    brands = _serp_brands(google, vocab) | set(own_brand.words)
+    # Near duplicates pool their evidence before any threshold: two "drain cleaning tip(s)" H2s count together.
+    groups: list[Found] = []
+    for phrase, found in sorted(raw.items(), key=lambda kv: (-sum(kv[1].by_source().values()), len(kv[0]), kv[0])):
+        twin = next((item for item in groups if same_search(item.q, phrase)), None)
+        if twin is None:
+            groups.append(found)
+        else:
+            twin.sightings.extend(found.sightings)
+            twin.variants.append(phrase)
     scored: list[Found] = []
-    for phrase, found in raw.items():
+    for found in groups:
+        phrase = found.q
         found.intent, found.intent_rule = classify_intent(phrase, brands=brands)
         found.relevance = relevance(phrase, vocab)
         by_source = found.by_source()
@@ -573,11 +655,6 @@ def discover(
 
     picked: list[Found] = []
     for found in scored:
-        twin = next((item for item in picked if same_search(item.q, found.q)), None)
-        if twin is not None:
-            twin.sightings.extend(found.sightings)
-            twin.variants.append(found.q)
-            continue
         if len(picked) >= limit:
             dropped.append({"q": found.q, "reason": "over the limit", "source": found.sources[0]})
             continue
@@ -616,7 +693,9 @@ def discover_searches(pages, brand: str, *, limit: int = MAX_SEARCHES, host: str
 def serp_extras(google_json: dict | None) -> dict[str, dict]:
     """Related searches and people also ask per search, from a stored ``google.json`` dict. Missing keys are fine."""
     out: dict[str, dict] = {}
-    for entry in (google_json or {}).get("searches") or []:
+    for entry in (google_json or {}).get("searches") or [] if isinstance(google_json, dict) else []:
+        if not isinstance(entry, dict):
+            continue
         search = str(entry.get("search") or "")
         related = entry.get("related_searches") or entry.get("related") or entry.get("relatedSearches") or []
         paa = entry.get("people_also_ask") or entry.get("paa") or entry.get("peopleAlsoAsk") or []

@@ -65,7 +65,7 @@ REPORT_QUERIES = 100
 REPORT_PAGES = 50
 DISCOVERY_LIMIT = 30
 DISCOVERY_TOP = 5.0
-DISCOVERY_FLOOR = 1.5
+DISCOVERY_FLOOR = 2.5
 LABEL = "Google Search Console data"
 GOOD_PERMISSIONS = {"siteOwner", "siteFullUser", "siteRestrictedUser"}
 
@@ -722,11 +722,10 @@ def _active(ui, project) -> bool:
 
 
 def discovery_weight(impressions: int, top: int) -> float:
-    """On discovery's scale (a page title phrase scores 3.0 to 4.5, a phrase needs 2.5 to be picked): the most seen
-    query scores 5.0, a query with a tenth of its impressions about 2.6 (still picked on its own), a query with a
-    hundredth 1.85 (picked only when the site's pages also use it)."""
+    """On discovery's scale (a page title phrase scores 3.0, a phrase needs 2.5 to be picked): 2.5 plus 2.5 times the
+    share of the top query's impressions. Every Search Console query qualifies; the most seen ones rank first."""
     share = max(0.0, min(1.0, impressions / top)) if top else 0.0
-    return round(DISCOVERY_FLOOR + (DISCOVERY_TOP - DISCOVERY_FLOOR) * share**0.5, 3)
+    return round(DISCOVERY_FLOOR + (DISCOVERY_TOP - DISCOVERY_FLOOR) * share, 3)
 
 
 def discovery_sources(*, project, pages=None, ui=None) -> list[dict]:

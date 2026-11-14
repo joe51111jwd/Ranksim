@@ -186,8 +186,10 @@ phone width (390 px, no horizontal scroll), disconnect. No console errors.
   impressions) impressions at average position 8 to 20, with the page that gets most of their impressions) and
   `low_ctr` (pages on page one with that many impressions and under half a typical CTR for their position; the
   typical curve is a rough benchmark and labeled as not Google data). Shown on an Overview tile (order 16), a
-  `gsc` screen (`/app/<slug>/gsc`, linked from the tile) with Open in editor and Track buttons, and a "Near page
-  one" mark in the Searches column.
+  `gsc` screen (`/app/<slug>/gsc`, linked from the tile) with Open in editor and Track buttons, and a "Positions 8 to 20
+  one" mark in the Searches column. Labels: "Positions 8 to 20" and "Seen but not clicked" (benchmark CTR labeled not
+  Google data). Automatic matching (first analysis, new projects) never picks a parent domain property; a project
+  with no match is rechecked once a day. Parked first-analysis data older than an hour is deleted.
 
 ## Known gaps
 

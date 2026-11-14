@@ -809,7 +809,7 @@ def test_opportunities_near_page_one_and_low_ctr(tmp_path, env):
     assert near[0]["page"] == "https://www.dirtcrew.example/"  # the page with most of its impressions
     low = opp["low_ctr"]
     assert [row["page"] for row in low] == ["https://www.dirtcrew.example/features"]  # 0.5% CTR at position 4
-    assert low[0]["typical_ctr"] == 0.07 and low[0]["q"] == "estimating software" and low[0]["missed_clicks"] == 36
+    assert low[0]["benchmark_ctr"] == 0.07 and low[0]["q"] == "estimating software" and "missed_clicks" not in low[0]
     assert "not Google data" in opp["rules"]["low_ctr"]
     text = json.dumps(opp, ensure_ascii=False)
     assert not any(dash in text for dash in DASHES)
@@ -834,3 +834,36 @@ def test_opportunity_rules():
     opp = gsc.opportunities(snapshot)
     assert [row["q"] for row in opp["near_page_one"]] == ["c"]
     assert [row["page"] for row in opp["low_ctr"]] == ["p1"] and opp["low_ctr"][0]["page"] == "p1"
+
+
+def test_automatic_matching_never_takes_a_parent_domain(tmp_path, env):
+    box = _app(tmp_path)
+    _sign_in(box)
+    query = _connect(box)
+    _callback(box, {"code": "good-code", "state": query["state"]})
+    pages = [SimpleNamespace(url="https://client.dirtcrew.example/")]
+    assert gsc.discovery_sources(project=None, pages=pages, ui=box.ui) == []  # sc-domain:dirtcrew.example is a parent
+    sub = create_project("Client", "client.dirtcrew.example", ["a search"], root=tmp_path / "projects")
+    gsc.after_pull(project=sub, report=None, ui=box.ui)
+    assert gsc.load_settings(sub)["enabled"] is False
+    listed = len([c for c in box.google.calls if c[1] == "/sites"])
+    gsc.after_pull(project=sub, report=None, ui=box.ui)
+    assert len([c for c in box.google.calls if c[1] == "/sites"]) == listed  # checked once a day, not every pull
+    box.ui.gsc_clock.now += gsc.ADOPT_RETRY_SECONDS + 1
+    gsc.after_pull(project=sub, report=None, ui=box.ui)
+    assert len([c for c in box.google.calls if c[1] == "/sites"]) == listed + 1
+    # The owner can still pick the parent domain by hand.
+    assert gsc.match_property(sub, [{"url": "sc-domain:dirtcrew.example", "usable": True}]) == "sc-domain:dirtcrew.example"
+
+
+def test_stale_parked_data_is_deleted(tmp_path, env):
+    box = _app(tmp_path)
+    _sign_in(box)
+    query = _connect(box)
+    _callback(box, {"code": "good-code", "state": query["state"]})
+    gsc.discovery_sources(project=None, pages=[SimpleNamespace(url="https://www.other.example/")], ui=box.ui)
+    folder = gsc.account_path(box.ui).parent / "pending"
+    assert len(list(folder.glob("*.json"))) == 1
+    box.ui.gsc_clock.now += gsc.PENDING_SECONDS + 1
+    gsc.discovery_sources(project=None, pages=[SimpleNamespace(url="https://nomatch.example/")], ui=box.ui)
+    assert list(folder.glob("*.json")) == []

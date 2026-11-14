@@ -547,9 +547,16 @@ def candidate_properties(project) -> list[str]:
     return names
 
 
-def match_property(project, properties: list[dict]) -> str:
+def match_property(project, properties: list[dict], *, strict: bool = False) -> str:
+    """The best usable property for the project's site. strict (automatic matching without the owner) leaves out
+    parent domain properties: client.agency.com never silently gets the data for all of agency.com."""
     usable = {item["url"].lower(): item["url"] for item in properties if item.get("usable")}
-    for name in candidate_properties(project):
+    names = candidate_properties(project)
+    if strict:
+        host = _site_host(project)
+        bare = host[4:] if host.startswith("www.") else host
+        names = [name for name in names if not name.startswith("sc-domain:") or name == f"sc-domain:{bare}"]
+    for name in names:
         if name.lower() in usable:
             return usable[name.lower()]
     return ""
@@ -786,8 +793,7 @@ def opportunities(snapshot: dict) -> dict:
         if expected is None or row["impressions"] < floor or row["ctr"] >= expected * 0.5:
             continue
         item = {key: row[key] for key in ("page", "clicks", "impressions", "ctr", "position")}
-        item["typical_ctr"] = expected
-        item["missed_clicks"] = max(0, round(row["impressions"] * expected * 0.5) - row["clicks"])
+        item["benchmark_ctr"] = expected  # a rough benchmark, not Google data
         top_query = max((pair for pair in snapshot.get("query_pages") or [] if pair["page"] == row["page"]), key=lambda pair: pair["impressions"], default=None)
         item["q"] = top_query["q"] if top_query else ""
         low.append(item)
@@ -799,8 +805,8 @@ def opportunities(snapshot: dict) -> dict:
         "min_impressions": floor,
         "rules": {
             "near_page_one": f"Searches with at least {floor} impressions at an average position of 8 to 20.",
-            "low_ctr": f"Pages on page one with at least {floor} impressions and under half the typical click rate for "
-            "their position. The typical rate is a rough benchmark, not Google data.",
+            "low_ctr": f"Pages on page one with at least {floor} impressions and under half a benchmark click rate for "
+            "their position. The benchmark is a rough industry curve, not Google data.",
         },
     }
 
@@ -834,6 +840,36 @@ def _pending_path(ui, host: str) -> Path:
     return plugins.workspace_dir(ui, NAME) / "pending" / f"{digest}.json"
 
 
+def _prune_pending(ui) -> None:
+    """Parked first-analysis data older than PENDING_SECONDS is deleted (an analysis that stopped never adopts it)."""
+    folder = _pending_path(ui, "x").parent
+    if not folder.is_dir():
+        return
+    for path in folder.glob("*.json"):
+        data = _read_json(path) or {}
+        if _now(ui) - float(data.get("at") or 0) > PENDING_SECONDS:
+            path.unlink(missing_ok=True)
+
+
+ADOPT_RETRY_SECONDS = 24 * 3600
+
+
+def _adopt_checked_recently(ui, project) -> bool:
+    from aeo.ranksim import plugins
+
+    checks = _read_json(plugins.workspace_dir(ui, NAME) / "adopt_checks.json") or {}
+    return _now(ui) - float(checks.get(project.slug) or 0) < ADOPT_RETRY_SECONDS
+
+
+def _record_adopt_check(ui, project) -> None:
+    from aeo.ranksim import plugins
+
+    path = plugins.workspace_dir(ui, NAME) / "adopt_checks.json"
+    checks = _read_json(path) or {}
+    checks[project.slug] = _now(ui)
+    _write_json(path, checks)
+
+
 def _host_of_pages(pages) -> str:
     for page in pages or []:
         host = (urlsplit(str(getattr(page, "url", "") or "")).hostname or "").lower()
@@ -847,11 +883,12 @@ def _first_analysis_snapshot(ui, pages) -> dict | None:
     properties covers the site, load its data now so its queries count, and park it for after_pull to adopt."""
     if getattr(ui, "public_demo", False) or not oauth_config()["ready"] or not connected(ui):
         return None
+    _prune_pending(ui)
     host = _host_of_pages(pages)
     if not host:
         return None
     try:
-        chosen = match_property(SimpleNamespace(site=host), list_properties(ui))
+        chosen = match_property(SimpleNamespace(site=host), list_properties(ui), strict=True)
         if not chosen:
             return None
         snapshot = collect_snapshot(ui, chosen)
@@ -868,6 +905,7 @@ def _adopt(ui, project) -> None:
         return
     if (project_dir(project) / "settings.json").exists():
         return
+    _prune_pending(ui)
     host = _site_host(project)
     parked = _read_json(_pending_path(ui, host)) if host else None
     if parked and _now(ui) - float(parked.get("at") or 0) <= PENDING_SECONDS and isinstance(parked.get("snapshot"), dict):
@@ -875,12 +913,16 @@ def _adopt(ui, project) -> None:
         save_settings(ui, project, {"enabled": True, "property": str(parked.get("property") or ""), "auto": True})
         _pending_path(ui, host).unlink(missing_ok=True)
         return
+    if _adopt_checked_recently(ui, project):
+        return  # no matching property last time; ask Google again once a day, not on every pull
     try:
-        chosen = match_property(project, list_properties(ui))
+        chosen = match_property(project, list_properties(ui), strict=True)
     except GscError:
         return
     if chosen:
         save_settings(ui, project, {"enabled": True, "property": chosen, "auto": True})
+    else:
+        _record_adopt_check(ui, project)
 
 
 def discovery_sources(*, project, pages=None, ui=None) -> list[dict]:

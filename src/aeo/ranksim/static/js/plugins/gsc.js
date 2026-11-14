@@ -1,5 +1,6 @@
 /* Google Search Console: the on/off switch and property picker in Settings, a Search Console column on Searches,
-   and an Overview tile. Every number shown is Google Search Console data for the stated date range.
+   and an Overview tile. Numbers are Google Search Console data for the stated date range, except the benchmark click
+   rate in "Seen but not clicked", which is a rough industry curve and labeled so.
    Server side: src/aeo/ranksim/plugins/gsc.py (routes under /api/v1/gsc). */
 
 import { registerSettingsSection, registerSearchColumn, registerOverviewTile, registerScreen } from '../hooks.js';
@@ -274,7 +275,7 @@ registerSearchColumn({
     return h('span', { class: 'gsc-cell', title: `${tip}. CTR ${pctText(hit.ctr)}, average position ${posText(hit.position)}.` },
       h('b', { text: `${fmt(hit.clicks)} clicks` }),
       h('small', { text: `${fmt(hit.impressions)} impr.` }),
-      near ? h('span', { class: 'gsc-chip', text: 'Near page one' }) : null);
+      near ? h('span', { class: 'gsc-chip', text: 'Positions 8 to 20' }) : null);
   },
 });
 
@@ -374,7 +375,7 @@ function lowRow(row, compact) {
     h('div', { class: 't gsc-path', text: pathOf(row.page) }),
     h('div', { class: 'm' },
       h('span', { text: `${pctText(row.ctr)} CTR at #${posText(row.position)}` }),
-      h('span', { text: `typical about ${pctText(row.typical_ctr)}` }),
+      h('span', { text: `benchmark about ${pctText(row.benchmark_ctr)}, not Google data` }),
       h('span', { text: `${fmt(row.impressions)} impressions` }),
       row.q ? h('span', { text: `top search: ${row.q}` }) : null),
     compact ? null : h('div', { class: 'gsc-opp-actions' }, editorButton(row.q, row.page, 'Improve title and description'))),
@@ -392,7 +393,7 @@ registerOverviewTile({
     return h('section', { class: 'tile span-2 gsc-tile', 'data-gsc': 'opportunities' },
       h('div', { class: 'tile-head' }, h('h2', { text: 'Search Console opportunities' }), link('gsc', 'All')),
       h('div', { class: 'tile-k', text: `${LABEL}, ${rangeText(g)}` }),
-      o.near_page_one.length ? h('div', { class: 'gsc-group' }, h('div', { class: 'gsc-group-k', text: 'Near page one' }), o.near_page_one.slice(0, 3).map((row) => nearRow(row, true))) : null,
+      o.near_page_one.length ? h('div', { class: 'gsc-group' }, h('div', { class: 'gsc-group-k', text: 'Positions 8 to 20' }), o.near_page_one.slice(0, 3).map((row) => nearRow(row, true))) : null,
       o.low_ctr.length ? h('div', { class: 'gsc-group' }, h('div', { class: 'gsc-group-k', text: 'Seen but not clicked' }), o.low_ctr.slice(0, 2).map((row) => lowRow(row, true))) : null);
   },
 });
@@ -410,7 +411,7 @@ registerScreen('gsc', {
     const o = opps(g);
     const rules = o.rules || {};
     const near = h('section', { class: 'tile span-2', 'data-gsc': 'near' },
-      h('div', { class: 'tile-head' }, h('h2', { text: 'Near page one' }), h('span', { class: 'aside', text: String(o.near_page_one.length) })),
+      h('div', { class: 'tile-head' }, h('h2', { text: 'Positions 8 to 20' }), h('span', { class: 'aside', text: String(o.near_page_one.length) })),
       h('p', { class: 'tile-sub gsc-rule', text: rules.near_page_one || '' }),
       o.near_page_one.length ? h('div', { class: 'form' }, o.near_page_one.map((row) => nearRow(row, false))) : h('div', { class: 'empty-note', text: 'None right now.' }));
     const low = h('section', { class: 'tile span-2', 'data-gsc': 'low' },

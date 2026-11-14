@@ -386,8 +386,10 @@ def test_a_deleted_project_is_deleted_everywhere(tmp_path, fake_blob):
 
 
 def _rank_db(folder):
+    from aeo import db
     from aeo.ranksim import store
 
+    db._register_sqlite_pragmas()  # WAL mode, as in the app: writes land in rank.db-wal before the main file
     folder.mkdir(parents=True, exist_ok=True)
     url = f"sqlite:///{folder / 'rank.db'}"
     store.session_factory(url)  # creates every table, including the ledger

@@ -37,6 +37,10 @@ class SerpProvider:
     def search(self, query: str, count: int = 10) -> list[SerpHit]:
         raise NotImplementedError
 
+    def search_with_features(self, query: str, count: int = 10) -> tuple[list[SerpHit], dict]:
+        """Organic hits plus what the page showed beyond them (see parse_features). One request, same cost."""
+        return self.search(query, count), {}
+
 
 def parse_serpapi(payload: dict, count: int) -> list[SerpHit]:
     hits: list[SerpHit] = []
@@ -116,13 +120,20 @@ class SerpApiProvider(SerpProvider):
         if self._owns:
             self.client.close()
 
-    def search(self, query: str, count: int = 10) -> list[SerpHit]:
+    def _payload(self, query: str, count: int) -> dict:
         response = self.client.get(
             SERPAPI_ENDPOINT,
             params={"engine": "google", "q": query, "num": min(max(count, 1), 20), "api_key": self.api_key},
         )
         response.raise_for_status()
-        return parse_serpapi(response.json(), count)
+        return response.json()
+
+    def search(self, query: str, count: int = 10) -> list[SerpHit]:
+        return parse_serpapi(self._payload(query, count), count)
+
+    def search_with_features(self, query: str, count: int = 10) -> tuple[list[SerpHit], dict]:
+        payload = self._payload(query, count)
+        return parse_serpapi(payload, count), parse_features(self.name, payload)
 
 
 class DataForSeoProvider(SerpProvider):
@@ -140,7 +151,7 @@ class DataForSeoProvider(SerpProvider):
         if self._owns:
             self.client.close()
 
-    def search(self, query: str, count: int = 10) -> list[SerpHit]:
+    def _payload(self, query: str, count: int) -> dict:
         depth = min(max(count, 1), 20)
         response = self.client.post(
             DATAFORSEO_ENDPOINT,
@@ -148,7 +159,14 @@ class DataForSeoProvider(SerpProvider):
             json=[{"keyword": query, "location_code": 2840, "language_code": "en", "depth": depth}],
         )
         response.raise_for_status()
-        return parse_dataforseo(response.json(), count)
+        return response.json()
+
+    def search(self, query: str, count: int = 10) -> list[SerpHit]:
+        return parse_dataforseo(self._payload(query, count), count)
+
+    def search_with_features(self, query: str, count: int = 10) -> tuple[list[SerpHit], dict]:
+        payload = self._payload(query, count)
+        return parse_dataforseo(payload, count), parse_features(self.name, payload)
 
 
 def parse_serper(payload: dict, count: int) -> list[SerpHit]:
@@ -191,14 +209,214 @@ class SerperProvider(SerpProvider):
         if self._owns:
             self.client.close()
 
-    def search(self, query: str, count: int = 10) -> list[SerpHit]:
+    def _payload(self, query: str, count: int) -> dict:
         response = self.client.post(
             SERPER_ENDPOINT,
             headers={"X-API-KEY": self.api_key, "Content-Type": "application/json"},
             json={"q": query, "num": min(max(count, 1), 20), "gl": "us", "hl": "en"},
         )
         response.raise_for_status()
-        return parse_serper(response.json(), count)
+        return response.json()
+
+    def search(self, query: str, count: int = 10) -> list[SerpHit]:
+        return parse_serper(self._payload(query, count), count)
+
+    def search_with_features(self, query: str, count: int = 10) -> tuple[list[SerpHit], dict]:
+        payload = self._payload(query, count)
+        return parse_serper(payload, count), parse_features(self.name, payload)
+
+
+# SERP features: what a results page shows beyond the organic list. Shape documented in docs/plans/track.md.
+
+FEATURE_LIST_MAX = 10
+FEATURE_TEXT_MAX = 300
+FEATURE_KEYS = (
+    "people_also_ask", "related_searches", "answer_box", "knowledge_panel",
+    "top_stories", "videos", "images", "sitelinks",
+)
+
+
+def _txt(value) -> str:
+    if value is None or isinstance(value, (dict, list)):
+        return ""
+    return " ".join(str(value).split())[:FEATURE_TEXT_MAX]
+
+
+def _link(value) -> str:
+    text = _txt(value)
+    return text if text.startswith(("http://", "https://")) else ""
+
+
+def _items(value) -> list:
+    return [item for item in value if item] if isinstance(value, list) else []
+
+
+def _compact(record: dict) -> dict:
+    return {key: value for key, value in record.items() if value not in ("", None, [], {})}
+
+
+def _clip(rows: list) -> list:
+    out = [row for row in rows if row]
+    return out[:FEATURE_LIST_MAX]
+
+
+def parse_features(provider: str, payload) -> dict:
+    """Normalized SERP features from a raw provider payload. Never raises; unknown shapes give {}."""
+    if not isinstance(payload, dict):
+        return {}
+    try:
+        if provider == "serper":
+            found = _features_serper(payload)
+        elif provider == "serpapi":
+            found = _features_serpapi(payload)
+        elif provider == "dataforseo":
+            found = _features_dataforseo(payload)
+        else:
+            return {}
+    except Exception:  # noqa: BLE001 - extras must never sink a search whose organic results parsed fine
+        return {}
+    return {key: found[key] for key in FEATURE_KEYS if found.get(key)}
+
+
+def _sitelinks(position, url, links) -> dict:
+    rows = _clip([_compact({"title": _txt(item.get("title")), "url": _link(item.get("link") or item.get("url"))})
+                  for item in _items(links) if isinstance(item, dict)])
+    return {"position": position, "url": url, "links": rows} if rows and url else {}
+
+
+def _features_serper(payload: dict) -> dict:
+    found: dict = {}
+    found["people_also_ask"] = _clip([
+        _compact({"question": _txt(item.get("question")), "snippet": _txt(item.get("snippet")), "url": _link(item.get("link"))})
+        for item in _items(payload.get("peopleAlsoAsk")) if isinstance(item, dict) and _txt(item.get("question"))
+    ])
+    found["related_searches"] = _clip([
+        _txt(item.get("query") if isinstance(item, dict) else item) for item in _items(payload.get("relatedSearches"))
+    ])
+    box = payload.get("answerBox")
+    if isinstance(box, dict):
+        found["answer_box"] = _compact({
+            "title": _txt(box.get("title")),
+            "snippet": _txt(box.get("snippet") or box.get("answer")),
+            "url": _link(box.get("link")),
+        })
+    graph = payload.get("knowledgeGraph")
+    if isinstance(graph, dict):
+        found["knowledge_panel"] = _compact({
+            "title": _txt(graph.get("title")),
+            "type": _txt(graph.get("type")),
+            "description": _txt(graph.get("description")),
+            "url": _link(graph.get("website") or graph.get("descriptionLink")),
+        })
+    found["top_stories"] = _clip([
+        _compact({"title": _txt(item.get("title")), "url": _link(item.get("link")), "source": _txt(item.get("source")), "date": _txt(item.get("date"))})
+        for item in _items(payload.get("topStories")) if isinstance(item, dict)
+    ])
+    found["videos"] = _clip([
+        _compact({"title": _txt(item.get("title")), "url": _link(item.get("link")), "source": _txt(item.get("source") or item.get("channel"))})
+        for item in _items(payload.get("videos")) if isinstance(item, dict)
+    ])
+    found["images"] = _clip([
+        _compact({"title": _txt(item.get("title")), "url": _link(item.get("link") or item.get("imageUrl"))})
+        for item in _items(payload.get("images")) if isinstance(item, dict)
+    ])
+    found["sitelinks"] = _clip([
+        _sitelinks(int(item.get("position") or index), _link(item.get("link")), item.get("sitelinks"))
+        for index, item in enumerate(_items(payload.get("organic")), start=1) if isinstance(item, dict)
+    ])
+    return found
+
+
+def _features_serpapi(payload: dict) -> dict:
+    found: dict = {}
+    found["people_also_ask"] = _clip([
+        _compact({"question": _txt(item.get("question")), "snippet": _txt(item.get("snippet")), "url": _link(item.get("link"))})
+        for item in _items(payload.get("related_questions")) if isinstance(item, dict) and _txt(item.get("question"))
+    ])
+    found["related_searches"] = _clip([
+        _txt(item.get("query") if isinstance(item, dict) else item) for item in _items(payload.get("related_searches"))
+    ])
+    box = payload.get("answer_box")
+    if isinstance(box, dict):
+        found["answer_box"] = _compact({
+            "title": _txt(box.get("title")),
+            "snippet": _txt(box.get("snippet") or box.get("answer")),
+            "url": _link(box.get("link")),
+        })
+    graph = payload.get("knowledge_graph")
+    if isinstance(graph, dict):
+        found["knowledge_panel"] = _compact({
+            "title": _txt(graph.get("title")),
+            "type": _txt(graph.get("type")),
+            "description": _txt(graph.get("description")),
+            "url": _link(graph.get("website")) or _link((graph.get("source") or {}).get("link") if isinstance(graph.get("source"), dict) else ""),
+        })
+    found["top_stories"] = _clip([
+        _compact({"title": _txt(item.get("title")), "url": _link(item.get("link")), "source": _txt(item.get("source")), "date": _txt(item.get("date"))})
+        for item in _items(payload.get("top_stories")) if isinstance(item, dict)
+    ])
+    found["videos"] = _clip([
+        _compact({"title": _txt(item.get("title")), "url": _link(item.get("link")), "source": _txt(item.get("platform") or item.get("channel"))})
+        for item in _items(payload.get("inline_videos")) if isinstance(item, dict)
+    ])
+    found["images"] = _clip([
+        _compact({"title": _txt(item.get("title")), "url": _link(item.get("link") or item.get("original") or item.get("source"))})
+        for item in _items(payload.get("inline_images")) if isinstance(item, dict)
+    ])
+    rows = []
+    for index, item in enumerate(_items(payload.get("organic_results")), start=1):
+        if not isinstance(item, dict):
+            continue
+        links = item.get("sitelinks")
+        if isinstance(links, dict):
+            links = [*_items(links.get("inline")), *_items(links.get("expanded"))]
+        rows.append(_sitelinks(int(item.get("position") or index), _link(item.get("link")), links))
+    found["sitelinks"] = _clip(rows)
+    return found
+
+
+def _features_dataforseo(payload: dict) -> dict:
+    found: dict = {key: [] for key in ("people_also_ask", "related_searches", "top_stories", "videos", "images", "sitelinks")}
+    for task in _items(payload.get("tasks")):
+        for result in _items(task.get("result") if isinstance(task, dict) else None):
+            for item in _items(result.get("items") if isinstance(result, dict) else None):
+                if not isinstance(item, dict):
+                    continue
+                kind = item.get("type")
+                inner = [row for row in _items(item.get("items")) if isinstance(row, dict)]
+                if kind == "people_also_ask":
+                    for row in inner:
+                        expanded = next((part for part in _items(row.get("expanded_element")) if isinstance(part, dict)), {})
+                        found["people_also_ask"].append(_compact({
+                            "question": _txt(row.get("title")),
+                            "snippet": _txt(expanded.get("description")),
+                            "url": _link(expanded.get("url")),
+                        }) if _txt(row.get("title")) else {})
+                elif kind == "related_searches":
+                    found["related_searches"].extend(_txt(row) for row in _items(item.get("items")))
+                elif kind == "featured_snippet" and "answer_box" not in found:
+                    found["answer_box"] = _compact({"title": _txt(item.get("title")), "snippet": _txt(item.get("description")), "url": _link(item.get("url"))})
+                elif kind == "knowledge_graph" and "knowledge_panel" not in found:
+                    found["knowledge_panel"] = _compact({
+                        "title": _txt(item.get("title")), "type": _txt(item.get("sub_title")),
+                        "description": _txt(item.get("description")), "url": _link(item.get("url")),
+                    })
+                elif kind == "top_stories":
+                    found["top_stories"].extend(
+                        _compact({"title": _txt(row.get("title")), "url": _link(row.get("url")), "source": _txt(row.get("source")), "date": _txt(row.get("date") or row.get("timestamp"))})
+                        for row in inner
+                    )
+                elif kind == "video":
+                    found["videos"].extend(
+                        _compact({"title": _txt(row.get("title")), "url": _link(row.get("url")), "source": _txt(row.get("source"))}) for row in inner
+                    )
+                elif kind == "images":
+                    found["images"].extend(_compact({"title": _txt(row.get("alt") or row.get("title")), "url": _link(row.get("url") or row.get("image_url"))}) for row in inner)
+                elif kind == "organic":
+                    found["sitelinks"].append(_sitelinks(int(item.get("rank_group") or 0), _link(item.get("url")), item.get("links")))
+    for key in ("people_also_ask", "related_searches", "top_stories", "videos", "images", "sitelinks"):
+        found[key] = _clip(found[key])
+    return found
 
 
 class BraveFallbackProvider(SerpProvider):

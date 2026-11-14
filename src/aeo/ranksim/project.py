@@ -211,6 +211,7 @@ class SearchResults:
     location: str | None = None
     language: str | None = None
     error: str = ""
+    features: dict = field(default_factory=dict)  # SERP features beyond organic results (docs/plans/track.md)
 
     @property
     def pulled_label(self) -> str:
@@ -242,6 +243,7 @@ class SearchResults:
             location=data.get("location"),
             language=data.get("language"),
             error=str(data.get("error") or ""),
+            features=dict(data.get("features")) if isinstance(data.get("features"), dict) else {},
         )
 
 
@@ -1201,6 +1203,7 @@ def pull(
     engine_cache_dir: str | Path | None = None,
     engine_use_cache: bool = True,
     engine_models: dict[str, str] | None = None,
+    budget=None,
 ) -> PullReport:
     """Pull REAL Google results, crawl what is missing or stale, ask the AI engines, and train the mini engine.
 
@@ -1217,6 +1220,10 @@ def pull(
     the env vars. Nothing is invented. serp_provider, fetcher and engine_client
     are for tests and for callers that bring their own; fetcher takes a list of
     URLs on one host and returns one FetchResult per URL, in order.
+
+    budget (optional, aeo.ranksim.plugins.tracking.Budget) controls paid Google
+    requests: it can reuse results pulled within a freshness window, and it
+    counts requests against a monthly cap. None keeps the old behavior.
     """
     database = database or settings.ranksim_database_url
     started = time.perf_counter()
@@ -1237,7 +1244,7 @@ def pull(
     emit("google", f"Getting the REAL Google top {depth} for {len(project.searches)} searches.", 0, len(project.searches))
     pull_id = _new_pull_id(project, now)
     try:
-        snapshot, google_note = _google_step(project, settings, previous, pull_id, depth, skip_google, serp_provider, emit, now)
+        snapshot, google_note = _google_step(project, settings, previous, pull_id, depth, skip_google, serp_provider, emit, now, budget)
     except BaseException:
         _drop_empty(project.dir / "pulls" / pull_id)
         raise
@@ -1407,13 +1414,22 @@ class _Emitter:
             self.progress(event)
 
 
-def _google_step(project, settings, previous, pull_id, depth, skip_google, serp_provider, emit, now):
+def _google_step(project, settings, previous, pull_id, depth, skip_google, serp_provider, emit, now, budget=None):
     by_previous = previous.by_search() if previous else {}
     written = (now or datetime.now(timezone.utc)).isoformat(timespec="seconds")
     provider = None
     reason = ""
     if not skip_google:
         provider, reason = _google_provider(settings, serp_provider)
+    if provider is not None and budget is not None:
+        refusal = budget.refusal(project.searches, by_previous)  # None, or why no paid request may be made now
+        if refusal:
+            closer = getattr(provider, "close", None)
+            if callable(closer) and serp_provider is None:
+                closer()
+            provider, reason = None, f"not run: {refusal}"
+            if not any(entry.results for entry in by_previous.values()) and not borrow_real_results(project):
+                budget.refuse(refusal)  # raises SearchCapError: nothing to carry, so say why plainly
     if provider is None:
         carried = [by_previous[search] for search in project.searches if search in by_previous and by_previous[search].results]
         if not carried:
@@ -1436,7 +1452,7 @@ def _google_step(project, settings, previous, pull_id, depth, skip_google, serp_
                 snapshot = GoogleSnapshot(pull_id=pull_id, written_at=written, kind="carried", searches=searches, carried_from=None, note=note)
                 return snapshot, note
             raise ProviderConfigError(
-                f"No REAL Google results for {project.name}. Google step {NOT_RUN_GOOGLE}. "
+                f"No REAL Google results for {project.name}. Google step {reason or NOT_RUN_GOOGLE}. "
                 "No results were imported either, and no other project here has REAL results for these searches. Set one of those env vars, import a CSV of Google positions (query,url,position) on the project page, or run: "
                 f"python -m aeo.ranksim project import-serp {project.slug} FILE.csv (query,url,position). "
                 "Nothing was invented."
@@ -1459,13 +1475,17 @@ def _google_step(project, settings, previous, pull_id, depth, skip_google, serp_
         snapshot = GoogleSnapshot(pull_id=pull_id, written_at=written, kind="carried", searches=searches, carried_from=previous.pull_id, note=note)
         return snapshot, note
     try:
-        searches = _pull_google(project, provider, by_previous, depth, emit)
+        reused: set[str] = set()
+        searches = _pull_google(project, provider, by_previous, depth, emit, budget, reused)
     finally:
         closer = getattr(provider, "close", None)
         if callable(closer) and serp_provider is None:
             closer()
     failed = [item for item in searches if item.error and not item.results]
-    note = f"REAL Google results pulled now from {provider.name} for {len(searches) - len(failed)} of {len(searches)} searches."
+    reused = [item for item in searches if item.search in reused]
+    note = f"REAL Google results pulled now from {provider.name} for {len(searches) - len(failed) - len(reused)} of {len(searches)} searches."
+    if reused:
+        note += f" {len(reused)} searches reused REAL results pulled within the last {budget.fresh_label} (kept their own pull date, not paid for again)."
     kept = [item for item in searches if item.error and item.results]
     if kept:
         note += f" {len(kept)} searches failed now and kept their earlier REAL results, with the earlier pull date."
@@ -1534,24 +1554,48 @@ def _google_provider(settings: Settings, serp_provider):
     return provider, ""
 
 
-def _pull_google(project, provider, by_previous, depth, emit) -> list[SearchResults]:
+def _pull_google(project, provider, by_previous, depth, emit, budget=None, reused: set[str] | None = None) -> list[SearchResults]:
     location, language = _provider_locale(provider.name)
     done = 0
     lock = threading.Lock()
     found: dict[str, SearchResults] = {}
+    with_features = getattr(provider, "search_with_features", None)
 
     def one(search: str) -> SearchResults:
         stamp = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        earlier = by_previous.get(search)
+        features: dict = {}
+        if budget is not None:
+            verdict = budget.claim(search, earlier)  # "reuse", "call" (counted), or a refusal sentence
+            if verdict == "reuse":
+                kept = copy.deepcopy(earlier)
+                kept.error = ""
+                if reused is not None:
+                    with lock:
+                        reused.add(search)
+                return kept
+            if verdict != "call":
+                if earlier is not None and earlier.results:
+                    kept = copy.deepcopy(earlier)
+                    kept.error = f"not pulled now ({verdict}); kept the earlier REAL results pulled {earlier.pulled_label}"
+                    return kept
+                return SearchResults(search=search, results=[], source=provider.name, provider=provider.name, pulled_at=None, error=f"not pulled: {verdict}")
         try:
-            hits = provider.search(search, depth)
+            if callable(with_features):
+                hits, features = with_features(search, depth)
+            else:
+                hits = provider.search(search, depth)
         except Exception as exc:  # noqa: BLE001 - one failed search must not end the pull
             error = _safe_error(exc)
-            earlier = by_previous.get(search)
+            if budget is not None:
+                budget.record(ok=False, error=error)
             if earlier is not None and earlier.results:
                 kept = copy.deepcopy(earlier)
                 kept.error = f"fresh pull failed ({error}); kept the earlier REAL results pulled {earlier.pulled_label}"
                 return kept
             return SearchResults(search=search, results=[], source=provider.name, provider=provider.name, pulled_at=None, error=f"pull failed: {error}")
+        if budget is not None:
+            budget.record(ok=True)
         results = []
         seen: set[str] = set()
         for hit in sorted(hits, key=lambda item: int(item.position)):
@@ -1571,6 +1615,7 @@ def _pull_google(project, provider, by_previous, depth, emit) -> list[SearchResu
             location=location,
             language=language,
             error="" if results else "the provider returned no organic results",
+            features=features if isinstance(features, dict) else {},
         )
 
     with ThreadPoolExecutor(max_workers=4) as pool:

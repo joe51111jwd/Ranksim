@@ -189,20 +189,44 @@ document.addEventListener('keydown', (event) => {
 
 /* ------------------------------------------------------------------ autosave (this browser only)
 
-   The latest draft of each page is kept in localStorage, so a refresh never loses work. It is restored only onto the
-   same page as it was loaded (same base), and saved versions on the server are separate (tools.js). */
+   The latest draft of each page is kept in IndexedDB with its own copy of the page, so a refresh never loses work,
+   even when the live page has changed since (many sites send new HTML on every request). Saved versions on the
+   server are separate (tools.js). Autosave is a convenience: when storage is blocked it quietly does nothing. */
 
-const AUTOSAVE = 'ranksim:draft:';
+const DB_NAME = 'ranksim-editor';
+let dbPromise = null;
 
-function hashOf(text) {
-  let a = 0x811c9dc5;
-  let b = 0x01000193;
-  for (let k = 0; k < text.length; k += 1) {
-    const c = text.charCodeAt(k);
-    a = Math.imul(a ^ c, 16777619) >>> 0;
-    b = Math.imul(b ^ c, 2246822519) >>> 0;
+function db() {
+  if (!dbPromise) {
+    dbPromise = new Promise((resolve) => {
+      try {
+        const open = indexedDB.open(DB_NAME, 1);
+        open.onupgradeneeded = () => open.result.createObjectStore('drafts');
+        open.onsuccess = () => resolve(open.result);
+        open.onerror = () => resolve(null);
+        open.onblocked = () => resolve(null);
+      } catch (_err) {
+        resolve(null);
+      }
+    });
   }
-  return `${a.toString(36)}${b.toString(36)}${text.length.toString(36)}`;
+  return dbPromise;
+}
+
+async function store(mode, fn) {
+  const handle = await db();
+  if (!handle) return null;
+  return new Promise((resolve) => {
+    try {
+      const tx = handle.transaction('drafts', mode);
+      const req = fn(tx.objectStore('drafts'));
+      tx.oncomplete = () => resolve(req ? req.result : null);
+      tx.onerror = () => resolve(null);
+      tx.onabort = () => resolve(null);
+    } catch (_err) {
+      resolve(null);
+    }
+  });
 }
 
 const pendingSaves = new Map();
@@ -214,29 +238,32 @@ function autosave(draft) {
     pendingSaves.delete(url);
     const rs = draft.rs;
     if (!rs) return;
-    try {
-      if (rs.text === rs.base) localStorage.removeItem(AUTOSAVE + url);
-      else localStorage.setItem(AUTOSAVE + url, JSON.stringify({ h: hashOf(rs.base), text: rs.text, at: Date.now() }));
-    } catch (_err) {
-      // private mode or full storage: autosave is a convenience, saved versions still work
-    }
+    if (rs.text === rs.base) store('readwrite', (os) => os.delete(url));
+    else store('readwrite', (os) => os.put({ source: rs.source, base: rs.base, text: rs.text, at: Date.now() }, url));
   }, 800));
 }
 
+/* Called once per new model: brings back unsaved edits, unless the person already started editing. */
 function restoreAutosave(draft) {
   const rs = draft.rs;
-  let saved = null;
-  try {
-    saved = JSON.parse(localStorage.getItem(AUTOSAVE + draft.url) || 'null');
-  } catch (_err) {
-    saved = null;
-  }
-  if (!saved || typeof saved.text !== 'string' || saved.h !== hashOf(rs.base) || saved.text === rs.text || draft.text !== draft.base) return;
-  rs.text = saved.text;
-  rs.history.record(saved.text);
-  draft.text = stripRs(saved.text);
-  draft.touched = true;
-  setTimeout(() => toast('Your edits to this page were restored. Undo to start over.'), 0);
+  const url = draft.url;
+  store('readonly', (os) => os.get(url)).then((saved) => {
+    if (!saved || typeof saved.text !== 'string' || typeof saved.source !== 'string' || typeof saved.base !== 'string') return;
+    if (draft.rs !== rs || rs.history.canUndo || rs.text !== rs.base || saved.text === saved.base) return;
+    rs.source = saved.source; // the copy of the page the edits were made on
+    rs.base = saved.base;
+    rs.history.reset(saved.base);
+    rs.history.record(saved.text);
+    if (ED.refs && draftFor(ED.refs.page) === draft) {
+      showText(draft, saved.text);
+      call('draft-changed', editorCtx({ source: 'restore' }));
+    } else {
+      rs.text = saved.text;
+      draft.text = stripRs(saved.text);
+      draft.touched = true;
+    }
+    toast('Your edits to this page were restored. Undo to start over.');
+  });
 }
 
 /* ------------------------------------------------------------------ drafts and page data */

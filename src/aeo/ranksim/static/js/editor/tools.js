@@ -3,7 +3,7 @@
    the full page), and saved versions. Everything goes through the editor ctx (hooks.js), like a plugin.
    editor.js imports this module for its registrations: keep top-level code free of calls into editor.js. */
 
-import { S, SVGNS, api, enc, h, icon, toast, openSheet, closeSheet, pathOf, plural, reduceMotion } from '../core.js';
+import { S, SVGNS, api, enc, h, icon, toast, openSheet, closeSheet, pathOf, reduceMotion } from '../core.js';
 import { on, registerEditorPanel, registerEditorTool } from '../hooks.js';
 import { ED, draftFor, editorCtx, modelOf, paintSide, showText, syncFromFrame } from './editor.js';
 import { BLOCKS, blockHtml, convertBlock, imageUrlOk, insertBlock, insertionPoint, moveSection, outline, textBlockOf } from './blocks.js';
@@ -418,7 +418,7 @@ function changesPanel(ctx) {
   const lead = diff.total ? summary(diff.counts) : 'No changes yet.';
   tile.append(h('p', { class: 'tile-sub', text: lead }));
   const preview = diff.changes.slice(0, 3).map((change) => h('li', { text: change.label }));
-  if (preview.length) tile.append(h('ul', { class: 'change-peek' }, preview, diff.changes.length > 3 ? h('li', { class: 'muted', text: `and ${plural(diff.changes.length - 3, 'more')}` }) : null));
+  if (preview.length) tile.append(h('ul', { class: 'change-peek' }, preview, diff.changes.length > 3 ? h('li', { class: 'muted', text: `and ${diff.changes.length - 3} more` }) : null));
   tile.append(h('div', { class: 'result-actions' },
     h('button', { class: 'btn btn-block', type: 'button', disabled: !diff.total, onClick: changesSheet }, 'Review changes'),
     h('button', { class: 'btn btn-block', type: 'button', onClick: () => downloadPage(editorCtx() || ctx) }, 'Download page')));

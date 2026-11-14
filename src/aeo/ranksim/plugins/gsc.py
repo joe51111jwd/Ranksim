@@ -71,16 +71,11 @@ LABEL = "Google Search Console data"
 GOOD_PERMISSIONS = {"siteOwner", "siteFullUser", "siteRestrictedUser"}
 
 SETUP_STEPS = [
-    "Open Google Cloud Console (console.cloud.google.com) and pick or create a project.",
-    "Open APIs and Services, then Library, search for Google Search Console API and click Enable.",
-    "Open the OAuth consent screen. Choose External, fill in the app name and your email, and add the scope "
-    "https://www.googleapis.com/auth/webmasters.readonly.",
-    "Set the publishing status to In production. In Testing, Google ends access after 7 days. Google shows an "
-    "unverified app warning when you connect; click Advanced, then continue.",
-    "Open Credentials, click Create credentials, then OAuth client ID. Choose the type Web application.",
-    f"Under Authorized redirect URIs add {HOSTED_REDIRECT_URI} and save.",
-    f"In Vercel, open the ranksim project, Settings, Environment Variables. Add {CLIENT_ID_ENV} and "
-    f"{CLIENT_SECRET_ENV} with the values Google shows, then redeploy.",
+    "In Google Cloud Console, enable the Google Search Console API.",
+    "Set up the OAuth consent screen (External) with the scope webmasters.readonly, and set it to In production. "
+    "In Testing, Google ends access after 7 days.",
+    "Create an OAuth client ID of type Web application with this redirect URI: {redirect_uri}",
+    f"Set {CLIENT_ID_ENV} and {CLIENT_SECRET_ENV} on the server (on Vercel: Environment Variables), then redeploy.",
 ]
 
 
@@ -112,16 +107,13 @@ def oauth_config() -> dict:
 
 
 def setup_info(redirect_uri: str | None = None) -> dict:
+    """The owner's setup steps. The redirect URI is this server's own address when a request gives it."""
     config = oauth_config()
-    steps = list(SETUP_STEPS)
-    if redirect_uri and redirect_uri != HOSTED_REDIRECT_URI:
-        steps[5] = f"Under Authorized redirect URIs add {HOSTED_REDIRECT_URI} and {redirect_uri}, then save."
+    uri = redirect_uri or "this server's address followed by " + CALLBACK_PATH
+    steps = [step.replace("{redirect_uri}", uri) for step in SETUP_STEPS]
     if secretbox.SECRET_ENV in config["missing"]:
-        steps.append(
-            f"Also set {secretbox.SECRET_ENV} on Vercel to a random value of at least {secretbox.MIN_SECRET_CHARS} characters "
-            "(for example the output of: openssl rand -base64 32). Ranksim uses it to encrypt the Google token. Changing it signs you out."
-        )
-    return {"missing": config["missing"], "steps": steps, "redirect_uri": redirect_uri or HOSTED_REDIRECT_URI, "scope": SCOPE}
+        steps.append(f"Set {secretbox.SECRET_ENV} to a random value of at least {secretbox.MIN_SECRET_CHARS} characters (openssl rand -base64 32).")
+    return {"missing": config["missing"], "steps": steps, "redirect_uri": redirect_uri or "", "scope": SCOPE}
 
 
 def redirect_uri_for(request) -> str:

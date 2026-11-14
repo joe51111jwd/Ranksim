@@ -78,20 +78,23 @@ async function startConnect(button) {
 function setupCard(status) {
   const setup = status.setup || {};
   const uri = status.redirect_uri || setup.redirect_uri || '';
-  const copy = h('button', { class: 'btn gsc-copy', type: 'button' }, icon('doc'), 'Copy');
-  copy.addEventListener('click', async () => {
-    try {
-      await navigator.clipboard.writeText(uri);
-      toast('Redirect URI copied.');
-    } catch (_err) {
-      toast(uri);
-    }
-  });
+  const copy = uri ? h('button', { class: 'btn gsc-copy', type: 'button' }, icon('doc'), 'Copy') : null;
+  if (copy) {
+    copy.addEventListener('click', async () => {
+      try {
+        await navigator.clipboard.writeText(uri);
+        toast('Redirect URI copied.');
+      } catch (_err) {
+        toast(uri);
+      }
+    });
+  }
   return h('div', { class: 'gsc-setup' },
-    h('div', { class: 'callout' }, icon('warn'), h('span', null, h('b', { text: 'Not set up yet. ' }), 'The server owner does this once. Then every site can turn Search Console on here.')),
-    h('ol', { class: 'gsc-steps' }, (setup.steps || []).map((step) => h('li', { text: step }))),
-    uri ? h('div', { class: 'gsc-uri' }, h('span', { class: 'form-help', text: 'Redirect URI for this server' }), h('div', { class: 'gsc-uri-row' }, h('code', { text: uri }), copy)) : null,
-    (setup.missing || []).length ? h('div', { class: 'form-help', text: `Missing on the server: ${setup.missing.join(', ')}.` }) : null);
+    h('p', { class: 'tile-sub', text: 'Search Console is not set up yet.' }),
+    h('details', { class: 'gsc-details' },
+      h('summary', { text: 'Setup steps' }),
+      h('ol', { class: 'gsc-steps' }, (setup.steps || []).map((step) => h('li', { text: step }))),
+      uri ? h('div', { class: 'gsc-uri-row' }, h('code', { text: uri }), copy) : null));
 }
 
 async function propertyPicker(status, rerender) {

@@ -280,7 +280,8 @@ def test_not_configured_says_exactly_what_to_do(tmp_path, no_env):
     setup = status["setup"]
     assert set(setup["missing"]) == {gsc.CLIENT_ID_ENV, gsc.CLIENT_SECRET_ENV, secretbox.SECRET_ENV}
     text = " ".join(setup["steps"])
-    for needed in ("Web application", "Search Console API", gsc.HOSTED_REDIRECT_URI, gsc.CLIENT_ID_ENV, gsc.CLIENT_SECRET_ENV, "Vercel", "In production"):
+    assert len(setup["steps"]) <= 5 and gsc.HOSTED_REDIRECT_URI not in text  # built from this server's address
+    for needed in ("Web application", "Search Console API", gsc.CLIENT_ID_ENV, gsc.CLIENT_SECRET_ENV, "In production", secretbox.SECRET_ENV):
         assert needed in text
     assert "http://testserver/api/v1/gsc/callback" in text  # the address this server answers on is listed too
     project = box.client.get(f"/api/v1/gsc/projects/{box.project.slug}").json()

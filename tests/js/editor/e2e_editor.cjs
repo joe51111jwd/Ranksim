@@ -55,6 +55,35 @@ async function settled() {
   const untouched = await editor(async () => (await import('/studio/js/editor/editor.js')).editorCtx().exportHtml());
   check(untouched === SOURCE, 'an untouched page exports byte for byte');
 
+  // the first edit survives an immediate switch to HTML mode
+  await frame.locator('footer p').click();
+  await page.keyboard.press('End');
+  await page.keyboard.type(' today');
+  await page.getByRole('button', { name: 'HTML' }).click();
+  await page.waitForSelector('textarea.code');
+  check((await page.locator('textarea.code').inputValue()).includes('Contact us today'), 'a first edit is kept by an immediate switch to HTML');
+  await page.getByRole('button', { name: 'Visual' }).click();
+  await settled();
+  check((await frame.locator('footer p').textContent()) === 'Contact us today', 'and is still there back in Visual');
+
+  // edit(fn) that changes nothing reports false and adds no step
+  const noop = await editor(async () => {
+    const ctx = (await import('/studio/js/editor/editor.js')).editorCtx();
+    const before = ctx.canUndo;
+    const result = ctx.edit(() => {});
+    return { result, same: ctx.canUndo === before };
+  });
+  check(noop.result === false && noop.same, 'edit(fn) that changes nothing returns false');
+
+  // the insert menu works from the keyboard
+  await page.getByRole('button', { name: 'Insert' }).focus();
+  await page.keyboard.press('Enter');
+  await page.waitForSelector('.ed-menu');
+  await page.keyboard.press('ArrowDown');
+  check(await page.evaluate(() => document.activeElement && document.activeElement.dataset.block === 'paragraph'), 'arrow keys move through the insert menu');
+  await page.keyboard.press('Escape');
+  check(await page.locator('.ed-menu').count() === 0, 'Escape closes the insert menu');
+
   // edit the heading, undo, redo
   const h1 = frame.locator('h1');
   await h1.click();
@@ -90,9 +119,19 @@ async function settled() {
   check(out.includes('<link rel="preload" href="/app.js" as="script" crossorigin>') && out.includes('crossorigin="anonymous"'), 'preview-only changes to links are not exported');
   check(out.includes(`<a href="/" onclick="track('logo')">`), 'event handlers stay');
   check(out.includes("<h1 class='hero'>Dirt work software for crews and yards</h1>"), 'the heading edit is exported in place');
+  check(out.includes('<footer><p>Contact us today</p></footer>'), 'the first edit is exported');
   check(/"@type": "FAQPage"/.test(out), 'the FAQ structured data is exported');
   check(!/data-rs/.test(out), 'no editor attributes are exported');
   check(out.includes('Track crews, trucks &amp; haul tickets.<!-- --> Built for contractors&nbsp;&copy; 2026.'), 'untouched text keeps its entities');
+
+  // at phone width the insert menu opens on screen
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.waitForTimeout(400);
+  await page.getByRole('button', { name: 'Insert' }).click();
+  const box = await page.locator('.ed-menu').boundingBox();
+  check(!!box && box.y >= 0 && box.y + box.height <= 844 && box.x >= 0 && box.x + box.width <= 390, 'the insert menu is on screen at phone width');
+  check(await page.evaluate(() => document.documentElement.scrollWidth <= 390), 'no sideways scroll at phone width');
+  await page.keyboard.press('Escape');
 
   console.log(errors.length ? `PAGE ERRORS ${errors.join(' | ')}` : 'no page errors');
   if (errors.length) failed += 1;

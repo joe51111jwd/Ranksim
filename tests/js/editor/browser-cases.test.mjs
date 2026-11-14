@@ -109,3 +109,33 @@ test('HTML mode: a deleted block does not lend its id (and its embeds) to a new 
   assert.ok(!out.includes('Book a demo'));
   assert.ok(!out.includes('<div class="faq"><p>Do you offer refunds? Yes.</p><script'), out);
 });
+
+test('a moved section takes the script that follows its widget', () => {
+  const src = '<!doctype html><html><head><title>t</title></head><body><main><p>Intro</p>\n<h2>Alpha</h2><p>A</p><div id="calc"></div><script>document.getElementById("calc").textContent = "widget";</script>\n<h2>Beta</h2><p>B</p>\n</main></body></html>';
+  const base = liteBase(src);
+  const t = parse(base, { strict: true });
+  const main = t.elements.find((e) => e.tag === 'main');
+  const [alpha, beta] = t.elements.filter((e) => e.tag === 'h2');
+  const alphaNodes = [alpha, alpha.nextElementSibling, alpha.nextElementSibling.nextElementSibling];
+  for (const node of alphaNodes) main.appendChild(node);
+  void beta;
+  const out = exportHtml(src, base, serializeLite(t));
+  assert.ok(out.indexOf('<h2>Beta</h2>') < out.indexOf('<h2>Alpha</h2>'));
+  assert.ok(out.indexOf('<div id="calc"></div><script>') > out.indexOf('<h2>Alpha</h2>'), out);
+  assert.equal((out.match(/<script>/g) || []).length, 1);
+});
+
+test("a page's own data-rs and data-rsvp attributes are the page's, not the editor's", () => {
+  const src = '<!doctype html><html><head><title>t</title></head><body><div data-rs="carousel"><p>Slide</p></div><a data-rsvp="evt-1" href="/e">RSVP</a><h1>Head</h1></body></html>';
+  const base = liteBase(src);
+  const t = parse(base, { strict: true });
+  t.elements.find((e) => e.tag === 'h1').textContent = 'New head';
+  const a = t.elements.find((e) => e.tag === 'a');
+  a.setAttribute('href', '/event');
+  const draft = serializeLite(t);
+  const out = exportHtml(src, base, draft);
+  assert.ok(out.includes('<div data-rs="carousel"><p>Slide</p></div>'));
+  assert.ok(out.includes('<a data-rsvp="evt-1" href="/event">RSVP</a>'), out);
+  assert.ok(stripRs(draft).includes('data-rsvp="evt-1"') && stripRs(draft).includes('data-rs="carousel"'));
+  assert.ok(!stripRs(draft).includes('data-rs-id'));
+});

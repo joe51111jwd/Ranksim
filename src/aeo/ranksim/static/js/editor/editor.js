@@ -71,6 +71,7 @@ function commit(draft, text, { group = null, record = true } = {}) {
     rs.text = rs.pendingText || text;
     rs.pendingText = null;
     if (record) rs.history.record(rs.text, { group });
+    if (rs.pages) rs.pages.set(rs.text, { source: rs.source, base: rs.base });
     draft.text = stripRs(rs.text);
   } else {
     draft.text = text;
@@ -127,9 +128,36 @@ function step(which) {
   if (!rs) return false;
   const text = which === 'undo' ? rs.history.undo() : rs.history.redo();
   if (text === null) return false;
+  usePageOf(draft, text);
   showText(draft, text);
   changed(which);
   return true;
+}
+
+/* Steps made on a different copy of the page (a saved version opened on a page that has changed since) remember
+   that copy, so undo and redo always pair a draft with the page it was made on. */
+export function usePageOf(draft, text) {
+  const rs = modelOf(draft);
+  const page = rs && rs.pages ? rs.pages.get(text) : null;
+  if (!page || (page.source === rs.source && page.base === rs.base)) return;
+  setPage(draft, page.source, page.base);
+}
+
+/* Switches the copy of the page the draft is measured against (a version, an autosave). draft.base follows, so Test
+   compares with the page the edits were made on. */
+export function setPage(draft, source, base) {
+  const rs = modelOf(draft);
+  if (!rs) return;
+  if (!rs.pages) {
+    rs.pages = new Map();
+    const here = { source: rs.source, base: rs.base };
+    for (const text of [...rs.history.past, rs.history.present, ...rs.history.future]) rs.pages.set(text, here);
+  }
+  rs.source = source;
+  rs.base = base;
+  draft.base = stripRs(base);
+  rs.key = draft.base;
+  SOURCES.set(draft.base, source);
 }
 
 /* Puts a whole draft on screen without recording it (undo, redo, a loaded version). */
@@ -229,30 +257,94 @@ async function store(mode, fn) {
   });
 }
 
-const pendingSaves = new Map();
+const pendingSaves = new Map(); // url -> { timer, draft }
+
+function writeAutosave(draft) {
+  const url = draft.url;
+  const rs = draft.rs;
+  if (!url || !rs) return;
+  if (rs.text === rs.base) store('readwrite', (os) => os.delete(url));
+  else store('readwrite', (os) => os.put({ source: rs.source, base: rs.base, text: rs.text, at: Date.now() }, url));
+}
 
 function autosave(draft) {
   const url = draft.url;
   if (!url || pendingSaves.has(url)) return;
-  pendingSaves.set(url, setTimeout(() => {
-    pendingSaves.delete(url);
-    const rs = draft.rs;
-    if (!rs) return;
-    if (rs.text === rs.base) store('readwrite', (os) => os.delete(url));
-    else store('readwrite', (os) => os.put({ source: rs.source, base: rs.base, text: rs.text, at: Date.now() }, url));
-  }, 800));
+  pendingSaves.set(url, {
+    draft,
+    timer: setTimeout(() => {
+      pendingSaves.delete(url);
+      writeAutosave(draft);
+    }, 800),
+  });
 }
+
+/* A short fingerprint of a page copy, to pair a last-moment save with the copy it belongs to. */
+function fingerprint(text) {
+  let a = 0x811c9dc5;
+  for (let k = 0; k < text.length; k += 1) a = Math.imul(a ^ text.charCodeAt(k), 16777619) >>> 0;
+  return `${a.toString(36)}.${text.length}`;
+}
+
+const LAST = 'ranksim:editor-last:';
+
+/* Leaving or hiding the page: read the preview now and save at once, so the last words typed are kept. IndexedDB may
+   not finish while a page unloads, so the draft also goes to localStorage, which writes at once. */
+function flushAutosave() {
+  if (S.screen === 'editor' && ED.refs) {
+    syncFromFrame();
+    const draft = draftFor(ED.refs.page);
+    const rs = draft.rs;
+    if (rs && draft.url) {
+      try {
+        if (rs.text === rs.base) localStorage.removeItem(LAST + draft.url);
+        else localStorage.setItem(LAST + draft.url, JSON.stringify({ base: fingerprint(rs.base), text: rs.text, at: Date.now() }));
+      } catch (_err) {
+        // storage full or blocked: the IndexedDB copy still stands
+      }
+    }
+  }
+  for (const [url, item] of pendingSaves) {
+    clearTimeout(item.timer);
+    pendingSaves.delete(url);
+    writeAutosave(item.draft);
+  }
+}
+
+function lastMoment(url) {
+  try {
+    const raw = localStorage.getItem(LAST + url);
+    localStorage.removeItem(LAST + url);
+    const data = raw ? JSON.parse(raw) : null;
+    return data && typeof data.text === 'string' ? data : null;
+  } catch (_err) {
+    return null;
+  }
+}
+
+window.addEventListener('pagehide', flushAutosave);
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'hidden') flushAutosave();
+});
 
 /* Called once per new model: brings back unsaved edits, unless the person already started editing. */
 function restoreAutosave(draft) {
   const rs = draft.rs;
   const url = draft.url;
-  store('readonly', (os) => os.get(url)).then((saved) => {
-    if (!saved || typeof saved.text !== 'string' || typeof saved.source !== 'string' || typeof saved.base !== 'string') return;
+  store('readonly', (os) => os.get(url)).then((found) => {
+    let saved = found && typeof found.text === 'string' && typeof found.source === 'string' && typeof found.base === 'string' ? found : null;
+    const last = lastMoment(url);
+    if (last) { // newer words typed just before the page closed, on the same copy of the page
+      if (saved && last.at > (saved.at || 0) && last.base === fingerprint(saved.base)) saved = { ...saved, text: last.text };
+      else if (!saved && last.base === fingerprint(rs.base)) saved = { source: rs.source, base: rs.base, text: last.text };
+    }
+    if (!saved) return;
     if (draft.rs !== rs || rs.history.canUndo || rs.text !== rs.base || saved.text === saved.base) return;
-    rs.source = saved.source; // the copy of the page the edits were made on
-    rs.base = saved.base;
-    rs.history.reset(saved.base);
+    if (saved.source !== rs.source || saved.base !== rs.base) {
+      setPage(draft, saved.source, saved.base); // the copy of the page the edits were made on
+      rs.history.reset(saved.base);
+      rs.pages = null;
+    }
     rs.history.record(saved.text);
     if (ED.refs && draftFor(ED.refs.page) === draft) {
       showText(draft, saved.text);
@@ -399,12 +491,16 @@ export function editorCtx(extra) {
   const edit = (fn) => {
     if (!here()) return false;
     const live = liveDoc();
-    if (!live) syncFromFrame();
+    syncFromFrame(); // typing still waiting in the debounce is its own undo step, not part of this one
     const rs = modelOf(draft);
+    if (rs) rs.history.seal();
     const doc = live || (rs ? new DOMParser().parseFromString(rs.text, 'text/html') : cleanDoc(draft.text));
+    const before = rs ? rs.text : draft.text;
     if (fn(doc) === false) return false;
     if (rs) syncFaq(doc);
-    commit(draft, rs ? serializeDraft(doc) : serialize(doc));
+    const after = rs ? serializeDraft(doc) : serialize(doc);
+    if (after === before) return false;
+    commit(draft, after);
     if (!live) {
       if (ED.mode === 'html' && ED.code) {
         ED.code.value = tidy(draft.text);
@@ -678,6 +774,7 @@ export function paintFrame() {
     } catch (_err) {
       // older engines: the defaults are fine
     }
+    doc.addEventListener('input', () => { draft.touched = true; }); // at once, so a quick mode switch reads the edit
     doc.addEventListener('input', debounce(() => {
       if (ED.frame !== frame) return;
       draft.touched = true;

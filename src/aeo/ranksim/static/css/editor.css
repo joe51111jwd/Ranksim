@@ -89,7 +89,7 @@
 .ed-insert { position: relative; }
 .btn-sm { height: 36px; padding: 0 12px; font-size: 13.5px; gap: 6px; }
 .btn-sm svg { width: 15px; height: 15px; }
-.ed-menu { position: absolute; z-index: 30; top: calc(100% + 6px); right: 0; width: 248px; display: grid; gap: 2px; padding: 6px; border-radius: 16px; background: var(--card); box-shadow: var(--shadow-lift); }
+.ed-menu { position: fixed; z-index: 60; width: 248px; display: grid; gap: 2px; padding: 6px; border-radius: 16px; background: var(--card); box-shadow: var(--shadow-lift); }
 .ed-menu button { display: grid; gap: 1px; text-align: left; padding: 9px 11px; border: 0; border-radius: 11px; background: transparent; color: var(--ink); }
 .ed-menu button:hover, .ed-menu button:focus-visible { background: var(--tile); outline: none; }
 .ed-menu strong { font-size: 14px; font-weight: 600; }

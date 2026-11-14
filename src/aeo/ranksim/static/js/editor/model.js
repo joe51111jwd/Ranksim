@@ -79,7 +79,9 @@ const KEEP = new Set([ID, 'data-rs-faq', 'data-rs-faq-ld']);
    restored, plugin attributes dropped, ids kept. */
 export function serializeDraft(doc) {
   const root = doc.documentElement.cloneNode(true);
-  root.querySelectorAll('[data-rs]').forEach((node) => node.remove());
+  // Nodes the preview or a plugin added carry data-rs and no id; a page's own element that happens to use a data-rs
+  // attribute has an id, and stays.
+  root.querySelectorAll(`[data-rs]:not([${ID}])`).forEach((node) => node.remove());
   unstash(root);
   for (const el of [root, ...root.querySelectorAll('*')]) {
     for (const attr of Array.from(el.attributes)) if (attr.name.startsWith('data-rs-') && !KEEP.has(attr.name)) el.removeAttribute(attr.name);

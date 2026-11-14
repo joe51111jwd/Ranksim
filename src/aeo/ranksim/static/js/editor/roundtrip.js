@@ -580,6 +580,8 @@ export function longestIncreasing(pairs) {
 
 /* ------------------------------------------------------------------ the model: base vs draft */
 
+/* The editor's own attributes: data-rs and data-rs-*. A page's data-rsvp or data-rss-feed is the page's. */
+export const isRsAttr = (name) => name === 'data-rs' || name.startsWith('data-rs-');
 const isXid = (id) => typeof id === 'string' && id.charCodeAt(0) === 120; // 'x'
 const NUMERIC = /^[0-9]+$/;
 
@@ -679,7 +681,7 @@ function decodeText(node) {
 
 function attrMap(el) {
   const map = new Map();
-  for (const a of el.attrs || []) if (!a.name.startsWith('data-rs') && !map.has(a.name)) map.set(a.name, a.value);
+  for (const a of el.attrs || []) if (!isRsAttr(a.name) && !map.has(a.name)) map.set(a.name, a.value);
   return map;
 }
 
@@ -770,8 +772,28 @@ export function exportHtml(source, base, draft) {
     for (const item of plan.inserts) markPlaced(item.node, E, placed);
   }
 
+  // Scripts and other hidden parts right after a moved element go with it: a section's widget script needs its markup.
+  const carried = new Map();
+  const carriedSet = new Set();
+  for (const id of placed) {
+    const el = srcIds.get(id);
+    if (!el || !el.parent) continue;
+    const kids = el.parent.children;
+    const run = [];
+    for (let k = kids.indexOf(el) + 1; k < kids.length; k += 1) {
+      const node = kids[k];
+      if (node.type === 'text' && isSpace(node.text)) run.push(node);
+      else if (node.type === 'element' && !B.real.has(node.rsid) && !placed.has(node.rsid)) run.push(node);
+      else break;
+    }
+    while (run.length && run[run.length - 1].type === 'text') run.pop();
+    if (!run.some((node) => node.type === 'element')) continue;
+    carried.set(id, run);
+    for (const node of run) carriedSet.add(node);
+  }
+
   const out = [];
-  const ctx = { source, draft, src, srcIds, B, E, changed, plans, placed, suppressed, out, acct };
+  const ctx = { source, draft, src, srcIds, B, E, changed, plans, placed, suppressed, out, acct, carried, carriedSet };
   if (changed.has('')) emitMerge(src, '', ctx);
   else emitWalk(src, ctx);
   return out.join('');
@@ -874,6 +896,7 @@ function emitAnchored(node, ctx) {
 }
 
 function emitAnchoredNode(node, ctx) {
+  if (ctx.carriedSet.has(node)) return; // emitted after the moved element it follows
   if (node.type !== 'element') {
     if (!ctx.suppressed.has(node)) ctx.out.push(ctx.source.slice(node.start, node.end));
     return;
@@ -918,6 +941,7 @@ function emitDraftNode(node, ctx) {
   }
   if (ctx.E.kind.get(node) === 'real') {
     emitNode(ctx.srcIds.get(node.rsid), node, ctx);
+    for (const follower of ctx.carried.get(node.rsid) || []) ctx.out.push(ctx.source.slice(follower.start, follower.end));
     return;
   }
   ctx.out.push(startTag(node.rawName, node.attrs));
@@ -929,7 +953,7 @@ function emitDraftNode(node, ctx) {
 function startTag(rawName, attrs) {
   let out = `<${rawName}`;
   for (const a of attrs || []) {
-    if (a.name.startsWith('data-rs')) continue;
+    if (isRsAttr(a.name)) continue;
     out += a.value === '' && a.raw === null ? ` ${a.name}` : ` ${a.name}="${escapeAttr(a.value)}"`;
   }
   return `${out}>`;
@@ -980,8 +1004,7 @@ function patchStart(srcEl, name, bAttrs, dAttrs, source) {
   let out = `<${name}`;
   const done = new Set();
   const spaced = (piece) => (/^[\t\n\f\r ]/.test(piece) ? piece : ` ${piece}`);
-  for (const a of srcEl.attrs) {
-    if (a.name.startsWith('data-rs')) continue;
+  for (const a of srcEl.attrs) { // every source attribute is the page's own, data-rs* named ones included
     const piece = spaced(source.slice(a.start, a.end));
     if (done.has(a.name)) { // a duplicate the browser ignores: as it was
       out += piece;
@@ -1003,6 +1026,9 @@ function patchStart(srcEl, name, bAttrs, dAttrs, source) {
 
 /* ------------------------------------------------------------------ helpers for the editor */
 
+/* The attributes a draft carries for the editor (model.js serializeDraft keeps these and drops every other data-rs-*). */
+const DRAFT_ATTRS = new Set([ID, 'data-rs-faq', 'data-rs-faq-ld']);
+
 /* The draft without editor attributes: what HTML mode shows and what the test sends. */
 export function stripRs(html) {
   const tree = parse(html, { strict: true });
@@ -1010,7 +1036,7 @@ export function stripRs(html) {
   let at = 0;
   for (const el of tree.elements) {
     for (const a of el.attrs) {
-      if (!a.name.startsWith('data-rs')) continue;
+      if (!DRAFT_ATTRS.has(a.name)) continue;
       out.push(html.slice(at, a.start));
       at = a.end;
     }
@@ -1024,7 +1050,7 @@ function signature(el) {
 }
 
 function shape(el) {
-  const attrs = (el.attrs || []).filter((a) => !a.name.startsWith('data-rs')).map((a) => `${a.name}=${a.value}`).sort().join('&');
+  const attrs = (el.attrs || []).filter((a) => !isRsAttr(a.name)).map((a) => `${a.name}=${a.value}`).sort().join('&');
   return `${el.tag}|${attrs}`;
 }
 

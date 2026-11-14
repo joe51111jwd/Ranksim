@@ -4,8 +4,8 @@
    editor.js imports this module for its registrations: keep top-level code free of calls into editor.js. */
 
 import { S, SVGNS, api, enc, h, icon, toast, openSheet, closeSheet, pathOf, reduceMotion } from '../core.js';
-import { on, registerEditorPanel, registerEditorTool } from '../hooks.js';
-import { ED, draftFor, editorCtx, modelOf, paintSide, showText, syncFromFrame } from './editor.js';
+import { call, on, registerEditorPanel, registerEditorTool } from '../hooks.js';
+import { ED, draftFor, editorCtx, modelOf, paintSide, setPage, showText, syncFromFrame } from './editor.js';
 import { BLOCKS, blockHtml, convertBlock, imageUrlOk, insertBlock, insertionPoint, moveSection, outline, textBlockOf } from './blocks.js';
 import { summary } from './diff.js';
 
@@ -161,8 +161,8 @@ function insertSheet(kind) {
     const form = h('form', { class: 'form' });
     if (isFaq) {
       const ctx = editorCtx();
-      const live = ctx && ctx.doc();
-      const has = !!live && Array.from(live.querySelectorAll('script[type="application/ld+json" i]')).some((el) => /"FAQPage"/.test(el.textContent || ''));
+      const page = ctx ? ctx.doc() || new DOMParser().parseFromString(ctx.getHtml(), 'text/html') : null;
+      const has = !!page && Array.from(page.querySelectorAll('script[type="application/ld+json" i]')).some((el) => /"FAQPage"/.test(el.textContent || ''));
       const ld = h('input', { type: 'checkbox', checked: !has, id: 'faq-ld' });
       form.append(h('label', { class: 'check-row', for: 'faq-ld' }, ld, h('span', null, h('strong', { text: 'Add FAQ structured data' }), h('span', { class: 'muted', text: has ? 'This page already has FAQ structured data. Google reads one FAQ block per page, so this is off.' : 'FAQPage JSON-LD that Google reads. It follows your edits to the questions.' }))));
       form.append(h('div', { class: 'form-actions' }, h('button', { class: 'btn btn-primary btn-large', type: 'submit' }, 'Add FAQ')));
@@ -201,35 +201,70 @@ function insertSheet(kind) {
   });
 }
 
-function closeMenus() {
+function closeMenus(focusBack) {
   document.querySelectorAll('.ed-menu').forEach((menu) => menu.remove());
+  document.querySelectorAll('.ed-insert > button[aria-expanded="true"]').forEach((btn) => {
+    btn.setAttribute('aria-expanded', 'false');
+    if (focusBack) btn.focus({ preventScroll: true });
+  });
 }
 
 document.addEventListener('click', (event) => {
-  if (!event.target.closest || !event.target.closest('.ed-insert')) closeMenus();
+  if (!event.target.closest || !event.target.closest('.ed-insert, .ed-menu')) closeMenus();
 });
+
+/* The menu lives on <body> with fixed position (a transformed screen wrapper would trap it), under the button on wide
+   screens and as a panel at the bottom on phones. */
+function placeMenu(menu, btn) {
+  if (window.matchMedia('(max-width: 640px)').matches) return;
+  const box = btn.getBoundingClientRect();
+  menu.style.top = `${Math.round(box.bottom + 6)}px`;
+  menu.style.left = `${Math.round(Math.max(16, Math.min(box.right - 248, window.innerWidth - 264)))}px`;
+}
+
+function menuKeys(menu, event) {
+  const items = Array.from(menu.querySelectorAll('button'));
+  const at = items.indexOf(document.activeElement);
+  if (event.key === 'Escape') {
+    event.preventDefault();
+    event.stopPropagation();
+    closeMenus(true);
+  } else if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+    event.preventDefault();
+    const next = (at + (event.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length;
+    items[next].focus();
+  } else if (event.key === 'Home' || event.key === 'End') {
+    event.preventDefault();
+    items[event.key === 'Home' ? 0 : items.length - 1].focus();
+  } else if (event.key === 'Tab') {
+    closeMenus(true);
+  }
+}
+
+window.addEventListener('resize', () => closeMenus());
+window.addEventListener('scroll', () => {
+  const menu = document.querySelector('.ed-menu');
+  const btn = document.querySelector('.ed-insert > button[aria-expanded="true"]');
+  if (menu && btn) placeMenu(menu, btn);
+}, { passive: true });
 
 registerEditorTool({
   key: 'editor-insert',
   order: 40,
-  render(ctx) {
+  render() {
     const wrap = h('div', { class: 'ed-insert' });
     const btn = h('button', { class: 'btn btn-sm', type: 'button', 'aria-haspopup': 'menu', 'aria-expanded': 'false' }, icon('plus'), 'Insert');
-    void ctx;
     btn.addEventListener('click', () => {
       const now = editorCtx();
       if (!now || !now.draft.text) {
         toast('Wait for the page to open, then insert.');
         return;
       }
-      const open = wrap.querySelector('.ed-menu');
+      const open = btn.getAttribute('aria-expanded') === 'true';
       closeMenus();
-      if (open) {
-        btn.setAttribute('aria-expanded', 'false');
-        return;
-      }
+      if (open) return;
       btn.setAttribute('aria-expanded', 'true');
-      const menu = h('div', { class: 'ed-menu', role: 'menu' });
+      const menu = h('div', { class: 'ed-menu', role: 'menu', 'aria-label': 'Insert a block' });
       for (const block of BLOCKS) {
         menu.append(h('button', {
           type: 'button',
@@ -237,13 +272,14 @@ registerEditorTool({
           dataset: { block: block.key },
           onClick: () => {
             closeMenus();
-            btn.setAttribute('aria-expanded', 'false');
             if (block.key === 'faq' || block.key === 'image') insertSheet(block.key);
             else insertNow(blockHtml(block.key), block.label);
           },
         }, h('strong', { text: block.label }), h('span', { text: block.note })));
       }
-      wrap.append(menu);
+      menu.addEventListener('keydown', (event) => menuKeys(menu, event));
+      document.body.append(menu);
+      placeMenu(menu, btn);
       const firstItem = menu.querySelector('button');
       if (firstItem) firstItem.focus({ preventScroll: true });
     });
@@ -472,15 +508,16 @@ async function loadVersion(id) {
   const data = await api.get(`${versionsUrl()}/${enc(id)}`);
   const draft = currentDraft();
   if (!draft) return;
+  syncFromFrame();
   const rs = modelOf(draft);
   if (!rs) return;
-  if (rs.source !== data.source || rs.base !== data.base) {
-    rs.source = data.source; // the page has changed since: the version brings its own copy of the page
-    rs.base = data.base;
-    rs.history.reset(rs.text);
-  }
+  rs.history.seal();
+  // the page may have changed since: the version brings its own copy, and undo goes back to the old one
+  if (rs.source !== data.source || rs.base !== data.base) setPage(draft, data.source, data.base);
   rs.history.record(data.draft);
+  if (rs.pages) rs.pages.set(data.draft, { source: data.source, base: data.base });
   showText(draft, data.draft);
+  call('draft-changed', editorCtx({ source: 'versions' }));
   toast(`Opened ${data.name}. Undo goes back.`);
 }
 

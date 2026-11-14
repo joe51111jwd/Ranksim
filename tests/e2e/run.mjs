@@ -89,6 +89,21 @@ async function audit(page, name) {
   await page.screenshot({ path: join(OUT, `${name}.png`), fullPage: true });
 }
 
+/* The Test changes tiles from the predict session: Every search (PREDICTED) and What would move you up (Guidance). */
+async function checkPredictTiles(page) {
+  const all = page.locator(SEL.predictAll);
+  const move = page.locator(SEL.predictMove);
+  await all.waitFor({ timeout: SLOW });
+  await move.waitFor({ timeout: SLOW });
+  expect(/PREDICTED/.test(await all.innerText()), 'Every search is labeled PREDICTED');
+  expect(/Guidance/.test(await move.innerText()), 'What would move you up is labeled Guidance');
+  const width = page.viewportSize().width;
+  for (const tile of [all, move]) {
+    const box = await tile.boundingBox();
+    expect(box && box.x >= 0 && box.x + box.width <= width + 1, `tile fits the ${width}px screen: ${JSON.stringify(box)}`);
+  }
+}
+
 async function goto(page, path) {
   await page.goto(BASE + path, { waitUntil: 'domcontentloaded' });
   await page.waitForFunction((sel) => !document.querySelector(sel), SEL.loading, { timeout: SLOW });
@@ -296,6 +311,7 @@ try {
     await page.waitForSelector(SEL.verdict, { timeout: SLOW });
     const body = await page.innerText('main');
     expect(/predict/i.test(body), 'the result says it is a prediction');
+    await checkPredictTiles(page);
     await audit(page, 'desktop-11-editor-result');
   });
 
@@ -326,6 +342,45 @@ try {
     await page.waitForSelector(SEL.chart);
     await audit(page, 'tablet-overview');
     await page.setViewportSize({ width: 1280, height: 900 });
+  });
+
+  await step('parallel-analysis', async () => {
+    const one = await desk.newPage();
+    const two = await desk.newPage();
+    watch(one, 'site-a');
+    watch(two, 'site-b');
+    const refused = [];
+    for (const p of [one, two]) p.on('response', (r) => { if (r.url().includes('/api/v1/sites') && r.status() === 409) refused.push(r.url()); });
+    await Promise.all([
+      one.goto(`${BASE}/edit?url=${encodeURIComponent('https://www.slow-a.example/')}`),
+      two.goto(`${BASE}/edit?url=${encodeURIComponent('https://www.slow-b.example/')}`),
+    ]);
+    const timeline = (p) => p.waitForSelector('.progress-tile .step.active', { timeout: SLOW }).then(() => Date.now())
+      .then(async (start) => { await p.waitForURL(/\/app\//, { timeout: SLOW }); return { start, end: Date.now() }; });
+    const [a, b] = await Promise.all([timeline(one), timeline(two)]);
+    expect(Math.max(a.start, b.start) < Math.min(a.end, b.end), `the two analyses overlap in time: ${JSON.stringify({ a, b })}`);
+    expect(!refused.length, `no 409 while two sites are analyzed: ${refused.join(', ')}`);
+    await one.close();
+    await two.close();
+  });
+
+  await step('reattach-after-refresh', async () => {
+    const tab = await desk.newPage();
+    watch(tab, 'reattach');
+    await tab.goto(`${BASE}/edit?url=${encodeURIComponent('https://www.slow-c.example/')}`);
+    await tab.waitForSelector('.progress-tile .step.done', { timeout: SLOW });
+    expect(!/\/app\//.test(tab.url()), 'still analyzing when the page reloads');
+    await tab.reload();
+    await tab.waitForSelector(SEL.progress, { timeout: SLOW });
+    await tab.waitForURL(/\/app\//, { timeout: SLOW });
+    await tab.waitForSelector(SEL.editorFrame, { timeout: SLOW });
+    const projects = await tab.evaluate(async () => (await (await fetch('/api/v1/projects')).json()).projects.map((p) => p.site));
+    const copies = projects.filter((site) => /slow-c/.test(site));
+    expect(copies.length === 1, `one project for the reattached site, got ${JSON.stringify(projects)}`);
+    const jobs = await tab.evaluate(async () => (await fetch('/api/v1/jobs')).json());
+    const live = (jobs.jobs || []).filter((job) => /slow-c/.test(JSON.stringify(job))); // the list holds running or paused jobs only
+    expect(!live.length, `no job left running: ${JSON.stringify(live)}`);
+    await tab.close();
   });
 
   state = await desk.storageState();
@@ -360,6 +415,16 @@ try {
       }
     });
   }
+
+  await step('phone-test-changes', async () => {
+    const pageUrl = `https://${SITE}/dirt-work-software/`;
+    await goto(mobile, `/app/${encodeURIComponent(slug)}/editor?page=${encodeURIComponent(pageUrl)}&q=${encodeURIComponent(SEARCHES[0])}`);
+    await mobile.waitForSelector(`${SEL.testButton}:not([disabled])`, { timeout: SLOW });
+    await mobile.click(SEL.testButton);
+    await mobile.waitForSelector(SEL.verdict, { timeout: SLOW });
+    await checkPredictTiles(mobile);
+    await audit(mobile, 'phone-editor-result');
+  });
 
   await step('sign-out', async () => {
     await goto(mobile, '/');

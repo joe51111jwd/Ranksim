@@ -48,6 +48,8 @@ export const SEL = {
   editorFrame: 'iframe[title="Editable page"]',
   testButton: '#test-btn',
   verdict: '.verdict',
+  predictAll: 'section.tile:has(h2:text-is("Every search"))',
+  predictMove: 'section.tile:has(h2:text-is("What would move you up"))',
 
   settingsSearches: 'section.tile:has(h2:text-is("Searches")) textarea',
   saveSearches: 'button:has-text("Save searches")',

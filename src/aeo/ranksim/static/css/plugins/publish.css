@@ -1,0 +1,30 @@
+/* Publish sheet (js/editor/publish.js). Shared pieces come from base.css: .tile, .btn, .chip, .label, .seg, .field. */
+
+.publish-sheet .sheet-body > .tile { display: grid; gap: 10px; }
+.publish-sheet .tile-head { margin-bottom: 0; }
+
+.publish-rows { display: grid; gap: 10px; }
+.publish-row { display: grid; gap: 4px; padding: 12px 14px; border-radius: var(--r-card); background: var(--tile); min-width: 0; }
+.publish-row-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; font-size: 14px; }
+.publish-before { font-size: 13.5px; color: var(--ink-3); text-decoration: line-through; text-decoration-color: var(--line-2); overflow-wrap: anywhere; }
+.publish-after { display: flex; align-items: flex-start; gap: 6px; font-size: 14px; color: var(--ink); overflow-wrap: anywhere; min-width: 0; }
+.publish-after svg { width: 14px; height: 14px; flex: none; margin-top: 3px; color: var(--blue); }
+.publish-after span { min-width: 0; }
+
+.publish-proof { display: grid; gap: 8px; }
+.publish-step { font-size: 14px; color: var(--ink-2); line-height: 1.45; }
+.publish-code { display: flex; align-items: center; gap: 8px; padding: 8px 8px 8px 12px; border-radius: var(--r-ctl); background: var(--card); box-shadow: inset 0 0 0 1px var(--line); min-width: 0; }
+.publish-code code { flex: 1; min-width: 0; font-family: var(--mono); font-size: 12.5px; overflow-wrap: anywhere; user-select: all; }
+.publish-miss { color: var(--amber); }
+
+.publish-conns, .publish-kinds { flex-wrap: wrap; max-width: 100%; }
+.publish-limits { margin: 0; padding-left: 18px; display: grid; gap: 4px; font-size: 13px; color: var(--ink-2); }
+.publish-warn { display: flex; align-items: flex-start; gap: 10px; padding: 10px 12px; border-radius: var(--r-ctl); background: var(--amber-wash); font-size: 13.5px; line-height: 1.45; cursor: pointer; }
+.publish-warn input { margin-top: 3px; flex: none; accent-color: var(--blue); }
+
+.publish-form { display: grid; gap: 10px; }
+.publish-field { display: grid; gap: 5px; font-size: 13px; font-weight: 550; color: var(--ink-2); }
+
+.publish-entry .body { display: grid; gap: 4px; }
+.publish-entry .form-actions { gap: 2px; margin-left: -10px; }
+.publish-conns button { white-space: normal; overflow-wrap: anywhere; text-align: left; max-width: 100%; }

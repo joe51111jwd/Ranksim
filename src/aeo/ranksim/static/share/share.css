@@ -132,3 +132,39 @@ tr.you td { background: var(--blue-wash); }
   .log li { border: 1px solid var(--line); }
   a { color: inherit; text-decoration: none; }
 }
+
+/* Plain intro, the weekly summary and the one-line data note under the numbers. */
+.lead { color: #d6d6cf; font-size: 16px; max-width: 640px; }
+.stats-note { margin-top: -6px; padding: 0 4px; }
+.week { background: var(--card); }
+.week-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 16px; }
+.week-col { display: grid; gap: 8px; align-content: start; min-width: 0; }
+.week-col h3 { font-size: 13px; font-weight: 600; color: var(--ink-2); }
+.week-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.week-list li { background: var(--bg); border-radius: var(--r-sm); padding: 10px 12px; display: grid; gap: 2px; overflow-wrap: anywhere; }
+.week-q { font-weight: 550; }
+.week-meta { font-size: 13px; color: var(--ink-2); }
+.move { justify-self: start; font: 600 11px/1 var(--mono); letter-spacing: 0.04em; padding: 4px 7px; border-radius: 6px; margin-top: 4px; }
+.move.up { background: var(--green-wash); color: var(--green); }
+.move.down { background: var(--red-wash); color: var(--red); }
+@media print {
+  .lead { color: var(--ink-2); }
+  .week { border: 1px solid var(--line); }
+  .week-list li { border: 1px solid var(--line); break-inside: avoid; }
+}
+
+/* Phones: tables become one card per row, each value with its label. No sideways scrolling. */
+@media screen and (max-width: 640px) {
+  table.stack, table.stack tbody, table.stack tr, table.stack td { display: block; width: 100%; }
+  table.stack thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+  table.stack tr { padding: 12px 14px; border-bottom: 1px solid var(--line); }
+  table.stack tbody tr:last-child { border-bottom: 0; }
+  table.stack td { border: 0; padding: 3px 0; text-align: left; white-space: normal; display: flex; justify-content: space-between; gap: 12px; }
+  table.stack td { justify-content: flex-end; align-items: baseline; gap: 8px; }
+  table.stack td::before { content: attr(data-label); color: var(--ink-2); font-size: 12px; flex: none; margin-right: auto; font-weight: 400; }
+  table.stack td.q .muted { font-weight: 400; }
+  table.stack td.q { display: grid; gap: 2px; min-width: 0; font-weight: 550; }
+  table.stack td.q::before { content: none; }
+  table.stack td.num { font-variant-numeric: tabular-nums; }
+  .table-wrap { overflow-x: visible; }
+}

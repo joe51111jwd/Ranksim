@@ -945,7 +945,7 @@ def _default_run_pull(ui, project) -> dict:
 
     def work(ctx) -> dict:
         events = _JobEvents(ui, sites._Events(ctx))
-        return {"report": sites._run_pull(ui, ui.project(project.slug), True, events, ctx=ctx)}
+        return {"report": sites._run_pull(ui, ui.project(project.slug), True, events, ctx=ctx, locked=True)}  # recheck holds project_lock
 
     def error_text(exc: BaseException) -> str:
         return _scrub(ui, f"{type(exc).__name__}: {str(exc)[:300]}")

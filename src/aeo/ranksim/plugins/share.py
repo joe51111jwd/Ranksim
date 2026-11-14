@@ -1018,6 +1018,134 @@ def weekly_update(data: dict, report_url: str = "") -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Monday digest (owner only): every client on one page, and every weekly update in one go
+# ---------------------------------------------------------------------------
+
+
+def _page_one_then(observations, searches, now: datetime) -> tuple[int | None, str]:
+    """How many searches were on page one a week before the newest check, from real dated checks only.
+    (count, date) or (None, "") when no search has a check that old."""
+    latest = max((points[-1][0] for search, points in observations.items() if search in searches and points), default=None)
+    if latest is None or (now - latest).days > WEEK_DAYS * 2:
+        return None, ""
+    cutoff = latest - timedelta(days=WEEK_DAYS - 1)
+    count, seen, newest = 0, 0, None
+    for search in searches:
+        earlier = [point for point in observations.get(search) or [] if point[0] <= cutoff]
+        if not earlier:
+            continue
+        seen += 1
+        moment, position = earlier[-1]
+        newest = moment if newest is None or moment > newest else newest
+        count += 1 if position and position <= 10 else 0
+    return (count, _iso(newest)[:10]) if seen else (None, "")
+
+
+def digest_row(ui, project, base_url: str = "", now: datetime | None = None) -> dict:
+    """One client's line in the Monday digest, from the whitelisted client payload plus dated checks."""
+    now = now or _now()
+    data = client_report(ui, project)
+    weekly = data["weekly"]
+    since = now - timedelta(days=WEEK_DAYS)
+    public = changelog(project, public_only=True, limit=200)
+    recent = [row for row in public if (_parse_time(row.get("at")) or since) >= since]
+    publishes = [row for row in public if row["kind"] == "publish"]
+    try:
+        observations = _history_observations(_tracking_history(project)) or _observations(project)
+    except Exception:  # noqa: BLE001
+        observations = {}
+    searches = [row["q"] for row in data["rankings"]]
+    then, then_date = _page_one_then(observations, searches, now)
+    active = [link for link in list_links(ui.root, project) if link["status"] == "active"] if not ui.public_demo else []
+    report_url = f"{base_url}{active[0]['path']}" if active and base_url else ""
+    return {
+        "slug": project.slug,
+        "name": data["name"],
+        "site": data["site"],
+        "source": data["source"],
+        "demo": bool(data["data"].get("demo")),
+        "google_date": data["google_date"],
+        "checked": bool(data["search_data"]),
+        "page_one": {"now": data["kpis"].get("top10") or 0, "of": data["kpis"].get("checked") or 0, "week_ago": then, "week_ago_date": then_date},
+        "biggest_move": weekly["moves"][0] if weekly["moves"] else None,
+        "fixed": sum(1 for row in recent if row["kind"] == "issue"),
+        "open_high": sum(1 for issue in data["issues"] if issue["severity"] == "high" and issue["status"] != "done"),
+        "last_publish": {"date": publishes[0]["date"], "summary": publishes[0]["summary"]} if publishes else None,
+        "report_url": report_url,
+        "preview_path": f"/report/{project.slug}",
+        "_data": data,
+    }
+
+
+def _digest_projects(ui) -> list:
+    from aeo.ranksim.project import list_projects
+
+    found = []
+    try:
+        rows = list_projects(root=ui.root)
+    except Exception:  # noqa: BLE001
+        return []
+    for row in rows:
+        try:
+            found.append(ui.project(row.slug))
+        except Exception:  # noqa: BLE001 - a project the app cannot open (or the public demo hides) is skipped
+            continue
+    return found
+
+
+def build_digest(ui, base_url: str = "", now: datetime | None = None) -> dict:
+    """Every client: page one now and a week ago, biggest move, fixes, open high-priority issues, last publish, link.
+    Also every client's weekly email, each built only from that client's own payload."""
+    from html import escape
+
+    now = now or _now()
+    rows, failed = [], []
+    for project in _digest_projects(ui):
+        try:
+            rows.append(digest_row(ui, project, base_url, now))
+        except Exception:  # noqa: BLE001 - one broken project never hides the others
+            failed.append(project.slug)
+    day = _day(_iso(now))
+    lines, html_rows = [f"Monday digest, {day}", ""], []
+    for row in rows:
+        p1 = row["page_one"]
+        then = f"{p1['week_ago']} on {_day(p1['week_ago_date'])}" if p1["week_ago"] is not None else "no check a week ago"
+        move = row["biggest_move"]
+        move_text = f'"{move["q"]}" {_place(move.get("from"))} to {_place(move.get("to"))} ({_move_words(move)})' if move else "none"
+        publish = f"{row['last_publish']['summary']} ({_day(row['last_publish']['date'])})" if row["last_publish"] else "none yet"
+        if row["google_date"]:
+            checked = f"{row['source']} checked {row['google_date']}"
+        else:
+            checked = f"{row['source']} check date not recorded" if row["checked"] else "not checked on Google yet"
+        facts = [
+            f"Page one of Google: {p1['now']} of {p1['of']} searches now ({checked}), {then}",
+            f"Biggest move this week: {move_text}",
+            f"Fixed this week: {row['fixed']}. Open high priority: {row['open_high']}",
+            f"Last publish: {publish}",
+            f"Client report: {row['report_url'] or 'no live link yet'}",
+        ]
+        title = row["name"] + (" (demo data)" if row["demo"] else "")
+        lines += [title] + [f"- {fact}" for fact in facts] + [""]
+        html_rows.append(f"<p><strong>{escape(title)}</strong></p><ul>" + "".join(f"<li>{escape(fact)}</li>" for fact in facts) + "</ul>")
+    if failed:
+        lines.append(f"Could not build: {', '.join(failed)}")
+    updates = [{"slug": row["slug"], "name": row["name"], **weekly_update(row["_data"], row["report_url"])} for row in rows]
+    for row in rows:
+        row.pop("_data", None)
+    divider = "\n\n" + "-" * 40 + "\n\n"
+    return {
+        "generated": _iso(now),
+        "projects": rows,
+        "failed": failed,
+        "text": "\n".join(lines).rstrip() + "\n",
+        "html": f"<div><p><strong>Monday digest, {escape(day)}</strong></p>" + "".join(html_rows) + "</div>",
+        "updates": updates,
+        "updates_text": divider.join(f"Subject: {item['subject']}\n\n{item['text']}" for item in updates),
+        "updates_html": "<div>" + "<hr>".join(f"<p><strong>Subject: {escape(item['subject'])}</strong></p>{item['html']}" for item in updates) + "</div>",
+    }
+
+
+# ---------------------------------------------------------------------------
 # CSV
 # ---------------------------------------------------------------------------
 
@@ -1365,6 +1493,13 @@ def register(app, ui) -> None:
         base = str(request.base_url).rstrip("/")
         url = f"{base}{active[0]['path']}" if active and re.match(r"^https?://[A-Za-z0-9.:\[\]-]+$", base) else ""
         return JSONResponse({**weekly_update(data, url), "has_link": bool(url)})
+
+    @app.get("/api/v1/digest")
+    async def api_digest(request: Request) -> JSONResponse:
+        """Owner only: the Monday digest across every client, plus each client's weekly email."""
+        base = str(request.base_url).rstrip("/")
+        base = base if re.match(r"^https?://[A-Za-z0-9.:\[\]-]+$", base) else ""
+        return JSONResponse(await run_in_threadpool(build_digest, ui, base))
 
     @app.get("/api/v1/projects/{slug}/changelog")
     def api_changelog(slug: str) -> JSONResponse:

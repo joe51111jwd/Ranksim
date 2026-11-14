@@ -574,7 +574,16 @@ def _competitors(project, meta, snapshots) -> list[str]:
         return []
 
 
-def build_history(project, meta=None, *, snapshots=None) -> dict:
+def scheduled_checks_ready(ui) -> bool:
+    """True when this server can run scheduled re-checks: a Google results key and CRON_SECRET are both set (and it is
+    not the public demo). Without them no check runs on its own, so no screen may promise a next check date."""
+    if ui is None or getattr(ui, "public_demo", False):
+        return False
+    configured = provider_status(getattr(ui, "settings", None), public_demo=False)["configured"]
+    return bool(configured and (os.environ.get(CRON_SECRET_ENV) or "").strip())
+
+
+def build_history(project, meta=None, *, snapshots=None, scheduled_ready: bool | None = None) -> dict:
     """Each search's REAL position over time for our site and the top competitors, and what changed last check."""
     if meta is None:
         try:
@@ -646,6 +655,7 @@ def build_history(project, meta=None, *, snapshots=None) -> dict:
         rows.append(
             {
                 "search": search,
+                "checked": bool(points),
                 "position": current,
                 "previous": previous,
                 "change": change,
@@ -659,8 +669,9 @@ def build_history(project, meta=None, *, snapshots=None) -> dict:
         )
     schedule = load_schedule(project)
     synthetic = _is_synthetic(meta)
+    can_schedule = bool(SCHEDULES.get(schedule)) and not synthetic and scheduled_ready is not False
     next_check = None
-    if SCHEDULES.get(schedule) and last_check is not None and not synthetic:
+    if can_schedule and last_check is not None:
         next_check = _iso(last_check + timedelta(hours=SCHEDULES[schedule]))
     return {
         "site": project.site,
@@ -674,6 +685,8 @@ def build_history(project, meta=None, *, snapshots=None) -> dict:
         "schedule": schedule,
         "last_check_at": _iso(last_check),
         "next_check_at": next_check,
+        # None when the caller did not say (no app context): then next_check_at is the schedule's date only
+        "scheduled_checks_ready": None if scheduled_ready is None else bool(can_schedule),
         "real": not synthetic,
         "note": SYNTHETIC_NOTE if synthetic else "REAL Google positions from stored pulls. Empty means not in the top 10 we hold.",
         "week": weekly_summary(rows, competitors, last_check),
@@ -765,11 +778,12 @@ def _is_synthetic(meta) -> bool:
 
 def compact_history(full: dict) -> dict:
     """The small form stored in report["history"]."""
-    compact = {key: full.get(key) for key in ("site", "competitors", "checks", "first_at", "last_at", "changes", "trend", "schedule", "last_check_at", "next_check_at", "real", "note", "week")}
+    compact = {key: full.get(key) for key in ("site", "competitors", "checks", "first_at", "last_at", "changes", "trend", "schedule", "last_check_at", "next_check_at", "scheduled_checks_ready", "real", "note", "week")}
     compact["trend"] = (full.get("trend") or [])[-SPARK_POINTS * 2 :]
     compact["searches"] = [
         {
             "search": row["search"],
+            "checked": bool(row["points"]),  # False: never checked on Google, so "not in top 10" would be wrong
             "position": row["position"],
             "previous": row["previous"],
             "change": row["change"],
@@ -1157,18 +1171,20 @@ def register(app, ui) -> None:
             project = ui.project(slug)
         except LookupError:
             return error(404, "No such project.")
-        return JSONResponse(await run_in_threadpool(build_history, project))
+        return JSONResponse(await run_in_threadpool(lambda: build_history(project, scheduled_ready=scheduled_checks_ready(ui))))
 
     def schedule_view(project) -> dict:
         state = load_state(project)
         schedule = load_schedule(project)
         checked = last_check(project)
         interval = SCHEDULES.get(schedule)
+        ready = scheduled_checks_ready(ui)
         return {
             "schedule": schedule,
             "schedules": list(SCHEDULES),
+            "scheduled_checks_ready": ready,
             "last_check_at": _iso(checked),
-            "next_check_at": _iso(checked + timedelta(hours=interval)) if checked and interval else None,
+            "next_check_at": _iso(checked + timedelta(hours=interval)) if checked and interval and ready else None,
             "last_attempt_at": state.get("last_attempt_at"),
             "last_result": state.get("last_result"),
             "last_error": state.get("last_error") or "",
@@ -1212,7 +1228,8 @@ def register(app, ui) -> None:
 
 
 def extend_report(report: dict, *, project, meta=None, database=None, ctx=None, ui=None) -> None:
-    report["history"] = compact_history(build_history(project, meta))
+    ready = scheduled_checks_ready(ui) if ui is not None else None
+    report["history"] = compact_history(build_history(project, meta, scheduled_ready=ready))
 
 
 def after_pull(*, project, report=None, ui=None) -> None:

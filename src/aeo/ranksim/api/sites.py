@@ -490,7 +490,9 @@ def _run_pull_unlocked(ui, project, use_google: bool, events, *, notify: bool = 
             {
                 "type": "progress",
                 "step": event.step,
-                "message": ui.scrub(event.message),
+                # plain words for the app (project.plain_progress, track); the full text stays in "detail"
+                "message": ui.scrub(getattr(event, "plain", "") or event.message),
+                "detail": ui.scrub(event.message),
                 "done": event.done,
                 "total": event.total,
                 "seconds": round(float(getattr(event, "seconds", 0.0) or 0.0), 1),

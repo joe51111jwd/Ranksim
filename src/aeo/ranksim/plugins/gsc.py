@@ -445,7 +445,7 @@ def make_state(ui, request, slug: str, redirect_uri: str) -> tuple[str, str]:
     return secretbox.seal(json.dumps(payload, sort_keys=True), purpose=STATE_PURPOSE), nonce
 
 
-def check_state(ui, request, state: str) -> dict:
+def check_state(ui, request, state: str, *, bind_session: bool = True) -> dict:
     try:
         payload = json.loads(secretbox.unseal(state or "", purpose=STATE_PURPOSE))
     except (secretbox.SecretBoxError, ValueError):
@@ -455,9 +455,46 @@ def check_state(ui, request, state: str) -> dict:
     cookie = request.cookies.get(NONCE_COOKIE) or ""
     if not cookie or not secrets.compare_digest(cookie, str(payload.get("nonce") or "")):
         raise GscError("That sign in was started in another browser. Start again from Settings.", code="bad_nonce")
-    if not secrets.compare_digest(str(payload.get("sess") or ""), session_binding(ui, request)):
+    if bind_session and not secrets.compare_digest(str(payload.get("sess") or ""), session_binding(ui, request)):
         raise GscError("That sign in belongs to another session. Start again from Settings.", code="bad_session")
     return payload
+
+
+PENDING_COOKIE = "rs_gsc_pending"
+PENDING_PURPOSE = "gsc-pending-callback"
+
+
+def complete_connection(ui, project, code: str, payload: dict) -> str:
+    """Exchange the code, store the tokens, turn the project on, match its property and load its data. Returns the
+    result code for the Settings screen. Raises GscError, CloudError or SecretBoxError."""
+    cloud = getattr(ui, "cloud", None)
+    if cloud is not None and getattr(cloud, "enabled", False):
+        cloud.refresh(force=True)
+    tokens = client_for(ui).exchange_code(oauth_config(), code, str(payload["redirect_uri"]))
+    if SCOPE not in str(tokens.get("scope") or SCOPE).split():
+        # Not stored. No revoke: Google's revoke ends the whole grant, which could cut a working connection.
+        raise GscError("Search Console access was not granted.", code="scope_missing")
+    # A reconnect replaces the stored tokens. The older refresh token is not revoked: for the same account and
+    # client, revoking any token ends the whole grant, including the token just issued.
+    store_tokens(ui, tokens)
+    settings = save_settings(ui, project, {"enabled": True, "last_error": "", "error_at": ""})
+    result = "connected"
+    if not settings["property"]:
+        try:
+            chosen = match_property(project, list_properties(ui))
+        except GscError:
+            chosen = ""
+        if chosen:
+            save_settings(ui, project, {"property": chosen})
+        else:
+            result = "needs_property"
+    if load_settings(project)["property"]:
+        try:
+            refresh_project(ui, project, force=True)
+        except GscError:
+            pass  # shown as the project's error state
+    _save_cloud(ui)
+    return result
 
 
 def auth_url(config: dict, redirect_uri: str, state: str) -> str:
@@ -546,6 +583,13 @@ def _metrics(row: dict) -> dict:
 
 
 def fetch_snapshot(ui, project, property_url: str) -> dict:
+    snapshot = collect_snapshot(ui, property_url)
+    save_snapshot(project, snapshot)
+    return snapshot
+
+
+def collect_snapshot(ui, property_url: str) -> dict:
+    """The four Search Analytics calls for the last 28 days of final data, as one snapshot. Saves nothing."""
     start, end = date_range(ui)
 
     def rows(dimensions: list[str]) -> tuple[list[dict], bool]:
@@ -584,7 +628,6 @@ def fetch_snapshot(ui, project, property_url: str) -> dict:
         "pages": pages,
         "query_pages": pairs,
     }
-    save_snapshot(project, snapshot)
     return snapshot
 
 
@@ -877,20 +920,37 @@ def register(app, ui) -> None:
         response.set_cookie(NONCE_COOKIE, nonce, max_age=STATE_SECONDS, httponly=True, secure=secure, samesite="lax", path="/api/v1/gsc")
         return response
 
+    def back(slug: str | None, result: str, *, keep_nonce: bool = False) -> RedirectResponse:
+        target = f"/app/{slug}/settings?gsc={result}" if slug else f"/app?gsc={result}"
+        response = RedirectResponse(target, status_code=303)
+        if not keep_nonce:
+            response.delete_cookie(NONCE_COOKIE, path="/api/v1/gsc")
+        response.delete_cookie(PENDING_COOKIE, path="/api/v1/gsc")
+        return response
+
+    async def finish(project, code: str, payload: dict) -> str:
+        from aeo.ranksim.cloud import CloudError
+
+        try:
+            return await run_in_threadpool(complete_connection, ui, project, code, payload)
+        except CloudError:
+            return "storage"
+        except GscError as exc:
+            return exc.code
+        except secretbox.SecretBoxError:
+            return "not_configured"
+
     @app.get("/api/v1/gsc/callback")
     async def gsc_callback(request: Request) -> RedirectResponse:
+        """Google's redirect back. login_exempt so a signed-out owner is sent to sign in instead of a JSON 401: the
+        state is still checked (sealed, unexpired, nonce cookie from this browser) before anything else, and the code
+        is only parked in a sealed, HttpOnly cookie until the owner signs in and the app calls /resume."""
         params = request.query_params
-
-        def back(slug: str | None, result: str) -> RedirectResponse:
-            target = f"/app/{slug}/settings?gsc={result}" if slug else f"/app?gsc={result}"
-            response = RedirectResponse(target, status_code=303)
-            response.delete_cookie(NONCE_COOKIE, path="/api/v1/gsc")
-            return response
-
         if ui.public_demo or not oauth_config()["ready"]:
             return back(None, "not_configured")
+        signed_in = common._signed_in(ui, request)
         try:
-            payload = check_state(ui, request, params.get("state") or "")
+            payload = check_state(ui, request, params.get("state") or "", bind_session=signed_in)
         except GscError as exc:
             return back(None, exc.code)
         slug = str(payload.get("slug") or "")
@@ -902,48 +962,43 @@ def register(app, ui) -> None:
         code = params.get("code") or ""
         if not code:
             return back(project.slug, "google_error")
+        if not signed_in:
+            parked = secretbox.seal(json.dumps({"code": code, "state": params.get("state"), "exp": payload["exp"]}), purpose=PENDING_PURPOSE)
+            response = back(project.slug, "signin", keep_nonce=True)
+            secure = str(payload.get("redirect_uri") or "").startswith("https://")
+            left = max(1, int(float(payload["exp"]) - _now(ui)))
+            response.set_cookie(PENDING_COOKIE, parked, max_age=left, httponly=True, secure=secure, samesite="lax", path="/api/v1/gsc")
+            return response
+        return back(project.slug, await finish(project, code, payload))
 
-        def finish() -> str:
-            cloud = getattr(ui, "cloud", None)
-            if cloud is not None and getattr(cloud, "enabled", False):
-                cloud.refresh(force=True)
-            tokens = client_for(ui).exchange_code(oauth_config(), code, str(payload["redirect_uri"]))
-            if SCOPE not in str(tokens.get("scope") or SCOPE).split():
-                # Not stored. No revoke: Google's revoke ends the whole grant, which could cut a working connection.
-                raise GscError("Search Console access was not granted.", code="scope_missing")
-            # A reconnect replaces the stored tokens. The older refresh token is not revoked: for the same account and
-            # client, revoking any token ends the whole grant, including the token just issued.
-            store_tokens(ui, tokens)
-            settings = save_settings(ui, project, {"enabled": True, "last_error": "", "error_at": ""})
-            result = "connected"
-            if not settings["property"]:
-                try:
-                    chosen = match_property(project, list_properties(ui))
-                except GscError:
-                    chosen = ""
-                if chosen:
-                    save_settings(ui, project, {"property": chosen})
-                else:
-                    result = "needs_property"
-            if load_settings(project)["property"]:
-                try:
-                    refresh_project(ui, project, force=True)
-                except GscError:
-                    pass  # shown as the project's error state
-            _save_cloud(ui)
-            return result
+    gsc_callback.login_exempt = True
 
-        from aeo.ranksim.cloud import CloudError
+    @app.post("/api/v1/gsc/resume")
+    async def gsc_resume(request: Request) -> JSONResponse:
+        """Finish a connection Google sent back while the owner was signed out. Signed in (middleware) and CSRF
+        checked; the parked state must still be valid with its nonce cookie. The old session binding is not checked,
+        because the owner signed in again in between; the nonce ties the flow to this browser."""
+        blocked = guard_write(request)
+        if blocked is not None:
+            return blocked
+
+        def answer(result: str, slug: str = "", status: int = 200) -> JSONResponse:
+            response = JSONResponse({"result": result, "slug": slug, "message": "" if result in {"connected", "needs_property"} else result}, status_code=status)
+            response.delete_cookie(PENDING_COOKIE, path="/api/v1/gsc")
+            response.delete_cookie(NONCE_COOKIE, path="/api/v1/gsc")
+            return response
 
         try:
-            result = await run_in_threadpool(finish)
-        except CloudError:
-            return back(project.slug, "storage")
+            parked = json.loads(secretbox.unseal(request.cookies.get(PENDING_COOKIE) or "", purpose=PENDING_PURPOSE))
+            payload = check_state(ui, request, str(parked.get("state") or ""), bind_session=False)
+        except (secretbox.SecretBoxError, ValueError, AttributeError):
+            return answer("nothing_pending", status=409)
         except GscError as exc:
-            return back(project.slug, exc.code)
-        except secretbox.SecretBoxError:
-            return back(project.slug, "not_configured")
-        return back(project.slug, result)
+            return answer(exc.code, status=409)
+        project = project_or_404(str(payload.get("slug") or ""))
+        if project is None:
+            return answer("no_project", status=404)
+        return answer(await finish(project, str(parked.get("code") or ""), payload), project.slug)
 
     @app.post("/api/v1/gsc/projects/{slug}")
     async def gsc_settings(slug: str, request: Request) -> JSONResponse:

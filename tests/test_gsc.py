@@ -518,13 +518,49 @@ def test_state_is_bound_to_the_owner_session(tmp_path, env):
     assert gsc.check_state(box.ui, same_session, query["state"])["slug"] == box.project.slug
 
 
-def test_callback_needs_the_signed_in_owner(tmp_path, env):
+def test_signed_out_callback_sends_the_owner_to_sign_in_then_finishes(tmp_path, env):
     box = _app(tmp_path)
     _sign_in(box)
     query = _connect(box)
     _post(box, "/api/v1/logout")
-    refused = _callback(box, {"code": "good-code", "state": query["state"]})
-    assert refused.status_code == 401 and refused.json()["login"] is True
+    parked = _callback(box, {"code": "good-code", "state": query["state"]})
+    assert parked.status_code == 303 and parked.headers["location"] == f"/app/{box.project.slug}/settings?gsc=signin"
+    pending = box.client.cookies.get(gsc.PENDING_COOKIE)
+    assert pending and "good-code" not in pending  # sealed, never the bare code
+    assert box.google.calls == [] and not gsc.account_path(box.ui).exists()
+    # Signed out, nothing else opens: the resume route needs the login.
+    assert _post(box, "/api/v1/gsc/resume").status_code == 401
+    _sign_in(box)
+    assert _post(box, "/api/v1/gsc/resume", csrf=False).status_code == 403
+    done = _post(box, "/api/v1/gsc/resume")
+    assert done.status_code == 200 and done.json()["result"] == "connected" and done.json()["slug"] == box.project.slug
+    assert gsc.account_path(box.ui).exists()
+    assert box.client.get(f"/api/v1/gsc/projects/{box.project.slug}").json()["state"] == "ready"
+    again = _post(box, "/api/v1/gsc/resume")
+    assert again.status_code == 409 and again.json()["result"] == "nothing_pending"  # single use
+
+
+def test_signed_out_callback_still_checks_the_state(tmp_path, env):
+    box = _app(tmp_path)
+    _sign_in(box)
+    query = _connect(box)
+    _post(box, "/api/v1/logout")
+    tampered = query["state"][:-3] + ("AAA" if not query["state"].endswith("AAA") else "BBB")
+    assert _callback(box, {"code": "good-code", "state": tampered}).headers["location"] == "/app?gsc=bad_state"
+    assert gsc.PENDING_COOKIE not in box.client.cookies
+    # Another browser (no nonce cookie) gets nothing parked.
+    other = TestClient(box.app)
+    refused = other.get("/api/v1/gsc/callback", params={"code": "good-code", "state": query["state"]}, follow_redirects=False)
+    assert refused.headers["location"] == "/app?gsc=bad_nonce" and gsc.PENDING_COOKIE not in other.cookies
+    # A parked code expires with its state. (A failed callback ended the flow above, so start a new one.)
+    _sign_in(box)
+    query = _connect(box)
+    _post(box, "/api/v1/logout")
+    assert _callback(box, {"code": "good-code", "state": query["state"]}).headers["location"].endswith("?gsc=signin")
+    _sign_in(box)
+    box.ui.gsc_clock.now += gsc.STATE_SECONDS + 1
+    late = _post(box, "/api/v1/gsc/resume")
+    assert late.status_code == 409 and late.json()["result"] == "expired_state"
     assert box.google.calls == []
 
 

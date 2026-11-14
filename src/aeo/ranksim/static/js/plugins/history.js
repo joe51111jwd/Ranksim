@@ -33,6 +33,11 @@ function day(iso) {
   return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 }
 
+/* The SVG coordinate width. A narrower box on phones keeps axis text readable once the chart scales to fit. */
+function chartWidth() {
+  return window.innerWidth && window.innerWidth < 720 ? 360 : 640;
+}
+
 function rankText(position) {
   return position ? `#${position}` : 'Not in top 10';
 }
@@ -94,7 +99,7 @@ function sparkline(values, label) {
    series: [{ name, cls, points: [{ at, position }] }], all on the same dates (the first series sets them). */
 function lineChart(series, { yLabel = 'Position', height = 220, values = 'position', yMax = DEPTH, format = rankText } = {}) {
   const dates = [...new Set(series.flatMap((one) => one.points.map((p) => p.at)))].sort();
-  const W = 640;
+  const W = chartWidth();
   const H = height;
   const left = 34;
   const right = 14;
@@ -132,7 +137,7 @@ function lineChart(series, { yLabel = 'Position', height = 220, values = 'positi
       }
       path += `${prev == null ? 'M' : 'L'}${x(i).toFixed(1)},${y(v).toFixed(1)}`;
       prev = v;
-      dots.push(s('circle', { class: `history-dot ${one.cls}`, cx: x(i), cy: y(v), r: 4 }));
+      dots.push(s('circle', { class: `history-dot ${one.cls}`, cx: x(i), cy: y(v), r: 5 }));
     });
     svg.append(s('g', { class: `history-series ${one.cls}` }, path ? s('path', { class: 'history-line', d: path }) : null, dots));
   });
@@ -152,7 +157,7 @@ function lineChart(series, { yLabel = 'Position', height = 220, values = 'positi
     cross.setAttribute('visibility', 'visible');
     tip.replaceChildren(
       h('div', { class: 'history-tip-k', text: day(at) }),
-      series.map((one, k) => h('div', { class: 'history-tip-row' },
+      ...series.map((one, k) => h('div', { class: 'history-tip-row' },
         h('i', { class: `history-key ${one.cls}`, 'aria-hidden': 'true' }),
         h('span', { text: one.name }),
         h('b', { text: format(lookup[k].get(at)) }))));
@@ -169,6 +174,58 @@ function lineChart(series, { yLabel = 'Position', height = 220, values = 'positi
   });
   svg.append(hit);
   wrap.append(svg, tip);
+  return wrap;
+}
+
+/* One bar per check: how many tracked searches had the site in the top 10. Dark is the top 3 part. */
+function firstPageBars(trend) {
+  const W = chartWidth();
+  const H = 120;
+  const top = 18;
+  const bottom = 22;
+  const most = Math.max(1, ...trend.map((row) => row.searches || 0));
+  const n = trend.length;
+  const slot = W / n;
+  const width = Math.min(56, slot * 0.6);
+  const yOf = (v) => H - bottom - (v / most) * (H - top - bottom);
+  const wrap = h('div', { class: 'history-chart' });
+  const svg = s('svg', { viewBox: `0 0 ${W} ${H}`, role: 'img', 'aria-label': `Searches on the first page at each check: ${trend.map((row) => `${day(row.at)} ${row.ranked} of ${row.searches}`).join(', ')}` });
+  svg.append(s('line', { class: 'history-grid', x1: 0, x2: W, y1: H - bottom, y2: H - bottom }));
+  const tip = h('div', { class: 'history-tip', role: 'status', hidden: true });
+  trend.forEach((row, i) => {
+    const cx = slot * i + slot / 2;
+    const ranked = row.ranked || 0;
+    const top3 = row.top3 || 0;
+    const group = s('g', { class: 'history-bar-g' });
+    if (ranked) {
+      // Stacked: the top 3 part at the base in dark, the rest of the top 10 above it in blue, 2px apart.
+      const y = yOf(ranked);
+      const y3 = top3 ? yOf(top3) : H - bottom;
+      if (top3) group.append(s('rect', { class: 'history-bar-top', x: cx - width / 2, y: y3, width, height: H - bottom - y3, rx: 4 }));
+      if (ranked > top3) group.append(s('rect', { class: 'history-bar', x: cx - width / 2, y, width, height: Math.max(1, y3 - y - (top3 ? 2 : 0)), rx: 4 }));
+    }
+    const value = s('text', { class: 'history-bar-v', x: cx, y: (ranked ? yOf(ranked) : H - bottom) - 5, 'text-anchor': 'middle' });
+    value.textContent = String(ranked);
+    const label = s('text', { class: 'history-axis', x: cx, y: H - 6, 'text-anchor': 'middle' });
+    label.textContent = n > 8 && i % 2 && i !== n - 1 ? '' : day(row.at);
+    const hit = s('rect', { class: 'history-hit', x: slot * i, y: 0, width: slot, height: H });
+    const show = () => {
+      tip.replaceChildren(h('div', { class: 'history-tip-k', text: day(row.at) }),
+        h('div', { text: `${ranked} of ${plural(row.searches || 0, 'search', 'searches')} on the first page` }),
+        h('div', { class: 'history-tip-k', text: `${top3} in the top 3` }));
+      tip.hidden = false;
+      const share = cx / W;
+      tip.style.left = `${Math.round(share * 100)}%`;
+      tip.style.transform = share > 0.6 ? 'translateX(calc(-100% - 12px))' : 'translateX(12px)';
+    };
+    hit.addEventListener('pointerenter', show);
+    hit.addEventListener('pointerdown', show);
+    hit.addEventListener('pointerleave', () => { tip.hidden = true; });
+    svg.append(group, value, label, hit);
+  });
+  wrap.append(svg, tip, h('div', { class: 'history-legend' },
+    h('span', null, h('i', { class: 'history-key history-key-top', 'aria-hidden': 'true' }), 'Top 3'),
+    h('span', null, h('i', { class: 'history-key history-key-on', 'aria-hidden': 'true' }), 'Top 10')));
   return wrap;
 }
 
@@ -206,13 +263,8 @@ registerOverviewTile({
     } else {
       tile.append(h('div', { class: 'history-stats' }, stat('history-up', 'Up', C.up), stat('history-down', 'Down', C.down), stat('history-new', 'New', C.new), stat('history-lost', 'Lost', C.lost)));
     }
-    const trend = (H.trend || []).filter((row) => row.average != null);
-    if (trend.length >= 2) {
-      const max = Math.max(DEPTH, ...trend.map((row) => Math.ceil(row.average)));
-      tile.append(
-        h('div', { class: 'history-cap', text: 'Average position of the searches you rank for' }),
-        lineChart([{ name: 'Average', cls: SERIES[0], points: trend.map((row) => ({ at: row.at, position: row.average, ranked: row.ranked })) }], { height: 150, yMax: max, format: (v) => (v == null ? 'None' : `#${v}`) }));
-    }
+    const trend = H.trend || [];
+    if (trend.length >= 2) tile.append(h('div', { class: 'history-cap', text: 'Searches on the first page at each check' }), firstPageBars(trend.slice(-12)));
     const foot = h('div', { class: 'history-foot' });
     if (H.next_check_at) foot.append(h('span', { class: 'tile-sub', text: `Next check ${day(H.next_check_at)}` }));
     else if (H.schedule === 'off') foot.append(h('span', { class: 'tile-sub', text: 'Re-checks are off. Turn them on in Settings.' }));
@@ -269,7 +321,7 @@ export function openHistory(search) {
     sheet.append(h('div', { class: 'sheet-head' }, h('div', null, h('h2', { text: search }), h('div', { class: 'sub', text: 'Position history' })), closeBtn), body);
     historyFor(slug).then((data) => {
       const row = (data.searches || []).find((item) => item.search === search);
-      body.replaceChildren(...sheetBody(data, row));
+      body.replaceChildren(...sheetBody(data, row).filter(Boolean));
     }).catch(() => body.replaceChildren(h('p', { class: 'tile-sub', text: 'History could not be loaded. Try again.' })));
   });
 }
@@ -334,7 +386,7 @@ registerSettingsSection({
       h('div', { class: 'tile-head' }, h('h2', { text: 'Re-checks and usage' })),
       h('p', { class: 'tile-sub', text: 'Loading.' }));
     Promise.all([api.get(`/api/v1/projects/${enc(slug)}/tracking`), api.get('/api/v1/tracking/status')])
-      .then(([tracking, status]) => section.replaceChildren(...settingsBody(slug, tracking, status)))
+      .then(([tracking, status]) => section.replaceChildren(...settingsBody(slug, tracking, status).filter(Boolean)))
       .catch(() => section.replaceChildren(h('div', { class: 'tile-head' }, h('h2', { text: 'Re-checks and usage' })), h('p', { class: 'tile-sub', text: 'Could not load. Try again.' })));
     return section;
   },
@@ -388,7 +440,7 @@ function settingsBody(slug, tracking, status) {
   const cron = status.cron && status.cron.secret_set ? null : h('p', { class: 'tile-sub', text: 'Scheduled checks need CRON_SECRET on the server. Until then, refresh by hand.' });
   return [
     h('div', { class: 'tile-head' }, h('h2', { text: 'Re-checks and usage' })),
-    h('div', { class: 'history-row' }, h('span', { class: 'label', text: 'Check Google' }), seg),
+    h('div', { class: 'history-row' }, h('span', { class: 'label label-plain', text: 'Check Google' }), seg),
     note,
     meter,
     h('p', { class: 'tile-sub', text: provider }),

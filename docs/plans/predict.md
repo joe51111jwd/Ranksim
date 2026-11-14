@@ -63,6 +63,38 @@ Features with the same positive sign in all 4 folds: title match, body match, su
 structured data, site presence. Word count, FAQ and links were negative in every fold, so the
 guidance never tells a user to add words or links on this data.
 
-## Forward results
+## Forward results (scored once on 2026-11-09)
 
-See `evals/predict-2026-11-14/report.json` and the section appended below after the single scoring run.
+Model frozen at commit dd566b7 before scoring. File: `evals/predict-2026-11-14/report.json`.
+Intervals: `intervals.json`, 95%, bootstrap over the 30 searches, computed after scoring from the same rows.
+
+Coverage: 299 Nov 9 rows, 202 returning, 97 new entries. 83 of 97 entries had fetched HTML and were
+scored. 14 were not (they sit tied at the bottom for every scorer and are dropped from entrant slices).
+50 entries were in no Nov 6 search at all (46 scored); those are the closest case to a real draft.
+
+| Slice | Hybrid with handicap | Hybrid, Nov 6 only | Persistence (entrants at bottom) |
+| --- | --- | --- | --- |
+| Full list, 1341 pairs | 0.788 (1056), 95% 0.74 to 0.83 | 0.773 (1037) | 0.694 (931) |
+| Returning pages only, 667 | 0.891 (594) | 0.891 | 0.891 |
+| New vs returning, 398 | 0.749 (298), 95% 0.70 to 0.80 | 0.701 (279) | 0.719 (286) |
+| New vs new, 151 | 0.609 (92), 95% 0.53 to 0.68 | 0.609 | cannot order (0) |
+| Never seen vs returning, 180 | 0.783 (141) | 0.756 | 0.722 (130) |
+| Never seen vs never seen, 87 | 0.644 (56), 95% 0.59 to 0.80 | 0.644 | cannot order (0) |
+
+Plain reading:
+- Most of the full-list gain over persistence comes from ordering new pages among themselves,
+  which persistence cannot do. That ordering is modestly above chance (0.61, interval 0.53 to 0.68).
+- Against pages already ranking, the model is close to "new pages land below everything"
+  (0.749 vs 0.719 on the same 398 pairs, intervals overlap). It is not a clear gain there.
+- The absolute PREDICTED position of a new page is not better than a constant guess:
+  mean error 2.55 positions vs 2.42 for always guessing position 6 (the training median).
+  So the product should present a draft's slot as a rough PREDICTED range with UNSURE, and lean on
+  order among candidates and on guidance.
+- Not 90%. One interval, one niche, HTML fetched 5 to 8 days late. The pre-existing LambdaMART
+  figures (0.477 draft vs ranking, 0.293 draft vs draft) used the private snapshot HTML and a
+  different draft definition, so they are not a like-for-like comparison.
+
+## Product guardrails added after scoring (do not change the scored numbers)
+
+- A new page that uses none of a search's words gets no PREDICTED slot for that search.
+- Guidance compares against pages from other sites only.

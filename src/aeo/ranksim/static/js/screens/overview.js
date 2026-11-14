@@ -5,7 +5,7 @@
    backtest 30, issues 40, opportunities 45, rankings 50, (55 is left for rank history), share 60,
    priority 70, competitors 80, pages 90, try 100. */
 
-import { S, h, icon, clear, main, plural, pct, bar, ring, link, go, page, footer, pulledText, noSearchData, openSheet, closeSheet, serpList, pathOf } from '../core.js';
+import { S, sourceName, isDemo, h, icon, clear, main, plural, pct, bar, link, go, page, footer, pulledText, noSearchData, openSheet, closeSheet, serpList, pathOf } from '../core.js';
 import { registerOverviewTile, registerScreen, overviewTiles, renderAll } from '../hooks.js';
 import { fit, predictionOf, predictionText, rankDots, positionColumns, shareBars, opportunities } from '../charts.js';
 import { issueRow } from './issues.js';
@@ -14,7 +14,7 @@ export function renderOverview() {
   const R = S.report;
   const K = R.kpis;
   const grid = h('div', { class: 'bento bento-dense' }, renderAll(overviewTiles(), R, { report: R, project: S.project, slug: S.slug }));
-  clear(main).append(page(R.name, `${R.site} · ${plural(K.searches, 'search', 'searches')}${pulledText(' · Google results from ')}`, null, grid), footer());
+  clear(main).append(page(R.name, `${R.site} · ${plural(K.searches, 'search', 'searches')}${isDemo(R) ? ' · Demo data, not Google results' : pulledText(' · Google results from ')}`, null, grid), footer());
 }
 
 registerScreen('overview', { label: 'Overview', order: 10, render: () => renderOverview() });
@@ -34,7 +34,7 @@ function head(title, action) {
 export function openSerp(row) {
   openSheet((sheet, closeBtn) => {
     const pred = predictionOf(row);
-    const status = row.position ? `You are #${row.position} on Google` : row.checked ? 'You are not in the top 10' : 'Not checked yet';
+    const status = row.position ? `You are #${row.position} ${isDemo() ? 'in the demo data' : 'on Google'}` : row.checked ? 'You are not in the top 10' : 'Not checked yet';
     sheet.append(h('div', { class: 'sheet-head' }, h('div', null, h('h2', { text: row.q }), h('div', { class: 'sub', text: pred ? `${status} · ${predictionText(pred)}` : status })), closeBtn));
     const body = h('div', { class: 'sheet-body' });
     if (row.top && row.top.length) body.append(serpList(row.top, { q: row.q }));
@@ -58,8 +58,9 @@ registerOverviewTile({
   order: 10,
   render(R) {
     const K = R.kpis;
-    return h('section', { class: 'tile white span-2', 'aria-label': 'On the first page of Google' },
-      h('div', { class: 'tile-k', text: 'On the first page of Google' }),
+    const where = isDemo(R) ? 'On the first page (demo data)' : 'On the first page of Google';
+    return h('section', { class: 'tile white span-2', 'aria-label': where },
+      h('div', { class: 'tile-k', text: where }),
       h('div', { class: 'tile-big' }, R.search_data ? String(K.top10) : '0', h('small', { text: `of ${plural(K.searches, 'search', 'searches')}` })),
       R.search_data ? chart((width) => positionColumns(R.rankings, { width, height: 150 }), 'chart-cols') : h('div', { class: 'tile-sub', text: 'Positions appear once Google results are pulled.' }));
   },
@@ -81,12 +82,13 @@ registerOverviewTile({
   key: 'backtest',
   order: 30,
   render(_R, ctx) {
+    // A same-snapshot backtest is not accuracy (MISSION.md), so it is quiet text: no ring, no big number.
     const P = ctx.project || {};
     const acc = P.model && P.model.pairwise != null ? P.model.pairwise : null;
-    return h('section', { class: 'tile' },
-      h('div', { class: 'tile-k', text: 'Same-day backtest' }),
-      ring(acc, acc != null ? pct(acc) : 'None', 'pairs right'),
-      h('div', { class: 'tile-sub', text: acc != null ? 'Searches left out of training, same snapshot. 50% is a coin flip. Not forward accuracy.' : 'Appears once rankings are pulled.' }));
+    const pairs = P.model && P.model.pairs ? ` of ${Number(P.model.pairs).toLocaleString('en-US')} page pairs` : '';
+    return h('section', { class: 'tile backtest-quiet' },
+      h('div', { class: 'tile-k', text: 'Model check' }),
+      h('p', { class: 'tile-sub', text: acc != null ? `Backtest on this snapshot: ${pct(acc)}${pairs} ordered right. Not accuracy.` : 'A backtest appears once rankings are pulled. It is not accuracy.' }));
   },
 });
 
@@ -132,9 +134,9 @@ registerOverviewTile({
     const hasUnsure = preds.some((p) => p.unsure);
     return h('section', { class: 'tile white span-2' },
       head('Where you rank', link('searches', 'All searches', { class: 'btn btn-plain' })),
-      R.rankings.length ? chart((width) => rankDots(R.rankings, { width }), 'chart-dots') : h('div', { class: 'empty-note', text: 'No searches yet. Add some in Settings.' }),
+      R.rankings.length ? chart((width) => rankDots(R.rankings, { width, source: sourceName(R) }), 'chart-dots') : h('div', { class: 'empty-note', text: 'No searches yet. Add some in Settings.' }),
       R.rankings.length ? h('div', { class: 'legend' },
-        h('span', { class: 'l-on', text: 'Google position' }),
+        h('span', { class: 'l-on', text: `${sourceName(R)} position` }),
         hasPred ? h('span', { class: 'l-ring', text: 'PREDICTED' }) : null,
         hasUnsure ? h('span', { class: 'l-ring-unsure', text: 'PREDICTED, unsure' }) : null,
         h('span', { text: 'Out of the top 10' })) : null);

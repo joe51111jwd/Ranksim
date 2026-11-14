@@ -117,6 +117,11 @@ async function checkPredictTiles(page) {
   }
 }
 
+/* A domain that is not a site yet asks before it analyzes. Say Analyze. */
+async function analyze(p, timeout = SLOW * 3) {
+  await p.locator(SEL.openAnalyze).click({ timeout });
+}
+
 async function goto(page, path) {
   await page.goto(BASE + path, { waitUntil: 'domcontentloaded' });
   await page.waitForFunction((sel) => !document.querySelector(sel), SEL.loading, { timeout: SLOW });
@@ -195,7 +200,10 @@ try {
   await step('open-url', async () => {
     await page.fill(SEL.homeInput, SITE);
     await page.click(SEL.homeSubmit);
-    await page.waitForSelector(SEL.progress, { timeout: SLOW });
+    await page.waitForSelector(SEL.openAsk, { timeout: SLOW });
+    expect(/Analyze .* as a client site\?/.test(await page.innerText(SEL.openAsk)), 'a new domain asks before it analyzes');
+    await audit(page, 'desktop-03a-ask');
+    await analyze(page);
     await page.waitForSelector(SEL.progressStep);
     await audit(page, 'desktop-03-analyzing');
     await page.waitForURL(/\/app\//, { timeout: SLOW });
@@ -205,6 +213,28 @@ try {
     await page.waitForFunction((sel) => /Report ready/.test(document.querySelector(sel).textContent), SEL.toast);
     expect(await page.isVisible(SEL.nav), 'the section nav appears once the report exists');
     await audit(page, 'desktop-04-opened');
+  });
+
+  await step('just-edit', async () => {
+    // A competitor's page opens in the editor; Just edit never creates a site and never analyzes.
+    const before = await page.evaluate(async () => (await (await fetch('/api/v1/projects')).json()).projects.length);
+    const posts = [];
+    const onRequest = (r) => { if (/\/api\/v1\/sites$/.test(r.url()) && r.method() === 'POST') posts.push(r.url()); };
+    page.on('request', onRequest);
+    await goto(page, '/');
+    await page.fill(SEL.homeInput, 'alpha.example/dirt-work-software');
+    await page.click(SEL.homeSubmit);
+    await page.waitForSelector(SEL.openAsk, { timeout: SLOW });
+    await page.frameLocator(SEL.editorFrame).locator('h1').first().waitFor({ timeout: SLOW });
+    await page.click(SEL.openJustEdit);
+    await page.waitForSelector(SEL.openEditing);
+    await audit(page, 'desktop-04b-just-edit');
+    await page.waitForTimeout(500);
+    page.off('request', onRequest);
+    const after = await page.evaluate(async () => (await (await fetch('/api/v1/projects')).json()).projects.length);
+    expect(after === before, `Just edit adds no site (${before} before, ${after} after)`);
+    expect(!posts.length, 'Just edit starts no analysis');
+    expect(/\/edit/.test(page.url()), 'the competitor page stays in the editor');
   });
 
   await step('settings-and-refresh', async () => {
@@ -232,6 +262,9 @@ try {
     for (const c of charts) expect(c.role === 'img' && c.title && c.desc && c.w > 100, `chart is labeled and sized: ${JSON.stringify(c)}`);
     const titles = charts.map((c) => c.title).join('|');
     expect(/Where you rank/.test(titles) && /Who takes the top 10/.test(titles) && /Position distribution/.test(titles), `chart titles: ${titles}`);
+    const backtest = await page.locator('.backtest-quiet').innerText();
+    expect(/Not accuracy/.test(backtest) && !(await page.locator('.backtest-quiet .ring').count()), `the backtest is quiet text: ${backtest}`);
+    expect(!(await page.locator('main .ring').count()), 'no backtest ring on the Overview');
     await audit(page, 'desktop-06-overview');
     await page.locator(SEL.opportunity).filter({ hasText: SEARCHES[0] }).click();
     await page.waitForSelector(SEL.sheet);
@@ -341,6 +374,8 @@ try {
     await sheet.locator(':text("Top 10 on Google")').waitFor();
     expect((await sheet.locator(SEL.serpRow).count()) >= 5, 'the search sheet lists the real top 10');
     expect((await sheet.locator(SEL.serpYou).count()) === 1, 'your page is marked in the search sheet');
+    const edit = await sheet.locator(SEL.serpEdit).first().getAttribute('href');
+    expect(new URL(edit, BASE).searchParams.get('q') === SEARCHES[0], `the pencil opens the editor on this search: ${edit}`);
     const gaps = await sheet.locator(':text("What the pages above have")').count();
     expect(gaps >= 1, 'the search sheet shows the gaps against the pages above');
     await audit(page, 'desktop-09b-search-sheet');
@@ -628,6 +663,10 @@ try {
     await page.waitForURL(/\/app\//, { timeout: SLOW });
     await page.waitForSelector(SEL.chart, { timeout: SLOW });
     await audit(page, 'desktop-13-demo-overview');
+    const demoText = await page.innerText('main');
+    expect(!/Google position|first page of Google|on Google/.test(demoText), 'demo positions never say Google');
+    const chartText = (await page.$$eval('svg.rc title, svg.rc desc, svg.rc text', (l) => l.map((n) => n.textContent))).join(' ');
+    expect(!/on Google|Google position/.test(chartText), `demo charts never say Google: ${chartText.match(/.{30}Google.{20}/)}`);
     await goto(page, '/');
     expect((await page.locator(SEL.siteCard).count()) >= 2, 'recent sites lists both sites');
     expect(!(await page.isVisible(SEL.homeDemo)), 'the demo entry is a site card once it exists');
@@ -650,6 +689,7 @@ try {
     await tab.goto(`${BASE}/edit?url=${encodeURIComponent(site)}`);
     const h1 = tab.frameLocator(SEL.editorFrame).locator('h1').first();
     await h1.waitFor({ timeout: SLOW * 3 });
+    await analyze(tab);
     const base = await tab.evaluate(async (u) => (await import('/studio/js/editor/editor.js')).draftFor(u).base, site);
     expect(base && base.length > 100, 'the first loaded draft has the page');
     // Watch the draft from inside the page: it must never go empty or get a different base once loaded.
@@ -696,6 +736,7 @@ try {
       one.goto(`${BASE}/edit?url=${encodeURIComponent('https://www.slow-a.example/')}`),
       two.goto(`${BASE}/edit?url=${encodeURIComponent('https://www.slow-b.example/')}`),
     ]);
+    await Promise.all([analyze(one), analyze(two)]);
     // Each analysis is timed by its own done signal (the project shows as built), not by a fixed URL timeout, so a
     // busy machine only makes it slower, never flaky. Generous headroom: six minutes per site.
     const HEADROOM = 360000;
@@ -726,6 +767,7 @@ try {
     const tab = await desk.newPage();
     watch(tab, 'reattach');
     await tab.goto(`${BASE}/edit?url=${encodeURIComponent('https://www.slow-c.example/')}`);
+    await analyze(tab);
     await tab.waitForSelector('.progress-tile .step.done', { timeout: SLOW * 3 });
     expect(!/\/app\//.test(tab.url()), 'still analyzing when the page reloads');
     await tab.reload();
@@ -763,6 +805,7 @@ try {
     });
     await tab.fill(SEL.homeInput, 'www.slow-p.example');
     await tab.click(SEL.homeSubmit);
+    await analyze(tab);
     await tab.waitForURL(/\/app\//, { timeout: SLOW * 3 });
     await tab.waitForSelector(SEL.editorFrame, { timeout: SLOW * 3 });
     expect(posts >= 2, `the app posted again after a pause (${posts} posts, ${paused} paused answers)`);

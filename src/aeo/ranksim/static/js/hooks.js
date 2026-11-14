@@ -43,10 +43,12 @@
    registerEditorPanel({ key, order, render(ctx) })
      Adds a tile to the editor's side column. Panels repaint whenever the draft changes, except the panel that holds
      keyboard focus: it stays as it is, and stays still on screen while the panels around it change height. Built-in
-     keys and orders: open-progress 5 (while a new site is analyzed), test 10, snippet 20, fields 30, stats 40.
+     keys and orders: open-progress 5 (while a new site is analyzed), test 10, editor-changes 15, snippet 20,
+     editor-outline 25, fields 30, stats 40, editor-versions 50.
 
    registerEditorTool({ key, order, render(ctx) })
-     Adds a control to the editor toolbar (right side). Built-in keys and orders: mode 50, device 60.
+     Adds a control to the editor toolbar (right side). Built-in keys and orders: editor-history 20 (undo, redo), editor-block 30
+     (Text, H2, H3), editor-insert 40, mode 50, device 60.
 
    The editor ctx (panels, tools, and the editor events below):
      url           the address of the page being edited (the draft's own URL once loaded)
@@ -80,6 +82,18 @@
                    the draft changed, fires 'draft-changed'. Returns true when an element matched.
      repaint()     repaints the side column.
      test()        runs Test changes for the current search.
+     exportHtml()  the full page to publish or download: the original HTML as fetched (scripts, styles, comments
+                   intact) with the draft's edits applied, and no data-rs attributes. Untouched parts are byte for byte
+                   the original. Before the page has loaded it is draft.text.
+     diff()        what changed against the page as loaded, block by block in plain words:
+                   { changes: [{ type: 'changed' | 'added' | 'removed' | 'moved', kind, label, before, after,
+                   words? }], counts: { changed, added, removed, moved }, total, summary }. summary is one sentence such
+                   as "1 change and 2 additions." or "No changes yet.". label reads like "Main heading
+                   changed"; words is a word diff [{ op: '=' | '+' | '-', text }] for changed blocks.
+     undo(), redo()  step through the draft's history (visual, HTML, inserted blocks, title and description share one
+                   history). Return true when something changed. canUndo, canRedo: booleans.
+     The preview marks every element with data-rs-id (the round trip uses it). serialize-time rules above still
+     hold: getHtml() and draft.text never contain data-rs attributes.
 
    ---------------------------------------------------------------- settings and searches
 
@@ -105,8 +119,10 @@
      'report-loaded'  { report, project, slug }  after a site's report and project load or reload.
      'editor-ready'   editor ctx  each time the editor shows a draft: in Visual mode once the preview document has
                       loaded (ctx.doc() is live), in HTML mode once the code view is shown (ctx.doc() is null).
-     'draft-changed'  editor ctx plus { source: 'visual' | 'html' | 'title' | 'meta' | 'api' }  after the draft
-                      HTML changes. Visual edits are debounced; HTML typing fires per change, so debounce heavy work.
+     'draft-changed'  editor ctx plus { source: 'visual' | 'html' | 'title' | 'meta' | 'api' | 'undo' | 'redo' |
+                      'restore' }  after the draft HTML changes ('restore': edits brought back from this browser's
+                      autosave). Visual edits are debounced; HTML typing is debounced too.
+     'editor-caret'   editor ctx  when the cursor moves in the preview (the block toolbar follows it).
      'test-finished'  { run, search, url, page, html, editor }  after Test changes returns. run is the API answer;
                       editor is the editor ctx, or null if the person already left the editor.
 

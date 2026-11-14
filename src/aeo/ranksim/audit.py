@@ -294,16 +294,55 @@ def pixels(text: str) -> int:
 
 
 def clean_cut(text: str, limit: int) -> str | None:
-    """Text cut to limit at a sentence or clause end, never with "...". None when no clean cut keeps half of it."""
+    """Text cut to limit at the latest sentence, clause or list break, never with "...". None when no clean cut
+    keeps half of it."""
     text = squash(text)
     if len(text) <= limit:
         return text
     head = text[:limit]
-    for mark in (". ", "! ", "? ", "; ", ", ", " | ", ": "):
+    best = -1
+    mark_at = ""
+    for mark in (". ", "! ", "? ", "; ", ", ", " | ", ": ", " & ", " and "):
         at = head.rfind(mark)
-        if at >= limit // 2:
-            return head[:at].rstrip(" ,;:|") + ("." if mark.strip() in {".", "!", "?"} else "")
-    return None
+        if at > best:
+            best, mark_at = at, mark
+    if best < limit // 2:
+        return None
+    return head[:best].rstrip(" ,;:|&") + ("." if mark_at.strip() in {".", "!", "?"} else "")
+
+
+INFO = re.compile(r"[$\u00a3\u20ac]|(?<![\d.])(?!(?:19|20)\d\d(?!\d))\d{1,4}(?![\d])|\b(price|pricing|priced|cost|costs|free|trial|per month|per user|plans?)\b", re.I)
+
+
+def keep_sentences(text: str, limit: int = META_TARGET) -> str | None:
+    """The text shortened to limit by dropping whole sentences, keeping the ones that carry facts a buyer wants
+    (a price, a number, "free trial") ahead of the rest, in their original order. None when no set fits."""
+    from itertools import combinations
+
+    text = squash(text)
+    if len(text) <= limit:
+        return text
+    parts = [part for part in re.split(r"(?<=[.!?])\s+", text) if part]
+    if len(parts) > 8:
+        parts = parts[:8]
+    best, best_score = None, None
+    for size in range(len(parts), 0, -1):
+        for picked in combinations(range(len(parts)), size):
+            candidate = " ".join(parts[i] for i in picked)
+            if len(candidate) > limit:
+                continue
+            score = (0 in picked, sum(1 for i in picked if INFO.search(parts[i])), len(candidate))
+            if best_score is None or score > best_score:
+                best, best_score = candidate, score
+    return best
+
+
+def undash(text: str | None) -> str | None:
+    """Our own words never carry an em or en dash: a spaced one becomes a comma, a range becomes a hyphen."""
+    if not text:
+        return text
+    text = re.sub(r"\s+[\u2013\u2014]\s+", ", ", text)
+    return text.replace("\u2013", "-").replace("\u2014", ", ")
 
 
 def trim_sentences(text: str, limit: int = META_TARGET) -> str:
@@ -1049,11 +1088,15 @@ UTILITY_PATH = re.compile(
 
 
 def same_content(one: PageDoc, two: PageDoc) -> bool:
-    """True when two pages show the same text (an alias serving its canonical page's HTML)."""
+    """True when two pages are the same page: a URL that redirects (the crawl stores the page it lands on), or an
+    alias serving its canonical page's HTML. Pages fetched at different times differ in dates, related links and
+    tokens, so the same title and H1 is enough; otherwise the text must nearly match."""
     if (one.html or "") == (two.html or ""):
         return True
+    if one.title and fold(one.title) == fold(two.title) and fold(one.h1) == fold(two.h1):
+        return True
     a, b = set(words_in(fold(one.text))), set(words_in(fold(two.text)))
-    return bool(a) and bool(b) and len(a & b) / len(a | b) >= 0.9
+    return bool(a) and bool(b) and len(a & b) / len(a | b) >= 0.8
 
 
 def _dedupe(pages: list[PageDoc]) -> list[PageDoc]:
@@ -1141,6 +1184,69 @@ def core_title(title: str, brand: str) -> str:
     return " | ".join(kept) if kept else squash(title)
 
 
+def add_missing(search: str, text: str, page_text: str) -> str | None:
+    """The text with only the search words it lacks added, when those words open or close the search
+    ("all in one" + "Dirtwork Software for Crews" -> "All in one dirtwork software for crews"). None otherwise."""
+    words = search.split()
+    gap = set(missing_words(search, text))
+    if not gap or len(gap) == len([w for w in words if fold(w) not in STOP]):
+        return None
+    flags = [fold(word) in gap or fold(word) in STOP for word in words]
+    lead = 0
+    while lead < len(words) and flags[lead]:
+        lead += 1
+    tail = len(words)
+    while tail > 0 and flags[tail - 1]:
+        tail -= 1
+    inner_missing = any(fold(word) in gap for word in words[lead:tail])
+    if inner_missing:
+        return None
+    if tail < len(words) and (len(text.split()) > 6 or re.search(r"[?!.:]", text)):
+        return None  # words tacked onto the end of a sentence or question never read well
+    shown = [word for word in text.split() if word[:1].isalpha() and fold(word) not in STOP and fold(word) not in {"of", "to", "in", "on", "at", "by"}]
+    titled = bool(shown) and sum(1 for word in shown if word[:1].isupper()) / len(shown) >= 0.6
+
+    def style(part: str, first: bool) -> str:
+        part = cased(part, page_text)
+        if not first and not titled and not part[:2].isupper():
+            part = part[:1].lower() + part[1:]
+        if titled:
+            return " ".join(word if word[:1].isupper() or fold(word) in STOP else word[:1].upper() + word[1:] for word in part.split())
+        return part
+
+    before = style(" ".join(words[:lead]), True) if lead else ""
+    after = style(" ".join(words[tail:]), False) if tail < len(words) else ""
+    if before and not titled and not text[:2].isupper():
+        text = text[:1].lower() + text[1:]
+    out = squash(f"{before} {text} {after}")
+    return out[:1].upper() + out[1:]
+
+
+def natural_title(page: "PageDoc", search: str, brand: str) -> str | None:
+    """A title that names the search and still reads like the page: the H1 when it already names the search, else
+    the search in front of the page's own title. None when neither fits; an exact-match title is never suggested."""
+    core = core_title(page.title, brand)
+    options = []
+    if page.h1 and covers(search, page.h1) and fold(page.h1) != fold(search):
+        options.append(page.h1)
+    lead = cased(search, page.text)
+    clause = re.split(r"\s*[:|?]\s+", core)[0] if core else ""
+    for base in dict.fromkeys(item for item in (core, clause) if item):
+        added = add_missing(search, base, page.text)
+        if added:
+            options.append(added)
+    if core and covers(core, lead, 0.9):
+        options.append(lead)  # the search already holds every word of the title: it is the natural title
+    elif core and not covers(lead, core, 0.5):
+        options.append(f"{lead}: {core}")
+    for option in options:
+        option = squash(re.sub(r"\s*[\u2013\u2014]\s*", ", ", option))
+        for candidate in ([f"{option} | {brand}"] if brand and compact(brand) not in compact(option) else []) + [option]:
+            if len(candidate) <= TITLE_MAX + 10 and pixels(candidate) <= TITLE_PIXELS:
+                return candidate
+    return None
+
+
 def visible_title(title: str) -> str:
     """Roughly what Google shows of a title: the words that fit in TITLE_PIXELS."""
     out = []
@@ -1204,7 +1310,7 @@ def make_issue(
     if element:
         issue["element"] = element
     if suggestion:
-        issue["suggestion"] = suggestion
+        issue["suggestion"] = suggestion if action == "retag" else undash(suggestion)
         issue["action"] = action or ("attr" if attr else "text")
     if evidence:
         issue["evidence"] = [str(item) for item in evidence if item]
@@ -1464,8 +1570,7 @@ def check_titles(ctx: AuditContext) -> list[dict]:
         width = pixels(title)
         core = core_title(title, brand)
         if width > TITLE_PIXELS and pixels(core) > TITLE_PIXELS - 20:  # a cut that only loses the brand is fine
-            lead = cased(target, page.text) if target and not covers(target, visible_title(title)) else core
-            suggestion = compose_title(lead, "", brand)
+            suggestion = compose_title(core, "", brand) or clean_cut(core, TITLE_MAX)
             issues.append(
                 make_issue(
                     "title-long", f"Title is {len(title)} characters, too wide for Google",
@@ -1489,8 +1594,8 @@ def check_titles(ctx: AuditContext) -> list[dict]:
             issues.append(
                 make_issue(
                     "title-search", f"Title doesn't name \"{target}\"", f"{page.path} is your page for \"{target}\" in Google, but its title is missing {missing_text(target, title)}. The title is the strongest on-page signal.",
-                    page=page, search=target, el=page.title_el, suggestion=compose_title(lead, core_title(title, brand), brand),
-                    fix="Start the title with the search, then the brand.",
+                    page=page, search=target, el=page.title_el, suggestion=natural_title(page, target, brand),
+                    fix="Work the search into the start of the title in plain words, then the brand."
                 )
             )
     for _title, group in by_title.items():
@@ -1562,7 +1667,7 @@ def check_meta(ctx: AuditContext) -> list[dict]:
             issues.append(
                 make_issue(
                     "meta-long", f"Meta description is {len(meta)} characters", f"Google cuts it near {META_MAX}, so the end of the description of {page.path} won't show.",
-                    page=page, el=page.meta_el, attr="content", suggestion=good_meta(clean_cut(meta, META_TARGET)), fix="Shorten it and put the point first.",
+                    page=page, el=page.meta_el, attr="content", suggestion=good_meta(undash(keep_sentences(meta, META_TARGET) or clean_cut(meta, META_TARGET))), fix="Shorten it and put the point first.",
                 )
             )
         elif len(meta) < META_MIN:
@@ -1629,7 +1734,10 @@ def check_headings(ctx: AuditContext) -> list[dict]:
                 )
             if target and not covers(target, page.h1) and not ctx.utility(page):
                 lead = cased(target, page.text)
-                suggestion = f"{lead}: {page.h1}" if len(lead) + len(page.h1) <= 70 else None
+                suggestion = add_missing(target, page.h1, page.text)
+                share = len(missing_words(target, page.h1)) / max(1, len(tokens(target)))
+                if suggestion is None and share >= 0.5 and len(lead) + len(page.h1) <= 70:
+                    suggestion = f"{lead}: {page.h1}"
                 issues.append(
                     make_issue(
                         "h1-search", f"H1 doesn't name \"{target}\"", f"The H1 on {page.path} says \"{short(page.h1, 70)}\" and is missing {missing_text(target, page.h1)}.",
@@ -1692,8 +1800,8 @@ def check_content(ctx: AuditContext) -> list[dict]:
                 issues.append(
                     make_issue(
                         "no-answer", f"No section answers \"{search}\"", f"None of the {len(heads)} headings on {page.path} names \"{search}\", so Google has no section to match the search to.",
-                        page=page, search=search, el=page.main, suggestion=f"<h2>{_html_text(lead)}</h2>", action="append",
-                        fix="Add a section under a heading that names the search, and answer it in the first two sentences.",
+                        page=page, search=search, el=page.main,
+                        fix=f"Add a section under a heading such as \"{lead}\", and answer the search in its first two sentences.",
                     )
                 )
     return issues
@@ -2111,7 +2219,7 @@ def check_rankings(ctx: AuditContext) -> list[dict]:
             make_issue(
                 "behind", f"#{row['position']} for \"{search}\"", f"{page.path} is on page one, but {detail}.",
                 page=page, search=search, el=page.title_el if title_gap else page.main,
-                suggestion=compose_title(cased(search, page.text), core_title(page.title, ctx.brand), ctx.brand) if title_gap and page.title_el is not None else None,
+                suggestion=natural_title(page, search, ctx.brand) if title_gap and page.title_el is not None else None,
                 evidence=[f"{item.get('position')}. {item.get('url')}" for item in leaders],
                 fix="Open it in the editor, make the change, and test it.",
             )

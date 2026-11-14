@@ -103,7 +103,7 @@ def test_title_missing_long_short_duplicate_and_search():
     assert by_page[f"{SITE}/e/"]["suggestion"].startswith("Machine maintenance logs") and "/d/" in by_page[f"{SITE}/e/"]["comment"]
     search = only(issues, "title-search")[0]
     assert search["page"] == f"{SITE}/d/" and search["search"] == "haul ticket app"
-    assert search["suggestion"].lower().startswith("haul ticket app") and len(search["suggestion"]) <= A.TITLE_MAX
+    assert search["suggestion"].lower().startswith("haul ticket app") and A.pixels(search["suggestion"]) <= A.TITLE_PIXELS
     assert_selectors_match(issues, pages)
 
 
@@ -196,7 +196,7 @@ def test_thin_thinner_than_top_three_and_no_section_for_the_search():
     assert "1,488" in versus[0]["comment"] or "1,500" in versus[0]["comment"] or "median" in versus[0]["comment"]
     answer = only(issues, "no-answer")[0]
     assert answer["page"] == f"{SITE}/mid/" and answer["search"] == "electronic haul ticket software"
-    assert answer["suggestion"] == "<h2>Electronic haul ticket software</h2>" and answer["action"] == "append"
+    assert "suggestion" not in answer and "Electronic haul ticket software" in answer["fix"]  # never an empty heading to paste
     assert_selectors_match(issues, pages)
 
 
@@ -872,3 +872,47 @@ def test_repeated_long_ids_stay_valid_share_ids():
     assert len(set(ids)) == len(ids)
     assert all(re.fullmatch(r"[a-z0-9][a-z0-9-]{0,119}", value) for value in ids), ids
     assert ids[1].endswith("-2") and ids[2].endswith("-3")
+
+
+# -- pre-deploy QA (SmartCrew walkthrough) ----------------------------------------------------------
+
+
+def test_a_redirecting_url_is_an_alias_even_when_the_pages_differ_a_little():
+    target = f"{SITE}/blog/gc-software-vs-dirtwork-software/"
+    alias = f"{SITE}/construction-management-software/"
+    body = f"<main><h1>GC software vs dirtwork software</h1><p>{FILLER}</p>%s</main>"
+    canon = f'<link rel="canonical" href="{target}">'
+    page_html = lambda extra: page(title="GC software vs dirtwork software | Shovel", body=body % extra).replace('<link rel="canonical" href="{url}">', canon)
+    pages = {
+        target: page_html("<aside>Related: " + " ".join(f"post{i}" for i in range(120)) + "</aside>"),
+        alias: page_html("<aside>Related: " + " ".join(f"other{i}" for i in range(120)) + "</aside>"),  # fetched later, other related posts
+    }
+    issues = A.audit_html(pages)
+    assert "canonical-other" not in kinds(issues)
+    assert not [issue for issue in issues if issue.get("page") == alias]
+
+
+def test_no_dash_in_any_suggestion():
+    body = "<main><h1>Dirt work software — built for crews</h1><p>" + FILLER + "</p></main>"
+    pages = {
+        f"{SITE}/a/": page(title=None, body=body),
+        f"{SITE}/b/": page(meta="Crew time, machines and loads in one app – job cost the same day. Plans start at $49 per month for crews of 5 to 100 people, with a free trial for 14 days."),
+    }
+    issues = run(pages)
+    assert any(issue.get("suggestion") for issue in issues)
+    for issue in issues:
+        assert "–" not in (issue.get("suggestion") or "") and "—" not in (issue.get("suggestion") or ""), issue
+
+
+def test_fix_suggestions_read_naturally():
+    url = f"{SITE}/cms/"
+    pages = {url: page(title="Buildertrend, JobTread or Procore for excavation? | Shovel", body=f"<main><h1>Buildertrend, JobTread or Procore for excavation?</h1><p>{FILLER}</p></main>")}
+    rows = [_row("dirt work management software", url, 8, RIVALS + [url])]
+    issues = run(pages, rankings=rows, docs={u: _rival(400) for u in RIVALS})
+    assert all(issue.get("action") != "append" or "<h2>" not in (issue.get("suggestion") or "") for issue in issues)  # never an empty heading
+    for issue in issues:
+        if issue["kind"] in {"title-search", "behind"} and issue.get("suggestion"):
+            assert "Buildertrend" in issue["suggestion"], issue["suggestion"]  # keeps the page's own title, not an exact-match swap
+    long_meta = "SmartCrew runs crews, machines and job cost for dirt work companies of 5 to 100 people. It replaces paper timecards. Plans start at $49 per month with a free trial."
+    meta = only(run({f"{SITE}/m/": page(meta=long_meta)}), "meta-long")[0]
+    assert "$49" in meta["suggestion"] and len(meta["suggestion"]) <= A.META_TARGET

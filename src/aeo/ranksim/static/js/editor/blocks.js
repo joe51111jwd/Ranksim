@@ -80,16 +80,24 @@ const squash = (text) => String(text || '').replace(/\s+/g, ' ').trim();
 export function faqPairs(section) {
   const pairs = [];
   let current = null;
+  const add = (text) => {
+    if (current && text) current.a = squash(`${current.a} ${text}`);
+  };
   const visit = (node) => {
     for (const child of Array.from(node.childNodes)) {
+      if (child.nodeType === 3) { // bare text typed after a question
+        add(squash(child.data));
+        continue;
+      }
       if (child.nodeType !== 1) continue;
-      if (QUESTION.has(child.tagName)) {
+      const tag = child.tagName.toUpperCase();
+      if (QUESTION.has(tag)) {
         current = { q: squash(child.textContent), a: '' };
         pairs.push(current);
-      } else if (child.tagName === 'DETAILS' || child.tagName === 'DL' || child.tagName === 'DIV') {
-        visit(child);
-      } else if (current && !/^H[12]$/.test(child.tagName) && child.tagName !== 'SCRIPT') {
-        current.a = squash(`${current.a} ${child.textContent}`);
+      } else if (/^(DETAILS|DL|DIV|SECTION)$/.test(tag) && first(child, (el) => QUESTION.has(el.tagName.toUpperCase()))) {
+        visit(child); // a wrapper around more questions
+      } else if (!/^H[12]$/.test(tag) && tag !== 'SCRIPT' && tag !== 'STYLE') {
+        add(squash(child.textContent));
       }
     }
   };
@@ -142,7 +150,8 @@ function first(root, test) {
   return null;
 }
 
-const levelOf = (el) => (el && el.nodeType === 1 && /^H[1-6]$/.test(el.tagName) ? Number(el.tagName[1]) : 0);
+const tagOf = (el) => String(el.tagName || '').toUpperCase(); // svg elements have lowercase tag names in the DOM
+const levelOf = (el) => (el && el.nodeType === 1 && /^H[1-6]$/.test(tagOf(el)) ? Number(tagOf(el)[1]) : 0);
 const SKIP_OUTLINE = new Set(['SVG', 'TEMPLATE', 'SCRIPT', 'STYLE', 'NOSCRIPT']);
 
 function bodyOf(doc) {
@@ -156,7 +165,7 @@ export function outline(doc) {
   const flat = [];
   const visit = (node) => {
     for (const child of Array.from(node.childNodes)) {
-      if (child.nodeType !== 1 || SKIP_OUTLINE.has(child.tagName)) continue;
+      if (child.nodeType !== 1 || SKIP_OUTLINE.has(tagOf(child))) continue;
       const level = levelOf(child);
       if (level) {
         const text = squash(child.textContent);
@@ -219,21 +228,30 @@ export function moveSection(heading, target, place = 'before') {
 
 export const SWITCHABLE = ['p', 'h2', 'h3'];
 const TEXT_BLOCK = new Set(['P', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'DIV']);
+const INLINE = new Set(['A', 'ABBR', 'B', 'BDI', 'BDO', 'BR', 'CITE', 'CODE', 'DATA', 'DFN', 'EM', 'FONT', 'I', 'IMG', 'KBD', 'LABEL', 'MARK', 'Q', 'S', 'SAMP', 'SMALL', 'SPAN', 'STRONG', 'SUB', 'SUP', 'TIME', 'U', 'VAR', 'WBR', 'DEL', 'INS', 'BIG', 'TT', 'NOBR']);
 
-/* The block the element toolbar acts on: the nearest paragraph or heading around a node. */
+/* The block the element toolbar acts on: the nearest paragraph or heading around a node. A div counts only when it
+   holds nothing but text and inline markup, since only that survives as a paragraph or heading. */
 export function textBlockOf(node) {
   for (let el = node && node.nodeType === 1 ? node : node && node.parentNode; el && el.nodeType === 1; el = el.parentNode) {
-    if (el.tagName === 'BODY' || el.tagName === 'HTML') return null;
-    if (TEXT_BLOCK.has(el.tagName) && (el.tagName !== 'DIV' || !first(el, (inner) => /^(P|H[1-6]|DIV|UL|OL|TABLE|SECTION)$/.test(inner.tagName)))) return el;
+    const tag = tagOf(el);
+    if (tag === 'BODY' || tag === 'HTML') return null;
+    if (!TEXT_BLOCK.has(tag)) continue;
+    if (first(el, (inner) => !INLINE.has(tagOf(inner)))) {
+      if (tag === 'DIV') continue;
+      return null; // a heading or paragraph holding blocks (invalid markup): leave it alone
+    }
+    return el;
   }
   return null;
 }
 
 /* Switches a block to another tag (p, h2, h3), keeping its attributes (and so its place in the original page) and
-   its contents. Returns the new element. */
+   its contents. Returns the new element, or the old one when the switch would not survive (blocks inside). */
 export function convertBlock(el, tag) {
   const name = String(tag).toLowerCase();
-  if (!SWITCHABLE.includes(name) || el.tagName.toLowerCase() === name) return el;
+  if (!SWITCHABLE.includes(name) || tagOf(el).toLowerCase() === name) return el;
+  if (first(el, (inner) => !INLINE.has(tagOf(inner)))) return el;
   const next = el.ownerDocument.createElement(name);
   for (const attr of Array.from(el.attributes)) next.setAttribute(attr.name, attr.value);
   while (el.firstChild) next.appendChild(el.firstChild);
@@ -241,16 +259,21 @@ export function convertBlock(el, tag) {
   return next;
 }
 
-/* Where an inserted block goes: after the block around the selection, never inside a list item, table or heading. */
+/* Where an inserted block goes: right after the paragraph, heading or figure around the cursor; out of a list or
+   table it is in. Returns the element to insert after, or null for the end of the page. */
 export function insertionPoint(node) {
-  let el = node && node.nodeType === 1 ? node : node && node.parentNode;
-  let best = null;
-  for (; el && el.nodeType === 1; el = el.parentNode) {
-    if (el.tagName === 'BODY' || el.tagName === 'HTML') break;
-    if (/^(P|H[1-6]|UL|OL|DL|TABLE|FIGURE|BLOCKQUOTE|PRE|SECTION|ARTICLE|DETAILS)$/.test(el.tagName)) best = el;
-    if (/^(SECTION|ARTICLE|MAIN)$/.test(el.tagName)) break;
+  let own = null;
+  let outer = null;
+  let inner = null;
+  for (let el = node && node.nodeType === 1 ? node : node && node.parentNode; el && el.nodeType === 1; el = el.parentNode) {
+    const tag = tagOf(el);
+    if (tag === 'BODY' || tag === 'HTML') break;
+    if (/^(UL|OL|DL|TABLE|PRE)$/.test(tag)) outer = el; // a block cannot go inside these
+    else if (!own && /^(P|H[1-6]|FIGURE|BLOCKQUOTE|DETAILS)$/.test(tag)) own = el;
+    if (!inner && !INLINE.has(tag)) inner = el;
   }
-  return best;
+  if (outer) return outer;
+  return own || inner;
 }
 
 /* Parses block markup into nodes owned by `doc` (a DOM document or a lite root). */

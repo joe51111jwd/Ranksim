@@ -16,8 +16,17 @@ export function markSeeThrough(doc) {
   visit(doc);
 }
 
+/* The page's own doctype, or none: a quirks mode page has to stay in quirks mode when the draft is read again. */
+export function doctypeOf(doc) {
+  const dt = doc.doctype;
+  if (!dt) return '';
+  const pub = dt.publicId ? ` PUBLIC "${dt.publicId}"` : '';
+  const sys = dt.systemId ? `${dt.publicId ? '' : ' SYSTEM'} "${dt.systemId}"` : '';
+  return `<!DOCTYPE ${dt.name}${pub}${sys}>\n`;
+}
+
 export function serializeDoc(doc) {
-  return `<!doctype html>\n${doc.documentElement.outerHTML}`;
+  return `${doctypeOf(doc)}${doc.documentElement.outerHTML}`;
 }
 
 /* source -> base. `clean(doc)` removes what the editor never shows (scripts, iframes) and settles streamed content. */
@@ -57,7 +66,7 @@ export function serializeDraft(doc) {
   root.querySelectorAll('[data-rs]').forEach((node) => node.remove());
   root.querySelectorAll('[data-rs-reveal]').forEach((node) => node.removeAttribute('data-rs-reveal'));
   unstash(root);
-  return `<!doctype html>\n${root.outerHTML}`;
+  return `${doctypeOf(doc)}${root.outerHTML}`;
 }
 
 /* HTML mode: the user edits the draft without ids. Parse what they typed, then put the ids back. */

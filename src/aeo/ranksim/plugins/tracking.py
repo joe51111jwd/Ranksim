@@ -7,7 +7,6 @@ whether a paid request is made.
 
 from __future__ import annotations
 
-import hmac
 import json
 import os
 import queue
@@ -31,7 +30,7 @@ DEFAULT_FRESH_HOURS = 6.0
 DEFAULT_CRON_SECONDS = 240.0
 MIN_PULL_SECONDS = 30.0
 COUNTERS = ("searches", "reused", "capped", "errors")
-USAGE_DIR = ".tracking"
+FEATURE = "tracking"
 USAGE_FILE = "usage.json"
 PLUGIN_DIR = ("plugins", "tracking")
 SCHEDULES = {"off": None, "daily": 24.0, "weekly": 168.0}
@@ -152,11 +151,12 @@ class Budget:
     """Monthly search counter, cap and freshness reuse for paid Google requests.
 
     Passed to project.pull(budget=...). Thread safe: the pull asks for searches from several threads. The counter
-    lives in <projects root>/.tracking/usage.json, which cloud storage mirrors with the projects folder.
+    lives in <folder>/usage.json; the plugin uses plugins.workspace_dir(ui, "tracking"), which is
+    <projects root>/_plugins/tracking/ and is kept by cloud storage like project data.
     """
 
-    def __init__(self, root: str | Path, *, cap: int | None = None, fresh_hours: float | None = None, clock=None) -> None:
-        self.root = Path(root)
+    def __init__(self, folder: str | Path, *, cap: int | None = None, fresh_hours: float | None = None, clock=None) -> None:
+        self.folder = Path(folder)
         self._cap = cap
         self._fresh_hours = fresh_hours
         self.clock = clock or _now
@@ -185,7 +185,7 @@ class Budget:
 
     @property
     def path(self) -> Path:
-        return self.root / USAGE_DIR / USAGE_FILE
+        return self.folder / USAGE_FILE
 
     # -- reading
 
@@ -302,7 +302,13 @@ def budget_for(ui) -> Budget:
     existing = (getattr(ui, "pull_options", None) or {}).get("budget")
     if isinstance(existing, Budget):
         return existing
-    return Budget(ui.root)
+    return Budget(_usage_folder(ui))
+
+
+def _usage_folder(ui) -> Path:
+    from aeo.ranksim import plugins
+
+    return plugins.workspace_dir(ui, FEATURE)
 
 
 def provider_status(settings, *, public_demo: bool = False) -> dict:
@@ -691,10 +697,8 @@ def _estimate_seconds(project) -> float:
 
 
 def _studio_run_pull():
-    try:
-        from aeo.ranksim.api.sites import _run_pull  # after the P0 split
-    except ImportError:
-        from aeo.ranksim.studio import _run_pull
+    from aeo.ranksim.api.sites import _run_pull
+
     return _run_pull
 
 
@@ -717,12 +721,11 @@ class _PullEvents:
 
 
 def _cloud_save(ui) -> str:
-    """Save to cloud storage when it is on. Returns an error name, or empty."""
-    cloud = getattr(ui, "cloud", None)
-    if cloud is None or not getattr(cloud, "enabled", False):
-        return ""
+    """plugins.save(ui): a GET route is not saved by the middleware. Returns an error name, or empty."""
+    from aeo.ranksim import plugins
+
     try:
-        cloud.save()
+        plugins.save(ui)
     except Exception as exc:  # noqa: BLE001 - reported, never fatal
         return type(exc).__name__
     return ""
@@ -847,30 +850,10 @@ def cron_authorized(header: str | None, secret: str | None = None) -> bool:
     secret = secret.strip()
     if not secret or not header:
         return False
-    return hmac.compare_digest(str(header).strip().encode(), f"Bearer {secret}".encode())
+    return secrets.compare_digest(str(header).strip().encode(), f"Bearer {secret}".encode())
 
 
 # -- 5. plugin hooks ------------------------------------------------------------------------------
-
-
-def _common():
-    try:
-        from aeo.ranksim.api import common  # after the P0 split
-    except ImportError:
-        from aeo.ranksim import studio as common
-    return common
-
-
-def _open_cron_path() -> None:
-    """The owner login must not block Vercel's cron call; the route checks its own bearer secret."""
-    for name in ("aeo.ranksim.api.common", "aeo.ranksim.studio"):
-        try:
-            module = __import__(name, fromlist=["OPEN_EXACT"])
-        except ImportError:
-            continue
-        exact = getattr(module, "OPEN_EXACT", None)
-        if isinstance(exact, set):
-            exact.add(CRON_PATH)
 
 
 def install_budget(ui) -> Budget:
@@ -881,7 +864,7 @@ def install_budget(ui) -> Budget:
         ui.pull_options = options
     budget = options.get("budget")
     if not isinstance(budget, Budget):
-        budget = Budget(ui.root)
+        budget = Budget(_usage_folder(ui))
         options["budget"] = budget
     return budget
 
@@ -890,9 +873,9 @@ def register(app, ui) -> None:
     from fastapi.concurrency import run_in_threadpool
     from fastapi.responses import JSONResponse
 
-    common = _common()
+    from aeo.ranksim.api import common
+
     install_budget(ui)
-    _open_cron_path()
 
     def error(status: int, message: str) -> JSONResponse:
         return JSONResponse({"error": message}, status_code=status)
@@ -951,11 +934,14 @@ def register(app, ui) -> None:
 
     @app.get(CRON_PATH)
     async def cron_recheck(request: Request) -> JSONResponse:
+        """Vercel Cron. Signed out by design: it proves itself with Authorization: Bearer <CRON_SECRET>."""
         if not cron_authorized(request.headers.get("authorization")):
             return error(401, "Unauthorized.")
         if getattr(ui, "public_demo", False):
             return error(403, "Re-checks do not run on the public demo.")
-        return JSONResponse(await run_in_threadpool(recheck, ui))
+        return JSONResponse(await run_in_threadpool(recheck, ui))  # recheck() calls plugins.save(ui) after its writes
+
+    cron_recheck.login_exempt = True
 
 
 def extend_report(report: dict, *, project, meta=None, database=None, ctx=None, ui=None) -> None:

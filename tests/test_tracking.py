@@ -136,7 +136,7 @@ def test_counter_counts_calls_and_persists_in_the_projects_folder(tmp_path):
     assert budget.claim("b") == "call"
     again = tracking.Budget(tmp_path, cap=3, clock=Clock())  # a new process reads the same file
     assert again.used() == 2 and again.remaining() == 1
-    assert (tmp_path / ".tracking" / "usage.json").is_file()
+    assert (tmp_path / "usage.json").is_file()
     assert again.claim("c") == "call"
     verdict = again.claim("d")
     assert verdict.startswith("monthly search cap reached: 3 of 3 searches used in November 2026")
@@ -858,8 +858,30 @@ def test_cron_route_auth(tmp_path, monkeypatch):
     assert client.get(tracking.CRON_PATH, headers={"authorization": "Bearer cron-test-secret"}).status_code == 403
 
 
-def test_cron_path_is_open_to_the_login_check(tmp_path):
-    from aeo.ranksim import studio
+def test_cron_is_login_exempt_in_the_real_app_and_nothing_else_is(tmp_path, monkeypatch):
+    from aeo.ranksim.serve import create_app
 
-    _client(tmp_path)
-    assert studio._is_open(tracking.CRON_PATH)
+    monkeypatch.setenv("CRON_SECRET", "cron-test-secret")
+    settings = _settings(tmp_path, serper_api_key="fake-serper")
+    app = create_app(
+        settings=settings,
+        database=settings.ranksim_database_url,
+        projects_root=tmp_path / "projects",
+        public_demo=False,
+        access_password="correct horse battery staple",
+        access_secret="test-secret",
+        pull_options={"serp_provider": FakeGoogle(), "fetcher": FakeCrawler(), "today": TODAY},
+    )
+    client = TestClient(app)
+    assert client.get("/api/v1/tracking/status").status_code == 401  # signed out
+    assert client.get("/api/v1/projects/x/history").status_code == 401
+    assert client.get(tracking.CRON_PATH).status_code == 401  # signed out and no bearer
+    ok = client.get(tracking.CRON_PATH, headers={"authorization": "Bearer cron-test-secret"})
+    assert ok.status_code == 200 and ok.json()["provider"] == "Serper"
+    usage_folder = tmp_path / "projects" / "_plugins" / "tracking"
+    assert usage_folder.is_dir() and not (tmp_path / "projects" / ".tracking").exists()
+
+
+def test_budget_lives_in_the_workspace_plugin_folder(tmp_path):
+    client, ui = _client(tmp_path)
+    assert ui.pull_options["budget"].path == ui.root / "_plugins" / "tracking" / "usage.json"

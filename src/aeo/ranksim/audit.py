@@ -120,6 +120,8 @@ WORD = re.compile(r"[^\W_]+(?:['’][^\W_]+)?")
 SCHEMA_TYPES = ("FAQPage", "Product", "Organization", "SoftwareApplication", "LocalBusiness", "HowTo", "Article", "BreadcrumbList", "Review", "AggregateRating", "VideoObject")
 GAP_TYPES = ("FAQPage", "Product", "Organization", "SoftwareApplication", "LocalBusiness", "HowTo", "BreadcrumbList", "AggregateRating")
 SIZE_HINT = re.compile(r"(?<![0-9])(\d{3,5})\s*[x×]\s*(\d{3,5})(?![0-9])")
+LD_SCRIPT = re.compile(r"<script[^>]*type\s*=\s*[\"']?application/ld\+json[\"']?[^>]*>(.*?)</script>", re.I | re.S)
+ITEMTYPE = re.compile(r"itemtype\s*=\s*[\"']([^\"']+)[\"']", re.I)
 WIDTH_HINT = re.compile(r"(?:[-_@](\d{4,5})w(?![a-z])|[?&](?:w|width)=(\d{4,5})(?!\d))", re.I)
 
 
@@ -244,6 +246,7 @@ class PageDoc:
     http_status: int | None = None
     headers: dict = field(default_factory=dict)
     image_bytes: dict = field(default_factory=dict)  # image URL -> size in bytes, when the crawl measured it
+    facts: SitePage | None = None  # stored facts: a top 10 page is compared on these without parsing its HTML
 
     @property
     def ok(self) -> bool:
@@ -266,18 +269,49 @@ class PageDoc:
         return self.soup.body or self.soup
 
     @cached_property
+    def _index(self) -> tuple[dict[str, list[Tag]], dict[str, list[Tag]]]:
+        """Every tag by name, for the whole document and for the body, from one walk each. Also counts ids on the
+        soup so selector_for can tell a unique id without another walk."""
+        everywhere: dict[str, list[Tag]] = defaultdict(list)
+        ids: Counter = Counter()
+        for tag in self.soup.descendants:
+            if isinstance(tag, Tag):
+                everywhere[tag.name].append(tag)
+                ident = tag.get("id")
+                if isinstance(ident, str):
+                    ids[ident] += 1
+        self.soup.rs_id_counts = ids
+        body: dict[str, list[Tag]] = defaultdict(list)
+        if self.body is self.soup:
+            body = everywhere
+        else:
+            for tag in self.body.descendants:
+                if isinstance(tag, Tag):
+                    body[tag.name].append(tag)
+        return everywhere, body
+
+    def tags(self, name: str) -> list[Tag]:
+        return self._index[0].get(name, [])
+
+    def body_tags(self, *names: str) -> list[Tag]:
+        if len(names) == 1:
+            return self._index[1].get(names[0], [])
+        wanted = set(names)
+        return [tag for tag in self.body.descendants if isinstance(tag, Tag) and tag.name in wanted]
+
+    @cached_property
     def head(self) -> Tag | None:
         return self.soup.head
 
     def _meta(self, **attrs) -> Tag | None:
-        for tag in self.soup.find_all("meta"):
+        for tag in self.tags("meta"):
             if all((tag.get(key) or "").strip().lower() == value for key, value in attrs.items()):
                 return tag
         return None
 
     @cached_property
     def title_el(self) -> Tag | None:
-        return next((tag for tag in self.soup.find_all("title") if not any(parent.name in {"svg", "symbol", "math"} for parent in tag.parents)), None)
+        return next((tag for tag in self.tags("title") if not any(parent.name in {"svg", "symbol", "math"} for parent in tag.parents)), None)
 
     @property
     def title(self) -> str:
@@ -293,11 +327,11 @@ class PageDoc:
 
     @cached_property
     def robots_els(self) -> list[Tag]:
-        return [tag for tag in self.soup.find_all("meta") if (tag.get("name") or "").strip().lower() in {"robots", "googlebot"}]
+        return [tag for tag in self.tags("meta") if (tag.get("name") or "").strip().lower() in {"robots", "googlebot"}]
 
     @cached_property
     def canonical_el(self) -> Tag | None:
-        for tag in self.soup.find_all("link"):
+        for tag in self.tags("link"):
             rel = tag.get("rel") or []
             rel = rel if isinstance(rel, list) else str(rel).split()
             if "canonical" in [item.lower() for item in rel] and tag.get("href"):
@@ -314,7 +348,7 @@ class PageDoc:
 
     @cached_property
     def headings(self) -> list[Tag]:
-        return [tag for tag in self.body.find_all(re.compile(r"^h[1-6]$")) if not self._in_skipped(tag)]
+        return [tag for tag in self.body_tags("h1", "h2", "h3", "h4", "h5", "h6") if not self._in_skipped(tag)]
 
     @property
     def h1s(self) -> list[Tag]:
@@ -329,7 +363,7 @@ class PageDoc:
         """Where the page's content sits: main, the one article, or the body."""
         found = self.body.find("main") or self.body.find(attrs={"role": "main"})
         if found is None:
-            articles = self.body.find_all("article")
+            articles = self.body_tags("article")
             found = articles[0] if len(articles) == 1 else None
         return found or self.body
 
@@ -340,7 +374,7 @@ class PageDoc:
     def hidden_classes(self) -> set[str]:
         """Classes the page's own CSS hides (outside media queries): .crawl-boot{clip:rect(0,0,0,0)} and friends."""
         found = set(HIDDEN_CLASSES)
-        for style in self.soup.find_all("style"):
+        for style in self.tags("style"):
             css = re.sub(r"/\*.*?\*/", "", style.get_text() or "", flags=re.S)
             css = re.sub(r"@media[^{]*\{(?:[^{}]*\{[^{}]*\})*[^{}]*\}", "", css)
             for selectors, body in re.findall(r"([^{}]+)\{([^{}]*)\}", css):
@@ -400,6 +434,8 @@ class PageDoc:
 
     @property
     def words(self) -> int:
+        if self.facts is not None and self.facts.status == "fetched" and "soup" not in self.__dict__:
+            return self.facts.words
         return self.visible_words + self.hidden_words
 
     @property
@@ -413,7 +449,7 @@ class PageDoc:
     @cached_property
     def script_bytes(self) -> int:
         total = 0
-        for script in self.soup.find_all("script"):
+        for script in self.tags("script"):
             kind = (script.get("type") or "").lower()
             if kind in {"application/ld+json", "application/json"}:
                 continue
@@ -427,7 +463,9 @@ class PageDoc:
     def links(self) -> list[tuple[Tag, str, str]]:
         """(a tag, absolute URL, anchor text) for every followable link in the body."""
         out = []
-        for tag in self.body.find_all("a", href=True):
+        for tag in self.body_tags("a"):
+            if not tag.has_attr("href"):
+                continue
             href = tag["href"].strip()
             if not href or href.startswith(("#", "mailto:", "tel:", "javascript:", "sms:", "data:")) or self._in_skipped(tag):
                 continue
@@ -442,13 +480,13 @@ class PageDoc:
 
     @cached_property
     def images(self) -> list[Tag]:
-        return [tag for tag in self.body.find_all("img") if not self._in_skipped(tag)]
+        return [tag for tag in self.body_tags("img") if not self._in_skipped(tag)]
 
     @cached_property
     def jsonld(self) -> list[dict]:
         """Each JSON-LD block: {el, data, error, types}."""
         out = []
-        for script in self.soup.find_all("script"):
+        for script in self.tags("script"):
             if (script.get("type") or "").strip().lower() != "application/ld+json":
                 continue
             raw = script.string if script.string is not None else script.get_text()
@@ -471,23 +509,35 @@ class PageDoc:
     @cached_property
     def types(self) -> set[str]:
         found: set[str] = set()
+        if self.facts is not None and "soup" not in self.__dict__:
+            for raw in LD_SCRIPT.findall(self.html or ""):
+                try:
+                    found |= schema_types(json.loads(raw.strip()))
+                except ValueError:
+                    continue
+            found |= {value.rstrip("/").rsplit("/", 1)[-1] for value in ITEMTYPE.findall(self.html or "")}
+            return found
         for entry in self.jsonld:
             found |= entry["types"]
-        for tag in self.soup.find_all(attrs={"itemtype": True}):
+        for tag in (item for items in self._index[0].values() for item in items if item.has_attr("itemtype")):
             found.add(str(tag["itemtype"]).rstrip("/").rsplit("/", 1)[-1])
         return found
 
     @property
     def has_faq(self) -> bool:
+        if self.facts is not None and "soup" not in self.__dict__:
+            return self.facts.has_faq or "FAQPage" in self.types
         return "FAQPage" in self.types or any("faq" in squash(tag.get_text()).lower() or "frequently asked" in squash(tag.get_text()).lower() for tag in self.headings)
 
     @cached_property
     def tables(self) -> int:
-        return len(self.body.find_all("table"))
+        if self.facts is not None and "soup" not in self.__dict__:
+            return self.facts.tables
+        return len(self.body_tags("table"))
 
     def paragraphs(self, *, min_words: int = 8) -> list[str]:
         out = []
-        for tag in self.body.find_all("p"):
+        for tag in self.body_tags("p"):
             if self._in_skipped(tag) or self.inside(tag, "nav", "footer", "header", "form", "aside"):
                 continue
             text = squash(tag.get_text(" "))
@@ -529,6 +579,13 @@ def _ident(value: str) -> bool:
 
 def _attr_value(value: str) -> str:
     return value.replace("\\", "\\\\").replace('"', '\\"')
+
+
+def _id_count(soup: BeautifulSoup, ident: str) -> int:
+    counts = getattr(soup, "rs_id_counts", None)
+    if isinstance(counts, Counter):
+        return counts.get(ident, 0)
+    return len(soup.find_all(id=ident))
 
 
 def _matches_only(soup: BeautifulSoup, selector: str, tag: Tag) -> bool:
@@ -611,7 +668,7 @@ def selector_for(tag: Tag, soup: BeautifulSoup | None = None) -> str:
         else:
             ident = node.get("id")
             parent = node.parent
-            if isinstance(ident, str) and _ident(ident) and len(soup.find_all(id=ident)) == 1:
+            if isinstance(ident, str) and _ident(ident) and _id_count(soup, ident) == 1:
                 options = [f"{node.name}#{ident}"]
                 node = None
             else:
@@ -641,6 +698,7 @@ def element_of(tag: Tag | None, doc: PageDoc, *, attr: str | None = None) -> dic
         text = ""
     else:
         text = tag.get_text(" ")
+    doc._index  # noqa: B018 - counts ids once for selector_for
     selector = selector_for(tag, doc.soup)
     if not selector:
         return None
@@ -698,7 +756,9 @@ class AuditContext:
                 site_docs[url] = site_page(parsed_docs[url])
             elif isinstance(doc, SitePage):
                 parsed_docs[url], site_docs[url] = page_doc(doc, html.get(url, "")), doc
+                parsed_docs[url].facts = doc
         self.docs = site_docs
+        self._html = html
         self.readable = [page for page in self.pages if page.status == "fetched"]
         self.own_by_url = {page.url: page for page in self.readable}
         self._by_key = {url_key(page.url): page for page in self.parsed}
@@ -1046,7 +1106,7 @@ def check_script_built(ctx: AuditContext) -> list[dict]:
         visible = page.visible_words
         if visible >= SCRIPT_BUILT_WORDS:
             continue
-        heavy = page.script_bytes >= 2000 or len(page.soup.find_all("script", src=True)) >= 1
+        heavy = page.script_bytes >= 2000 or any(tag.has_attr("src") for tag in page.tags("script"))
         if not heavy:
             continue  # no scripts: a short page, not one a script draws
         roots = [found for selector in APP_ROOTS for found in [page.soup.select_one(selector)] if found is not None]
@@ -1941,10 +2001,42 @@ def _sort_key(issue: dict):
     return (SEVERITY_ORDER[issue["severity"]], -issue.get("score", 0), issue["kind"] not in RANKING_KINDS, issue["title"], issue["id"])
 
 
+_CACHE: dict[str, list[dict]] = {}
+_CACHE_SIZE = 16
+
+
+def _cache_key(ctx: AuditContext) -> str | None:
+    """A digest of everything the built-in checks read, or None when a page has no HTML string to hash."""
+    try:
+        digest = hashlib.sha1()
+        for page in ctx.parsed:
+            digest.update(f"{page.url}|{page.status}|{page.error}|{page.http_status}|{json.dumps(page.headers, sort_keys=True)}|{json.dumps(page.image_bytes, sort_keys=True)}|".encode())
+            digest.update(hashlib.sha1((page.html or "").encode("utf-8", "replace")).digest())
+        for url, doc in sorted(ctx._docs_by_key.items()):
+            digest.update(f"{url}|{doc.status}|{doc.facts.words if doc.facts else ''}|{doc.facts.tables if doc.facts else ''}|{doc.facts.has_faq if doc.facts else ''}|".encode())
+            digest.update(hashlib.sha1((doc.html or "").encode("utf-8", "replace")).digest())
+        for page in ctx.facts_only:
+            digest.update(json.dumps([page.url, page.title, page.meta, page.h1, page.h1_count, page.words]).encode())
+        digest.update(json.dumps([ctx.rankings, ctx.robots_txt, {str(k): str(v) for k, v in ctx.statuses.items()}, ctx.brand, [getattr(fn, "__qualname__", "") for fn in CHECKS]], sort_keys=True, default=str).encode())
+        return digest.hexdigest()
+    except (TypeError, ValueError):
+        return None
+
+
 def run_audit(ctx: AuditContext, *, checks: Iterable[CheckFn] | None = None) -> list[dict]:
     """The built-in CHECKS (or the given checks), then every plugin check when no checks are given. Built-in issues
-    are deduplicated, merged and scored (finalize); plugin issues keep their own ids. Every id ends up unique."""
-    issues = finalize(_run_builtin(ctx, list(checks) if checks is not None else list(CHECKS)))
+    are deduplicated, merged and scored (finalize); plugin issues keep their own ids. Every id ends up unique.
+    Built-in results are cached by a digest of the pages, the top 10 pages and the rankings, so a report that is
+    loaded again without changes skips the parsing."""
+    key = _cache_key(ctx) if checks is None else None
+    if key is not None and key in _CACHE:
+        issues = json.loads(json.dumps(_CACHE[key]))
+    else:
+        issues = finalize(_run_builtin(ctx, list(checks) if checks is not None else list(CHECKS)))
+        if key is not None:
+            if len(_CACHE) >= _CACHE_SIZE:
+                _CACHE.pop(next(iter(_CACHE)))
+            _CACHE[key] = json.loads(json.dumps(issues))
     if checks is None:
         extra = _plugin_issues(ctx)
         for issue in extra:

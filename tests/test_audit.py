@@ -860,3 +860,15 @@ def test_streamed_content_counts_and_files_from_the_sitemap_are_not_pages():
     issues = A.audit_html([A.PageDoc(url, page(body=streamed).replace("{url}", url)), A.PageDoc(f"{SITE}/uploads/logo.webp", "", status="error", error="Unsupported content type image/webp")])
     assert "thin" not in kinds(issues, url) and "script-built" not in kinds(issues, url)
     assert not [issue for issue in issues if "logo.webp" in (issue.get("page") or "")]
+
+
+def test_repeated_long_ids_stay_valid_share_ids():
+    import re
+
+    long_page = "https://x.example/" + "a" * 150
+    issues = [{"id": A._issue_id("img-alt", long_page, None, "img:nth-of-type(1)")} for _ in range(3)] + [{"id": "Weird ID!"}, {"id": "x" * 200}]
+    A._unique_ids(issues)
+    ids = [issue["id"] for issue in issues]
+    assert len(set(ids)) == len(ids)
+    assert all(re.fullmatch(r"[a-z0-9][a-z0-9-]{0,119}", value) for value in ids), ids
+    assert ids[1].endswith("-2") and ids[2].endswith("-3")

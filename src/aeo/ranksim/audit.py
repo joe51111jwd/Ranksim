@@ -1223,8 +1223,22 @@ def _issue_id(kind: str, page: str | None, search: str | None, selector: str | N
     return f"{full[:111].rstrip('-')}-{hashlib.sha1(full.encode()).hexdigest()[:8]}"
 
 
+ID_LIMIT = 120  # share's ISSUE_ID_RE: ^[a-z0-9][a-z0-9-]{0,119}$
+
+
+def _id_shape(value: str) -> str:
+    """An id share and publish accept: lowercase letters, digits and dashes, at most ID_LIMIT characters."""
+    clean = re.sub(r"[^a-z0-9]+", "-", str(value or "").lower()).strip("-") or "issue"
+    if len(clean) <= ID_LIMIT:
+        return clean
+    return f"{clean[: ID_LIMIT - 9].rstrip('-')}-{hashlib.sha1(clean.encode()).hexdigest()[:8]}"
+
+
 def _unique_ids(issues: list[dict]) -> None:
-    """Give every issue a different id, in list order: a repeated id gets -2, -3 and so on (never an id in use)."""
+    """Give every issue a different id, in list order: a repeated id gets -2, -3 and so on (never an id in use).
+    The suffix fits inside ID_LIMIT: the base is cut first, so a long id stays a valid id."""
+    for issue in issues:
+        issue["id"] = _id_shape(issue["id"])
     taken = {issue["id"] for issue in issues}
     seen: set[str] = set()
     for issue in issues:
@@ -1233,10 +1247,14 @@ def _unique_ids(issues: list[dict]) -> None:
             seen.add(base)
             continue
         number = 2
-        while f"{base}-{number}" in taken or f"{base}-{number}" in seen:
+        while True:
+            suffix = f"-{number}"
+            candidate = f"{base[: ID_LIMIT - len(suffix)].rstrip('-')}{suffix}"
+            if candidate not in taken and candidate not in seen:
+                break
             number += 1
-        issue["id"] = f"{base}-{number}"
-        seen.add(issue["id"])
+        issue["id"] = candidate
+        seen.add(candidate)
 
 
 def _issue(severity: str, kind: str, title: str, comment: str, *, page: str | None = None, search: str | None = None, fix: str = "") -> dict:

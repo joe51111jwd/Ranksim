@@ -78,7 +78,9 @@ const flush = debounce(async () => {
   for (const id of ids) state.pending.add(id);
   const slug = S.slug;
   try {
-    const answer = await api.post(`/api/v1/projects/${enc(slug)}/issues/impact`, { ids });
+    const byId = new Map(((S.report && S.report.issues) || []).map((issue) => [issue.id, issue]));
+    const issues = ids.map((id) => byId.get(id)).filter(Boolean); // sending the issues skips a report build on the server
+    const answer = await api.post(`/api/v1/projects/${enc(slug)}/issues/impact`, { ids, issues });
     if (impactState().slug !== slug) return;
     state.note = answer.note || '';
     for (const item of answer.impacts || []) if (item && item.id) state.results.set(item.id, item);

@@ -5,7 +5,7 @@
 
 import {
   S, main, shell, api, stream, h, icon, clear, enc, hostOf, plural, initial, bar, toast, navigate, link, pathFor,
-  parseLocation, loadProjects, openSite, closeSheet, footer, bootSpinner, sleep,
+  parseLocation, loadProjects, openSite, closeSheet, footer, bootSpinner, sleep, emptyState,
 } from './core.js';
 import { registerEditorPanel, screen, screens, renderEntry } from './hooks.js';
 import './screens/overview.js';
@@ -130,9 +130,29 @@ function renderBar() {
 
 function renderProblem(title, text) {
   renderBar();
-  clear(main).append(h('div', { class: 'wrap screen' }, h('div', { class: 'tile white login' }, h('h1', { text: title }), h('p', { text: text || 'Something went wrong.' }),
-    h('div', { class: 'form' }, h('button', { class: 'btn btn-dark btn-large', type: 'button', onClick: () => location.reload() }, 'Try again')))));
+  const offline = navigator.onLine === false;
+  clear(main).append(h('div', { class: 'wrap screen', role: 'alert' }, emptyState(title, offline ? 'You are offline. Reconnect, then try again.' : (text || 'Something went wrong.'),
+    h('button', { class: 'btn btn-dark', type: 'button', onClick: () => location.reload() }, icon('refresh'), 'Try again'),
+    h('button', { class: 'btn', type: 'button', onClick: () => navigate('/') }, 'Go home'))), footer());
 }
+
+/* ------------------------------------------------------------------ offline */
+
+function paintOffline() {
+  const old = document.querySelector('.offline');
+  if (navigator.onLine !== false) {
+    if (old) {
+      old.remove();
+      toast('Back online.');
+    }
+    return;
+  }
+  if (old) return;
+  document.getElementById('bar').after(h('div', { class: 'offline', role: 'status' }, icon('warn'), 'You are offline. Changes will not save until you reconnect.'));
+}
+
+window.addEventListener('online', paintOffline);
+window.addEventListener('offline', paintOffline);
 
 /* ------------------------------------------------------------------ sign in */
 
@@ -185,11 +205,17 @@ async function signOut() {
 
 /* ------------------------------------------------------------------ home: one box, type a site */
 
+function looksLikeAddress(text) {
+  return /^(https?:\/\/)?(localhost|[^\s/.]+(\.[^\s/.]+)+)(:\d+)?(\/\S*)?$/i.test(text);
+}
+
 function renderHome() {
   document.title = 'Ranksim';
-  const input = h('input', { type: 'text', inputmode: 'url', autocomplete: 'off', spellcheck: 'false', placeholder: 'yoursite.com or any page address', 'aria-label': 'Page address' });
+  const input = h('input', { type: 'text', inputmode: 'url', autocomplete: 'off', spellcheck: 'false', placeholder: 'yoursite.com or any page address', 'aria-label': 'Page address', 'aria-describedby': 'home-error' });
   const submit = h('button', { class: 'btn btn-primary', type: 'submit' }, 'Open', icon('arrow'));
-  const form = h('form', { class: 'composer' }, icon('globe', 'lead'), input, submit);
+  const error = h('p', { class: 'form-error home-error', id: 'home-error', role: 'alert', hidden: true });
+  const form = h('form', { class: 'composer', novalidate: true }, icon('globe', 'lead'), input, submit);
+  input.addEventListener('input', () => { error.hidden = true; });
   form.addEventListener('submit', (event) => {
     event.preventDefault();
     const site = input.value.trim();
@@ -197,13 +223,25 @@ function renderHome() {
       input.focus();
       return;
     }
+    if (!looksLikeAddress(site)) {
+      error.textContent = 'Enter an address like yoursite.com or yoursite.com/page.';
+      error.hidden = false;
+      input.focus();
+      return;
+    }
+    submit.disabled = true;
+    clear(submit).append(h('span', { class: 'spinner', 'aria-hidden': 'true' }), 'Opening');
     navigate(`/edit?url=${enc(/^https?:\/\//i.test(site) ? site : `https://${site}`)}`);
   });
+  const demo = S.projects.find((p) => p.dataset === 'synthetic' || p.slug === S.demoSlug);
   const hero = h('section', { class: 'hero' },
     h('h1', { text: 'Which page should we look at?' }),
-    h('p', { class: 'sub', text: 'Paste any address, yours or a competitor\'s. You get the live page to edit right away, while Ranksim finds its searches, who it competes with, and what to fix.' }),
+    h('p', { class: 'sub', text: 'Paste any address, yours or a competitor\'s. The live page opens right away while Ranksim finds its searches, competitors and issues.' }),
     S.publicDemo ? h('p', { class: 'hints', text: 'This demo is read only.' }) : form,
-    S.publicDemo ? null : h('div', { class: 'hints' }, h('span', { text: 'Edit any page. Publishing needs you to own the site.' })));
+    S.publicDemo ? null : error,
+    S.publicDemo ? null : h('div', { class: 'hints' },
+      h('span', { text: 'Edit any page. Publishing needs you to own the site.' }),
+      demo ? null : h('button', { class: 'btn btn-plain demo-entry', type: 'button', onClick: (event) => loadDemo(event.currentTarget) }, 'Or try the demo')));
   const body = [hero];
   if (S.projects.length) {
     const grid = h('div', { class: 'sites-grid' });
@@ -217,19 +255,20 @@ function renderHome() {
           navigate(`/app/${enc(p.slug)}`);
         },
       },
-      h('div', { class: 'top' }, h('span', { class: 'fav dark', text: initial(p.site) }), h('div', { class: 'who' }, h('div', { class: 'name', text: p.name }), h('div', { class: 'host', text: p.site }))),
+      h('div', { class: 'top' }, h('span', { class: `fav ${p.dataset === 'synthetic' ? '' : 'dark'}`, text: initial(p.site), 'aria-hidden': 'true' }), h('div', { class: 'who' }, h('div', { class: 'name', text: p.name }), h('div', { class: 'host', text: p.site }))),
       h('div', { class: 'meta' }, h('span', { text: plural(p.queries, 'search', 'searches') }), p.built ? h('span', { class: 'label label-ok', text: 'Report ready' }) : h('span', { class: 'label label-medium', text: 'Rankings pending' }), p.dataset === 'synthetic' ? h('span', { class: 'label label-demo', text: 'Demo' }) : null)));
     }
-    body.push(h('section', { class: 'sites' }, h('div', { class: 'tile-head' }, h('h2', { text: 'Your sites' })), grid));
-  } else if (!S.publicDemo) {
-    body.push(h('div', { class: 'hints' }, h('button', { class: 'btn btn-plain', type: 'button', onClick: loadDemo }, 'Or open the demo')));
+    body.push(h('section', { class: 'sites', 'aria-labelledby': 'recent-sites' }, h('div', { class: 'tile-head' }, h('h2', { id: 'recent-sites', text: 'Recent sites' })), grid));
   }
   clear(main).append(h('div', { class: 'wrap screen' }, body), footer());
   if (!S.publicDemo) setTimeout(() => input.focus(), 50);
 }
 
-async function loadDemo() {
-  clear(main).append(bootSpinner());
+async function loadDemo(button) {
+  if (button) {
+    button.disabled = true;
+    clear(button).append(h('span', { class: 'spinner', 'aria-hidden': 'true' }), 'Building the demo');
+  } else clear(main).append(bootSpinner());
   try {
     await api.post('/api/v1/demo', {});
     await loadProjects();
@@ -390,6 +429,7 @@ function progressTile() {
     list.append(row);
   }
   tile.append(h('p', { class: 'tile-sub', text: 'Edit the page while this runs. Testing unlocks when it finishes.' }), list);
+  if (timer >= 60) tile.append(h('p', { class: 'slow-note', role: 'status', text: 'This site is taking a while. It keeps running, and your edits are safe.' }));
   return tile;
 }
 
@@ -401,7 +441,9 @@ function paintProgress() {
 setInterval(() => {
   if (S.open && S.open.state === 'analyzing') {
     const aside = main.querySelector('.progress-tile .aside');
-    if (aside) aside.textContent = `${Math.round((Date.now() - S.open.started) / 1000)} s`;
+    const seconds = Math.round((Date.now() - S.open.started) / 1000);
+    if (aside) aside.textContent = `${seconds} s`;
+    if (seconds === 60) paintProgress();
   }
 }, 1000);
 
@@ -420,6 +462,7 @@ registerEditorPanel({
 /* ------------------------------------------------------------------ start */
 
 Object.assign(shell, { route, render, renderBar, renderLogin, renderProblem });
+paintOffline();
 
 /* Module scripts run in page order before DOMContentLoaded, and the shell lists plugins after this file, so every
    plugin has registered by the time the first screen renders. */

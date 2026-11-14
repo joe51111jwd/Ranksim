@@ -110,3 +110,23 @@ None required for storage or jobs: the existing `BLOB_READ_WRITE_TOKEN` is used.
 - After a refresh the progress timer restarts from the refresh (cosmetic, `js/app.js`).
 - Browser check (Playwright, local server, slow fake sites): two sites analyzed at once, no 409; a refresh
   mid-analysis reattached and finished; a paused analysis was re-posted by the app and finished.
+
+## Phase C: Blob budget, report speed, security
+
+Vercel Hobby Blob: 10,000 simple (head, get on a cache miss) and 2,000 advanced (put, list, copy) operations a
+month; Blob is blocked for 30 days past a cap; deletes are free.
+
+- Storage is a numbered chain of saves (`ranksim/v2/c/<n>`). A save is one create-only put of the next number, which
+  works as compare-and-swap; the manifest rides inside each save; a pointer hint is written every 8 saves. The rank
+  database goes up as row-level deltas, with a full snapshot every 15 deltas.
+- Ordinary requests make no Blob call. An instance looks for a newer save (one get) on a cold start, before a write,
+  every 5 minutes, or when the `rs_sync` cookie says it is behind (read-your-writes across instances).
+- Jobs: the lock is one create-only put with a deadline; the final or paused record rides on the job's own save.
+- Login: wrong passwords cost nothing; a global lockout is published at most once a day per instance; sign out
+  everywhere reaches other instances within 5 minutes (at once on the instance that did it and on cold instances).
+- Measured (tests/test_budget.py, counting store): an hour of clicking with 10 writes 20 simple / 11 advanced; one
+  analysis 3 / 2; one pull 3 / 2; one cron save 1 / 1; idle 0; 200 wrong passwords 0.
+- Report: page facts cached by content hash (warm report 0.75 s to 0.03 s on a 92-page test project). Public demo
+  builds on first use, not at startup.
+- Security review of every route: signed-out requests never touch storage, share-link views never save, the guard
+  middleware runs outermost, cross-site form posts are refused, more secrets scrubbed.

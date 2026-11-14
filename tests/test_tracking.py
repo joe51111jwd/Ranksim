@@ -1143,13 +1143,11 @@ def test_since_last_week_needs_checks_a_week_apart(tmp_path):
     assert view["ready"] is False and "a week apart" in view["reason"] and view["moves"] == []
 
 
-# -- regression tests for infra findings (phase C review). Expected to fail until infra's fixes land; the markers
-# come off once they pass on the integration branch.
+# -- regression tests for infra findings (phase C review); fixed by infra, so they run as plain tests now.
 
 INFRA_PENDING = "infra fix pending (reported to the coordinator, phase C review)"
 
 
-@pytest.mark.xfail(reason=INFRA_PENDING, strict=False)
 def test_regression_concurrent_saves_keep_both_instances_counter_files(tmp_path):
     """Instance B saves "_plugins" between instance A's list and put. Every instance must end with both files."""
     from aeo.ranksim.cloud import CloudState
@@ -1173,18 +1171,23 @@ def test_regression_concurrent_saves_keep_both_instances_counter_files(tmp_path)
     (usage(a) / "A.json").write_text('{"searches": 9}')
     real_put = store.put
     interleaved = []
+    inside_a = []
 
-    def put(name, body, **kwargs):
-        if not interleaved and name.startswith("ranksim/v2/projects/_plugins/v/"):
+    def put(name, body, *args, **kwargs):
+        # A's data save (any storage layout names it under ranksim/v2/; the HEAD pointers are only hints)
+        if inside_a and not interleaved and name.startswith("ranksim/v2/") and not name.endswith("HEAD"):
             interleaved.append(name)
             b.save_project("_plugins")  # B finishes a whole save while A is in the middle of its own
-        return real_put(name, body, **kwargs)
+        return real_put(name, body, *args, **kwargs)
 
     store.put = put
     try:
+        inside_a.append(True)
         a.save_project("_plugins")
     finally:
+        inside_a.clear()
         store.put = real_put
+    assert interleaved, "the test did not interleave the two saves"
     a.refresh(force=True)
     b.refresh(force=True)
     c = instance("c")
@@ -1214,7 +1217,6 @@ def _resume_pull(budget, ctx):
     return rows, Inner
 
 
-@pytest.mark.xfail(reason=INFRA_PENDING, strict=False)
 def test_regression_resumed_job_pull_is_free_keeps_features_and_dates(tmp_path):
     ctx = SimpleNamespace(checkpoint={}, save_checkpoint=lambda *args: None)
     budget = tracking.Budget(tmp_path, cap=3, fresh_hours=0, instance="i1")
@@ -1226,3 +1228,21 @@ def test_regression_resumed_job_pull_is_free_keeps_features_and_dates(tmp_path):
     assert all(row.results and not row.error for row in again)
     assert [row.pulled_at for row in again] == [row.pulled_at for row in first]  # dated when Google answered
     assert all(row.features.get("related_searches") for row in again)
+
+
+def test_counter_writes_use_the_temp_name_cloud_storage_skips(tmp_path, monkeypatch):
+    from aeo.ranksim import cloud
+
+    seen = []
+    real_replace = tracking.os.replace
+
+    def spy(source, target):
+        seen.append(Path(source).name)
+        return real_replace(source, target)
+
+    monkeypatch.setattr(tracking.os, "replace", spy)
+    tracking.Budget(tmp_path, cap=5, clock=Clock()).claim("x")
+    assert seen and all(name.startswith(".ranksim-tmp-") for name in seen)
+    scope = cloud._Scope(tmp_path, recursive=True)
+    (tmp_path / seen[0]).write_text("{half")  # as if a save ran mid-write
+    assert all(not rel.split("/")[-1].startswith(".ranksim-tmp-") for rel, _path in scope.files())

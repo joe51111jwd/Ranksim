@@ -20,6 +20,7 @@ import httpx
 
 from . import ownership as own
 from .connectors import CONNECTORS, Connector, ConnectorError, Prepared
+from .connectors.base import same_page
 from .htmlparts import parts, short
 from .store import PublishStore, StoreError, public_connection, public_history
 
@@ -58,12 +59,15 @@ class Publisher:
         verify_waits: tuple[float, ...] = (0.0, 3.0, 6.0),
         allow_private: bool = False,
         who: str = "owner",
+        checkpoint: Callable[[], None] | None = None,
         proof_fetch: Callable[[str], tuple] | None = None,
     ) -> None:
         self.store = store
         self.fetch = fetch
         # Ownership proofs need the final URL after redirects; the app passes a fetcher that returns it.
         self.proof_fetch = proof_fetch or fetch
+        # Saves the data folder to cloud storage mid-request (the plugin passes plugins.save); a no-op locally.
+        self.checkpoint = checkpoint or (lambda: None)
         self.http_factory = http_factory
         self.now = now
         self.sleep = sleep
@@ -303,6 +307,7 @@ class Publisher:
             entry = self._entry_for(prepared, connector, connection, record, url, html, options, started)
             # Saved before the platform call: if it fails half way, the previous values are still on record.
             self.store.put_history(entry)
+            self.checkpoint()
             try:
                 result = guarded(lambda: connector.apply(prepared, options=options), 502, prefix="Publishing failed. ")
             except PublishError as exc:
@@ -376,20 +381,42 @@ class Publisher:
         return outcome
 
     def verify_live(self, entry_id: str) -> dict:
+        """Check again. A merged pull request, or a saved draft the live page now shows, turns the entry live. A
+        pending revert pull request that was merged completes its rollback. Only this step's fields are written, onto
+        a fresh copy of the entry, so a rollback that ran meanwhile is never undone."""
         entry = self._entry(entry_id)
-        if entry.get("status") == "pull_request" and entry["connection"]["kind"] == "github":
-            connection = self._connection(entry["connection"]["id"])
-            with self.http_factory() as client:
-                connector = self._connector(connection, client)
-                merged = guarded(lambda: connector.merged(entry["remote"]), 502)
-            if not merged:
-                entry["verify"] = {"status": "not_live_yet", "at": self.now(), "fields": {}, "detail": "The pull request is not merged yet."}
-                self.store.put_history(entry)
-                return public_history(entry)
-            entry["status"] = "live"
-        entry["verify"] = self._verify(entry, waits=(0.0,))
-        self.store.put_history(entry)
-        return public_history(entry)
+        kind = entry["connection"]["kind"]
+        updates: dict = {}
+        if entry.get("rollback_pending") and kind == "github":
+            connector_call = self._github_merged(entry, entry["rollback"])
+            if connector_call:
+                updates.update(rollback_pending=False, rolled_back_at=self.now())
+                updates["rollback"] = {**entry["rollback"], "status": "live", "note": "The revert pull request was merged."}
+        elif entry.get("status") == "pull_request" and kind == "github":
+            if not self._github_merged(entry, entry["remote"]):
+                updates["verify"] = {"status": "not_live_yet", "at": self.now(), "fields": {}, "detail": "The pull request is not merged yet."}
+                return self._merge_entry(entry_id, updates)
+            updates["status"] = "live"
+        if "verify" not in updates:
+            updates["verify"] = self._verify({**entry, **updates}, waits=(0.0,))
+            if entry.get("status") == "saved" and updates["verify"]["status"] == "confirmed":
+                updates["status"] = "live"  # a Webflow draft someone published from Webflow
+        return self._merge_entry(entry_id, updates)
+
+    def _github_merged(self, entry: dict, remote: dict) -> bool:
+        connection = self._rollback_connection(entry, None)
+        with self.http_factory() as client:
+            connector = self._connector(connection, client)
+            return bool(guarded(lambda: connector.merged(remote), 502))
+
+    def _merge_entry(self, entry_id: str, updates: dict) -> dict:
+        with self.store.lock:
+            fresh = self._entry(entry_id)
+            if fresh.get("rolled_back_at") and "rolled_back_at" not in updates:
+                updates = {k: v for k, v in updates.items() if k != "status"}
+            fresh.update(updates)
+            self.store.put_history(fresh)
+        return public_history(fresh)
 
     # -- history and rollback ----------------------------------------------
 
@@ -421,30 +448,34 @@ class Publisher:
             entry = self._entry(entry_id)
             if not entry.get("can_rollback"):
                 raise PublishError("This publish cannot be rolled back.", 409)
-            if entry.get("rolled_back_at") or entry.get("rolling_back"):
-                raise PublishError("This publish was already rolled back.", 409)
+            if entry.get("rolled_back_at") or entry.get("rolling_back") or entry.get("rollback_pending"):
+                raise PublishError("This publish was already rolled back, or its rollback is waiting for a merge.", 409)
+            if entry.get("status") == "applying":
+                raise PublishError("This publish is still being sent. Try again in a moment.", 409)
             newer = [
                 e for e in self.store.history(limit=500)
-                if e.get("url") == entry["url"] and e["id"] > entry["id"] and not e.get("rolled_back_at") and e.get("status") not in {"failed", "closed"}
+                if same_page(e.get("url") or "", entry["url"]) and e["id"] > entry["id"] and not e.get("rolled_back_at") and e.get("status") not in {"failed", "closed"}
             ]
             if newer:
                 raise PublishError("A newer publish of this page is live. Roll that one back first.", 409, newer=newer[0]["id"])
             entry["rolling_back"] = True
             self.store.put_history(entry)
+        self.checkpoint()  # on a cloud host, other instances see the claim before the platform call
         try:
             connection = self._rollback_connection(entry, connection_id)
             with self.http_factory() as client:
                 connector = self._connector(connection, client)
                 result = guarded(lambda: connector.rollback(entry), 502, prefix="Rollback failed. ")
         except PublishError:
-            entry.pop("rolling_back", None)
-            self.store.put_history(entry)
+            self._merge_entry(entry_id, {"rolling_back": False})
             raise
-        entry.pop("rolling_back", None)
-        entry["rolled_back_at"] = self.now()
-        entry["rollback"] = {"who": self.who, "at": entry["rolled_back_at"], **result}
-        self.store.put_history(entry)
-        return public_history(entry)
+        now = self.now()
+        updates = {"rolling_back": False, "rollback": {"who": self.who, "at": now, **result}}
+        if result.get("status") == "pull_request":
+            updates["rollback_pending"] = True  # a revert pull request: rolled back once it is merged (Check again)
+        else:
+            updates["rolled_back_at"] = now
+        return self._merge_entry(entry_id, updates)
 
 
 FIX_ID = re.compile(r"^[a-z0-9][a-z0-9-]{0,119}$")

@@ -1,6 +1,9 @@
 """PREDICTED impact per audit issue (predict workstream).
 
-POST /api/v1/projects/{slug}/issues/impact  {"ids": ["issue-id", ...]}
+POST /api/v1/projects/{slug}/issues/impact  {"ids": ["issue-id", ...], "issues": [issue, ...]?}
+
+"issues" is optional: the issue objects the caller already has from the report. Sending them skips the report
+build (the slow part of a first answer). Ids without a sent issue are looked up in the server's report.
 
 For each issue: apply its suggestion to the stored page HTML on the server (the issue's ``action`` says how,
 see audit.py), then run the predictor on the page's target searches and return the PREDICTED move with a
@@ -22,7 +25,7 @@ log = logging.getLogger(__name__)
 
 FEATURE = "predict-impact"
 MAX_IDS = 50
-CACHE_VERSION = 1
+CACHE_VERSION = 2
 APPLY_ACTIONS = {"text", "attr", "retag", "append", "prepend", "after"}
 NOTE = "PREDICTED, not a guarantee. Positions come from the same model as Test changes, and most calls are UNSURE."
 
@@ -78,6 +81,53 @@ def apply_suggestion(html: str, issue: dict) -> str | None:
                 anchor.insert_after(node)
                 anchor = node
     return str(soup)
+
+
+# Issues that carry no ready change. A plain reason, said once, for each kind the audit raises without one.
+NO_CHANGE_REASONS = {
+    # No "where it stands today" line: the model can only place a page among today's top 10, so for a page Google
+    # does not show it would name a top 10 slot that the real results contradict.
+    "not-ranking": "There is no single change to try. Open the page in the editor, close the gaps and use Test changes.",
+    "behind": "There is no single change to try. Open the page in the editor and use Test changes.",
+    "thin-vs-top": "The model cannot judge new writing it has not seen. Write the section, then use Test changes on it.",
+    "few-links": "No estimate. In this site's results, pages with more links did not reliably rank higher, so the model "
+    "would not credit this change. Links still help people and Google find your pages.",
+    "script-built": "No estimate. The model reads the text the crawler stored, so it cannot tell script-drawn text from "
+    "server-drawn text. Google can.",
+}
+EMPTY_JSONLD = '<script type="application/ld+json">{"@context": "https://schema.org"}</script>'
+
+
+def _stable_signs(ctx) -> dict:
+    from aeo.ranksim import predict_service
+
+    try:
+        return predict_service.predictor_for(ctx).stable
+    except Exception:  # noqa: BLE001 - no predictor means no stand-in change
+        return {}
+
+
+def hypothetical(issue: dict, html: str, stable: dict | None = None):
+    """A well-founded stand-in change for an issue that has no ready suggestion.
+
+    Returns (issue with a suggestion, assumption text), a plain reason string, or None when there is none.
+    """
+    from aeo.ranksim.predict import has_schema
+
+    kind = issue.get("kind") or ""
+    selector = ((issue.get("element") or {}).get("selector") or "").strip()
+    search = (issue.get("search") or "").strip()
+    if kind == "h1-search" and selector and search:
+        text = search[:1].upper() + search[1:]
+        return dict(issue, action="text", suggestion=text), f'Assumes the H1 is changed to name the search, for example "{text}".'
+    if kind == "schema-gap":
+        if has_schema(html):
+            return "No estimate. The model only reads whether a page has structured data, and this page already has some."
+        return dict(issue, action="append", suggestion=EMPTY_JSONLD, element={"selector": "head"}), "Assumes structured data is added to the page."
+    if kind == "few-links" and selector and (stable or {}).get("links") == 1:
+        links = "".join(f'<p><a href="/">Related page {n}</a></p>' for n in (1, 2, 3))
+        return dict(issue, action="append", suggestion=links), "Assumes three links to related pages are added to the body text."
+    return None
 
 
 def _unchanged_for(searches: list[str], url: str, before_html: str, after_html: str) -> bool:
@@ -142,10 +192,18 @@ def estimate(ctx, issue: dict, html: str | None, searches: list[str]) -> dict:
     page = issue.get("page")
     if not page:
         return dict(base, status="no_estimate", reason="This issue is about the whole site, not one page.")
-    if issue.get("action") == "copy" or not issue.get("suggestion"):
-        return dict(base, status="no_estimate", reason="There is no change to apply to the page for this issue.")
+    kind = issue.get("kind") or ""
     if not html:
         return dict(base, status="no_estimate", reason="No stored copy of this page, so the change cannot be tried.")
+    assumption = ""
+    if issue.get("action") == "copy" or not issue.get("suggestion"):
+        tried = hypothetical(issue, html, _stable_signs(ctx))
+        if tried is None:
+            reason = NO_CHANGE_REASONS.get(kind, "There is no single change to apply to the page for this issue.")
+            return dict(base, status="no_estimate", reason=reason)
+        if isinstance(tried, str):
+            return dict(base, status="no_estimate", reason=tried)
+        issue, assumption = tried
     changed = apply_suggestion(html, issue)
     if changed is None:
         return dict(base, status="no_estimate", reason="The suggestion could not be applied to the stored page.")
@@ -182,12 +240,13 @@ def estimate(ctx, issue: dict, html: str | None, searches: list[str]) -> dict:
         searches=rows,
         summary=result.get("summary"),
         reason="" if rows else "None of this page's searches could be scored.",
+        assumption=assumption,
         backtest_note=result.get("backtest_note", ""),
     )
 
 
 def _issue_hash(issue: dict) -> str:
-    keep = {key: issue.get(key) for key in ("id", "page", "search", "suggestion", "action", "element")}
+    keep = {key: issue.get(key) for key in ("id", "kind", "page", "search", "suggestion", "action", "element")}
     return hashlib.sha256(json.dumps(keep, sort_keys=True, default=str).encode()).hexdigest()[:16]
 
 
@@ -201,7 +260,22 @@ def _cache_file(project, pull: str | None, searches) -> object:
     return plugins.data_dir(project, FEATURE) / f"impact-v{CACHE_VERSION}-{pull}-{sig}.json"
 
 
-def impacts(ui, slug: str, ids: list[str]) -> dict:
+ISSUE_KEYS = ("id", "kind", "page", "search", "suggestion", "action", "element")
+
+
+def _clean_issue(item: dict) -> dict:
+    """Only the fields an estimate reads, as plain strings, from an issue the caller sent."""
+    out: dict = {}
+    for key in ISSUE_KEYS:
+        value = item.get(key)
+        if key == "element" and isinstance(value, dict):
+            out[key] = {k: str(v)[:2000] for k, v in value.items() if k in ("selector", "attr", "tag", "text") and isinstance(v, str)}
+        elif isinstance(value, str):
+            out[key] = value[:20000]
+    return out
+
+
+def impacts(ui, slug: str, ids: list[str], given: list[dict] | None = None) -> dict:
     from aeo.ranksim.api.editor import page_html
     from aeo.ranksim.api.projects import project_report
 
@@ -222,17 +296,26 @@ def impacts(ui, slug: str, ids: list[str]) -> dict:
     if all(issue_id in latest and latest[issue_id] in cache for issue_id in ids):
         # Every answer is cached for this pull and these searches: no need to rebuild the report.
         return {"label": "PREDICTED", "note": NOTE, "pull": pull, "impacts": [cache[latest[issue_id]] for issue_id in ids]}
-    report = project_report(ui, slug)
-    by_id = {issue.get("id"): issue for issue in report.get("issues") or []}
+    # Issues the caller already holds (the sheet has the report) skip the report build. They are trusted only for
+    # this answer: the id-only fast path above is filled from the server's own report, never from a caller's copy.
+    sent = {item["id"]: item for item in (given or []) if isinstance(item, dict) and isinstance(item.get("id"), str)}
+    by_id: dict | None = None
     out = []
     dirty = False
     for issue_id in ids:
-        issue = by_id.get(issue_id)
+        trusted = issue_id not in sent
+        if trusted:
+            if by_id is None:
+                report = project_report(ui, slug)
+                by_id = {issue.get("id"): issue for issue in report.get("issues") or []}
+            issue = by_id.get(issue_id)
+        else:
+            issue = _clean_issue(sent[issue_id])
         if issue is None:
             out.append({"id": issue_id, "label": "PREDICTED", "status": "unknown", "reason": "No issue with this id in the current report."})
             continue
         key = f"{issue_id}:{_issue_hash(issue)}"
-        if latest.get(issue_id) != key:
+        if trusted and latest.get(issue_id) != key:
             latest[issue_id] = key
             dirty = True
         if key in cache:
@@ -268,15 +351,16 @@ def register(app, ui) -> None:
     @app.post("/api/v1/projects/{slug}/issues/impact")
     async def api_issue_impact(slug: str, request: Request) -> JSONResponse:
         _check_header_csrf(ui, request)
-        body = await _json_body(request, 64 * 1024)
+        body = await _json_body(request, 1024 * 1024)
         ids = body.get("ids")
         if not isinstance(ids, list) or not ids:
             return _error(400, "Send a list of issue ids.")
         ids = [str(item)[:200] for item in ids if isinstance(item, str)][:MAX_IDS]
         if not ids:
             return _error(400, "Send a list of issue ids.")
+        given = body.get("issues") if isinstance(body.get("issues"), list) else None
         try:
-            return JSONResponse(await run_in_threadpool(impacts, ui, slug, ids))
+            return JSONResponse(await run_in_threadpool(impacts, ui, slug, ids, (given or [])[:MAX_IDS]))
         except LookupError:
             return _error(404, "No such project.")
         except ImpactError as exc:

@@ -21,6 +21,7 @@ from __future__ import annotations
 import copy
 import json
 import time
+from contextlib import contextmanager
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, Response, StreamingResponse
@@ -285,7 +286,12 @@ def register(app: FastAPI, ui) -> None:
 
 
 class _CheckpointedSerp:
-    """A Google provider that keeps every answer in the job's checkpoint and replays it on a resumed attempt."""
+    """A Google provider that keeps every answer in the job's checkpoint and replays it on a resumed attempt.
+
+    Each answer is kept as {hits, features, fetched_at}. project.pull asks replayed(query, count) first: a replayed
+    answer is not counted against the search budget again and keeps the time Google really answered, and its SERP
+    features (people also ask, related searches) come back with it.
+    """
 
     def __init__(self, inner, ctx) -> None:
         import threading
@@ -296,23 +302,48 @@ class _CheckpointedSerp:
         self.synthetic = getattr(inner, "synthetic", False)
         self._lock = threading.Lock()
 
-    def search(self, query: str, count: int = 10) -> list:
+    @staticmethod
+    def _key(query: str, count: int) -> str:
+        return f"{count}|{query}"
+
+    def _kept(self, query: str, count: int) -> dict | None:
+        with self._lock:
+            kept = (self.ctx.checkpoint.get("serp") or {}).get(self._key(query, count))
+        if kept is None:
+            return None
+        if isinstance(kept, list):  # an answer checkpointed before features and dates were kept
+            return {"hits": kept, "features": {}, "fetched_at": ""}
+        return kept
+
+    def replayed(self, query: str, count: int = 10) -> str | None:
+        """When the checkpointed answer was really fetched ("" when unknown), or None when Google would be asked."""
+        kept = self._kept(query, count)
+        return None if kept is None else str(kept.get("fetched_at") or "")
+
+    def search_with_features(self, query: str, count: int = 10) -> tuple[list, dict]:
         from dataclasses import asdict
+        from datetime import datetime, timezone
 
         from aeo.ranksim.serp import SerpHit
 
-        key = f"{count}|{query}"
-        with self._lock:
-            kept = (self.ctx.checkpoint.get("serp") or {}).get(key)
+        kept = self._kept(query, count)
         if kept is not None:
-            return [SerpHit(**row) for row in kept]
-        hits = self.inner.search(query, count)
+            return [SerpHit(**row) for row in kept.get("hits") or []], dict(kept.get("features") or {})
+        with_features = getattr(self.inner, "search_with_features", None)
+        if callable(with_features):
+            hits, features = with_features(query, count)
+        else:
+            hits, features = self.inner.search(query, count), {}
+        fetched_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
         with self._lock:
-            kept = self.ctx.checkpoint.setdefault("serp", {})
-            kept[key] = [asdict(hit) for hit in hits]
-            if len(kept) % 5 == 0:
-                self.ctx.save_checkpoint()  # every few answers (each save is a storage write); a pause keeps them all
-        return hits
+            answers = self.ctx.checkpoint.setdefault("serp", {})
+            answers[self._key(query, count)] = {"hits": [asdict(hit) for hit in hits], "features": features or {}, "fetched_at": fetched_at}
+            if len(answers) % 5 == 0:
+                self.ctx.save_checkpoint()  # a pause stores them all anyway
+        return hits, features or {}
+
+    def search(self, query: str, count: int = 10) -> list:
+        return self.search_with_features(query, count)[0]
 
     def close(self) -> None:
         closer = getattr(self.inner, "close", None)
@@ -403,7 +434,34 @@ def _after_pull(ui, project, summary: dict | None) -> None:
     plugins.call_all("after_pull", project=project, report=copy.deepcopy(summary), ui=ui)
 
 
-def _run_pull(ui, project, use_google: bool, events, *, notify: bool = True, ctx=None) -> dict:
+class ProjectBusy(RuntimeError):
+    pass
+
+
+@contextmanager
+def _project_busy(ui, slug: str):
+    """Hold the per-project lock the rest of the app uses (classic pull, search edits, CSV import, scheduled
+    re-checks), so a job and those never change one project at the same time. Never waits: busy is an error."""
+    jobs = getattr(ui, "jobs", None)
+    lock = jobs.project_lock(slug) if jobs is not None else None
+    if lock is not None and not lock.acquire(blocking=False):
+        raise ProjectBusy("This project is busy with another pull, import or search edit. Try again in a minute.")
+    try:
+        yield
+    finally:
+        if lock is not None:
+            lock.release()
+
+
+def _run_pull(ui, project, use_google: bool, events, *, notify: bool = True, ctx=None, locked: bool = False) -> dict:
+    """_run_pull_unlocked under the project's lock (locked=True: the caller already holds it)."""
+    if locked:
+        return _run_pull_unlocked(ui, project, use_google, events, notify=notify, ctx=ctx)
+    with _project_busy(ui, project.slug):
+        return _run_pull_unlocked(ui, project, use_google, events, notify=notify, ctx=ctx)
+
+
+def _run_pull_unlocked(ui, project, use_google: bool, events, *, notify: bool = True, ctx=None) -> dict:
     """One pull, the same call the classic screens make, with hosted defaults: no AI engines, Google only with a key.
 
     notify=False leaves the after_pull hook to the caller (an analysis calls it once, when it has finished).
@@ -477,6 +535,9 @@ def _run_pull(ui, project, use_google: bool, events, *, notify: bool = True, ctx
 def _pull_error(ui, project, exc: Exception) -> str:
     from aeo.errors import ProviderConfigError
 
+    if isinstance(exc, ProjectBusy):
+        return str(exc)
+
     if isinstance(exc, ProviderConfigError) and "No REAL Google results" in str(exc):
         return (
             f"No Google results for {project.name} yet. Add a Google results key (SERPER_API_KEY) to this server, "
@@ -545,6 +606,9 @@ def _analyze(ui, site: str, events, searches=None, *, ctx=None) -> dict:
             pass
         project = create_project(name, host, chosen, root=ui.root)
     else:
+        jobs = getattr(ui, "jobs", None)
+        if jobs is not None and jobs.project_lock(project.slug).locked():
+            raise ProjectBusy("This site's project is busy with another pull, import or search edit. Try again in a minute.")
         snapshot = latest_google(project)
         has_results = snapshot is not None and any(entry.results for entry in snapshot.searches)
         if not has_results:
@@ -562,6 +626,11 @@ def _analyze(ui, site: str, events, searches=None, *, ctx=None) -> dict:
 
 
 def _analyze_rest(ui, project, chosen: list, events, step, ctx, *, resumed: bool = False) -> dict:
+    with _project_busy(ui, project.slug):
+        return _analyze_rest_locked(ui, project, chosen, events, step, ctx, resumed=resumed)
+
+
+def _analyze_rest_locked(ui, project, chosen: list, events, step, ctx, *, resumed: bool = False) -> dict:
     """The analysis after the project exists: the pull (when there is search data), competitors, after_pull, save."""
     from aeo.ranksim.competitors import pick_competitors
     from aeo.ranksim.project import latest_google
@@ -588,7 +657,7 @@ def _analyze_rest(ui, project, chosen: list, events, step, ctx, *, resumed: bool
 
         if not google["ready"]:
             step("google", "Using the Google results already saved for this site.", 1, 1, state="done")
-        summary = _run_pull(ui, project, google["ready"], Relay(), notify=False, ctx=ctx)
+        summary = _run_pull(ui, project, google["ready"], Relay(), notify=False, ctx=ctx, locked=True)
         meta = ws.load_meta(project)
         picked = meta.competitors or pick_competitors(latest_google(project), project.domain)
         if picked and not meta.competitors:
@@ -610,6 +679,6 @@ def _analyze_rest(ui, project, chosen: list, events, step, ctx, *, resumed: bool
 def _analyze_error(ui, exc: Exception) -> str:
     from aeo.ranksim.project import ProjectError
 
-    if isinstance(exc, ProjectError):
+    if isinstance(exc, (ProjectError, ProjectBusy)):
         return ui.scrub(str(exc).replace(str(ui.root), "the projects folder"))
     return ui.scrub(f"The analysis stopped: {type(exc).__name__}: {str(exc)[:300]}")

@@ -7,7 +7,7 @@
    SVG: lower position numbers are drawn higher. */
 
 import { registerOverviewTile, registerSearchColumn, registerSettingsSection, registerScreen, on } from '../hooks.js';
-import { S, SVGNS, h, api, enc, bar, toast, openSheet, plural, page, link } from '../core.js';
+import { S, SVGNS, h, api, enc, bar, toast, openSheet, plural, page, link, icon, noSearchData } from '../core.js';
 
 const SERIES = ['history-you', 'history-c1', 'history-c2'];
 const DEPTH = 10;
@@ -361,11 +361,58 @@ function table(series) {
         h('tbody', null, dates.map((at) => h('tr', null, h('td', { text: day(at) }), series.map((one, k) => h('td', { text: rankText(lookup[k].get(at)) }))))))));
 }
 
+/* ------------------------------------------------------------------ no search data key */
+
+/* The owner's view when the server has no Google results key: one calm notice per screen with the exact steps,
+   instead of empty charts. Never on the public demo; the client report page (static/share) loads no plugin, so it
+   never shows there either. Search Console positions, when connected, are named as the fallback. */
+export function keyMissing(R) {
+  return !!R && R.google_ready === false && !S.publicDemo;
+}
+
+function gscFallback(R) {
+  const positions = R && R.gsc && R.gsc.positions;
+  return positions && Object.keys(positions).length ? Object.keys(positions).length : 0;
+}
+
+export function keyNotice(R, { wide = true } = {}) {
+  const fallback = gscFallback(R);
+  const now = fallback
+    ? `Until then, ${fallback === 1 ? '1 search shows its' : `${fallback} searches show their`} Search Console average position for the last 28 days, labeled as such. That is not a Google top 10 position.`
+    : R.search_data
+      ? 'The positions shown are from the last Google check and will not update until the key is added.'
+      : 'Until then, this site shows its own pages and issues only.';
+  const steps = h('ol', { class: 'history-steps' },
+    h('li', { text: 'Get an API key at serper.dev (the free plan includes 2,500 searches).' }),
+    h('li', { text: 'Open vercel.com, then the project ranksim, then Settings, then Environment Variables.' }),
+    h('li', null, 'Add ', h('code', { text: 'SERPER_API_KEY' }), ' with the key as its value, for Production.'),
+    h('li', null, 'Optional, for weekly re-checks: add ', h('code', { text: 'CRON_SECRET' }), ' with any long random text.'),
+    h('li', { text: 'Open Deployments, pick the latest one and choose Redeploy.' }),
+    h('li', { text: 'Back here, open Settings and choose Refresh now.' }));
+  return h('section', { class: `tile history-notice${wide ? ' span-4' : ''}`, role: 'note' },
+    h('div', { class: 'history-notice-head' }, icon('warn'), h('div', null,
+      h('div', { class: 'history-notice-title', text: 'Google rankings are off.' }),
+      h('div', { class: 'tile-sub', text: 'Add a search data key in Vercel to turn them on.' }))),
+    h('p', { class: 'tile-sub', text: now }),
+    h('details', { class: 'history-notice-steps' }, h('summary', { text: 'How to turn them on' }), steps));
+}
+
+/* One notice on Overview: this replaces the built-in "search data" slot so the two never stack. With a key, the
+   built-in callout shows exactly as before. */
+registerOverviewTile({
+  key: 'search-data',
+  replace: true,
+  order: 0,
+  render(R) {
+    return keyMissing(R) ? keyNotice(R) : noSearchData();
+  },
+});
+
 /* ------------------------------------------------------------------ overview alert */
 
 registerOverviewTile({
   key: 'track-alert',
-  order: -10,
+  order: 1, // right after the search data slot (order 0), so a missing key is the first thing on the page
   render(R, ctx) {
     const slug = ctx.slug || S.slug;
     if (!R.history || R.history.real === false || dismissed.has(slug)) return null;
@@ -458,7 +505,8 @@ registerScreen('track-history', {
     }
     if (!rows.length) list.append(h('div', { class: 'empty-note', text: 'No searches yet.' }));
     const sub = H.real === false ? 'Demo data, not Google results. Pick a search to see it over time.' : H.checks ? `${plural(H.checks, 'Google check')} since ${day(H.first_at)}. Pick a search to see it over time.` : 'Positions show after the first Google check.';
-    return page('Rank history', sub, null, weekView(H), h('div', { class: 'tile' }, h('div', { class: 'tile-head' }, h('h2', { text: 'Every search' })), list));
+    const notice = keyMissing(R) ? h('div', { class: 'history-notice-wrap' }, keyNotice(R, { wide: false })) : null;
+    return page('Rank history', sub, null, notice, weekView(H), h('div', { class: 'tile' }, h('div', { class: 'tile-head' }, h('h2', { text: 'Every search' })), list));
   },
 });
 
@@ -566,6 +614,14 @@ function featureNames(features) {
 /* ------------------------------------------------------------------ settings */
 
 registerSettingsSection({
+  key: 'tracking-key',
+  order: 5,
+  render({ report }) {
+    return keyMissing(report) ? keyNotice(report) : null;
+  },
+});
+
+registerSettingsSection({
   key: 'tracking',
   order: 15,
   render({ slug, reload }) {
@@ -624,7 +680,7 @@ function settingsBody(slug, tracking, status, reload) {
     h('div', { class: 'tile-sub', text: `${plural(Number(status.reused || 0), 'search', 'searches')} reused from the last ${status.fresh_hours} hours this month at no cost. Resets ${day(status.resets)}.` }));
   const provider = status.configured
     ? `Google results from ${status.provider}.${status.healthy === false ? ` The last request failed (${status.last_error}).` : ''}`
-    : 'Search data is not set up on this server yet. The owner adds SERPER_API_KEY once.';
+    : 'No search data key on this server yet, so no searches are used. The steps are at the top of this page.';
   const cron = status.cron && status.cron.secret_set ? null : h('p', { class: 'tile-sub', text: 'Scheduled checks need CRON_SECRET on the server. Until then, refresh by hand.' });
   return [
     h('div', { class: 'tile-head' }, h('h2', { text: 'Re-checks and usage' })),

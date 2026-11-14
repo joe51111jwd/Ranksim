@@ -308,7 +308,8 @@ class CloudState:
         changed = False
         for slug, seq in sorted((manifest.get("projects") or {}).items()):
             if SLUG_RE.match(slug) and self._installed.get(slug, {}).get("seq") != seq:
-                bodies.setdefault(seq, self._get_save(seq))
+                if seq not in bodies:  # fetch each save object once (setdefault would fetch every time)
+                    bodies[seq] = self._get_save(seq)
                 if bodies[seq] is None:
                     raise KeyError(chain_name(seq))
                 changed |= self._install_project(slug, seq, bodies[seq])
@@ -363,7 +364,8 @@ class CloudState:
         """Snapshot (when it changed), then each delta not applied yet."""
         snapshot = db.get("snapshot")
         if snapshot != self._db.get("snapshot"):
-            bodies.setdefault(snapshot, self._get_save(snapshot))
+            if snapshot not in bodies:  # fetch each save object once (setdefault would fetch every time)
+                bodies[snapshot] = self._get_save(snapshot)
             if bodies[snapshot] is None:
                 raise KeyError(chain_name(snapshot))
             with _Unpacked(self.data_dir, bodies[snapshot]) as folder:
@@ -374,7 +376,8 @@ class CloudState:
         for seq in db.get("deltas") or []:
             if seq in self._db["applied"]:
                 continue
-            bodies.setdefault(seq, self._get_save(seq))
+            if seq not in bodies:  # fetch each save object once (setdefault would fetch every time)
+                bodies[seq] = self._get_save(seq)
             if bodies[seq] is None:
                 raise KeyError(chain_name(seq))
             with _Unpacked(self.data_dir, bodies[seq]) as folder:

@@ -20,7 +20,7 @@ const PAUSED_BASE = args['paused-base'] ? args['paused-base'].replace(/\/$/, '')
 const OUT = args.out || 'tests/e2e/screenshots';
 // --group main | jobs | all. pytest runs main and jobs at the same time against separate servers to keep the run short.
 const GROUP = args.group || 'all';
-const JOB_STEPS = new Set(['parallel-analysis', 'reattach-after-refresh', 'paused-resume']);
+const JOB_STEPS = new Set(['first-load-kept', 'parallel-analysis', 'reattach-after-refresh', 'paused-resume']);
 const PASSWORD = process.env.E2E_PASSWORD || 'e2e-pass';
 const SITE = process.env.E2E_SITE || 'www.dirtcrew.example';
 const SEARCHES = JSON.parse(process.env.E2E_SEARCHES || '["dirt work software","excavation crew app","grading job costing","paving crew scheduling"]');
@@ -441,7 +441,7 @@ try {
     expect(/Up|Down|New|Lost|Changes show|Positions show/.test(text), `Rank changes tile has content: ${text.slice(0, 120)}`);
     await goto(page, `/app/${encodeURIComponent(slug)}/searches`);
     await page.waitForSelector(SEL.searchRow);
-    expect(/Trend/.test(await page.innerText('main')), 'the Searches list has the Trend column');
+    expect(/Trend|Since last visit/.test(await page.innerText('main')), 'the Searches list has the track column');
     expect((await page.locator('.history-cell').count()) >= 1, 'a sparkline cell per checked search');
     await goto(page, `/app/${encodeURIComponent(slug)}/track-history`);
     await page.waitForSelector(SEL.historyRow);
@@ -533,6 +533,50 @@ try {
     await page.waitForSelector(SEL.chart);
     await audit(page, 'tablet-overview');
     await page.setViewportSize({ width: 1280, height: 900 });
+  });
+
+  await step('first-load-kept', async () => {
+    // A brand new site on a slow host: the page shows first, the person edits while the analysis runs, and the
+    // report arriving must neither empty the draft, load it again, nor drop those edits.
+    const site = 'https://www.slow-first.example/';
+    const tab = await desk.newPage();
+    watch(tab, 'first-load');
+    await tab.goto(`${BASE}/edit?url=${encodeURIComponent(site)}`);
+    const h1 = tab.frameLocator(SEL.editorFrame).locator('h1').first();
+    await h1.waitFor({ timeout: SLOW });
+    const base = await tab.evaluate(async (u) => (await import('/studio/js/editor/editor.js')).draftFor(u).base, site);
+    expect(base && base.length > 100, 'the first loaded draft has the page');
+    // Watch the draft from inside the page: it must never go empty or get a different base once loaded.
+    await tab.evaluate(async (u) => {
+      const m = await import('/studio/js/editor/editor.js');
+      const first = m.draftFor(u).base;
+      window.__draftProblems = [];
+      window.__draftWatch = setInterval(() => {
+        const d = m.draftFor(u);
+        if (!d.text) window.__draftProblems.push('empty');
+        if (d.base !== first) window.__draftProblems.push('reloaded');
+      }, 20);
+    }, site);
+    await h1.click();
+    await tab.keyboard.press('End');
+    let typed = 0;
+    while (!/\/app\//.test(tab.url()) && typed < 400) {
+      await tab.keyboard.type('Q');
+      typed += 1;
+      await tab.waitForTimeout(60);
+    }
+    expect(/\/app\//.test(tab.url()), 'the analysis finished while typing');
+    await tab.waitForSelector(SEL.editorFrame);
+    await tab.waitForTimeout(800);
+    const result = await tab.evaluate(async (u) => {
+      clearInterval(window.__draftWatch);
+      const m = await import('/studio/js/editor/editor.js');
+      const frame = document.querySelector('iframe[title="Editable page"]');
+      return { problems: [...new Set(window.__draftProblems)], draft: (m.draftFor(u).text.match(/Q+/) || [''])[0].length, frame: ((frame.contentDocument.body.textContent || '').match(/Q+/) || [''])[0].length };
+    }, site);
+    expect(!result.problems.length, `the first loaded draft was never emptied or replaced: ${result.problems.join(', ')}`);
+    expect(result.draft >= typed - 1 && result.frame >= typed - 1, `edits made during the analysis are kept (typed ${typed}, draft ${result.draft}, preview ${result.frame})`);
+    await tab.close();
   });
 
   await step('parallel-analysis', async () => {

@@ -141,7 +141,7 @@
      editor/test.js     runTest() -> Promise          renderResult(run, animate)
      editor/publish.js  publishButton(draft) -> Node
      screens/issues.js  issueRow(issue, compact) -> Node
-     Importers: app.js (draftFor, normalize, paintFrame, paintSide, renderEditor, publishButton), screens/overview.js
+     Importers: app.js (draftFor, normalize, paintFrame, paintSide, renderEditor, syncFromFrame, publishButton), screens/overview.js
      (issueRow), editor/test.js (ED, draftFor, editorCtx, getCompare, renderEditor, syncFromFrame, facts,
      publishButton), editor/editor.js (renderResult, runTest), editor/publish.js (ED, draftFor, syncFromFrame, editorCtx).
      tests/test_studio_modules.py checks this list against the imports.

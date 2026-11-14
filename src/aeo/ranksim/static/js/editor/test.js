@@ -285,12 +285,18 @@ function searchesTile(run) {
     run.predict.forward_check ? h('p', { class: 'caveat', text: run.predict.forward_check }) : null);
 }
 
+function guideDetail(item) {
+  if (['words', 'headings', 'links'].includes(item.feature)) return null; // the sentence already gives both numbers
+  const show = (v) => (typeof v === 'number' ? pct(v) : String(v));
+  return h('span', { class: 'predict-guide-d', text: `You: ${show(item.yours)}. Pages above: ${show(item.above)}.` });
+}
+
 function guidanceTile(run) {
   const rows = run.predict.searches;
   const row = rows.find((item) => item.search === run.search) || rows[0];
   const items = (row && row.guidance) || [];
   const list = items.length
-    ? h('ol', { class: 'predict-guide' }, items.map((item) => h('li', null, h('span', { class: 'predict-guide-t', text: item.text }), h('span', { class: 'predict-guide-d', text: `You: ${item.yours}. Pages above: ${item.above}.` }))))
+    ? h('ol', { class: 'predict-guide' }, items.map((item) => h('li', null, h('span', { class: 'predict-guide-t', text: item.text }), guideDetail(item))))
     : h('p', { class: 'tile-sub', text: row && row.with_edit != null && row.with_edit <= 1.5 ? 'Nothing is PREDICTED above this page here.' : 'No clear gap on the features this model trusts.' });
   const above = (row && row.above) || [];
   return h('section', { class: 'tile span-2 predict-tile' },

@@ -87,7 +87,7 @@ def test_title_missing_long_short_duplicate_and_search():
         f"{SITE}/d/": page(title="Crew time tracking for excavation contractors | Shovel", body="<main><h1>Crew time tracking</h1><p>" + FILLER + "</p></main>"),
         f"{SITE}/e/": page(title="Crew time tracking for excavation contractors | Shovel", body="<main><h1>Machine maintenance logs</h1><p>" + FILLER + "</p></main>"),
     }
-    rankings = [{"q": "haul ticket app", "position": None, "url": f"{SITE}/d/", "checked": False, "top": []}]
+    rankings = [{"q": "haul ticket app", "position": None, "url": f"{SITE}/d/", "checked": True, "top": []}]
     issues = run(pages, rankings=rankings)
     missing = only(issues, "title-missing")[0]
     assert missing["page"] == f"{SITE}/a/" and missing["severity"] == "high"
@@ -110,7 +110,7 @@ def test_title_missing_long_short_duplicate_and_search():
 def test_suggestions_keep_the_casing_the_page_uses():
     body = "<main><h1>Switching from HCSS</h1><p>" + FILLER + " HCSS HeavyJob users move their crews in a day.</p></main>"
     pages = {f"{SITE}/x/": page(title="Switching tools | Shovel", body=body)}
-    rankings = [{"q": "hcss heavyjob alternative", "position": None, "url": f"{SITE}/x/", "checked": False, "top": []}]
+    rankings = [{"q": "hcss heavyjob alternative", "position": None, "url": f"{SITE}/x/", "checked": True, "top": []}]
     issue = only(run(pages, rankings=rankings), "title-search")[0]
     assert issue["suggestion"].startswith("HCSS HeavyJob alternative")
 
@@ -151,7 +151,7 @@ def test_headings_missing_many_skipped_and_missing_the_search():
         f"{SITE}/h3/": page(body=f"<main><h1>Dirt work software for excavation crews</h1><h2>Time</h2><h4>GPS clock in</h4><p>{FILLER}</p></main>"),
         f"{SITE}/h4/": page(body=f"<main><h1>Welcome</h1><p>{FILLER}</p></main>", title="Haul ticket app for dirt work | Shovel"),
     }
-    rankings = [{"q": "haul ticket app", "position": None, "url": f"{SITE}/h4/", "checked": False, "top": []}]
+    rankings = [{"q": "haul ticket app", "position": None, "url": f"{SITE}/h4/", "checked": True, "top": []}]
     issues = run(pages, rankings=rankings)
     missing = only(issues, "h1-missing")[0]
     assert missing["page"] == f"{SITE}/h1/" and missing["suggestion"] == "<h1>Dirt work software for excavation crews</h1>" and missing["action"] == "prepend"
@@ -266,6 +266,7 @@ def test_noindex_canonical_elsewhere_robots_blocked_and_errors():
     pages = {
         f"{SITE}/noindex/": page(extra_head='<meta name="robots" content="noindex, follow">'),
         f"{SITE}/canon/": page().replace('<link rel="canonical" href="{url}">', f'<link rel="canonical" href="{SITE}/other/">'),
+        f"{SITE}/other/": page(title="Haul tickets for dirt work crews | Shovel", body="<main><h1>Haul tickets</h1><p>" + " ".join(["Loads, weights and pits recorded by drivers on every ticket."] * 40) + "</p></main>"),
         f"{SITE}/private/": page(),
     }
     docs = [A.PageDoc(url, html.replace("{url}", url)) for url, html in pages.items()]
@@ -428,7 +429,7 @@ def test_ranking_issues_per_search():
     assert no_page["search"] == "dirt work estimating software" and no_page.get("page") is None
     behind = only(issues, "behind")[0]
     assert behind["title"] == '#6 for "crew time tracking app"' and "have a table" in behind["comment"] and "FAQ" in behind["comment"]
-    assert 'missing "time tracking"' in behind["comment"] and behind["element"]["selector"] == "head > title"
+    assert 'missing "time", "tracking"' in behind["comment"] and behind["element"]["selector"] == "head > title"
     assert behind["suggestion"].startswith("Crew time tracking app")
     assert not any(issue.get("search") == "unchecked search" for issue in issues)
 
@@ -491,7 +492,7 @@ def test_registry_and_plugin_hook(monkeypatch):
 
 def test_group_by_search_and_summary():
     pages = {f"{SITE}/haul/": page(title="Shovel", body=f"<main><h1>Welcome</h1><p>{FILLER}</p></main>")}
-    issues = run(pages, rankings=[{"q": "haul ticket app", "position": None, "url": f"{SITE}/haul/", "checked": False, "top": []}])
+    issues = run(pages, rankings=[{"q": "haul ticket app", "position": None, "url": f"{SITE}/haul/", "checked": True, "top": []}])
     grouped = A.group_issues(issues)
     assert grouped["searches"][0]["search"] == "haul ticket app" and len(grouped["searches"][0]["ids"]) >= 2
     summary = A.summarize(issues)
@@ -709,3 +710,153 @@ def test_the_audit_ui_in_a_real_browser(tmp_path):
     assert lines, run.stdout[-3000:] + run.stderr[-3000:]
     result = json.loads(lines[-1])
     assert result["ok"], json.dumps(result, indent=1)
+
+
+# -- false alarms found on real sites (docs/plans/audit-findings-from-discover.md) ---------------------
+
+
+def test_an_alias_serving_its_canonical_page_gets_no_issues():
+    target = f"{SITE}/all-in-one-dirt-work-software/"
+    alias = f"{SITE}/all-in-one-dirt-work/"
+    html = page(title="All in one dirt work software for crews of 5 to 100 people | Shovel and more words here")
+    pages = {target: html.replace("{url}", target), alias: html.replace("{url}", target)}  # byte for byte, canonical names the target
+    rankings = [_row("all in one dirt work software", alias, 6, RIVALS + [alias])]
+    issues = A.audit_html(pages, rankings=rankings, docs={url: _rival(1500) for url in RIVALS})
+    assert not [issue for issue in issues if issue.get("page") == alias], [(i["kind"], i["page"]) for i in issues if i.get("page") == alias]
+    assert "canonical-other" not in kinds(issues)
+    assert any(issue["kind"] == "behind" and issue["page"] == target for issue in issues)  # the ranking moves to the canonical page
+
+
+def test_a_canonical_to_a_different_page_is_still_flagged_high():
+    pages = {
+        f"{SITE}/a/": page().replace('<link rel="canonical" href="{url}">', f'<link rel="canonical" href="{SITE}/b/">'),
+        f"{SITE}/b/": page(title="Haul tickets for dirt work crews | Shovel", body="<main><h1>Haul tickets</h1><p>" + " ".join(["Drivers record loads, pits and weights on each ticket."] * 40) + "</p></main>"),
+    }
+    issue = only(run(pages), "canonical-other")[0]
+    assert issue["severity"] == "high" and issue["page"] == f"{SITE}/a/"
+
+
+def test_our_own_timeout_is_low_and_never_a_broken_link():
+    home = f"{SITE}/"
+    docs = [
+        A.PageDoc(home, page(body=f"<main><h1>Dirt work software</h1><p>{FILLER}</p><p><a href='/slow/'>Slow page about pricing</a></p></main>").replace("{url}", home)),
+        A.PageDoc(f"{SITE}/slow/", "", status="error", error="ReadTimeout: timed out after 8s"),
+    ]
+    issues = A.audit_html(docs)
+    slow = only(issues, "unreadable")[0]
+    assert slow["severity"] == "low" and "in time" in slow["title"] and "can't rank" not in slow["comment"]
+    assert "broken-link" not in kinds(issues)
+
+
+def test_no_search_advice_without_google_data_or_on_a_page_already_in_the_top_3():
+    pages = {f"{SITE}/award/": page(title="Award nominees 2023 | Shovel", body=f"<main><h1>Award nominees</h1><p>{FILLER}</p></main>")}
+    guessed = [{"q": "when greatness in construction aligns", "position": None, "url": f"{SITE}/award/", "checked": False, "top": []}]
+    assert not {"title-search", "h1-search", "no-answer"} & set(kinds(run(pages, rankings=guessed)))
+    ranking = f"{SITE}/cms/"
+    pages = {ranking: page(title="Construction management software | Shovel", body=f"<main><h1>Construction management software</h1><p>{FILLER}</p></main>")}
+    rows = [_row("construction management software", ranking, 2, [ranking] + RIVALS), _row("best all in one dirt work management software", ranking, 8, RIVALS + [ranking])]
+    issues = run(pages, rankings=rows, docs={url: _rival(400) for url in RIVALS})
+    assert not {"title-search", "h1-search"} & set(kinds(issues))
+    behind = only(issues, "behind")[0]
+    assert "title is missing" not in behind["comment"] and "H1 is missing" not in behind["comment"]
+
+
+def test_word_matching_handles_compounds_digits_and_accents():
+    assert A.covers("dirt work software", "Dirtwork Software for Crews")
+    assert A.covers("dirtwork software", "Dirt Work Software for Crews")
+    assert A.covers("all in 1 dirt work software", "All in one dirt work software")
+    assert A.covers("terminos y condiciones", "Términos y condiciones")
+    assert A.missing_words("dirt work software", "Dirtwork Software") == []
+    assert A.cased("terminos y condiciones", "Términos y condiciones de uso").startswith("Términos")
+
+
+def test_legal_and_utility_pages_get_no_content_link_or_social_advice():
+    footer = "<footer>" + " ".join(["Company Product Pricing Careers Blog Contact Support Partners"] * 10) + "</footer>"
+    legal = f"{SITE}/legal/privacy-portal/"
+    pages = {legal: page(title="Privacy portal for customers and partners | Shovel", body=f"<main><h1>Privacy portal</h1><p>Send a privacy request here.</p></main>{footer}").replace('<meta property="og:title" content="Shovel">', "")}
+    found = set(kinds(run(pages)))
+    assert not {"thin", "few-links", "schema-missing", "og-missing", "twitter-missing"} & found, found
+
+
+def test_thin_counts_the_main_content_only():
+    nav = "<nav>" + " ".join(["Product Pricing Customers Resources Company Login"] * 30) + "</nav>"
+    footer = "<footer>" + " ".join(["Terms Privacy Cookies Careers Contact Partners"] * 30) + "</footer>"
+    url = f"{SITE}/crew-app/"
+    pages = {url: page(body=f"{nav}<main><h1>Crew app</h1><p>{' '.join(['word'] * 50)}</p></main>{footer}")}
+    thin = only(run(pages), "thin")[0]
+    assert "52 words" in thin["title"] or "52 words" in thin["comment"], thin["title"]
+
+
+def test_www_and_bare_home_pages_are_one_page():
+    html = page(title="Heavy civil estimating software for contractors | Shovel")
+    issues = run({"https://www.shovel.example/": html, "https://shovel.example/": html, "https://shovel.example/?try=home": html})
+    assert "title-duplicate" not in kinds(issues) and "meta-duplicate" not in kinds(issues)
+
+
+def test_title_length_by_pixels_and_suggestions_never_cut_off():
+    fits = "Construction estimating software for heavy civil crews | Shov"  # 61 characters, fits in 600 pixels
+    assert A.pixels(fits) <= A.TITLE_PIXELS
+    brand_only = "Heavy civil estimating software for crews of 5 to 100 | Mitti (by SafetyCulture)"
+    long = "Construction Management Software Built For Heavy Civil And Dirt Work Contractors With Crews | Shovel"
+    pages = {f"{SITE}/fits/": page(title=fits), f"{SITE}/brand/": page(title=brand_only), f"{SITE}/long/": page(title=long)}
+    issues = run(pages, brand="Mitti")
+    flagged = {issue["page"] for issue in issues if issue["kind"] == "title-long"}
+    assert flagged == {f"{SITE}/long/"}, flagged
+    for issue in issues:
+        if issue.get("suggestion") and issue["kind"].startswith(("title", "meta")):
+            assert not issue["suggestion"].rstrip("\">").endswith("..."), issue
+            assert "–" not in issue["suggestion"] and "—" not in issue["suggestion"], issue
+
+
+def test_meta_suggestions_skip_banners_and_short_or_cut_text():
+    banner = "<div class='event-banner'><p>Join us February 15–18 · Houston, TX for the yearly user conference and training days with the team.</p></div>"
+    body = f"{banner}<main><h1>Estimating software</h1><p>Short line.</p><p>{FILLER}</p></main>"
+    issue = only(run({f"{SITE}/est/": page(meta="", body=body)}), "meta-missing")[0]
+    assert "February" not in issue["suggestion"] and "–" not in issue["suggestion"]
+    content = issue["suggestion"].split('content="', 1)[1].rsplit('"', 1)[0]
+    assert A.META_MIN <= len(content) <= A.META_MAX and not content.endswith("...")
+
+
+def test_generic_links_only_internal_and_once_per_target():
+    body = (
+        f"<main><h1>Dirt work software</h1><p>{FILLER}</p><a href='/a/'>a page</a><a href='/b/'>b page</a>"
+        "<a href='https://other.example/x'>here</a><nav class='desktop'><a href='/guide/'>Learn more</a></nav><nav class='mobile'><a href='/guide/'>Learn more</a></nav></main>"
+    )
+    generic = only(run({f"{SITE}/g/": page(body=body)}), "link-generic")
+    assert len(generic) == 1 and "/guide/" in generic[0]["comment"]
+
+
+def test_decorative_icons_language_paths_heading_text_and_wording():
+    body = (
+        f"<main><h1>Dirt work software</h1><p>{FILLER}</p><a href='/a/'><img src='/icons/arrow.svg'> Read the guide to crews</a>"
+        "<h2>Forms</h2><h3><strong>QR Code Form</strong>s</h3><h2>Section</h2><h4><p>A heading wrapped around a block</p></h4></main>"
+    )
+    url = f"{SITE}/pt-BR/guia/"
+    issues = run({url: page(body=body)})
+    assert "img-alt" not in kinds(issues) and "url-hygiene" not in kinds(issues)
+    assert not any("Form s" in issue["comment"] for issue in issues)
+    assert not any(issue["kind"] == "heading-skip" and "wrapped" in issue["comment"] for issue in issues)
+    few = only(issues, "few-links")[0]
+    assert "1 other page." in few["comment"]
+
+
+def test_schema_gap_counts_one_search_and_skips_breadcrumbs_on_the_home_page():
+    home = f"{SITE}/"
+    other = f"{SITE}/haul/"
+    pages = {home: page(), other: page(title="Haul ticket app for dirt work | Shovel", body=f"<main><h1>Haul ticket app</h1><p>{FILLER}</p></main>")}
+    docs = {url: _rival(400, types=("BreadcrumbList",)) for url in RIVALS}
+    rows = [_row("dirt work software", home, 6, RIVALS + [home]), _row("haul ticket app", other, 6, RIVALS + [other]), _row("haul ticket software", other, 7, RIVALS + [other])]
+    gaps = only(run(pages, rankings=rows, docs=docs), "schema-gap")
+    assert [issue["page"] for issue in gaps] == [other]
+    assert "3 of the 3 top pages we compared" in gaps[0]["comment"]
+
+
+def test_streamed_content_counts_and_files_from_the_sitemap_are_not_pages():
+    streamed = (
+        "<main><template id='B:0'></template><div>Loading</div></main>"
+        "<div hidden id='S:0'><h1>Dirt work software</h1><p>" + FILLER + "</p></div>"
+    )
+    url = f"{SITE}/streamed/"
+    issues = A.audit_html([A.PageDoc(url, page(body=streamed).replace("{url}", url)), A.PageDoc(f"{SITE}/uploads/logo.webp", "", status="error", error="Unsupported content type image/webp")])
+    assert "thin" not in kinds(issues, url) and "script-built" not in kinds(issues, url)
+    assert not [issue for issue in issues if "logo.webp" in (issue.get("page") or "")]

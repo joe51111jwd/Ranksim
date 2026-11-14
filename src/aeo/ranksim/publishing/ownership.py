@@ -87,13 +87,15 @@ def instructions(record: dict) -> dict:
         },
         "file": {
             "label": "File",
-            "steps": f"Upload a text file to https://{domain}{FILE_PATH} that holds this line.",
+            "steps": f"Upload a plain text file to https://{domain}{FILE_PATH} that holds this line.",
             "value": token,
+            "fields": [["Address", f"https://{domain}{FILE_PATH}"], ["Contents", token]],
         },
         "dns": {
             "label": "DNS record",
-            "steps": f"Add a TXT record on {domain} with this value. DNS changes can take a while to show up.",
+            "steps": f"At your domain or DNS provider, add a TXT record for {domain}. DNS changes can take a while to show up.",
             "value": f"{TXT_PREFIX}{token}",
+            "fields": [["Type", "TXT"], ["Name", f"@ (that is {domain} itself)"], ["Value", f"{TXT_PREFIX}{token}"]],
         },
     }
 

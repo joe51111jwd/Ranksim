@@ -183,6 +183,21 @@ class Publisher:
             raise PublishError(str(exc), 503) from exc
         return {**public_connection(connection), "account": account}
 
+    def check_connection(self, *, kind: str, settings: dict, secret: dict, url: str = "") -> dict:
+        """The guided flow's live check: test what was typed, step by step, without saving anything."""
+        cls = CONNECTORS.get(kind)
+        if cls is None:
+            raise PublishError("Pick a platform to connect.")
+        try:
+            clean_settings = cls.clean_settings(settings)
+            clean_secret = cls.clean_secret(secret)
+        except ConnectorError as exc:
+            raise PublishError(str(exc)) from exc
+        with self.http_factory() as client:
+            connector = cls(clean_settings, clean_secret, client, allow_private=self.allow_private)
+            steps = guarded(lambda: connector.inspect(url), 502)
+        return {"ok": all(s["ok"] for s in steps), "steps": steps}
+
     def remove_connection(self, connection_id: str) -> bool:
         return self.store.remove_connection(connection_id)
 

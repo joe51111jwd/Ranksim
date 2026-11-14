@@ -759,7 +759,9 @@ def test_first_analysis_uses_gsc_before_the_project_exists(tmp_path, env):
     _sign_in(box)
     query = _connect(box)
     _callback(box, {"code": "good-code", "state": query["state"]})
-    pages = [SimpleNamespace(url="https://www.other.example/", status="fetched", title="", h1="", h2s=[])]
+    from aeo.ranksim.site import SitePage
+
+    pages = [SitePage(url="https://www.other.example/", status="fetched")]  # a real page row, as discovery reads every field
     found = discovery.discover_with_plugins(pages, "Other", host="www.other.example", project=None, ui=box.ui)
     assert found[:2] == ["heavy civil software", "dirt work software"]
     assert any(path.endswith("/sites/https%3A%2F%2Fother.example%2F/searchAnalytics/query") for kind, path, _ in box.google.calls)

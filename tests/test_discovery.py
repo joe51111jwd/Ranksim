@@ -896,3 +896,76 @@ def test_brief_sections_are_topics_not_products_or_taglines():
            "top": [{"position": i + 1, "url": f"https://s{i}.example/", "you": False} for i in range(3)] + [{"position": 4, "url": "https://www.agtek.com/x", "you": False}]}
     brief = cp.content_brief(row["q"], row, docs, other_brands={"jobtread", "stack"})
     assert [item["heading"] for item in brief["sections"]] == ["Estimating"]
+
+
+# -- speed without changing the output -------------------------------------------------------------------------
+
+
+TRICKY = [
+    "",
+    "<p>no html or body</p>",
+    '<?xml version="1.0" encoding="utf-8"?><html><head><title>X</title></head><body><h1>A</h1><p>b</p></body></html>',
+    "<html><head><title> Spaced   Title </title><meta property='og:description' content='OG text'></head><body><!-- a comment --><h1>One <!-- c --> heading</h1><p>para <b>bold</b> tail</p><ul><li>item <p>nested</p></li></ul></body></html>",
+    '<html><body><main><h2>Q</h2><script type="application/ld+json">{"@type":"FAQPage"}</script><script type="application/ld+json">{bad json</script><p>words here</p><nav><h2>Menu</h2></nav></main></body></html>',
+    "<html><body><div>" + "only divs with words " * 30 + "</div><p>short</p></body></html>",
+    "<html><body><article><h1>Art</h1><h3>Deep</h3><blockquote>quote <p>inner</p></blockquote><pre>code</pre></article></body></html>",
+]
+
+
+def test_lean_profiles_match_the_beautifulsoup_extractor():
+    pages = {f"https://t{i}.example/": html for i, html in enumerate(TRICKY)}
+    pages.update(_docs())
+    pages["https://c.example/"] = _contractor_page("Dirt Works")
+    pages["https://v.example/"] = _vendor_page("Mitti")
+    for url, html in pages.items():
+        lean, slow = cp.page_profile(url, html, lean=True), cp.page_profile(url, html, lean=False)
+        assert lean == slow, url
+
+
+def test_cleaning_sentences_in_one_pass_matches_cleaning_each():
+    import re
+
+    text = "All-in-1 Dirt Work: the Software! Meet the team. Café & Grill; it's “quoted”.\nThe end? Ünïcode words: naïve façade. &amp; more"
+    assert cp._clean_sentences(text) == [dn.clean(part) for part in re.split(r"[.!?;:\n]+", text)]
+
+
+def test_sections_are_the_same_fresh_from_disk_and_from_memory(tmp_path, monkeypatch):
+    settings = make_settings(tmp_path, serpapi_key="sk-test-discover")
+    app = create_app(settings=settings, projects_root=tmp_path / "projects", public_demo=False,
+                     pull_options={"serp_provider": FakeGoogle(), "fetcher": FakeCrawler(_site_pages()), "today": TODAY, "workers": 4})
+    client = TestClient(app)
+    slug = _lines(client.post("/api/v1/sites", json={"site": SITE}, headers={"x-ranksim-csrf": _token(client)}))[-1]["slug"]
+    project = load_project(slug, root=tmp_path / "projects")
+    folder = project.dir / "plugins" / "discover"
+    first = client.get(f"/api/v1/projects/{slug}/report").json()
+    assert (folder / "profiles.json").is_file() and (folder / "sections.json").is_file()
+    keys = ("discovery", "competitor_profiles", "gaps", "briefs")
+    # a fresh instance: no sections, no memory, only the saved profiles. Nothing may be parsed again.
+    (folder / "sections.json").unlink()
+    cp._profile_memory.clear()
+    monkeypatch.setattr(cp, "page_profile", lambda *a, **k: (_ for _ in ()).throw(AssertionError("parsed again")))
+    second = client.get(f"/api/v1/projects/{slug}/report").json()
+    assert {key: second[key] for key in keys} == {key: first[key] for key in keys}
+    # warm: the sections file answers
+    third = client.get(f"/api/v1/projects/{slug}/report").json()
+    assert {key: third[key] for key in keys} == {key: first[key] for key in keys}
+
+
+def test_the_bs4_path_gives_the_same_report_sections(tmp_path, monkeypatch):
+    settings = make_settings(tmp_path, serpapi_key="sk-test-discover")
+    app = create_app(settings=settings, projects_root=tmp_path / "projects", public_demo=False,
+                     pull_options={"serp_provider": FakeGoogle(), "fetcher": FakeCrawler(_site_pages()), "today": TODAY, "workers": 4})
+    client = TestClient(app)
+    slug = _lines(client.post("/api/v1/sites", json={"site": SITE}, headers={"x-ranksim-csrf": _token(client)}))[-1]["slug"]
+    project = load_project(slug, root=tmp_path / "projects")
+    folder = project.dir / "plugins" / "discover"
+    keys = ("discovery", "competitor_profiles", "gaps", "briefs")
+    lean = client.get(f"/api/v1/projects/{slug}/report").json()
+    for name in ("sections.json", "profiles.json"):
+        (folder / name).unlink()
+    cp._profile_memory.clear()
+    real = cp.page_profile
+    monkeypatch.setattr(cp, "page_profile", lambda url, html, lean=True: real(url, html, lean=False))
+    slow = client.get(f"/api/v1/projects/{slug}/report").json()
+    assert {key: slow[key] for key in keys} == {key: lean[key] for key in keys}
+    cp._profile_memory.clear()

@@ -17,9 +17,14 @@ visibility and hosts).
 
 from __future__ import annotations
 
+import hashlib
+import json
 import math
+import os
 import re
-from collections import Counter, defaultdict
+import threading
+from collections import Counter, OrderedDict, defaultdict
+from pathlib import Path
 from statistics import median
 from urllib.parse import urlsplit
 
@@ -190,7 +195,143 @@ def _known(host: str, base: str, known: set[str]) -> str | None:
 # -- page facts --------------------------------------------------------------------------------------
 
 
-def page_profile(url: str, html: str) -> dict:
+class _Lean:
+    """The fields of aeo.crawl.extract.ExtractedPage that page_profile reads, parsed with lxml directly (about five
+    times faster than BeautifulSoup). The rules are extract_html's; tests compare the two on real pages."""
+
+    __slots__ = ("title", "meta_description", "h1", "headings", "schema_objects", "main_text", "word_count")
+
+
+def _text_of(element, sep: str = " ") -> str:
+    """BeautifulSoup's get_text(" ", strip=True): every text node in the subtree, stripped, joined by spaces.
+    Comments and processing instructions are not text."""
+    from lxml import etree
+
+    parts: list[str] = []
+
+    def walk(node) -> None:
+        if isinstance(node.tag, str) and node.text:
+            value = node.text.strip()
+            if value:
+                parts.append(value)
+        for child in node:
+            walk(child)
+            if child.tail:
+                value = child.tail.strip()
+                if value:
+                    parts.append(value)
+
+    if element is not None and not isinstance(element, (etree._Comment, etree._ProcessingInstruction)):
+        walk(element)
+    return sep.join(parts)
+
+
+LEAN_JUNK = ("script", "style", "noscript", "nav", "footer", "form", "svg", "iframe")
+LEAN_BLOCKS = {"h1", "h2", "h3", "p", "li", "blockquote", "pre"}
+
+
+def lean_extract(html: str) -> _Lean:
+    """extract_html's title, meta description, H1, H1 to H3 headings, JSON-LD objects, main text and word count."""
+    import json
+
+    from lxml import etree
+
+    from aeo.textutil import word_count
+
+    page = _Lean()
+    page.title = page.meta_description = page.h1 = page.main_text = ""
+    page.headings, page.schema_objects, page.word_count = [], [], 0
+    text = re.sub(r"^\s*<\?xml[^>]*\?>", "", html or "")
+    if not text.strip():
+        return page
+    root = etree.fromstring(text, etree.HTMLParser(recover=True, remove_comments=False))
+    if root is None:
+        return page
+    title = root.find(".//title")
+    if title is not None:
+        page.title = _text_of(title)
+    for tag in root.iter("meta"):
+        name = (tag.get("name") or tag.get("property") or "").strip().lower()
+        content = (tag.get("content") or "").strip()
+        if content and name in {"description", "og:description"}:
+            page.meta_description = content
+            break
+    for level in (1, 2, 3):
+        for heading in root.iter(f"h{level}"):
+            value = _text_of(heading)
+            if value:
+                page.headings.append({"level": level, "text": value})
+                if level == 1 and not page.h1:
+                    page.h1 = value
+    for script in root.iter("script"):
+        if not re.search(r"ld\+json", script.get("type") or "", re.I):
+            continue
+        raw = "".join(script.itertext())
+        try:
+            page.schema_objects.append(json.loads(raw))
+        except json.JSONDecodeError:
+            continue
+    for name in LEAN_JUNK:
+        for tag in list(root.iter(name)):
+            parent = tag.getparent()
+            if parent is not None:
+                parent.remove(tag)  # decompose: the tag, its subtree and its tail go
+    main = next(root.iter("main"), None)
+    if main is None:
+        main = next(root.iter("article"), None)
+    if main is None:
+        main = next(root.iter("body"), None)
+    if main is None:
+        main = root
+    sections: list[tuple[str, str]] = []
+    stack: list[str] = []
+    current = ""
+    buffer: list[str] = []
+
+    def flush() -> None:
+        body = "\n".join(part for part in buffer if part).strip()
+        value = current + "\n" + body if current and body else (body or current)
+        if value:
+            sections.append((current, value))
+
+    for element in main.iter(*LEAN_BLOCKS):
+        if element.tag not in {"h1", "h2", "h3"} and any(parent.tag in {"p", "li", "blockquote", "pre"} for parent in element.iterancestors()):
+            continue
+        if element.tag in {"h1", "h2", "h3"}:
+            flush()
+            buffer = []
+            level = int(element.tag[1])
+            heading = _text_of(element)
+            stack = stack[: level - 1]
+            while len(stack) < level - 1:
+                stack.append("")
+            if len(stack) == level - 1:
+                stack.append(heading)
+            else:
+                stack[level - 1] = heading
+            current = " > ".join(part for part in stack if part)
+        else:
+            value = _text_of(element)
+            if value:
+                buffer.append(value)
+    flush()
+    if not sections:
+        fallback = _text_of(main, "\n")
+        if fallback:
+            sections = [("", fallback)]
+    structured = "\n\n".join(value for _, value in sections).strip()
+    plain = " ".join(_text_of(main).split())
+    if word_count(structured) < 40 and word_count(plain) >= word_count(structured) + 80:
+        structured = plain
+    page.main_text = structured
+    page.word_count = word_count(structured)
+    return page
+
+
+PROFILE_VERSION = 1  # bump when page_profile's output changes, so stored profiles are rebuilt
+
+
+def page_profile(url: str, html: str, *, lean: bool = True) -> dict:
     """What a page is made of: headings, word count, structured data types, term counts, selling signals."""
     from aeo.crawl.extract import extract_html
 
@@ -198,7 +339,7 @@ def page_profile(url: str, html: str) -> dict:
     # Footer, nav, aside and header hold site chrome ("Company", "Resources", "Subscribe"), not the page's content.
     body = CHROME.sub(" ", html)
     try:
-        found = extract_html(body, url)
+        found = lean_extract(body) if lean else extract_html(body, url)
         types: list[str] = []
         for obj in found.schema_objects or []:
             types.extend(_schema_types(obj))
@@ -279,9 +420,116 @@ def _empty_profile(url: str) -> dict:
     return {"url": url, "title": "", "h1": "", "headings": [], "words": 0, "schema": [], "terms": Counter(), "surface": {}, "selling": False, "unreadable": True}
 
 
-def _profile(cache: dict, url: str, html: str) -> dict:
+# -- profiles cached by content -----------------------------------------------------------------------
+#
+# A profile is a pure function of (PROFILE_VERSION, url, html), so it is cached under their sha256, the way
+# pagefacts caches page facts: in memory per process, and on disk per project in plugins/discover/profiles.json,
+# so a new serverless instance reads the profiles instead of parsing every ranking page again. The file keeps only
+# the keys the last report used and is rewritten only when they change.
+
+PROFILE_MEMORY_LIMIT = 2000
+PROFILES_FILE = "profiles.json"
+_profile_memory: "OrderedDict[str, dict]" = OrderedDict()
+_profile_lock = threading.Lock()
+
+
+def profile_key(url: str, html: str) -> str:
+    digest = hashlib.sha256()
+    digest.update(f"{PROFILE_VERSION}\0{url or ''}\0".encode("utf-8", "surrogatepass"))
+    digest.update((html or "").encode("utf-8", "surrogatepass"))
+    return digest.hexdigest()
+
+
+def _stored_form(profile: dict) -> dict:
+    data = dict(profile)
+    data["terms"] = dict(profile.get("terms") or {})
+    return data
+
+
+def _live_form(data: dict) -> dict:
+    profile = dict(data)
+    profile["terms"] = Counter(data.get("terms") or {})
+    profile["surface"] = dict(data.get("surface") or {})
+    profile["headings"] = [dict(item) for item in data.get("headings") or []]
+    return profile  # a fresh object each time, so a caller that edits it cannot change the cache
+
+
+def _remember_profile(key: str, data: dict) -> None:
+    with _profile_lock:
+        _profile_memory[key] = data
+        _profile_memory.move_to_end(key)
+        while len(_profile_memory) > PROFILE_MEMORY_LIMIT:
+            _profile_memory.popitem(last=False)
+
+
+def cached_profile(url: str, html: str, store: "ProfileStore | None" = None) -> dict:
+    """page_profile(url, html), from memory or the project's file when the same page was profiled before."""
+    key = profile_key(url, html)
+    if store is not None:
+        store.used.add(key)
+        data = store.disk.get(key)
+        if data is not None:
+            _remember_profile(key, data)
+            return _live_form(data)
+    with _profile_lock:
+        data = _profile_memory.get(key)
+    if data is None:
+        data = _stored_form(page_profile(url, html))
+        _remember_profile(key, data)
+    if store is not None:
+        store.new[key] = data
+    return _live_form(data)
+
+
+class ProfileStore:
+    """The on-disk layer for one project, plus a per-call memo by URL. Read on creation; save() writes back only
+    the keys used since, and only when they changed."""
+
+    def __init__(self, project=None) -> None:
+        self.project = project
+        self.disk: dict[str, dict] = {}
+        self.used: set[str] = set()
+        self.new: dict[str, dict] = {}
+        self.by_url: dict[tuple[str, int], dict] = {}
+        if project is None:
+            return
+        try:
+            raw = json.loads((Path(project.dir) / "plugins" / "discover" / PROFILES_FILE).read_text(encoding="utf-8"))
+            if isinstance(raw, dict) and raw.get("version") == PROFILE_VERSION and isinstance(raw.get("profiles"), dict):
+                self.disk = {key: value for key, value in raw["profiles"].items() if isinstance(value, dict)}
+        except (OSError, ValueError, TypeError, AttributeError):
+            self.disk = {}
+
+    def get(self, url: str, html: str) -> dict:
+        memo = (url, id(html))
+        if memo not in self.by_url:
+            self.by_url[memo] = cached_profile(url, html, self)
+        return self.by_url[memo]
+
+    def save(self) -> None:
+        if self.project is None or not self.used:
+            return
+        if self.used == set(self.disk) and not set(self.new) - set(self.disk):
+            return  # nothing changed: a steady report GET never writes
+        merged = {**self.disk, **self.new}
+        keep = {key: merged[key] for key in sorted(self.used) if key in merged}
+        try:
+            from aeo.ranksim.plugins import data_dir
+
+            folder = data_dir(self.project, "discover")
+            temp = folder / f".{PROFILES_FILE}.{os.getpid()}.{threading.get_ident()}.tmp"
+            temp.write_text(json.dumps({"version": PROFILE_VERSION, "profiles": keep}, separators=(",", ":")), encoding="utf-8")
+            os.replace(temp, folder / PROFILES_FILE)
+            self.disk, self.new = keep, {}
+        except (OSError, ValueError, TypeError):
+            pass  # a read-only or full disk only costs speed
+
+
+def _profile(cache, url: str, html: str) -> dict:
+    if isinstance(cache, ProfileStore):
+        return cache.get(url, html)
     if url not in cache:
-        cache[url] = page_profile(url, html)
+        cache[url] = cached_profile(url, html)
     return cache[url]
 
 
@@ -305,6 +553,36 @@ def _schema_types(obj, depth: int = 0) -> list[str]:
     return [item.split("/")[-1] for item in out if item]
 
 
+def _clean_sentences(text: str) -> list[str]:
+    """discovery.clean() of every sentence of a text, done in one pass over the whole text (the same result as
+    cleaning each sentence alone, many times faster on long pages)."""
+    from aeo.ranksim.discovery import LEADING
+
+    sentences = re.split(r"[.!?;:\n]+", text or "")
+    joined = "\x01".join(sentences).lower()
+    if not joined.isascii():
+        import unicodedata
+
+        joined = unicodedata.normalize("NFKD", joined)
+        joined = "".join(char for char in joined if not unicodedata.combining(char))
+    joined = joined.replace("&amp;", "&").replace("’", "").replace("'", "").replace("&", " and ")
+    joined = re.sub(r"[^\w \x01]+|_", " ", joined)
+    out = []
+    for value in joined.split("\x01"):
+        value = " ".join(value.split())  # only plain spaces are left after the pass above
+        if "all in 1" in value:
+            value = re.sub(r"\ball in 1\b", "all in one", value)
+        changed = True
+        while changed:
+            changed = False
+            for lead in LEADING:
+                if value.startswith(lead) and len(value) > len(lead):
+                    value = value[len(lead):].strip()
+                    changed = True
+        out.append(value)
+    return out
+
+
 def _terms(text: str, url: str) -> tuple[Counter, dict[str, str]]:
     """One and two word terms keyed by word form (``norm``), stop words and the page's own brand out. Also the
     most common way each term is written, for display."""
@@ -314,23 +592,28 @@ def _terms(text: str, url: str) -> tuple[Counter, dict[str, str]]:
         own = set()
     counts: Counter = Counter()
     forms: dict[str, Counter] = defaultdict(Counter)
-    for sentence in re.split(r"[.!?;:\n]+", text or ""):  # word pairs never cross a sentence end
-        raw = clean(sentence).split()
-        words = [norm(word) for word in raw]
+    known: dict[str, tuple[str, bool]] = {}  # word -> (norm, usable), worked out once per word
 
-        def ok(index: int) -> bool:
-            word = raw[index]
-            return word not in TEXT_STOP and stem(word) not in TEXT_STOP and len(word) >= 3 and not any(char.isdigit() for char in word) and stem(word) not in own and word not in own
+    def look(word: str) -> tuple[str, bool]:
+        found = known.get(word)
+        if found is None:
+            stemmed = stem(word)
+            usable = word not in TEXT_STOP and stemmed not in TEXT_STOP and len(word) >= 3 and not any(char.isdigit() for char in word) and stemmed not in own and word not in own
+            found = known[word] = (norm(word), usable)
+        return found
 
-        for index, word in enumerate(words):
-            if not ok(index):
+    for raw in _clean_sentences(text):  # word pairs never cross a sentence end
+        raw = raw.split()
+        looked = [look(word) for word in raw]
+        for index, (key, usable) in enumerate(looked):
+            if not usable:
                 continue
-            counts[word] += 1
-            forms[word][raw[index]] += 1
-            if index + 1 < len(words) and ok(index + 1):
-                key = f"{word} {words[index + 1]}"
-                counts[key] += 1
-                forms[key][f"{raw[index]} {raw[index + 1]}"] += 1
+            counts[key] += 1
+            forms[key][raw[index]] += 1
+            if index + 1 < len(raw) and looked[index + 1][1]:
+                pair = f"{key} {looked[index + 1][0]}"
+                counts[pair] += 1
+                forms[pair][f"{raw[index]} {raw[index + 1]}"] += 1
     return counts, {key: found.most_common(1)[0][0] for key, found in forms.items()}
 
 
@@ -540,7 +823,7 @@ def title_patterns(titles: list[str], domain: str) -> dict:
         "with_year": round(sum(1 for title in titles if re.search(r"\b20\d\d\b", title)) / len(titles), 2),
         "with_number": round(sum(1 for title in titles if re.search(r"\b\d{1,2}\b", title)) / len(titles), 2),
         "listicle": round(sum(1 for title in titles if LISTICLE.search(title)) / len(titles), 2),
-        "common_words": [word for word, count in words.most_common(8) if count >= 2 or len(titles) == 1][:6],
+        "common_words": [word for word, count in sorted(words.items(), key=lambda kv: (-kv[1], kv[0]))[:8] if count >= 2 or len(titles) == 1][:6],
     }
 
 
@@ -576,7 +859,7 @@ def competitor_profiles(google, own_domain: str, docs: dict[str, str] | None = N
         word_counts = [facts["words"] for facts in stored if facts["words"]]
         schema: Counter = Counter()
         for facts in stored:
-            schema.update(set(facts["schema"]))
+            schema.update(sorted(set(facts["schema"])))
         h2_counts = [sum(1 for item in facts["headings"] if item["level"] == 2) for facts in stored]
         group.append(
             {
@@ -592,7 +875,7 @@ def competitor_profiles(google, own_domain: str, docs: dict[str, str] | None = N
                 "best_pages": best_pages[:5],
                 "titles": title_patterns([page["title"] for page in pages.values()], row["domain"]),
                 "words": {"median": int(median(word_counts)), "min": min(word_counts), "max": max(word_counts), "pages": len(word_counts)} if word_counts else None,
-                "schema": [{"type": kind, "pages": count} for kind, count in schema.most_common(8)],
+                "schema": [{"type": kind, "pages": count} for kind, count in sorted(schema.items(), key=lambda kv: (-kv[1], kv[0]))[:8]],  # ties by name, never by set order
                 "h2_median": int(median(h2_counts)) if h2_counts else None,
                 "pages_stored": len(stored),
                 "pages_ranking": len(pages),
@@ -921,7 +1204,31 @@ def stored_html(database: str, urls: list[str]) -> dict[str, str]:
     return {url: found[loose_key(url)] for url in urls if loose_key(url) in found}
 
 
-SECTIONS_VERSION = 15
+SECTIONS_VERSION = 16
+
+
+def stored_versions(database: str, urls: list[str]) -> dict[str, list]:
+    """For each URL with a stored fetched page: its HTML length and fetch time, without loading the HTML. Enough to
+    tell whether a stored page changed since the sections were last worked out."""
+    from sqlalchemy import func
+
+    from aeo.ranksim.project import loose_key
+    from aeo.ranksim.store import RsPage, open_session
+
+    urls = [url for url in urls if url]
+    if not urls:
+        return {}
+    session = open_session(database)
+    try:
+        wanted = set(urls) | {url.rstrip("/") for url in urls} | {url.rstrip("/") + "/" for url in urls}
+        found = {}
+        query = session.query(RsPage.url, RsPage.status, func.length(RsPage.raw_html), RsPage.fetched_at).filter(RsPage.url.in_(sorted(wanted)))
+        for url, status, length, fetched_at in query.all():
+            if status == "fetched" and length:
+                found[loose_key(url)] = [int(length), str(fetched_at)]
+    finally:
+        session.close()
+    return {url: found[loose_key(url)] for url in urls if loose_key(url) in found}
 
 
 def _fingerprint(project, meta, google, features, rows, pages, docs) -> str:
@@ -940,10 +1247,8 @@ def _fingerprint(project, meta, google, features, rows, pages, docs) -> str:
         "rows": rows,
         "pages": [[page.url, page.status, page.title, page.h1, page.meta, page.h2s, page.words] for page in pages or []],
     }
+    head["stored"] = {url: docs[url] for url in sorted(docs)}  # length and fetch time of each stored page
     digest.update(json.dumps(head, sort_keys=True, default=str).encode("utf-8"))
-    for url in sorted(docs):
-        digest.update(url.encode("utf-8"))
-        digest.update(hashlib.sha1(docs[url].encode("utf-8", "replace")).digest())
     return digest.hexdigest()
 
 
@@ -969,8 +1274,7 @@ def report_sections(project, meta, database: str, report: dict, *, pages=None) -
         google, features = discovery.google_inputs(project)
         rows = discovery.load_rows(project)
         urls = sorted({item["url"] for row in rankings for item in row.get("top") or [] if item.get("url")} | {row["url"] for row in rankings if row.get("url")})
-        docs = stored_html(database, urls)
-        key = _fingerprint(project, meta, google, features, rows, pages, docs)
+        key = _fingerprint(project, meta, google, features, rows, pages, stored_versions(database, urls))
         cached = None
         try:
             cached = json.loads(_cache_path(project).read_text(encoding="utf-8"))
@@ -979,6 +1283,7 @@ def report_sections(project, meta, database: str, report: dict, *, pages=None) -
         if isinstance(cached, dict) and cached.get("key") == key and isinstance(cached.get("sections"), dict):
             sections = cached["sections"]
         else:
+            docs = stored_html(database, urls)
             if pages:
                 brand = discovery.brand_of(pages, project.domain)
                 found = discovery.discover(pages, brand, host=project.domain, google=google, serp_features=features, extra=rows, is_ours=project.is_our_url)
@@ -988,11 +1293,12 @@ def report_sections(project, meta, database: str, report: dict, *, pages=None) -
                 data["serp_features"] = len(features)
                 data["tracked"] = discovery.describe(list(project.searches), found, brands=set(discovery.host_tokens(project.domain)))
                 sections["discovery"] = data
-            cache: dict = {}
+            cache = ProfileStore(project)
             sections["competitor_profiles"] = competitor_profiles(google, project.domain, docs, is_ours=project.is_our_url, cache=cache, own_pages=pages)
             sections["gaps"] = content_gaps(rankings, docs, is_ours=project.is_our_url, own_domain=project.domain, cache=cache)
             brand = discovery.brand_of(pages, project.domain) if pages else ""
             sections["briefs"] = content_briefs(rankings, docs, features=features, brand=brand, is_ours=project.is_our_url, cache=cache)
+            cache.save()
             try:
                 _cache_path(project).write_text(json.dumps({"key": key, "sections": sections}), encoding="utf-8")
             except (OSError, ValueError, TypeError, AttributeError):

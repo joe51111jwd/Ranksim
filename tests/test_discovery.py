@@ -849,3 +849,40 @@ def test_alternative_pages_do_not_fill_the_list():
     assert "dirt work software" in found.queries  # the category search still gets in
     assert "home service" not in found.queries and "what real users are saying" not in found.queries
     assert any(item["q"] == "projul alternative" for item in found.to_dict()["searches"]) or any(item["reason"].startswith("enough") and item["q"] == "projul alternative" for item in found.dropped)
+
+
+def test_the_sample_keeps_room_for_product_pages_beside_alternatives():
+    base = "https://mitti.example"
+    urls = [f"{base}/{name}-alternative" for name in "abcdefghijklmnopqrstuvwxyz"] + [f"{base}/features/inspections", f"{base}/features/scheduling", f"{base}/ai-tools", f"{base}/industries/construction"]
+    picked = dn.rank_site_urls(urls, 12)
+    assert {f"{base}/features/inspections", f"{base}/features/scheduling", f"{base}/ai-tools", f"{base}/industries/construction"} <= set(picked)
+    found = _phrases(["Do More With One Platform | Acme", "Download the App | Acme", "How to Choose | Acme", "Quick Comparison | Acme", "Work Order Software | Acme"])
+    assert "work order software" in found.queries
+    assert not {"do more with one platform", "download the app", "how to choose", "quick comparison"} & set(found.queries)
+
+
+def test_a_brief_is_built_only_from_the_pages_that_rank():
+    faq = '<h2>Frequently asked questions</h2><h3>How much does excavation software cost?</h3><p>A.</p>'
+    body = "Job costing for excavation crews. Job costing reports by phase. Crew scheduling for every job. " * 20
+    docs = {
+        "https://a.example/": _page("", "A", "A", ["Job costing", "Pricing plans", "Crew scheduling"], body).replace("</main>", faq + "</main>"),
+        "https://b.example/": _page("", "B", "B", ["Job costing by phase", "Simple pricing", "Scheduling crews"], body + body).replace("</main>", faq + "</main>"),
+        "https://c.example/": _page("", "C", "C", ["Daily logs"], body),
+    }
+    row = {"q": "excavation software", "checked": True, "position": None, "url": None, "top": [
+        {"position": 1, "url": "https://a.example/", "you": False}, {"position": 2, "url": "https://b.example/", "you": False},
+        {"position": 3, "url": "https://c.example/", "you": False}, {"position": 4, "url": "https://unstored.example/", "you": False}]}
+    brief = cp.content_brief("excavation software", row, docs, questions=["What is the best excavation software?"], brand="SmartCrew")
+    assert brief["title"] == "Excavation software | SmartCrew" and brief["h1"] == "Excavation software"
+    assert brief["based_on"] == ["https://a.example/", "https://b.example/", "https://c.example/"]
+    headings = {item["heading"].lower(): item for item in brief["sections"]}
+    assert any("job costing" in heading for heading in headings) and any("pricing" in heading for heading in headings)
+    assert all(item["pages"] >= 2 and item["of"] == 3 for item in brief["sections"])
+    assert brief["questions"][0] == "What is the best excavation software?" and any("cost" in q for q in brief["questions"])
+    assert brief["words"]["low"] <= brief["words"]["median"] <= brief["words"]["high"]
+    assert {item["element"] for item in brief["elements"]} == {"faq", "pricing"}
+    assert any(term["term"] == "job costing" for term in brief["terms"])
+    few = cp.content_brief("x", {"q": "x", "top": [{"position": 1, "url": "https://a.example/"}]}, docs)
+    assert few["note"] and few["sections"] == []
+    briefs = cp.content_briefs([row, {**row, "q": "ranked", "position": 2}, {**row, "q": "unchecked", "checked": False}], docs)
+    assert list(briefs) == ["excavation software"]

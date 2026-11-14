@@ -42,9 +42,24 @@ function columnCell(column, row) {
   return h('span', { class: 'qcol', role: 'cell', 'data-label': column.header || '' }, out);
 }
 
+/* The page for a search: the one Google ranks or that targets it, else the page Search Console reports for it. */
+export function bestPage(row, report) {
+  if (row.url) return { url: row.url, fromGsc: false };
+  const gsc = report && report.gsc && report.gsc.positions && report.gsc.positions[row.q];
+  if (gsc && typeof gsc.page === 'string' && gsc.page) return { url: gsc.page, fromGsc: true };
+  return { url: null, fromGsc: false };
+}
+
+function pageCell(row, report) {
+  const best = bestPage(row, report);
+  if (!best.url) return h('span', { class: 'c-page one-line', role: 'cell', text: 'No page yet' });
+  return h('span', { class: 'c-page one-line', role: 'cell', title: best.fromGsc ? `${best.url} (from Search Console)` : best.url, text: pathOf(best.url) });
+}
+
 function openInEditor(row) {
   closeSheet(true);
-  go('editor', row.url ? { q: row.q, page: row.url } : { q: row.q });
+  const best = bestPage(row, S.report);
+  go('editor', best.url ? { q: row.q, page: best.url } : { q: row.q });
 }
 
 export function renderSearches() {
@@ -81,7 +96,7 @@ export function renderSearches() {
       h('span', { class: `c-num pred${predicted ? '' : ' none'}`, role: 'cell', title: predicted ? `PREDICTED of ${row.predicted.of}` : '', text: predicted || '' }),
       h('span', { class: 'c-intent', role: 'cell' }, intentChip(item)),
       h('span', { class: 'c-source', role: 'cell', text: sourceText(item) }),
-      h('span', { class: 'c-page one-line', role: 'cell', title: row.url || '', text: row.url ? pathOf(row.url) : 'No page yet' }),
+      pageCell(row, R),
       h('span', { class: 'c-open', role: 'cell' }, h('button', { class: 'icon-btn', type: 'button', 'aria-label': `Open ${row.q} in the editor`, title: 'Open in editor', onClick: () => openInEditor(row) }, icon('pencil')))));
   }
   if (!rows.length) table.append(h('div', { class: 'empty-note', text: 'No searches yet.' }));
@@ -141,7 +156,8 @@ export function openSearch(row) {
     body.append(h('div', { class: 'sgrid' },
       h('div', { class: 'tile white' }, h('div', { class: 'tile-k', text: 'Google' }), h('div', { class: 'num', text: row.position ? `#${row.position}` : '-' }), h('div', { class: 'tile-sub', text: row.position ? 'Your position' : row.checked ? 'Not in the top 10' : 'Not checked yet' })),
       h('div', { class: 'tile white' }, h('div', { class: 'tile-k', text: 'PREDICTED' }), h('div', { class: 'num', text: predicted ? `#${predicted.position}` : '-' }), h('div', { class: 'tile-sub', text: predicted ? `of ${predicted.of} stored pages` : 'Needs a trained model' }))));
-    if (row.url) body.append(h('p', { class: 'reason', text: `Best page: ${pathOf(row.url)}` }));
+    const best = bestPage(row, S.report);
+    if (best.url) body.append(h('p', { class: 'reason', text: best.fromGsc ? `Best page: ${pathOf(best.url)} (from Search Console)` : `Best page: ${pathOf(best.url)}` }));
     if (row.top && row.top.length) body.append(h('div', { class: 'tile' }, h('div', { class: 'tile-head' }, h('h2', { text: 'Top 10 on Google' })), serpList(row.top)));
     else body.append(h('div', { class: 'empty-note', text: 'No Google results for this search yet.' }));
     if (gap) body.append(gapTile(gap));

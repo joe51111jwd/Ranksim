@@ -732,6 +732,103 @@ def gap_for(search: str, page_url: str | None, page_html: str | None, above: lis
     return result
 
 
+MAX_BRIEF_SECTIONS = 8
+MAX_BRIEF_QUESTIONS = 6
+QUESTION_WORDS = ("how", "what", "why", "when", "where", "which", "who", "is", "are", "can", "does", "do", "should")
+
+
+def _cased(text: str) -> str:
+    text = " ".join((text or "").split())
+    return text[:1].upper() + text[1:] if text else text
+
+
+def content_brief(search: str, row: dict, docs: dict[str, str], *, questions: list[str] | None = None, brand: str = "", is_ours=None, cache: dict | None = None) -> dict:
+    """A brief for a new or better page, built only from the stored pages that rank for the search: a title and H1,
+    the sections most of them share (with how many have each), questions people ask, a word range, and the page
+    elements most of them have. It describes what ranks now; it is not a promise of a position."""
+    cache = {} if cache is None else cache
+
+    def ours(url: str) -> bool:
+        try:
+            return bool(is_ours and is_ours(url))
+        except ValueError:
+            return False
+
+    top = sorted((item for item in row.get("top") or [] if item.get("url") and not item.get("you") and not ours(item["url"])), key=lambda item: item.get("position") or 99)
+    seen: set[str] = set()
+    pages = []
+    for item in top[:10]:
+        html = docs.get(item["url"])
+        if html and item["url"] not in seen:
+            seen.add(item["url"])
+            profile = _profile(cache, item["url"], html)
+            if not profile.get("unreadable"):
+                pages.append(profile)
+    title = _cased(search)
+    if brand and len(f"{title} | {brand}") <= 60:
+        title = f"{title} | {brand}"
+    brief = {"q": search, "title": title, "h1": _cased(search), "based_on": [page["url"] for page in pages], "sections": [], "questions": [], "words": None, "elements": [], "terms": []}
+    if len(pages) < COMMON_MIN_PAGES:
+        brief["note"] = "Fewer than two of the pages that rank are stored, so there is no brief yet."
+        return brief
+    total = len(pages)
+    asked: list[str] = []
+    for topic in _cluster([(page["url"], item["text"]) for page in pages for item in page["headings"]]):
+        label = min(topic["texts"], key=lambda text: (-topic["texts"][text], len(text)))
+        is_question = label.rstrip().endswith("?") or clean(label).split()[:1] in [[word] for word in QUESTION_WORDS]
+        if is_question and len(topic["pages"]) >= 1:
+            asked.append(label.strip())
+        if _common(len(topic["pages"]), total) and not is_question:
+            brief["sections"].append({"heading": label, "pages": len(topic["pages"]), "of": total, "evidence": list(topic["pages"])[:6]})
+    brief["sections"].sort(key=lambda item: -item["pages"])
+    brief["sections"] = brief["sections"][:MAX_BRIEF_SECTIONS]
+    wanted = [text for text in (questions or []) if isinstance(text, str) and text.strip()] + asked
+    picked: list[str] = []
+    for text in wanted:
+        key = " ".join(sorted(_topic_key(text)))
+        if key and all(" ".join(sorted(_topic_key(other))) != key for other in picked):
+            picked.append(_cased(text.strip()))
+        if len(picked) >= MAX_BRIEF_QUESTIONS:
+            break
+    brief["questions"] = picked
+    counts = sorted(page["words"] for page in pages if page["words"])
+    if counts:
+        low = counts[max(0, len(counts) // 4)]
+        high = counts[min(len(counts) - 1, (3 * len(counts)) // 4)]
+        brief["words"] = {"low": int(round(low, -1)), "high": int(round(high, -1)), "median": int(median(counts))}
+    have: dict[str, list[str]] = defaultdict(list)
+    for page in pages:
+        for name in page.get("elements") or []:
+            have[name].append(page["url"])
+    brief["elements"] = [{"element": name, "label": ELEMENTS[name], "pages": len(have[name]), "of": total} for name in ELEMENTS if len(have[name]) * 2 >= total and len(have[name]) >= COMMON_MIN_PAGES]
+    uses: dict[str, list[str]] = defaultdict(list)
+    surface: dict[str, Counter] = defaultdict(Counter)
+    for page in pages:
+        for term, count in page["terms"].items():
+            if " " in term and count >= 2:
+                uses[term].append(page["url"])
+                surface[term][page.get("surface", {}).get(term, term)] += count
+    brief["terms"] = [
+        {"term": surface[term].most_common(1)[0][0], "pages": len(urls), "of": total}
+        for term, urls in sorted(uses.items(), key=lambda kv: -len(kv[1]))
+        if _common(len(urls), total)
+    ][:10]
+    return brief
+
+
+def content_briefs(rankings: list[dict], docs: dict[str, str], *, features: dict | None = None, brand: str = "", is_ours=None, cache: dict | None = None, limit: int = 20) -> dict:
+    """Briefs for the searches the site has no page for, or ranks below the top 3 for, keyed by search."""
+    out = {}
+    for row in rankings:
+        if not row.get("checked") or (row.get("position") and row["position"] <= 3):
+            continue
+        found = (features or {}).get(row["q"]) or {}
+        out[row["q"]] = content_brief(row["q"], row, docs, questions=found.get("paa") or [], brand=brand, is_ours=is_ours, cache=cache)
+        if len(out) >= limit:
+            break
+    return out
+
+
 def content_gaps(rankings: list[dict], docs: dict[str, str], *, is_ours=None, own_domain: str = "", limit: int = 20, cache: dict | None = None) -> list[dict]:
     """Gaps for each search in ``report["rankings"]`` shape: q, position, url, top [{position, url, you}]."""
     cache = {} if cache is None else cache
@@ -781,7 +878,7 @@ def stored_html(database: str, urls: list[str]) -> dict[str, str]:
     return {url: found[loose_key(url)] for url in urls if loose_key(url) in found}
 
 
-SECTIONS_VERSION = 9
+SECTIONS_VERSION = 10
 
 
 def _fingerprint(project, meta, google, features, rows, pages, docs) -> str:
@@ -851,6 +948,8 @@ def report_sections(project, meta, database: str, report: dict, *, pages=None) -
             cache: dict = {}
             sections["competitor_profiles"] = competitor_profiles(google, project.domain, docs, is_ours=project.is_our_url, cache=cache, own_pages=pages)
             sections["gaps"] = content_gaps(rankings, docs, is_ours=project.is_our_url, own_domain=project.domain, cache=cache)
+            brand = discovery.brand_of(pages, project.domain) if pages else ""
+            sections["briefs"] = content_briefs(rankings, docs, features=features, brand=brand, is_ours=project.is_our_url, cache=cache)
             try:
                 _cache_path(project).write_text(json.dumps({"key": key, "sections": sections}), encoding="utf-8")
             except (OSError, ValueError, TypeError, AttributeError):
@@ -871,6 +970,8 @@ def report_sections(project, meta, database: str, report: dict, *, pages=None) -
     sections["competitor_profiles"] = {group: list(profiles.get(group) or []) for group in ("competitors", "directories", "platforms", "publishers")}
     if not isinstance(sections.get("discovery"), dict):
         sections["discovery"] = None
+    if not isinstance(sections.get("briefs"), dict):
+        sections["briefs"] = {}
     return sections
 
 

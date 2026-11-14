@@ -65,8 +65,8 @@ LOGO_MIME = {ext: mime for mime, (ext, _check) in LOGO_TYPES.items()}
 ASSETS = {
     "share.css": ("text/css; charset=utf-8", SHARE_STATIC / "share.css"),
     "share.js": ("application/javascript; charset=utf-8", SHARE_STATIC / "share.js"),
-    "sans.woff2": ("font/woff2", STATIC / "sans.woff2"),
-    "mono.woff2": ("font/woff2", STATIC / "mono.woff2"),
+    "sans.woff2": ("font/woff2", STATIC / "fonts" / "sans.woff2"),
+    "mono.woff2": ("font/woff2", STATIC / "fonts" / "mono.woff2"),
 }
 KINDS = {
     "analysis": "Analysis",
@@ -347,8 +347,8 @@ def resolve_token(ui, token: str, now: datetime | None = None):
     return None
 
 
-def touch_link(project, link_id: str, now: datetime | None = None) -> None:
-    """Record when a client last opened the link, at most every ten minutes."""
+def touch_link(project, link_id: str, now: datetime | None = None) -> bool:
+    """Record when a client last opened the link, at most every ten minutes. True when it wrote."""
     now = now or _now()
     with _lock:
         links = _load_links(project)
@@ -360,8 +360,10 @@ def touch_link(project, link_id: str, now: datetime | None = None) -> None:
                     try:
                         _write_json(_links_path(project), links)
                     except OSError:
-                        pass
-                return
+                        return False
+                    return True
+                return False
+    return False
 
 
 # ---------------------------------------------------------------------------
@@ -924,15 +926,34 @@ def _asset_version() -> str:
     return digest.hexdigest()[:10]
 
 
+def csp(path: str) -> str | None:
+    """Plugin hook: the policy for the public share pages. Everything else is left to the core."""
+    return SHARE_CSP if isinstance(path, str) and path.startswith(PUBLIC_PREFIX) else None
+
+
 def page_html() -> str:
     return (SHARE_STATIC / "index.html").read_text(encoding="utf-8").replace("{{v}}", _asset_version())
 
 
 def register(app, ui) -> None:
     common = _common()
-    # GuardMiddleware already adds no-referrer, no-store, nosniff, DENY and its own CSP. SHARE_CSP is a second,
-    # stricter policy; browsers enforce both.
-    public_headers = {"x-robots-tag": ROBOTS, "content-security-policy": SHARE_CSP}
+    # GuardMiddleware adds no-referrer, no-store, nosniff, DENY, and SHARE_CSP through the csp() hook below.
+    public_headers = {"x-robots-tag": ROBOTS}
+
+    def public(endpoint):
+        """Open to signed-out callers. Each such route verifies the signed token itself and answers 404 without it
+        (the asset route serves only fixed static files that hold no data)."""
+        endpoint.login_exempt = True
+        return endpoint
+
+    def remember_view(project, link_id: str) -> None:
+        if touch_link(project, link_id):
+            try:
+                from aeo.ranksim import plugins
+
+                plugins.save(ui)  # a GET that writes must save itself on a cloud host
+            except Exception:  # noqa: BLE001 - the last-opened time is a convenience, never a failure
+                pass
 
     def error(status: int, message: str) -> JSONResponse:
         return JSONResponse({"error": message}, status_code=status)
@@ -984,6 +1005,7 @@ def register(app, ui) -> None:
 
     # -- public: the client report ----------------------------------------------------------------
 
+    @public
     @app.get("/r/assets/{name}")
     def share_asset(name: str, request: Request) -> Response:
         blocked = limited(request)
@@ -994,6 +1016,7 @@ def register(app, ui) -> None:
         mime, path = ASSETS[name]
         return FileResponse(path, media_type=mime, headers=public_headers)
 
+    @public
     @app.get("/r/{token}")
     async def share_page(token: str, request: Request) -> Response:
         found, blocked = await resolve(request, token)
@@ -1003,6 +1026,7 @@ def register(app, ui) -> None:
             return gone(False)
         return HTMLResponse(page_html(), headers=public_headers)
 
+    @public
     @app.get("/r/{token}/data")
     async def share_data(token: str, request: Request) -> Response:
         found, blocked = await resolve(request, token)
@@ -1011,13 +1035,14 @@ def register(app, ui) -> None:
         if found is None:
             return gone(True)
         project, link = found
-        await run_in_threadpool(touch_link, project, link["id"])
+        await run_in_threadpool(remember_view, project, link["id"])
         try:
             data = await run_in_threadpool(client_report, ui, project)
         except Exception:  # noqa: BLE001 - never echo internals to a client
             return JSONResponse({"error": "The report could not be built right now. Try again later."}, status_code=503, headers=public_headers)
         return JSONResponse(data, headers=public_headers)
 
+    @public
     @app.get("/r/{token}/logo")
     async def share_logo(token: str, request: Request) -> Response:
         found, blocked = await resolve(request, token)
@@ -1028,6 +1053,7 @@ def register(app, ui) -> None:
             return gone(False)
         return FileResponse(logo[0], media_type=logo[1], headers=public_headers)
 
+    @public
     @app.get("/r/{token}/{what}.csv")
     async def share_csv(token: str, what: str, request: Request) -> Response:
         found, blocked = await resolve(request, token)
@@ -1042,6 +1068,7 @@ def register(app, ui) -> None:
         text = rankings_csv(data) if what == "rankings" else issues_csv(data)
         return csv_response(text, _filename(data, what), True)
 
+    @public
     @app.get("/r/{rest:path}")
     def share_unknown(rest: str, request: Request) -> Response:
         """Anything else under /r/ gets the same answer as a dead link."""
@@ -1056,7 +1083,7 @@ def register(app, ui) -> None:
     def report_preview(slug: str) -> Response:
         if owner_project(slug) is None:
             return Response("Not found", status_code=404, media_type="text/plain")
-        return HTMLResponse(page_html(), headers={"x-robots-tag": ROBOTS, "content-security-policy": SHARE_CSP})
+        return HTMLResponse(page_html(), headers={"x-robots-tag": ROBOTS})
 
     @app.get("/api/v1/projects/{slug}/share")
     def api_links(slug: str) -> JSONResponse:

@@ -88,6 +88,7 @@ def test_create_link_and_open_the_client_report(env):
     assert page.headers["referrer-policy"] == "no-referrer"
     assert page.headers["cache-control"] == "no-store"
     csp = page.headers["content-security-policy"]
+    assert csp == share.SHARE_CSP  # one policy, set through the plugin csp() hook
     assert "default-src 'none'" in csp and "script-src 'self'" in csp and "frame-ancestors 'none'" in csp
     assert "'unsafe-inline'" not in csp and "https:" not in csp
     data = client.get(link["path"] + "/data")
@@ -247,23 +248,29 @@ def test_a_share_link_does_not_open_owner_routes(tmp_path):
         "/api/v1/branding",
         "/api/v1/branding/logo",
     ]
-    if _share_is_open(app):
-        page = stranger.get(link["path"])
-        assert page.status_code == 200
-        assert stranger.get(link["path"] + "/data").status_code == 200
-        assert "rs_session" not in stranger.cookies
+    page = stranger.get(link["path"], follow_redirects=False)
+    assert page.status_code == 200 and page.headers["content-security-policy"] == share.SHARE_CSP
+    data = stranger.get(link["path"] + "/data")
+    assert data.status_code == 200 and data.json()["site"] == "www.northwind-fencing.example"
+    for suffix in ("/rankings.csv", "/issues.csv"):
+        assert stranger.get(link["path"] + suffix).status_code == 200
+    assert stranger.get("/r/assets/share.js").status_code == 200
+    assert "rs_session" not in stranger.cookies
+    # signed out, a bad token is a 404 (never a login redirect that confirms the route) and opens nothing else
+    for path in (f"/r/{'a' * 24}.{'b' * 22}", f"/r/{'a' * 24}.{'b' * 22}/data", "/r/x/../../api/v1/projects", "/r/%2e%2e/api/v1/projects"):
+        response = stranger.get(path, follow_redirects=False)
+        assert response.status_code in {401, 404}, path  # a client that folds ".." lands on a closed owner route
+        assert "northwind" not in response.text.lower() and "synthetic" not in response.text.lower()
+    # owner writes stay closed to a signed-out caller even with the CSRF token from the public shell
+    shell_csrf = _csrf(stranger)
+    for path in (f"/api/v1/projects/{ws.DEMO_SLUG}/share", "/api/v1/branding", f"/api/v1/projects/{ws.DEMO_SLUG}/changelog"):
+        assert stranger.post(path, json={}, headers={"x-ranksim-csrf": shell_csrf}).status_code == 401, path
+    assert stranger.post(f"/api/v1/projects/{ws.DEMO_SLUG}/share/{link['id']}/revoke", headers={"x-ranksim-csrf": shell_csrf}).status_code == 401
     for path in owner_only:
         response = stranger.get(path, follow_redirects=False)
         assert response.status_code == 401, path
     preview = stranger.get(f"/report/{ws.DEMO_SLUG}", follow_redirects=False)
     assert preview.status_code in {303, 401}
-
-
-def _share_is_open(app) -> bool:
-    """True once the login middleware lets /r/ through (phase B wiring)."""
-    from aeo.ranksim import studio
-
-    return studio._is_open("/r/x") if hasattr(studio, "_is_open") else False
 
 
 def test_nothing_private_leaks_into_the_client_report(env, monkeypatch):

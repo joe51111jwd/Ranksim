@@ -201,3 +201,9 @@ call on the same day spends nothing.
 - Rank change alerts: Overview tile `track-alert` and the Searches column compare with the last check seen in this
   browser (`localStorage` key `ranksim.track.seen.<slug>`, read once per page load). Without storage they compare
   the last two checks.
+- "Since last week" (`history["week"]`, `tracking.weekly_summary`, top of the History screen): each search's newest
+  check against its own check at least a week older (12 hours slack). Lists searches onto and off page one, the
+  biggest moves (6 shown, the rest counted), and tracked competitors who climbed past us. A competitor that stayed
+  put while we fell is not counted (that is our drop). Searches without a check a week earlier, or none this week,
+  are left out and counted in `skipped`. Shape: `{ready, days, from, to, compared, skipped, gained, lost, moves,
+  moves_total, up, down, passed, reason?}`.

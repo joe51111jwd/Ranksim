@@ -1323,3 +1323,45 @@ def test_status_route_reports_encryption_state(app_env, box):
 def test_store_lives_in_the_plugin_data_dir(tmp_path):
     store = PublishStore.for_project(FakeProject(tmp_path))
     assert store.folder == tmp_path / "acme" / "plugins" / "publish" and store.folder.is_dir()
+
+
+def test_publish_and_rollback_reach_the_client_change_log(app_env, monkeypatch):
+    from aeo.ranksim.plugins import share
+
+    logged = []
+    monkeypatch.setattr(share, "log_change", lambda project, kind, summary, **kw: logged.append((kind, summary, kw["key"])))
+    client, web, router, ui = app_env
+    url = "https://acme.com/about"
+    web.pages[url] = page()
+    router.on("POST", r"hooks", lambda r, m: httpx.Response(200))
+    record = client.post("/api/v1/projects/acme/publish/ownership", json={"site": "acme.com"}, headers=H).json()
+    web.pages["https://acme.com/"] = page(extra=f'<meta name="ranksim-verification" content="{record["token"]}">')
+    client.post("/api/v1/projects/acme/publish/ownership/verify", json={"site": "acme.com"}, headers=H)
+    conn = client.post("/api/v1/projects/acme/publish/connections", json={"kind": "webhook", "site": "acme.com", "settings": {"url": "https://hooks.acme.test/x"}, "secret": {"signing_secret": "k" * 20}}, headers=H).json()
+    entry = client.post("/api/v1/projects/acme/publish", json={"url": url, "html": page(h1="New"), "connection_id": conn["id"]}, headers=H).json()
+    client.post(f"/api/v1/projects/acme/publish/history/{entry['id']}/rollback", headers=H)
+    assert logged[0] == ("publish", "Published changes to /about: main heading.", f"publish:{entry['id']}")
+    assert logged[1][0] == "publish" and logged[1][1].startswith("Rolled back") and logged[1][2] == f"publish-rollback:{entry['id']}"
+
+
+def test_real_secretbox_round_trip_through_the_store(tmp_path, monkeypatch):
+    import importlib.util
+
+    import aeo.ranksim as pkg
+
+    path = Path(pkg.__file__).parent / "secretbox.py"
+    spec = importlib.util.spec_from_file_location("aeo.ranksim.secretbox", path)
+    real = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(real)
+    monkeypatch.setitem(sys.modules, "aeo.ranksim.secretbox", real)
+    monkeypatch.setattr(pkg, "secretbox", real, raising=False)
+    monkeypatch.setenv("RANKSIM_SECRET", "test-only-secret-0123456789abcdefghijkl")
+    store = PublishStore(tmp_path / "p", scope="acme")
+    c = store.add_connection(kind="webhook", domain="acme.com", label="", settings={}, secret={"signing_secret": "real-secret-value-123"})
+    assert c["sealed"].startswith("v1.") and "real-secret-value-123" not in (tmp_path / "p" / "state.json").read_text()
+    assert store.secret(c) == {"signing_secret": "real-secret-value-123"}
+    with pytest.raises(StoreError):
+        PublishStore(tmp_path / "p", scope="other").secret(c)
+    monkeypatch.setenv("RANKSIM_SECRET", "a-different-key-0123456789abcdefghijklmn")
+    with pytest.raises(StoreError):
+        store.secret(c)  # a changed server key: reconnect, never a crash or a leak

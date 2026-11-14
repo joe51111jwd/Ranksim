@@ -22,6 +22,7 @@ The work lives in ``aeo.ranksim.publishing``; this module only wires it to the a
 from __future__ import annotations
 
 import logging
+from urllib.parse import urlsplit
 
 from fastapi import Request
 from fastapi.concurrency import run_in_threadpool
@@ -198,14 +199,18 @@ def register(app, ui) -> None:
             return blocked
         confirm = [text(c, 40) for c in body.get("confirm") or [] if isinstance(c, str)]
         options = body.get("options") if isinstance(body.get("options"), dict) else {}
-        return await run(
-            pub.publish,
-            text(body.get("url")),
-            str(body.get("html") or ""),
-            text(body.get("connection_id"), 40),
-            confirm=confirm,
-            options=options,
-        )
+        def publish_and_log():
+            entry = pub.publish(
+                text(body.get("url")),
+                str(body.get("html") or ""),
+                text(body.get("connection_id"), 40),
+                confirm=confirm,
+                options=options,
+            )
+            log_change(ui.project(slug), entry, rollback=False)
+            return entry
+
+        return await run(publish_and_log)
 
     @app.get("/api/v1/projects/{slug}/publish/history")
     async def publish_history(slug: str, url: str = ""):
@@ -232,7 +237,34 @@ def register(app, ui) -> None:
         pub, blocked = guard(slug)
         if blocked:
             return blocked
-        return await run(pub.rollback, entry_id, connection_id)
+        def rollback_and_log():
+            entry = pub.rollback(entry_id, connection_id)
+            log_change(ui.project(slug), entry, rollback=True)
+            return entry
+
+        return await run(rollback_and_log)
+
+
+def log_change(project, entry: dict, *, rollback: bool) -> None:
+    """Record a publish or rollback in the client change log (the share plugin), when that plugin is present."""
+    try:
+        from aeo.ranksim.plugins import share
+    except ImportError:
+        return
+    path = urlsplit(entry.get("url") or "").path or "/"
+    fields = ", ".join(row["label"].lower() for row in entry.get("rows") or [] if row.get("apply"))
+    platform = (entry.get("connection") or {}).get("kind", "")
+    if rollback:
+        summary = f"Rolled back the published change to {path}."
+        key = f"publish-rollback:{entry['id']}"
+    else:
+        summary = f"Published changes to {path}: {fields}." if fields else f"Published changes to {path}."
+        key = f"publish:{entry['id']}"
+    status = (entry.get("verify") or {}).get("status") or entry.get("status") or ""
+    try:
+        share.log_change(project, "publish", summary, detail=f"{platform}, live check: {status}".strip(", "), key=key)
+    except Exception:  # noqa: BLE001 - the change log never breaks a publish
+        log.exception("publish: change log entry failed")
 
 
 def after_pull(*, project, report=None, ui=None, **_ignored) -> None:

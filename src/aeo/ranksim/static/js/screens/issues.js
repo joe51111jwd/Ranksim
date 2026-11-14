@@ -2,10 +2,115 @@
    search, and open one to see the exact element, the comment, the fix, a ready-to-paste suggestion and a button
    that opens the editor on that element. */
 
-import { S, h, icon, clear, main, plural, pathOf, looseKey, go, page, footer, noSearchData, openSheet, closeSheet, serpList, toast, SEVERITY } from '../core.js';
+import { S, h, icon, clear, main, plural, pathOf, looseKey, go, page, footer, noSearchData, openSheet, closeSheet, serpList, toast, api, enc, debounce, SEVERITY } from '../core.js';
 import { registerScreen } from '../hooks.js';
 
-const VIEW = { page: '', search: '', group: 'page' };
+const VIEW = { page: '', search: '', group: 'page', sort: 'urgent' };
+
+/* ------------------------------------------------------------------ PREDICTED impact (predict's issue impact API)
+
+   POST /api/v1/projects/{slug}/issues/impact {ids} answers {label: 'PREDICTED', note, impacts: [{id, status, headline,
+   reason, searches}]}. An uncached estimate costs seconds, so only issues that show on screen are asked for, in
+   batches, and each answer is kept for the site until the report reloads. */
+const IMPACT = { slug: null, pulled: null, results: new Map(), pending: new Set(), queue: new Set(), note: '' };
+const IMPACT_NOTE = 'PREDICTED, not a guarantee.';
+
+export const estimable = (issue) => !!(issue.page && issue.suggestion && issue.action && issue.action !== 'copy');
+
+function impactState() {
+  const R = S.report;
+  if (IMPACT.slug !== S.slug || IMPACT.pulled !== (R && R.pulled)) {
+    IMPACT.slug = S.slug;
+    IMPACT.pulled = R && R.pulled;
+    IMPACT.results.clear();
+    IMPACT.pending.clear();
+    IMPACT.queue.clear();
+  }
+  return IMPACT;
+}
+
+/* The biggest PREDICTED move of one estimate: {places, label, search} (places > 0 is up), or null. */
+export function bestMove(result) {
+  if (!result || result.status !== 'estimate' || !Array.isArray(result.searches)) return null;
+  const moved = result.searches.filter((row) => row.move_places);
+  if (!moved.length) return null;
+  const best = moved.reduce((a, b) => (b.move_places > a.move_places ? b : a));
+  const worst = moved.reduce((a, b) => (b.move_places < a.move_places ? b : a));
+  const pick = best.move_places > 0 ? best : worst;
+  return { places: pick.move_places, label: (pick.confidence && pick.confidence.label) || 'UNSURE', search: pick.search };
+}
+
+/* The short chip text for a row. */
+export function impactChip(result) {
+  if (!result) return 'PREDICTED impact: working it out';
+  const move = bestMove(result);
+  if (move) return `PREDICTED ${move.places > 0 ? 'up' : 'down'} ${Math.abs(move.places)}, ${move.label}`;
+  if (result.status === 'no_change') return 'PREDICTED no change';
+  return 'No estimate';
+}
+
+/* Sort value for "Predicted impact": the best upward move first, then no change, then the rest. */
+function impactValue(issue) {
+  const result = IMPACT.results.get(issue.id);
+  const move = bestMove(result);
+  if (move) return move.places;
+  if (result && result.status === 'no_change') return 0;
+  return result ? -0.5 : -0.25;
+}
+
+function paintChips() {
+  for (const chip of document.querySelectorAll('[data-impact]')) {
+    const result = IMPACT.results.get(chip.dataset.impact);
+    chip.textContent = impactChip(result);
+    const move = bestMove(result);
+    chip.classList.toggle('up', !!move && move.places > 0);
+    chip.classList.toggle('down', !!move && move.places < 0);
+    chip.classList.toggle('loading', !result);
+  }
+  for (const box of document.querySelectorAll('[data-impact-sheet]')) paintImpactBox(box);
+}
+
+const flush = debounce(async () => {
+  const state = impactState();
+  const ids = [...state.queue].filter((id) => !state.results.has(id) && !state.pending.has(id)).slice(0, 50);
+  state.queue.clear();
+  if (!ids.length || !S.slug) return;
+  for (const id of ids) state.pending.add(id);
+  const slug = S.slug;
+  try {
+    const answer = await api.post(`/api/v1/projects/${enc(slug)}/issues/impact`, { ids });
+    if (impactState().slug !== slug) return;
+    state.note = answer.note || '';
+    for (const item of answer.impacts || []) if (item && item.id) state.results.set(item.id, item);
+  } catch (err) {
+    for (const id of ids) state.results.set(id, { id, status: 'unknown', reason: err.message || 'The estimate could not be loaded.' });
+  } finally {
+    for (const id of ids) state.pending.delete(id);
+  }
+  paintChips();
+  if (VIEW.sort === 'impact' && S.screen === 'issues') renderIssues();
+}, 250);
+
+export function requestImpact(ids) {
+  const state = impactState();
+  for (const id of ids) if (!state.results.has(id) && !state.pending.has(id)) state.queue.add(id);
+  if (state.queue.size) flush();
+}
+
+let watcher = null;
+function watchRows() {
+  if (watcher) watcher.disconnect();
+  if (!('IntersectionObserver' in window)) {
+    requestImpact([...document.querySelectorAll('[data-impact]')].slice(0, 50).map((el) => el.dataset.impact));
+    return;
+  }
+  watcher = new IntersectionObserver((entries) => {
+    const seen = entries.filter((entry) => entry.isIntersecting).map((entry) => entry.target.dataset.impact);
+    for (const entry of entries) if (entry.isIntersecting) watcher.unobserve(entry.target);
+    if (seen.length) requestImpact(seen);
+  }, { rootMargin: '200px 0px' });
+  for (const chip of document.querySelectorAll('[data-impact]')) if (!IMPACT.results.has(chip.dataset.impact)) watcher.observe(chip);
+}
 
 const pagesOf = (issue) => (issue.pages && issue.pages.length ? issue.pages : issue.page ? [issue.page] : []);
 const onPage = (issue, url) => pagesOf(issue).some((item) => looseKey(item) === looseKey(url));
@@ -80,7 +185,8 @@ export function issueRow(issue, compact) {
     issue.search ? h('span', { text: `"${issue.search}"` }) : null,
     many ? h('span', { text: plural(pagesOf(issue).length, 'page') }) : null,
     issue.element && issue.element.tag ? h('span', { class: 'issue-tag', text: `<${issue.element.tag}>` }) : null,
-    issue.suggestion ? h('span', { class: 'issue-has-fix', text: 'Suggestion ready' }) : null);
+    issue.suggestion ? h('span', { class: 'issue-has-fix', text: 'Suggestion ready' }) : null,
+    estimable(issue) ? h('span', { class: 'impact-chip loading', dataset: { impact: issue.id }, text: impactChip(IMPACT.results.get(issue.id)) }) : null);
   return h('button', { class: 'rowcard', type: 'button', onClick: () => openIssue(issue) },
     h('span', { class: `dot ${issue.severity}` }),
     h('div', { class: 'body' }, h('div', { class: 't', text: issue.title }), h('div', { class: `c${compact ? ' one-line' : ''}`, text: issue.comment }), meta),
@@ -128,7 +234,12 @@ export function renderIssues() {
     seg('Filter by priority', [['all', `All ${counts.all}`], ['high', `High ${counts.high}`], ['medium', `Medium ${counts.medium}`], ['low', `Low ${counts.low}`]], S.issueFilter, (key) => { S.issueFilter = key; renderIssues(); }),
     pageUrls.length > 1 ? select('Page', VIEW.page, [['', 'Every page'], ...pageUrls.map((url) => [url, pathOf(url)])], (value) => { VIEW.page = value; renderIssues(); }) : null,
     searches.length ? select('Search', VIEW.search, [['', 'Every search'], ...searches.map((q) => [q, q])], (value) => { VIEW.search = value; renderIssues(); }) : null,
-    seg('Group issues', [['page', 'By page'], ['search', 'By search']], VIEW.group, (key) => { VIEW.group = key; renderIssues(); }));
+    seg('Group issues', [['page', 'By page'], ['search', 'By search']], VIEW.group, (key) => { VIEW.group = key; renderIssues(); }),
+    select('Sort', VIEW.sort, [['urgent', 'Most urgent first'], ['impact', 'Biggest PREDICTED gain first']], (value) => {
+      VIEW.sort = value;
+      if (value === 'impact') requestImpact(shown.filter(estimable).slice(0, 50).map((issue) => issue.id));
+      renderIssues();
+    }));
 
   const groups = new Map();
   const groupUrl = new Map();
@@ -142,7 +253,12 @@ export function renderIssues() {
       if (VIEW.group === 'page' && issue.page && !(issue.pages && issue.pages.length > 1)) groupUrl.set(key, issue.page);
     }
   }
-  const rank = (list) => list.reduce((sum, issue) => sum + (issue.severity === 'high' ? 1000 : 0) + (issue.score || 0), 0);
+  impactState();
+  let rank = (list) => list.reduce((sum, issue) => sum + (issue.severity === 'high' ? 1000 : 0) + (issue.score || 0), 0);
+  if (VIEW.sort === 'impact') {
+    for (const list of groups.values()) list.sort((a, b) => impactValue(b) - impactValue(a));
+    rank = (list) => Math.max(...list.map(impactValue));
+  }
   const ordered = [...groups.entries()].sort((a, b) => rank(b[1]) - rank(a[1]));
 
   const body = h('div', { class: 'bento' });
@@ -156,7 +272,38 @@ export function renderIssues() {
       groupUrl.has(where) ? fixButton(all, groupUrl.get(where)) : null,
       h('div', { class: 'rows' }, list.map((issue) => issueRow(issue, false)))));
   }
-  clear(main).append(page('Issues', `${counts.high} high, ${counts.medium} medium and ${counts.low} low on ${R.site}`, controls, body), footer());
+  const sub = `${counts.high} high, ${counts.medium} medium and ${counts.low} low on ${R.site}. Impact is ${IMPACT_NOTE}`;
+  clear(main).append(page('Issues', sub, controls, body), footer());
+  paintChips();
+  watchRows();
+}
+
+function paintImpactBox(box) {
+  const result = IMPACT.results.get(box.dataset.impactSheet);
+  clear(box);
+  box.append(h('div', { class: 'tile-head' }, h('div', { class: 'tile-k', text: 'PREDICTED impact' }), h('span', { class: 'aside', text: 'Not a guarantee' })));
+  if (!result) {
+    box.append(h('p', { class: 'reason muted' }, h('span', { class: 'spinner', 'aria-hidden': 'true' }), ' Working out the PREDICTED move of this change.'));
+    return;
+  }
+  if (result.headline) box.append(h('p', { class: 'reason impact-headline', text: result.headline }));
+  if (result.reason && result.status !== 'estimate') box.append(h('p', { class: 'reason', text: result.reason }));
+  const rows = (result.searches || []).filter((row) => row.now != null || row.with_change != null);
+  if (rows.length) {
+    box.append(h('ul', { class: 'impact-rows' }, rows.slice(0, 6).map((row) => h('li', null,
+      h('span', { class: 'one-line', text: `"${row.search}"` }),
+      h('span', { class: 'impact-move', text: `#${row.now ?? '?'} to #${row.with_change ?? '?'}` }),
+      h('span', { class: 'impact-conf', text: (row.confidence && row.confidence.label) || 'UNSURE' })))));
+  }
+  box.append(h('p', { class: 'tile-sub', text: IMPACT.note || 'PREDICTED, not a guarantee. Test the change in the editor before you publish.' }));
+}
+
+function impactBox(issue) {
+  if (!estimable(issue)) return null;
+  const box = h('div', { class: 'tile impact-box', dataset: { impactSheet: issue.id } });
+  paintImpactBox(box);
+  requestImpact([issue.id]);
+  return box;
 }
 
 function elementBox(issue) {
@@ -201,6 +348,8 @@ export function openIssue(issue) {
     if (issue.fix) body.append(h('div', { class: 'tile' }, h('div', { class: 'tile-k', text: 'What to do' }), h('p', { class: 'reason', text: issue.fix })));
     const suggestion = suggestionBox(issue);
     if (suggestion) body.append(suggestion);
+    const impact = impactBox(issue);
+    if (impact) body.append(impact);
     if (issue.evidence && issue.evidence.length) {
       body.append(h('div', { class: 'tile' }, h('div', { class: 'tile-k', text: 'Details' }), h('ul', { class: 'issue-evidence' }, issue.evidence.slice(0, 8).map((line) => h('li', { text: line })))));
     }

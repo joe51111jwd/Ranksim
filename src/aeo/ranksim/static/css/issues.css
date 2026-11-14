@@ -25,3 +25,16 @@
   .issue-select select { flex: 1; width: 100%; min-width: 0; max-width: 100%; }
 }
 .tile .fix-top { margin: 4px 0 8px; }
+
+/* PREDICTED impact: the chip on a row and the box in the issue sheet. */
+.rowcard .m .impact-chip { font-size: 12px; font-weight: 550; color: var(--ink-2); background: var(--tile); border-radius: 999px; padding: 1px 8px; white-space: nowrap; }
+.rowcard .m .impact-chip.up { color: var(--green); background: var(--green-wash); }
+.rowcard .m .impact-chip.down { color: var(--red); background: var(--red-wash); }
+.rowcard .m .impact-chip.loading { color: var(--ink-3); }
+.impact-box .tile-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.impact-headline { font-weight: 550; }
+.impact-rows { list-style: none; margin: 8px 0; padding: 0; display: flex; flex-direction: column; gap: 4px; font-size: 13.5px; }
+.impact-rows li { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 10px; align-items: baseline; }
+.impact-move { font-family: var(--mono); font-size: 12.5px; }
+.impact-conf { font-size: 12px; color: var(--ink-3); }
+.reason.muted { color: var(--ink-3); display: flex; align-items: center; gap: 6px; }

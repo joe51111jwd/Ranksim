@@ -22,7 +22,24 @@ const TOP_FIXES = 10;
 const appliedKey = (ctx, issue) => `${looseKey(ctx.page)}|${issue.id}`;
 function isApplied(ctx, issue) {
   const draft = STATE.applied.get(appliedKey(ctx, issue));
-  return !!draft && draft === ctx.draft && ctx.draft.touched;
+  if (!draft || draft !== ctx.draft || !ctx.draft.touched) return false;
+  return stillThere(ctx, issue); // an undo, or a later edit, takes the change back out
+}
+
+/* stillApplied on the current draft, worked out once per draft text. */
+const still = { text: null, doc: null, answers: new Map() };
+function stillThere(ctx, issue) {
+  const text = ctx.draft.text;
+  if (still.text !== text) {
+    still.text = text;
+    still.doc = null;
+    still.answers.clear();
+  }
+  if (!still.answers.has(issue.id)) {
+    if (!still.doc) still.doc = new DOMParser().parseFromString(text || '', 'text/html');
+    still.answers.set(issue.id, stillApplied(still.doc, issue));
+  }
+  return still.answers.get(issue.id);
 }
 
 const PIN_CSS = `[data-rs="annotations"]{position:absolute!important;left:0!important;top:0!important;width:0!important;height:0!important;margin:0!important;padding:0!important;border:0!important;z-index:2147483646!important;pointer-events:none!important}

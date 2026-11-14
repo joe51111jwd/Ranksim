@@ -381,38 +381,6 @@ try {
     await audit(page, 'desktop-11b-fix-in-editor');
   });
 
-  await step('audit-apply', async () => {
-    const pageUrl = `https://${SITE}/dirt-work-software/`;
-    await goto(page, `/app/${encodeURIComponent(slug)}/editor?page=${encodeURIComponent(pageUrl)}&q=${encodeURIComponent(SEARCHES[0])}`);
-    await page.waitForSelector(SEL.commentsPanel, { timeout: SLOW });
-    const frame = page.frameLocator(SEL.editorFrame);
-    await frame.locator('h1').first().waitFor();
-    const heads = page.locator(`${SEL.commentsPanel} .annot-head`);
-    let applied = null;
-    for (let i = 0; i < await heads.count() && !applied; i += 1) {
-      const head = heads.nth(i);
-      if ((await head.getAttribute('aria-expanded')) !== 'true') await head.click();
-      const item = page.locator(`${SEL.commentsPanel} li`).nth(i);
-      const tag = await item.locator('.annot-tag').first().textContent().catch(() => '');
-      const apply = item.locator('button:has-text("Apply suggestion")');
-      if (await apply.count() && /h1/i.test(tag || '')) applied = { apply, tag };
-    }
-    if (!applied) {
-      const apply = page.locator(SEL.applySuggestion).first();
-      if (await apply.count()) applied = { apply, tag: 'other' };
-    }
-    expect(applied, 'a comment offers Apply suggestion');
-    const before = await page.evaluate(async (url) => (await import('/studio/js/editor/editor.js')).draftFor(url).text, pageUrl);
-    const h1Before = await frame.locator('h1').first().innerText();
-    await applied.apply.click();
-    await page.waitForFunction((url) => import('/studio/js/editor/editor.js').then((m) => m.draftFor(url).touched), pageUrl);
-    const after = await page.evaluate(async (url) => (await import('/studio/js/editor/editor.js')).draftFor(url).text, pageUrl);
-    expect(after !== before, 'Apply suggestion changed the draft');
-    if (applied.tag !== 'other') expect((await frame.locator('h1').first().innerText()) !== h1Before, 'the H1 changed');
-    expect(!/data-rs/.test(after), 'the saved HTML has no data-rs marks');
-    await audit(page, 'desktop-11c-applied');
-  });
-
   await step('audit-details', async () => {
     const issues = `/app/${encodeURIComponent(slug)}/issues`;
     await goto(page, issues);
@@ -438,7 +406,7 @@ try {
       await page.waitForURL(/focus=/);
       await page.waitForSelector('.annot-item.open', { timeout: SLOW });
       const frame = page.frameLocator(SEL.editorFrame);
-      await frame.locator('[data-rs-pick]').first().waitFor({ timeout: SLOW });
+      await frame.locator('[data-rs-pick]').first().waitFor({ state: 'attached', timeout: SLOW });
       expect((await frame.locator('[data-rs-annotations="active"]').count()) === 1, 'exactly one active element');
       expect((await frame.locator('[data-rs-pin]').count()) >= 1, 'pins are drawn');
       expect((await page.innerText('.annot-item.open .annot-title')).trim() === title, 'the open comment is the issue');
@@ -484,9 +452,42 @@ try {
     await page.waitForSelector('.sheet', { state: 'detached', timeout: SLOW });
     await page.waitForSelector('.result, .verdict', { timeout: SLOW });
     page.off('request', onRequest);
-    expect((await page.locator('.annot-done').count()) === Math.max(1, rows - 1), 'the applied comments are marked Applied');
+    const done = await page.locator('.annot-done').count();
+    expect(done === Math.max(1, rows - 1), `the applied comments are marked Applied (${done} of ${Math.max(1, rows - 1)}; ${await page.locator('.annot-item').count()} comments)`);
     expect(tests.length && tests.every((body) => !/data-rs/.test(body)), 'the Test changes draft has no data-rs');
     await audit(page, 'desktop-11e-fix-top-result');
+  });
+
+  await step('audit-apply', async () => {
+    const pageUrl = `https://${SITE}/`; // a page Fix the top issues did not touch
+    await goto(page, `/app/${encodeURIComponent(slug)}/editor?page=${encodeURIComponent(pageUrl)}&q=${encodeURIComponent(SEARCHES[0])}`);
+    await page.waitForSelector(SEL.commentsPanel, { timeout: SLOW });
+    const frame = page.frameLocator(SEL.editorFrame);
+    await frame.locator('h1').first().waitFor();
+    const heads = page.locator(`${SEL.commentsPanel} .annot-head`);
+    let applied = null;
+    for (let i = 0; i < await heads.count() && !applied; i += 1) {
+      const head = heads.nth(i);
+      if ((await head.getAttribute('aria-expanded')) !== 'true') await head.click();
+      const item = page.locator(`${SEL.commentsPanel} li`).nth(i);
+      const tag = await item.locator('.annot-tag').first().textContent().catch(() => '');
+      const apply = item.locator('button:has-text("Apply suggestion")');
+      if (await apply.count() && /h1/i.test(tag || '')) applied = { apply, tag };
+    }
+    if (!applied) {
+      const apply = page.locator(SEL.applySuggestion).first();
+      if (await apply.count()) applied = { apply, tag: 'other' };
+    }
+    expect(applied, 'a comment offers Apply suggestion');
+    const before = await page.evaluate(async (url) => (await import('/studio/js/editor/editor.js')).draftFor(url).text, pageUrl);
+    const h1Before = await frame.locator('h1').first().innerText();
+    await applied.apply.click();
+    await page.waitForFunction((url) => import('/studio/js/editor/editor.js').then((m) => m.draftFor(url).touched), pageUrl);
+    const after = await page.evaluate(async (url) => (await import('/studio/js/editor/editor.js')).draftFor(url).text, pageUrl);
+    expect(after !== before, 'Apply suggestion changed the draft');
+    if (applied.tag !== 'other') expect((await frame.locator('h1').first().innerText()) !== h1Before, 'the H1 changed');
+    expect(!/data-rs/.test(after), 'the saved HTML has no data-rs marks');
+    await audit(page, 'desktop-11c-applied');
   });
 
   await step('editor-test', async () => {

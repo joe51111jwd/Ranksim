@@ -502,13 +502,18 @@ def slug_phrase(url: str) -> str | None:
     return " ".join(words)
 
 
+def _attr(page, name: str) -> str:
+    value = getattr(page, name, "")
+    return value if isinstance(value, str) else ""
+
+
 def _vocabulary(pages) -> Counter:
     """What the site sells, as word stems weighted by where they appear on its own pages."""
     vocab: Counter = Counter()
     for page in pages:
         if getattr(page, "status", "fetched") != "fetched":
             continue
-        for text, weight in ((page.title, 3), (page.h1, 3), (page.meta, 2), (" ".join(page.h2s[:12]), 1), (slug_phrase(page.url) or "", 2)):
+        for text, weight in ((_attr(page, "title"), 3), (_attr(page, "h1"), 3), (_attr(page, "meta"), 2), (" ".join((getattr(page, "h2s", None) or [])[:12]), 1), (slug_phrase(_attr(page, "url")) or "", 2)):
             for item in content_stems(text or ""):
                 vocab[item] += weight
     return vocab
@@ -588,6 +593,7 @@ def discover(
 
     readable = [page for page in pages if getattr(page, "status", "fetched") == "fetched"]
     for page in readable:
+        page = SitePage(url=_attr(page, "url"), status="fetched", title=_attr(page, "title"), meta=_attr(page, "meta"), h1=_attr(page, "h1"), h2s=[text for text in (getattr(page, "h2s", None) or []) if isinstance(text, str)])
         parts = [part for part in SPLIT.split(page.title or "") if part.strip()]
         for part in parts:
             add(_gather(part, "title", WEIGHTS["title"], page.url))

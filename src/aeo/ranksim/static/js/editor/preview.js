@@ -3,6 +3,7 @@
    exactly like the original. Scripts never run in the preview. */
 
 import { esc } from '../core.js';
+import { doctypeOf, stash, unstash } from './model.js';
 
 export const READER_CSS = `
 :root{color-scheme:light}
@@ -39,8 +40,13 @@ export function asHtml(text) {
 /* A page as the editor holds it: parsed once, unsafe parts removed, serialized the same way every time, so an
    unchanged page tests exactly like the original. */
 export function cleanDoc(text) {
-  const doc = new DOMParser().parseFromString(asHtml(text || ''), 'text/html');
-  doc.querySelectorAll('script,noscript,iframe,frame,frameset,object,embed,base,meta[http-equiv]').forEach((node) => node.remove());
+  return cleanParsed(new DOMParser().parseFromString(asHtml(text || ''), 'text/html'));
+}
+
+/* The cleaning itself, on a parsed document. Structured data (JSON-LD) stays: it is data, never run, and it is part
+   of what Google reads. The preview's sandbox has no allow-scripts, so nothing in it ever runs. */
+export function cleanParsed(doc) {
+  doc.querySelectorAll('script:not([type="application/ld+json" i]),noscript,iframe,frame,frameset,object,embed,base,meta[http-equiv]').forEach((node) => node.remove());
   settleStreamedContent(doc);
   for (const el of doc.querySelectorAll('*')) {
     for (const attr of Array.from(el.attributes)) {
@@ -92,6 +98,7 @@ export function settleStreamedContent(doc) {
 export function serialize(doc) {
   const root = doc.documentElement.cloneNode(true);
   root.querySelectorAll('[data-rs]').forEach((node) => node.remove());
+  unstash(root);
   for (const el of [root, ...root.querySelectorAll('*')]) {
     for (const attr of Array.from(el.attributes)) {
       if (attr.name.startsWith('data-rs-')) el.removeAttribute(attr.name);
@@ -161,26 +168,27 @@ export function frameSource(text, url) {
   for (const link of doc.querySelectorAll('link')) {
     const rel = (link.getAttribute('rel') || '').toLowerCase();
     const as = (link.getAttribute('as') || '').toLowerCase();
+    // Preview-only changes are stashed (model.js), so the draft puts the page's own values back when it is saved.
     if (/modulepreload|prefetch|prerender/.test(rel) || (rel.includes('preload') && as !== 'style')) {
-      link.remove(); // scripts never run in the preview, so there is nothing to preload
+      stash(link, 'rel', 'rs-off'); // scripts never run in the preview, so there is nothing to preload
       continue;
     }
-    if (rel.includes('preload') && as === 'style') link.setAttribute('rel', 'stylesheet'); // the onload swap was removed
-    link.removeAttribute('crossorigin'); // a CORS fetch fails when the site sends no CORS header; a plain load works
-    link.removeAttribute('integrity');
+    if (rel.includes('preload') && as === 'style') stash(link, 'rel', 'stylesheet'); // the onload swap was removed
+    if (link.hasAttribute('crossorigin')) stash(link, 'crossorigin', null); // a CORS fetch fails without CORS headers
+    if (link.hasAttribute('integrity')) stash(link, 'integrity', null);
   }
   for (const img of doc.querySelectorAll('img[data-src], img[data-lazy-src], source[data-srcset], img[data-srcset]')) {
     const src = img.getAttribute('data-src') || img.getAttribute('data-lazy-src');
-    if (src && !img.getAttribute('src')) img.setAttribute('src', src);
+    if (src && !img.getAttribute('src')) stash(img, 'src', src);
     const set = img.getAttribute('data-srcset');
-    if (set && !img.getAttribute('srcset')) img.setAttribute('srcset', set);
+    if (set && !img.getAttribute('srcset')) stash(img, 'srcset', set);
   }
   const styled = doc.querySelector('style, link[rel~="stylesheet"]');
   const style = doc.createElement('style');
   style.setAttribute('data-rs', '1');
   style.textContent = (styled ? '' : READER_CSS) + REVEAL_CSS + EDIT_CSS;
   head.append(style);
-  return `<!doctype html>${doc.documentElement.outerHTML}`;
+  return `${doctypeOf(doc) || '<!doctype html>'}${doc.documentElement.outerHTML}`;
 }
 
 export function facts(text) {

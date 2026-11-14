@@ -232,9 +232,11 @@ def register(app, ui) -> None:
                 text(body.get("connection_id"), 40),
                 confirm=confirm,
                 options=options,
+                fixes=body.get("fixes") if isinstance(body.get("fixes"), list) else None,
             )
-            log_change(ui.project(slug), entry, rollback=False)
-            return entry
+            project = ui.project(slug)
+            log_change(project, entry, rollback=False)
+            return sync_fixes(pub, project, entry)
 
         return await run(publish_and_log)
 
@@ -251,7 +253,7 @@ def register(app, ui) -> None:
         pub, blocked = guard(slug)
         if blocked:
             return blocked
-        return await run(pub.verify_live, entry_id)
+        return await run(lambda: sync_fixes(pub, ui.project(slug), pub.verify_live(entry_id)))
 
     @app.post("/api/v1/projects/{slug}/publish/history/{entry_id}/rollback")
     async def publish_rollback(slug: str, entry_id: str, request: Request):
@@ -265,10 +267,53 @@ def register(app, ui) -> None:
             return blocked
         def rollback_and_log():
             entry = pub.rollback(entry_id, connection_id)
-            log_change(ui.project(slug), entry, rollback=True)
-            return entry
+            project = ui.project(slug)
+            log_change(project, entry, rollback=True)
+            return sync_fixes(pub, project, entry)
 
         return await run(rollback_and_log)
+
+
+def sync_fixes(pub, project, entry: dict) -> dict:
+    """Issues fixed by this publish, in the client report: Done once the change is live on the platform, back to Not
+    started when it is rolled back. Uses the share plugin's issue status when that plugin is present.
+    A pull request or a Webflow draft is not live: its issues turn Done when a later live check finds it live."""
+    fixes = entry.get("fixes") or []
+    if not fixes:
+        return entry
+    if entry.get("rolled_back_at"):
+        want = "open"
+    elif entry.get("status") == "live":
+        want = "done"
+    else:
+        return entry
+    if entry.get("fixes_marked") == want:
+        return entry
+    try:
+        from aeo.ranksim.plugins import share
+    except ImportError:
+        return entry
+    plans = {}
+    try:
+        plans = share.issue_plans(project)
+    except Exception:  # noqa: BLE001
+        log.exception("publish: reading issue status failed")
+    marked = []
+    for fix in fixes:
+        current = plans.get(fix["id"]) or {}
+        if want == "open" and current.get("status") != "done":
+            continue  # someone changed it since; leave their status alone
+        note = current.get("plan") or ""
+        try:
+            share.set_issue_plan(project, fix["id"], want, plan=note, title=fix.get("title") or "")
+            marked.append(fix["id"])
+        except Exception:  # noqa: BLE001 - the issue list never breaks a publish
+            log.exception("publish: marking issue %s failed", fix["id"])
+    full = pub.store.history_entry(entry["id"]) or {}
+    if full:
+        full.update(fixes_marked=want, fixes_marked_ids=marked)
+        pub.store.put_history(full)
+    return {**entry, "fixes_marked": want, "fixes_marked_ids": marked}
 
 
 def save_quietly(ui) -> None:

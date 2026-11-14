@@ -108,3 +108,54 @@ picked it as the best page for.
   listed in the panel without a marker, never pinned on the wrong element.
 - Image byte sizes are only known if the crawl records them; otherwise only width hints count.
 - `schema-gap` and `thin-vs-top` need the top pages' HTML, which only exists after a pull with search data.
+
+## Phase C: Fix the top issues
+
+- Issues screen, grouped by page: a page with 2 or more suggestions the editor can apply shows **Fix the top N**
+  (`button.fix-top`). It leaves a one-time token in `sessionStorage['rs-audit-fix']` and opens
+  `/app/<slug>/editor?page=<url>`.
+- Editor: on `editor-ready` the annotations plugin reads the token and opens the review sheet. The Comments panel
+  has the same button (`button.annot-fix-all`, "Fix the top N").
+- Review sheet (`.fix-list`): one `.fix-row` per change, each with a checkbox, the issue, where it applies
+  (`<title> text`, `<meta> content`, `New, at the end of <main>`), **Now** (struck through) and **After**. At most
+  10, highest score first, one change per element (when the title is too long and also misses the search, only the
+  higher score stays). Changes that can hide or redirect a page (`canonical-other`, `noindex`, `robots-blocked`)
+  are never in a batch; they stay one at a time in the panel.
+- **Apply N changes and test** applies text and attribute changes first, then retags, then inserts, through
+  `ctx.edit`, marks each applied for this draft, and runs `ctx.test()` (Test changes, PREDICTED). An element that
+  moved is skipped and the toast says how many.
+
+## Browser checks for tests/e2e (hand-off to the shell session)
+
+Setup (BUILD_PLAN section 7): server with `RANKSIM_PASSWORD=localtest RANKSIM_SECRET=localsecret
+RANKSIM_DATA_DIR=<tmp>`. For a fixed site without network, prefer the test fakes. The checks below were run
+against SmartCrew: `POST /api/v1/sites {"site": "www.smartcrewhq.com"}`, then `POST /api/v1/projects/smartcrew/import
+{"csv": <evals/forward-2026-11-09/forward_serp.csv>, "date": "2026-11-09"}`, then `POST .../pull {}`. Sign in by
+reading `#csrf` on `/` and `POST /api/v1/login {"password": "localtest"}` with header `x-ranksim-csrf`.
+Collect `pageerror` and console errors throughout; every check ends with none.
+
+1. Issues filters. Go to `/app/<slug>/issues`, wait for `.issue-controls`. Click `.issue-controls .seg
+   button:has-text("High")`: every `.rowcard .dot` has class `high`. Click `button:has-text("By search")`: tile
+   headings `.bento section.tile h2` start with a quote or read "Not tied to a search". Choose a page in the first
+   `.issue-select select`: every row belongs to that page.
+2. Issue sheet. Click a `.rowcard` whose issue has an element. `.sheet.open` shows `.issue-element` (tag, text,
+   `code.issue-selector`), the comment, "What to do", and `.issue-suggestion` with a Copy button when the issue has
+   a suggestion.
+3. Fix in editor. Click `.sheet button:has-text("Fix in editor")`. The address is `/app/<slug>/editor?page=..&focus=..`.
+   Wait for `.annot-item.open`. In the preview frame (`.viewport iframe`): the focused selector's element has
+   `data-rs-pick`, exactly one element has `data-rs-annotations="active"`, and `[data-rs-pin]` count is at least 1.
+   The open item's title equals the issue title.
+4. Focus again. Open another comment (`.annot-item:not(.open) .annot-head`), click the Issues tab, open the same
+   issue and Fix in editor again: the issue's element is selected again and its comment is open.
+5. Mode toggle. Close the open comment, click `button:has-text("HTML")` then `button:has-text("Visual")`:
+   `.annot-item.open` count is 0 and pins are drawn again.
+6. Apply suggestion. In `.annot-item.open`, click `button:has-text("Apply suggestion")`: the element in the frame
+   now has the suggested text, attribute or tag, and `.annot-done` ("Applied") shows on that item.
+7. Nothing leaks. Click `button:has-text("HTML")`: the code view text contains no `data-rs`. The Test changes request
+   body (`POST /api/v1/projects/<slug>/test`, field `draft`) contains no `data-rs` either.
+8. Fix the top issues. On the Issues screen, click the first `button.fix-top`. Wait for `.fix-list`; `.fix-row`
+   count equals the N on the button. Uncheck the last row: the apply button reads "Apply N-1 changes and test".
+   Click `.fix-actions button`: the sheet closes, `.annot-done` count is N-1, the preview's title or element shows
+   the change, and a Test result (`.result`) appears.
+9. Phone width. At 390 x 844 (and 360), `/app/<slug>/issues` and an open issue sheet have
+   `document.documentElement.scrollWidth - innerWidth === 0`.

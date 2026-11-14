@@ -111,3 +111,33 @@
 @media print {
   .history-tip, .history-hit, .history-cross { display: none; }
 }
+
+/* "Since your last visit" alert on Overview */
+.history-alert { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; background: var(--blue-wash); }
+.history-alert-text { min-width: 0; flex: 1 1 320px; }
+.history-alert-big { font-size: 22px; font-weight: 650; letter-spacing: -0.025em; margin-top: 4px; color: var(--ink); }
+.history-alert-list { display: flex; flex-wrap: wrap; gap: 6px 14px; margin-top: 10px; font-size: 13px; color: var(--ink-2); }
+.history-alert-list span { display: inline-flex; align-items: center; gap: 6px; min-width: 0; overflow-wrap: anywhere; }
+.history-alert-actions { display: flex; align-items: center; gap: 8px; flex: none; }
+@media (max-width: 720px) {
+  .history-alert-big { font-size: 18px; }
+  .history-alert-actions { width: 100%; }
+}
+
+/* "Since last week" on the history screen */
+.history-week { margin-bottom: 16px; }
+.history-week .history-stats { margin-bottom: 14px; }
+.history-week-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px 18px; }
+.history-week-block { min-width: 0; display: grid; gap: 8px; align-content: start; }
+.history-week-rows { display: grid; gap: 6px; }
+.history-week-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 10px; padding: 9px 12px; border: 0; border-radius: var(--r-card); background: var(--bg); color: var(--ink); font: inherit; text-align: left; cursor: pointer; width: 100%; }
+.history-week-row:hover { background: var(--tile); }
+.history-week-row:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+.history-week-val { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; color: var(--ink-2); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.history-week-pass { white-space: normal; text-align: right; }
+.history-week-pass b { color: var(--ink); font-weight: 600; }
+@media (max-width: 720px) {
+  .history-week-grid { grid-template-columns: minmax(0, 1fr); }
+  .history-week-row { grid-template-columns: minmax(0, 1fr); }
+  .history-week-val, .history-week-pass { justify-content: flex-start; text-align: left; white-space: normal; }
+}

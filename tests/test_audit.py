@@ -672,3 +672,40 @@ def test_the_shell_loads_the_annotations_plugin_and_its_styles(tmp_path):
         assert "—" not in body.text and "–" not in body.text, path
     script = client.get("/studio/js/plugins/annotations.js").text
     assert "data-rs" in script and "innerHTML" not in script.replace("box.innerHTML = html", "")  # only the sandboxed template
+
+
+def test_the_audit_ui_in_a_real_browser(tmp_path):
+    """Fix the top issues, then the Publish sheet's publish-fixes list, in Chromium against the e2e fake server.
+    Skips when node or Playwright is missing (CI runs Python only)."""
+    import os
+    import shutil
+    import subprocess
+    import sys
+
+    e2e = ROOT / "tests" / "e2e"
+    node = shutil.which("node")
+    if os.environ.get("RANKSIM_SKIP_E2E", "").strip() in {"1", "true", "yes"} or not node:
+        pytest.skip("node is not installed or RANKSIM_SKIP_E2E is set")
+    if subprocess.run([node, "-e", "require('playwright')"], cwd=e2e, capture_output=True, timeout=60).returncode != 0:
+        pytest.skip("Playwright is not installed")
+    sys.path.insert(0, str(e2e))
+    try:
+        from test_e2e import _start
+    finally:
+        sys.path.remove(str(e2e))
+    env = {key: value for key, value in os.environ.items() if not key.endswith(("_API_KEY", "_KEY", "_PASSWORD", "_LOGIN", "_TOKEN", "_SECRET", "_CLIENT_ID"))}
+    servers: list = []
+    try:
+        base = _start(servers, tmp_path / "data", {**env, "E2E_SLOW_SECONDS": "0"})
+        run = subprocess.run([node, str(ROOT / "tests" / "audit_browser" / "check.mjs"), "--base", base], cwd=e2e, env=env, capture_output=True, text=True, timeout=600)
+    finally:
+        for server in servers:
+            server.terminate()
+            try:
+                server.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                server.kill()
+    lines = [line for line in run.stdout.splitlines() if line.startswith("{")]
+    assert lines, run.stdout[-3000:] + run.stderr[-3000:]
+    result = json.loads(lines[-1])
+    assert result["ok"], json.dumps(result, indent=1)

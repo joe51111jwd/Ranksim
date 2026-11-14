@@ -13,7 +13,95 @@ const SERIES = ['history-you', 'history-c1', 'history-c2'];
 const DEPTH = 10;
 const full = new Map(); // slug -> Promise of the full history
 
-on('report-loaded', ({ slug }) => full.delete(slug));
+on('report-loaded', ({ slug, report }) => {
+  full.delete(slug);
+  baselineFor(slug); // the check seen on the last visit, read once per page load, before this visit is recorded
+  const last = report && report.history && report.history.last_at;
+  if (last) writeSeen(slug, last);
+});
+
+/* ------------------------------------------------------------------ since the last visit */
+
+/* The newest check the owner has seen, per site, in this browser. Read once per page load so the changes stay visible
+   for the whole visit; the visit itself is recorded straight away for next time. Storage can be unavailable (private
+   mode, blocked site data): then every visit compares the latest check with the one before it. */
+const SEEN_KEY = (slug) => `ranksim.track.seen.${slug}`;
+const baseline = new Map(); // slug -> ISO time of the last check seen before this page load, or null
+const dismissed = new Set();
+
+function readSeen(slug) {
+  try {
+    return window.localStorage.getItem(SEEN_KEY(slug));
+  } catch (err) {
+    return null;
+  }
+}
+
+function writeSeen(slug, iso) {
+  try {
+    window.localStorage.setItem(SEEN_KEY(slug), iso);
+  } catch (err) {
+    /* nothing to remember with; the next visit compares the last two checks */
+  }
+}
+
+function baselineFor(slug) {
+  if (!baseline.has(slug)) baseline.set(slug, readSeen(slug));
+  return baseline.get(slug);
+}
+
+/* How a search moved since the check the owner last saw: { change, delta, from, to } with the server's words
+   (up, down, new, lost, same), or null when there is nothing to compare. */
+export function sinceVisit(row, seenAt) {
+  const spark = (row && row.spark) || [];
+  const at = (row && row.spark_at) || [];
+  const n = spark.length;
+  if (n < 2 || at.length !== n) return null;
+  let base = n - 2; // no remembered visit: the check before the latest one
+  if (seenAt) {
+    base = -1;
+    for (let i = 0; i < n; i += 1) if (at[i] <= seenAt) base = i;
+    if (base === n - 1) return null; // the latest check was already seen
+    if (base < 0) base = 0; // the visit was before the oldest check kept here
+  }
+  const from = spark[base];
+  const to = spark[n - 1];
+  if (from == null && to == null) return null;
+  if (from == null) return { change: 'new', delta: null, from, to };
+  if (to == null) return { change: 'lost', delta: null, from, to };
+  if (to < from) return { change: 'up', delta: from - to, from, to };
+  if (to > from) return { change: 'down', delta: from - to, from, to };
+  return { change: 'same', delta: 0, from, to };
+}
+
+function visitChanges(R, slug) {
+  const H = R && R.history;
+  if (!H || !H.searches) return null;
+  const seenAt = baselineFor(slug);
+  const counts = { up: 0, down: 0, new: 0, lost: 0 };
+  const moved = [];
+  for (const row of H.searches) {
+    const move = sinceVisit(row, seenAt);
+    if (move && counts[move.change] != null) {
+      counts[move.change] += 1;
+      moved.push({ search: row.search, ...move });
+    }
+  }
+  return moved.length ? { counts, moved, seenAt } : null;
+}
+
+/* "3 searches moved up, 1 dropped out of the top 10". */
+export function changeSentence(counts) {
+  const parts = [];
+  const lead = (n) => `${n} ${n === 1 ? 'search' : 'searches'}`;
+  const add = (n, words) => { if (n) parts.push(parts.length ? `${n} ${words}` : `${lead(n)} ${words}`); };
+  add(counts.up, 'moved up');
+  add(counts.new, 'entered the top 10');
+  add(counts.down, 'moved down');
+  add(counts.lost, 'dropped out of the top 10');
+  if (!parts.length) return '';
+  return parts.length === 1 ? parts[0] : `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}`;
+}
 
 /* ------------------------------------------------------------------ helpers */
 
@@ -273,6 +361,38 @@ function table(series) {
         h('tbody', null, dates.map((at) => h('tr', null, h('td', { text: day(at) }), series.map((one, k) => h('td', { text: rankText(lookup[k].get(at)) }))))))));
 }
 
+/* ------------------------------------------------------------------ overview alert */
+
+registerOverviewTile({
+  key: 'track-alert',
+  order: -10,
+  render(R, ctx) {
+    const slug = ctx.slug || S.slug;
+    if (!R.history || R.history.real === false || dismissed.has(slug)) return null;
+    const found = visitChanges(R, slug);
+    if (!found) return null;
+    const when = found.seenAt ? `Since your last visit on ${day(found.seenAt)}` : `Since the check on ${day(previousCheck(R))}`;
+    const tile = h('section', { class: 'tile span-4 history-alert', role: 'status' });
+    const close = h('button', { class: 'btn btn-plain', type: 'button', text: 'Got it' });
+    close.addEventListener('click', () => {
+      dismissed.add(slug);
+      tile.remove();
+    });
+    tile.append(
+      h('div', { class: 'history-alert-text' },
+        h('div', { class: 'tile-k', text: when }),
+        h('div', { class: 'history-alert-big', text: `${changeSentence(found.counts)}.` }),
+        h('div', { class: 'history-alert-list' }, found.moved.slice(0, 4).map((item) => h('span', null, changeChip({ change: item.change, delta: item.delta }), item.search)))),
+      h('div', { class: 'history-alert-actions' }, link('track-history', 'See history', { class: 'btn btn-dark' }), close));
+    return tile;
+  },
+});
+
+function previousCheck(R) {
+  const trend = (R.history && R.history.trend) || [];
+  return trend.length >= 2 ? trend[trend.length - 2].at : null;
+}
+
 /* ------------------------------------------------------------------ overview tile */
 
 registerOverviewTile({
@@ -306,13 +426,16 @@ registerOverviewTile({
 registerSearchColumn({
   key: 'track-history',
   order: 50,
-  header: 'Trend',
+  header: 'Since last visit',
   cell(row) {
     const item = compactRow(S.report, row.q);
     if (!item || !item.spark || !item.spark.length) return h('span', { class: 'history-none', text: 'No checks' });
     // The Searches row is a button, so this cell stays passive. The History screen opens the full chart.
+    // The chip shows the move since the owner's last visit, the same numbers as the Overview alert.
     const label = `Positions at each check: ${item.spark.map(rankText).join(', ')}`;
-    return h('span', { class: 'history-cell' }, sparkline(item.spark, label), changeChip(item));
+    const move = sinceVisit(item, baselineFor(S.slug));
+    const chip = move && move.change !== 'same' ? changeChip(move) : null;
+    return h('span', { class: 'history-cell' }, sparkline(item.spark, label), chip);
   },
 });
 
@@ -335,9 +458,46 @@ registerScreen('track-history', {
     }
     if (!rows.length) list.append(h('div', { class: 'empty-note', text: 'No searches yet.' }));
     const sub = H.real === false ? 'Demo data, not Google results. Pick a search to see it over time.' : H.checks ? `${plural(H.checks, 'Google check')} since ${day(H.first_at)}. Pick a search to see it over time.` : 'Positions show after the first Google check.';
-    return page('Rank history', sub, null, h('div', { class: 'tile' }, list));
+    return page('Rank history', sub, null, weekView(H), h('div', { class: 'tile' }, h('div', { class: 'tile-head' }, h('h2', { text: 'Every search' })), list));
   },
 });
+
+/* ------------------------------------------------------------------ since last week */
+
+/* Monday morning view: what changed for this client since last week. Every number is a pair of real dated checks
+   (each search's newest check against its check a week earlier), worked out on the server (tracking.weekly_summary). */
+function weekView(H) {
+  const W = H && H.week;
+  if (!W || H.real === false) return null;
+  const head = h('div', { class: 'tile-head' }, h('h2', { text: 'Since last week' }), h('span', { class: 'aside', text: W.ready ? `${day(W.from)} to ${day(W.to)}` : '' }));
+  if (!W.ready) return h('section', { class: 'tile history-week' }, head, h('p', { class: 'tile-sub', text: W.reason || 'Needs two Google checks at least a week apart.' }));
+  const stat = (cls, value, label) => h('div', { class: `history-stat ${cls}` }, h('b', { text: String(value) }), h('span', { text: label }));
+  const row = (search, right) => h('button', { class: 'history-week-row', type: 'button', onClick: () => openHistory(search) }, h('span', { class: 'history-q', text: search }), right);
+  const pos = (value) => (value ? `#${value}` : 'not in top 10');
+  const block = (title, items, empty) => h('div', { class: 'history-week-block' },
+    h('div', { class: 'tile-k', text: title }),
+    items.length ? h('div', { class: 'history-week-rows' }, items) : h('div', { class: 'history-none', text: empty }));
+  const gained = W.gained.map((item) => row(item.search, h('span', { class: 'history-week-val' }, changeChip({ change: 'new' }), `now #${item.to}`)));
+  const lost = W.lost.map((item) => row(item.search, h('span', { class: 'history-week-val' }, changeChip({ change: 'lost' }), `was #${item.from}`)));
+  const moves = W.moves.map((item) => row(item.search, h('span', { class: 'history-week-val' }, changeChip({ change: item.delta > 0 ? 'up' : 'down', delta: item.delta }), `#${item.from} to #${item.to}`)));
+  const passed = W.passed.map((item) => row(item.search, h('span', { class: 'history-week-val history-week-pass' },
+    h('b', { text: item.domain }), ` ${pos(item.their_from)} to ${pos(item.their_to)}, you ${pos(item.our_from)} to ${pos(item.our_to)}`)));
+  const more = W.moves_total > W.moves.length ? h('div', { class: 'history-none', text: `${W.moves_total - W.moves.length} smaller moves not shown.` }) : null;
+  const skipped = W.skipped ? ` ${plural(W.skipped, 'search', 'searches')} had no check a week earlier or none this week, so they are left out.` : '';
+  return h('section', { class: 'tile white history-week' },
+    head,
+    h('div', { class: 'history-stats' },
+      stat('history-new', W.gained.length, 'Onto page one'),
+      stat('history-lost', W.lost.length, 'Off page one'),
+      stat('history-up', W.up, 'Moved up'),
+      stat('history-down', W.down, 'Moved down')),
+    h('div', { class: 'history-week-grid' },
+      block('Onto page one', gained, 'None this week.'),
+      block('Off page one', lost, 'None this week.'),
+      h('div', { class: 'history-week-block' }, block('Biggest moves', moves, 'No position changes.'), more),
+      block('Competitors who moved past you', passed, 'No tracked competitor passed you.')),
+    h('p', { class: 'history-note', text: `Each of ${plural(W.compared, 'search', 'searches')} compared with its own Google check a week earlier.${skipped}` }));
+}
 
 /* ------------------------------------------------------------------ per-search sheet */
 

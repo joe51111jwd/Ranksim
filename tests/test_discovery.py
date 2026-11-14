@@ -631,3 +631,110 @@ def test_rows_from_a_first_analysis_reach_the_new_project(tmp_path, monkeypatch)
     assert dn.load_rows(project) == rows  # now saved in the project
     detail = dn.discover(_smartcrew_pages(), "SmartCrew", host=SC, extra=rows).to_dict()["searches"]
     assert any(item["q"] == "grading crew software" and "impressions 120" in item["sources"][0]["detail"][0] for item in detail)
+
+
+def test_google_inputs_use_the_real_tracking_helper(tmp_path):
+    from aeo.ranksim.plugins import tracking
+    from aeo.ranksim.project import create_project
+
+    project = create_project("SmartCrew", SC, ["excavation software"], root=tmp_path)
+    snapshot = _google().to_dict()
+    for entry in snapshot["searches"]:
+        if entry["search"] == "excavation software":
+            entry["features"] = {
+                "related_searches": ["excavation contractor software"],
+                "people_also_ask": [{"question": "What is the best software for excavation contractors?", "snippet": "x", "url": "https://a.example/"}],
+            }
+    folder = project.dir / "pulls" / "20261109T000000Z"
+    folder.mkdir(parents=True)
+    (folder / "google.json").write_text(json.dumps(snapshot), encoding="utf-8")
+    assert "excavation software" in tracking.serp_features(project)
+    google, features = dn.google_inputs(project)
+    assert google is not None and features == {"excavation software": {
+        "related": ["excavation contractor software"], "paa": ["What is the best software for excavation contractors?"]}}
+    found = dn.discover(_smartcrew_pages(), "SmartCrew", host=SC, google=google, serp_features=features)
+    assert "excavation contractor software" in found.queries
+
+
+def _contractor_page(name):
+    return _page("", f"Excavation & Site Work Services | {name}", f"{name} Excavation", ["Our services", "Service area"],
+                 "Family owned excavation contractor serving Cape Cod. Licensed and insured. Excavation services, septic systems and driveways. "
+                 "Call us at (508) 555-1234 for a free estimate. Residential and commercial work. " * 5,
+                 {"@type": "HomeAndConstructionBusiness"})
+
+
+def _vendor_page(name):
+    return _page("", f"Excavation Software | {name}", "Excavation software for contractors", ["Pricing", "Integrations"],
+                 "Our cloud-based software and mobile app run dispatch and timecards. Book a demo or start a free trial. Plans start at $40 per user. " * 5,
+                 {"@type": "SoftwareApplication"})
+
+
+def test_offering_tells_software_vendors_from_service_businesses():
+    assert cp.offering(["Excavation software for contractors. Book a demo. Mobile app. Per user pricing."])[0] == "software"
+    assert cp.offering(["Family owned excavation contractor serving Cape Cod. Free estimate. Call (508) 555-1234."])[0] == "service"
+    assert cp.offering(["Excavation"])[0] is None
+    # software for contractors is not a contractor: audience words are not evidence
+    assert cp.offering(["Dirt work software for excavation contractors and site work crews. Book a demo. Mobile app."])[0] == "software"
+
+
+def test_a_local_contractor_in_a_software_sites_results_is_not_a_competitor():
+    google = GoogleSnapshot("p", "", "import", [SearchResults("excavation software", [
+        _result(1, "https://mitti.example/excavation", "Excavation Software | Mitti"),
+        _result(2, "https://dirtworkscapecod.example/", "Dirt Works Cape Cod", ),
+        _result(3, f"{SC_HOME}excavation-software/", "Excavation Software | SmartCrew"),
+    ], "import", "csv", None)])
+    docs = {"https://mitti.example/excavation": _vendor_page("Mitti"), "https://dirtworkscapecod.example/": _contractor_page("Dirt Works"),
+            f"{SC_HOME}excavation-software/": _vendor_page("SmartCrew")}
+    profiles = cp.competitor_profiles(google, SC, docs)
+    assert [row["domain"] for row in profiles["competitors"]] == ["mitti.example"]
+    service = next(row for row in profiles["platforms"] if row["domain"] == "dirtworkscapecod.example")
+    assert service["kind"] == "service" and "local service business" in service["reason"]
+    # with no stored pages and no snippets nothing is known, so the old answer stands
+    assert "dirtworkscapecod.example" in cp.pick_competitors(google, SC)
+    # Google snippets alone are enough when they are clear
+    google.searches[0].results[1].snippet = "Family owned excavation contractor serving Cape Cod. Free estimates. Licensed and insured."
+    google.searches[0].results[2].snippet = "SmartCrew is cloud-based software with a mobile app. Book a demo."
+    assert "dirtworkscapecod.example" not in cp.pick_competitors(google, SC)
+    # a contractor's site sees software vendors as software, not competitors
+    rows = {row["domain"]: row for row in cp.classify_domains(google, SC, profiles={url: cp.page_profile(url, html) for url, html in docs.items()}, own_offer="service")}
+    assert rows["mitti.example"]["kind"] == "software"
+
+
+def test_gaps_name_page_elements_the_pages_above_have():
+    faq = '<h2>Frequently asked questions</h2><h3>Q?</h3><p>A.</p><table><tr><th>Plan</th><td>$40</td></tr></table><iframe src="https://www.youtube.com/embed/x"></iframe>'
+    a = _page("", "A", "A", ["Job costing"], "words " * 50).replace("</main>", faq + "</main>")
+    b = _page("", "B", "B", ["Dispatch"], "words " * 50).replace("</main>", faq + "</main>")
+    c = _page("", "C", "C", ["Daily logs"], "words " * 50)
+    mine = _page("", "Mine", "Mine", ["Daily logs"], "words " * 50).replace("</main>", '<iframe src="https://player.vimeo.com/video/1"></iframe></main>')
+    gap = cp.gap_for("x software", "https://me.example/", mine, [("https://a.example/", a), ("https://b.example/", b), ("https://c.example/", c)])
+    elements = {item["element"]: item for item in gap["elements"]}
+    assert set(elements) == {"faq", "table"}  # you have a video already
+    assert elements["faq"]["label"] == "an FAQ section" and elements["faq"]["pages"] == 2 and elements["faq"]["of"] == 3
+    assert elements["faq"]["evidence"] == ["https://a.example/", "https://b.example/"]
+    footer_only = _page("", "D", "D", ["X"], "w " * 20).replace("</body>", "<footer><h3>FAQ</h3></footer></body>")
+    assert "faq" not in cp.page_profile("https://d.example/", footer_only)["elements"]  # site chrome is not content
+
+
+def test_pages_that_sell_nothing_like_yours_are_other_sites():
+    google = GoogleSnapshot("p", "", "import", [SearchResults("excavation software", [
+        _result(1, "https://mitti.example/excavation", "Excavation Software | Mitti"),
+        _result(2, "https://help.mitti.example/article", "Help Center"),
+        _result(3, "https://essays.example/dirt-work", "Dirt Work: An Education in the Woods"),
+        _result(4, "https://dirtworksoftware.example/", "Dirt Work Software"),
+        _result(5, "https://lists.example/best", "10 Best Excavation Software Tools Ranked"),
+        _result(6, f"{SC_HOME}excavation-software/", "Excavation Software | SmartCrew"),
+    ], "import", "csv", None)])
+    plain = "A long essay about digging in the woods and what it teaches. " * 10
+    docs = {
+        "https://mitti.example/excavation": _vendor_page("Mitti"),
+        "https://help.mitti.example/article": _page("", "Help Center", "How to reset a password", ["Steps"], plain),
+        "https://essays.example/dirt-work": _page("", "Dirt Work: An Education in the Woods", "Dirt Work", ["Chapter one"], plain),
+        "https://dirtworksoftware.example/": _page("", "Dirt Work Software", "Welcome", [], "Loading"),
+        "https://lists.example/best": _page("", "10 Best Excavation Software Tools Ranked", "10 best", ["1. Mitti"], "Mitti has good pricing. " * 20),
+        f"{SC_HOME}excavation-software/": _vendor_page("SmartCrew"),
+    }
+    rows = {row["domain"]: row for row in cp.classify_domains(google, SC, profiles={url: cp.page_profile(url, html) for url, html in docs.items()})}
+    assert rows["mitti.example"]["kind"] == "competitor" and rows["mitti.example"]["hosts"] == ["help.mitti.example", "mitti.example"]
+    assert rows["essays.example"]["kind"] == "other" and "sells software" in rows["essays.example"]["reason"]
+    assert rows["dirtworksoftware.example"]["kind"] == "competitor"  # the name says software
+    assert rows["lists.example"]["kind"] == "publisher"

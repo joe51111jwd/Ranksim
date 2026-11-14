@@ -63,7 +63,8 @@ SCREEN_KEY = re.compile(r"[a-z0-9][a-z0-9_-]{0,39}")
 OPEN_EXACT = {"/", "/app", "/start", "/edit", "/healthz", "/favicon.ico", "/api/v1/session", "/api/v1/login", "/api/v1/logout"}
 OPEN_PREFIX = ("/studio/", "/app/")
 NO_STATE_PREFIX = ("/studio/", "/static/")
-NO_SAVE_SUFFIX = ("/pull", "/fetch", "/login", "/logout")
+NO_SAVE_SUFFIX = ("/pull", "/fetch", "/login", "/logout", "/sites", "/resume")  # jobs save themselves
+SYNC_COOKIE = "rs_sync"
 
 
 def _serve():
@@ -190,14 +191,24 @@ def register(app: FastAPI, ui) -> None:
             return await call_next(request)
         from aeo.ranksim.cloud import CloudError
 
+        # Blob operations are budgeted (cloud.py): a read checks storage only on a cold start, every few minutes, or
+        # when the browser's rs_sync cookie (the newest save it has seen) is newer than this instance; a write checks
+        # first so it never builds on stale files. The cookie is a hint, not a secret: a forged one costs one check.
         writing = request.method in {"POST", "PUT", "PATCH", "DELETE"}
+        hint_text = request.cookies.get(SYNC_COOKIE, "")
+        hint = int(hint_text) if hint_text.isdigit() and len(hint_text) <= 20 else 0
+        hinted = hasattr(cloud, "stamp")  # a stand-in cloud object (tests) may not take hints
         try:
-            await run_in_threadpool(lambda: cloud.refresh(force=writing))
+            await run_in_threadpool(lambda: cloud.refresh(force=writing, hint=hint) if hinted else cloud.refresh(force=writing))
         except CloudError as exc:
             if path.startswith("/api/"):
                 return _error(503, f"{exc} Nothing was changed. Try again in a moment.")
             return Response(f"{exc} Try again in a moment.", status_code=503, media_type="text/plain")
         response = await call_next(request)
+        if hinted and response.status_code == 404 and request.method == "GET" and path.startswith("/api/v1/projects/"):
+            # A project made on another instance a moment ago: check storage once, then answer again.
+            if await run_in_threadpool(lambda: cloud.refresh(hint=cloud.stamp + 1)):
+                response = await call_next(request)
         if writing and response.status_code < 400 and not path.endswith(NO_SAVE_SUFFIX):
             try:
                 await run_in_threadpool(cloud.save)
@@ -205,6 +216,8 @@ def register(app: FastAPI, ui) -> None:
                 print(f"ranksim: {exc}", flush=True)
                 if path.startswith("/api/"):
                     return _error(503, f"{exc} The change was made on this server but may not last. Try again.")
+        if hinted and cloud.stamp > hint:
+            response.set_cookie(SYNC_COOKIE, str(cloud.stamp), max_age=30 * 24 * 3600, httponly=False, samesite="lax", path="/")
         return response
 
     @app.middleware("http")

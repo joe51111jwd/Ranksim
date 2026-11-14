@@ -942,3 +942,70 @@ def test_public_url_pins_the_redirect_uri(monkeypatch):
     assert gsc.redirect_uri_for(request) == "https://ranksim.example/api/v1/gsc/callback"
     monkeypatch.setenv(gsc.REDIRECT_ENV, "https://other.example/api/v1/gsc/callback")
     assert gsc.redirect_uri_for(request) == "https://other.example/api/v1/gsc/callback"
+
+
+# -- Search Console as a free rank source -------------------------------------------------------------------------
+
+
+def _connected_box(tmp_path, pages=None):
+    from test_project import FakeCrawler
+
+    box = _app(tmp_path)
+    _sign_in(box)
+    box.crawler = FakeCrawler(pages or {})
+    box.ui.pull_options = {**(box.ui.pull_options or {}), "fetcher": box.crawler}
+    query = _connect(box)
+    _callback(box, {"code": "good-code", "state": query["state"]})
+    return box
+
+
+def test_gsc_positions_for_searches_without_google_results(tmp_path, env):
+    box = _connected_box(tmp_path)
+    report = box.client.get(f"/api/v1/projects/{box.project.slug}/report").json()
+    assert all(not row["checked"] and row["position"] is None for row in report["rankings"])  # no Google data, unchanged
+    section = report["gsc"]
+    assert section["positions_label"] == f"Search Console average position, {section['range']['label']}"
+    assert section["positions"]["heavy civil software"] == {"position": 11.1, "clicks": 50, "impressions": 3000, "ctr": 0.0167, "page": "https://www.dirtcrew.example/"}
+    assert section["positions"]["dirt work software"]["page"] == "https://www.dirtcrew.example/pricing"
+    assert "excavation estimating" not in section["positions"]  # no Search Console data for it either
+    assert "not a Google top 10 position" in section["positions_note"]
+
+
+def test_gsc_positions_never_touch_google_rows():
+    section = {"range": {"label": "Oct 1 to Oct 28, 2026"}, "searches": {"a": {"position": 4.2, "clicks": 1, "impressions": 9, "ctr": 0.1, "page": "p"}, "b": {"position": 7.0, "clicks": 0, "impressions": 3, "ctr": 0.0}}}
+    rankings = [{"q": "a", "checked": True, "position": 3}, {"q": "b", "checked": False, "position": None}, {"q": "c", "checked": False}]
+    out = gsc.rank_source(section, rankings)
+    assert list(out["positions"]) == ["b"] and rankings[0]["position"] == 3 and "gsc" not in rankings[1]
+    assert gsc.rank_source({"searches": {}}, rankings) == {}  # no data, nothing added
+
+
+def test_gsc_pages_are_read_for_issues(tmp_path, env):
+    from test_project import page_html
+
+    pages = {
+        "https://www.dirtcrew.example/": page_html("Heavy Civil Software for Contractors", "Heavy civil software"),
+        "https://www.dirtcrew.example/pricing": page_html("Pricing | Dirt Crew", "Plans and pricing"),
+        "https://www.dirtcrew.example/features": page_html("Features", "Features"),
+    }
+    box = _connected_box(tmp_path, pages)
+    gsc.after_pull(project=_project(box), report=None, ui=box.ui)
+    assert sorted(box.crawler.asked) == sorted(pages)  # best pages for tracked searches, then pages by clicks
+    gsc.after_pull(project=_project(box), report=None, ui=box.ui)
+    assert len(box.crawler.asked) == 3  # stored pages are not fetched again
+    report = box.client.get(f"/api/v1/projects/{box.project.slug}/report").json()
+    assert report["pages_read"] >= 3
+    found = [issue for issue in report["issues"] if issue["kind"] == "gsc-title-search"]
+    assert [(issue["search"], issue["page"]) for issue in found] == [("dirt work software", "https://www.dirtcrew.example/pricing")]
+    issue = found[0]
+    assert issue["element"]["selector"] == "title" and "average position 8.4" in issue["comment"] and "Google Search Console" in issue["comment"]
+    assert not any(dash in json.dumps(found, ensure_ascii=False) for dash in DASHES)
+
+
+def test_page_feed_stays_on_the_site_and_off_when_gsc_is_off(tmp_path, env):
+    project = SimpleNamespace(searches=["x"], is_our_url=lambda url: "dirtcrew.example" in url)
+    snapshot = {"query_pages": [{"q": "x", "page": "https://evil.example/x", "clicks": 9, "impressions": 9}], "pages": [{"page": "https://www.dirtcrew.example/a"}, {"page": "javascript:alert(1)"}]}
+    assert gsc.feed_urls(project, snapshot) == ["https://www.dirtcrew.example/a"]
+    box = _connected_box(tmp_path)
+    _post(box, f"/api/v1/gsc/projects/{box.project.slug}", {"enabled": False})
+    gsc.after_pull(project=_project(box), report=None, ui=box.ui)
+    assert box.crawler.asked == []

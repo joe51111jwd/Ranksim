@@ -301,7 +301,7 @@ export async function openSite(slug, { keepDrafts = false } = {}) {
   S.report = null;
   S.project = null;
   shell.renderBar();
-  if (!keepDrafts) clear(main).append(skeleton());
+  if (!keepDrafts) clear(main).append(skeleton(parseLocation().screen));
   const [report, project] = await Promise.all([api.get(`/api/v1/projects/${enc(slug)}/report`), api.get(`/api/v1/projects/${enc(slug)}`)]);
   S.report = report;
   S.project = project;
@@ -489,11 +489,17 @@ export function serpList(items, opts = {}) {
 }
 
 /* A placeholder in the bento's shape while a site loads: gray blocks, no spinner wall. Still under reduced motion. */
-export function skeleton() {
-  const tile = (cls) => h('div', { class: `tile ${cls || ''}` }, h('span', { class: 'sk sk-line' }), h('span', { class: 'sk sk-big' }), h('span', { class: 'sk sk-block' }));
-  return h('div', { class: 'wrap screen skeleton', 'aria-busy': 'true', 'aria-label': 'Loading' },
+export function skeleton(kind = 'overview') {
+  const tile = (cls, ...kids) => h('div', { class: `tile ${cls || ''}` }, kids.length ? kids : [h('span', { class: 'sk sk-line' }), h('span', { class: 'sk sk-big' }), h('span', { class: 'sk sk-block' })]);
+  const rows = (n) => h('div', { class: 'rows' }, Array.from({ length: n }, () => h('span', { class: 'sk sk-row' })));
+  let body;
+  if (kind === 'issues') body = h('div', { class: 'bento' }, tile('span-2', h('span', { class: 'sk sk-line' }), rows(4)), tile('span-2', h('span', { class: 'sk sk-line' }), rows(3)));
+  else if (kind === 'searches') body = h('div', { class: 'split' }, tile('', h('span', { class: 'sk sk-line' }), rows(6)), tile('', h('span', { class: 'sk sk-line' }), rows(8)));
+  else if (kind === 'competitors' || kind === 'settings') body = h('div', { class: 'bento' }, tile('span-4', h('span', { class: 'sk sk-line' }), rows(5)));
+  else body = h('div', { class: 'bento' }, tile('white span-2'), tile('black'), tile(), tile('span-2 tall'), tile('white span-2 tall'));
+  return h('div', { class: `wrap screen skeleton sk-${kind}`, 'aria-busy': 'true', 'aria-label': 'Loading' },
     h('div', { class: 'head' }, h('div', null, h('span', { class: 'sk sk-big' }), h('span', { class: 'sk sk-line' }))),
-    h('div', { class: 'bento' }, tile('white span-2'), tile('black'), tile(), tile('span-2 tall'), tile('white span-2 tall')),
+    body,
     h('span', { class: 'sr-only', role: 'status', text: 'Loading' }));
 }
 

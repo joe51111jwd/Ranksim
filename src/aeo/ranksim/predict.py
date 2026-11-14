@@ -456,29 +456,49 @@ def _advice(name: str, mine: float, target: float, count: int, values: list[floa
 
 
 def confidence(backtest_pairwise: float | None, pairs: int | None) -> dict:
-    """A per-search label from that search's backtest. The backtest is not accuracy."""
+    """A per-search label from that search's backtest. The backtest is not accuracy.
+
+    ``short`` is one plain line for a client. ``text`` is the detail shown on tap.
+    """
     if backtest_pairwise is None or not pairs:
         return {
             "label": UNSURE,
             "backtest_pairwise": None,
             "backtest_pairs": int(pairs or 0),
+            "near_chance": False,
+            "short": "Unsure: no backtest for this search yet.",
             "text": "No backtest for this search yet. Treat the PREDICTED position as a rough guide.",
         }
     near = abs(backtest_pairwise - 0.5) <= NEAR_CHANCE
     clearer = backtest_pairwise >= CLEARER_MIN_PAIRWISE and pairs >= CLEARER_MIN_PAIRS
+    share = f"{backtest_pairwise:.0%} of {pairs} page pairs"
     if clearer:
-        text = f"Backtest on held-out searches ordered {backtest_pairwise:.0%} of {pairs} page pairs for this search. Still a prediction."
+        short = "Clearer: the model did well on this search in a backtest."
+        text = f"Backtest on held-out searches: it put {share} in the right order for this search. Still a prediction."
     elif near:
-        text = f"Near chance: the backtest ordered {backtest_pairwise:.0%} of {pairs} page pairs for this search."
+        short = "Unsure: close to a coin flip on this search."
+        text = f"Near chance: the backtest put {share} in the right order for this search. 50% is a coin flip."
+    elif backtest_pairwise < 0.5:
+        short = "Unsure: the model has been wrong more often than right here."
+        text = f"The backtest put only {share} in the right order for this search. 50% is a coin flip."
     else:
-        text = f"The backtest ordered {backtest_pairwise:.0%} of {pairs} page pairs for this search. Not enough to be sure."
+        short = "Unsure: some signal, not enough to rely on."
+        text = f"The backtest put {share} in the right order for this search. Not enough to be sure."
     return {
         "label": CLEARER if clearer else UNSURE,
         "backtest_pairwise": round(float(backtest_pairwise), 3),
         "backtest_pairs": int(pairs),
         "near_chance": near,
+        "short": short,
         "text": text,
     }
+
+
+ONE_FAMILY_SHORT = "Unsure: no backtest, the searches are all close variants."
+ONE_FAMILY_TEXT = (
+    "Every search in this project is a close variant of the others, so the model could not be tested on a search "
+    "it did not learn from. Every call stays UNSURE. Add a few different searches to get a backtest."
+)
 
 
 def raw_counts(doc, html: str | None) -> dict:

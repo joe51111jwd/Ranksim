@@ -16,6 +16,8 @@ from dataclasses import dataclass, field
 
 from aeo.ranksim.predict import (
     ALL_FEATURES,
+    ONE_FAMILY_SHORT,
+    ONE_FAMILY_TEXT,
     UNSURE,
     Group,
     PairwiseModel,
@@ -203,14 +205,12 @@ def build_predictor(ctx) -> ProjectPredictor:
                 stable[name] = 1
             elif all(weights[index] < 0 for weights in signs):
                 stable[name] = -1
-    notes = []
-    if len(folds) < 2:
-        notes.append("All searches are one family, so no search could be held out. Every call is UNSURE.")
+    notes: list[str] = []
     return ProjectPredictor(model, backtest, stable, items, rows, len(groups), notes, len(folds))
 
 
 _CACHE: dict[int, tuple] = {}
-CACHE_VERSION = 2  # bump when features, signals or the recipe change
+CACHE_VERSION = 3  # bump when features, signals or the recipe change
 
 
 def _nan_to_none(signals: dict | None) -> dict | None:
@@ -371,6 +371,7 @@ def test_searches(
     key = _key(url)
     own_domain = _domain(url)  # your other pages are not the pages to beat
     out_rows = []
+    by_search = ctx.google.by_search()
     picked = target_searches(ctx, url, draft_doc, searches)
     if first and first in ctx.project.searches:
         picked = [first] + [search for search in picked if search != first]
@@ -383,13 +384,19 @@ def test_searches(
         after = _signals(search, url, draft_doc, draft_html, peers, predictor.site_rows)
         raw_after = raw_counts(draft_doc, draft_html)
         backtest = predictor.backtest.get(search) or {}
-        conf = confidence(backtest.get("pairwise"), backtest.get("pairs")) if predictor.groups and backtest else confidence(None, 0)
+        if predictor.families < 2:
+            conf = dict(confidence(None, 0), short=ONE_FAMILY_SHORT, text=ONE_FAMILY_TEXT, one_family=True)
+        else:
+            conf = confidence(backtest.get("pairwise"), backtest.get("pairs")) if predictor.groups and backtest else confidence(None, 0)
+        entry = by_search.get(search)
+        seen = entry.pulled_label if entry is not None and hasattr(entry, "pulled_label") else ""
         row = {
             "search": search,
             "label": "PREDICTED",
             "candidates": len(others) + 1,
             "stored_candidates": len(peers),
             "confidence": conf,
+            "google_seen": seen,
         }
         if mine is None and not _uses_search_words(after):
             row.update(
@@ -404,7 +411,7 @@ def test_searches(
                 above=[],
                 guidance=[],
             )
-            row["confidence"] = dict(conf, label=UNSURE)
+            row["confidence"] = dict(conf, label=UNSURE, short="Not placed: the page does not use this search's words.")
             out_rows.append(row)
             continue
         if mine is not None:
@@ -435,7 +442,7 @@ def test_searches(
                 slot_with_edit=_slot(moved["predicted"]),
             )
             if base_doc is None:
-                row["confidence"] = dict(conf, label=UNSURE, text="No stored copy of the current page, so the move is not measured.")
+                row["confidence"] = dict(conf, label=UNSURE, short="Unsure: no stored copy of the current page.", text="No stored copy of the current page, so the move is not measured.")
                 row["with_edit"] = row["now"]
                 row["slot_with_edit"] = row["slot_now"]
         else:
@@ -472,13 +479,41 @@ def test_searches(
             raw_above=[item.raw for _signals_, item in above],
         )
         out_rows.append(row)
+    notes = list(predictor.notes)
+    if predictor.families < 2:
+        notes = [ONE_FAMILY_TEXT]
+    if not any(row[1] == own_domain for row in predictor.site_rows):
+        notes.append(
+            f"{own_domain} is not in the top 10 for any of these searches yet. Its pages are placed as new pages from a "
+            "site with no rankings here, so treat every position as a rough guide."
+        )
     return {
         "label": "PREDICTED",
         "url": url,
+        "summary": _summary(out_rows),
         "searches": out_rows,
         "guidance_note": "Guidance, not a guarantee. These are the gaps to the pages PREDICTED just above you that this model ties to ranking higher.",
         "forward_check": FORWARD_NOTE,
         "backtest_note": "Backtest: each search scored by a model trained on the other search families in this project, same snapshot. Not accuracy.",
         "model": {"features": model.features, "pairs": model.pairs, "searches": predictor.groups},
-        "notes": predictor.notes,
+        "notes": notes,
     }
+
+
+def _summary(rows: list[dict]) -> dict:
+    """Counts for the one-line header. A move under half a place counts as the same."""
+    out = {"searches": len(rows), "up": 0, "down": 0, "same": 0, "not_placed": 0, "unsure": 0, "new": 0}
+    for row in rows:
+        if row["confidence"]["label"] == UNSURE:
+            out["unsure"] += 1
+        if row.get("with_edit") is None:
+            out["not_placed"] += 1
+        elif row.get("move") is None:
+            out["new"] += 1
+        elif row["move"] >= 0.5:
+            out["up"] += 1
+        elif row["move"] <= -0.5:
+            out["down"] += 1
+        else:
+            out["same"] += 1
+    return out

@@ -261,3 +261,61 @@ def test_backtest_hides_the_held_out_family_from_site_features(ctx, monkeypatch)
     predict_service.build_predictor(ctx)
     assert seen[0] == set(SEARCHES)  # the final model sees everything
     assert all(len(rows) < len(SEARCHES) for rows in seen[1:])  # each fold hides its family
+
+
+def test_one_family_project_says_why_every_call_is_unsure():
+    predict_service._CACHE.clear()
+    ctx = make_ctx()
+    variants = ["dirt work software", "best dirt work software", "dirt work software tool"]
+    by = ctx.google.by_search()
+    ctx.project.searches = variants
+    remapped = {name: by[SEARCHES[index]] for index, name in enumerate(variants)}
+    ctx.google = SimpleNamespace(by_search=lambda: remapped)
+    out = predict_service.test_searches(ctx, page("Dirt work software", "Dirt work software", 400, body_terms="dirt work software"), "https://ours.example/new", searches=variants)
+    assert all(row["confidence"]["label"] == UNSURE for row in out["searches"])
+    assert all(row["confidence"].get("one_family") for row in out["searches"])
+    assert any("close variant" in note for note in out["notes"])
+
+
+def test_a_site_with_no_rankings_gets_a_plain_note(ctx):
+    out = predict_service.test_searches(ctx, page("hcss alternative", "hcss alternative", 400, body_terms="hcss alternative"), "https://brandnew.example/page", searches=SEARCHES[:1])
+    assert any("brandnew.example is not in the top 10" in note for note in out["notes"])
+    ranked = predict_service.test_searches(ctx, OURS, "https://ours.example/main", searches=SEARCHES[:1])
+    assert not any("is not in the top 10" in note for note in ranked["notes"])
+
+
+def test_summary_and_short_lines(ctx):
+    out = predict_service.test_searches(ctx, OURS, "https://ours.example/main", searches=SEARCHES)
+    summary = out["summary"]
+    assert summary["searches"] == 4 and summary["same"] == 4
+    for row in out["searches"]:
+        assert row["confidence"]["short"].split(":")[0] in {"Unsure", "Clearer", "Not placed"}
+        assert len(row["confidence"]["short"]) <= 80
+
+
+def test_predictor_is_cached_on_disk_per_pull(tmp_path):
+    predict_service._CACHE.clear()
+    ctx = make_ctx()
+    ctx.project.dir = str(tmp_path)
+    ctx.pull_id = "pull-1"
+    draft = page("Dirt work software", "Dirt work software", 500, h2=4, body_terms=" ".join(SEARCHES))
+    first = predict_service.test_searches(ctx, draft, "https://ours.example/new", searches=SEARCHES)
+    files = list((tmp_path / "plugins" / "predict").glob("predictor-pull-1-*.json"))
+    assert len(files) == 1
+    predict_service._CACHE.clear()  # a new instance: memory is empty, the file is reused
+
+    def boom(_ctx):
+        raise AssertionError("rebuilt instead of reading the cache")
+
+    original = predict_service.build_predictor
+    predict_service.build_predictor = boom
+    try:
+        again = predict_service.test_searches(ctx, draft, "https://ours.example/new", searches=SEARCHES)
+    finally:
+        predict_service.build_predictor = original
+    assert again["searches"] == first["searches"]
+    ctx.pull_id = "pull-2"
+    predict_service._CACHE.clear()
+    predict_service.test_searches(ctx, draft, "https://ours.example/new", searches=SEARCHES)
+    names = [path.name for path in (tmp_path / "plugins" / "predict").glob("predictor-*.json")]
+    assert len(names) == 1 and names[0].startswith("predictor-pull-2-")

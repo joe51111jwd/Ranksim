@@ -64,6 +64,8 @@ KEEP_SNAPSHOTS = 8
 REPORT_QUERIES = 100
 REPORT_PAGES = 50
 DISCOVERY_LIMIT = 30
+DISCOVERY_TOP = 5.0
+DISCOVERY_FLOOR = 1.5
 LABEL = "Google Search Console data"
 GOOD_PERMISSIONS = {"siteOwner", "siteFullUser", "siteRestrictedUser"}
 
@@ -151,11 +153,15 @@ def _stamp(ui) -> str:
 
 
 def account_path(ui) -> Path:
-    return Path(ui.root) / "_plugins" / NAME / "account.json"
+    from aeo.ranksim import plugins
+
+    return plugins.workspace_dir(ui, NAME) / "account.json"
 
 
 def project_dir(project) -> Path:
-    return Path(project.dir) / "plugins" / NAME
+    from aeo.ranksim import plugins
+
+    return plugins.data_dir(project, NAME)
 
 
 def _read_json(path: Path) -> dict | None:
@@ -715,6 +721,14 @@ def _active(ui, project) -> bool:
     return bool(settings["enabled"] and settings["property"] and connected(ui))
 
 
+def discovery_weight(impressions: int, top: int) -> float:
+    """On discovery's scale (a page title phrase scores 3.0 to 4.5, a phrase needs 2.5 to be picked): the most seen
+    query scores 5.0, a query with a tenth of its impressions about 2.6 (still picked on its own), a query with a
+    hundredth 1.85 (picked only when the site's pages also use it)."""
+    share = max(0.0, min(1.0, impressions / top)) if top else 0.0
+    return round(DISCOVERY_FLOOR + (DISCOVERY_TOP - DISCOVERY_FLOOR) * share**0.5, 3)
+
+
 def discovery_sources(*, project, pages=None, ui=None) -> list[dict]:
     """Top Search Console queries for the project, weighted by impressions (1.0 for the most seen). Only when on."""
     if ui is None or not _active(ui, project):
@@ -732,7 +746,7 @@ def discovery_sources(*, project, pages=None, ui=None) -> list[dict]:
     return [
         {
             "q": item["q"],
-            "weight": round(max(item["impressions"] / top, 0.01), 4),
+            "weight": discovery_weight(item["impressions"], top),
             "source": NAME,
             "impressions": item["impressions"],
             "clicks": item["clicks"],
@@ -773,28 +787,18 @@ def settings_schema() -> dict:
 # ---------------------------------------------------------------------------------------------------------------------
 
 
-def _common():
-    try:
-        from aeo.ranksim.api import common  # after the plugin refactor
-
-        return common
-    except ImportError:
-        from aeo.ranksim import studio
-
-        return studio
-
-
 def _save_cloud(ui) -> None:
-    cloud = getattr(ui, "cloud", None)
-    if cloud is not None and getattr(cloud, "enabled", False):
-        try:
-            cloud.save()
-        except Exception as exc:  # noqa: BLE001 - the change is on this instance; report but do not fail the redirect
-            print(f"ranksim: gsc: cloud save failed: {type(exc).__name__}", flush=True)
+    """Save to cloud storage for writes the middleware does not cover (a GET, a failed POST). Never fatal here."""
+    from aeo.ranksim import plugins
+
+    try:
+        plugins.save(ui)
+    except Exception as exc:  # noqa: BLE001 - the change is on this instance; report but do not fail the request
+        print(f"ranksim: gsc: cloud save failed: {type(exc).__name__}", flush=True)
 
 
 def register(app, ui) -> None:
-    common = _common()
+    from aeo.ranksim.api import common
 
     def project_or_404(slug: str):
         try:

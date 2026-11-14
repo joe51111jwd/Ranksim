@@ -180,7 +180,6 @@ def _app(tmp_path, *, password: str | None = PASSWORD, public: bool = False, sit
     google = FakeGoogle()
     ui.gsc_transport = google.transport()
     ui.gsc_clock = Clock()
-    gsc.register(app, ui)  # until the plugin loader lands, the test wires the plugin in directly
     project = None
     if not public:
         project = create_project("Dirt Crew", site, ["heavy civil software", "dirt work software", "excavation estimating"], root=tmp_path / "projects")
@@ -361,7 +360,8 @@ def test_full_flow_connect_pick_fetch_report_refresh_disconnect(tmp_path, env):
     # Discovery gets the top queries weighted by impressions.
     sources = gsc.discovery_sources(project=_project(box), pages=[], ui=box.ui)
     assert [row["q"] for row in sources] == ["heavy civil software", "dirt work software", "dirt crew login"]
-    assert sources[0]["weight"] == 1.0 and sources[1]["weight"] == 0.3 and all(row["source"] == "gsc" for row in sources)
+    assert sources[0]["weight"] == 5.0 and sources[1]["weight"] == gsc.discovery_weight(900, 3000) and all(row["source"] == "gsc" for row in sources)
+    assert sources[2]["weight"] < 2.5  # 100 impressions out of 3000: only counts when the site also uses the phrase
     calls_before = len(box.google.calls)
     gsc.after_pull(project=_project(box), report=None, ui=box.ui)
     assert len(box.google.calls) == calls_before  # fresh data is not fetched again
@@ -676,3 +676,30 @@ def test_a_storage_failure_in_the_callback_redirects(tmp_path, env):
     # The storage middleware answers 503 for /api/ paths before the route runs; either way no raw 500 and nothing stored.
     assert done.status_code in {303, 503}
     assert not gsc.account_path(box.ui).exists()
+
+
+def test_the_app_loads_the_plugin_and_the_report_carries_gsc(tmp_path, env):
+    box = _app(tmp_path)
+    _sign_in(box)
+    listed = box.client.get("/api/v1/plugins").json()
+    gsc_row = next(row for row in listed["plugins"] if row["name"] == "gsc")
+    assert {"register", "extend_report", "discovery_sources", "after_pull"} <= set(gsc_row["hooks"])
+    paths = [getattr(route, "path", "") for route in box.app.router.routes]
+    assert paths.count("/api/v1/gsc/callback") == 1  # registered once, by the loader
+    query = _connect(box)
+    _callback(box, {"code": "good-code", "state": query["state"]})
+    report = box.client.get(f"/api/v1/projects/{box.project.slug}/report")
+    assert report.status_code == 200, report.text
+    assert report.json()["gsc"]["state"] == "ready" and report.json()["gsc"]["totals"]["clicks"] == 120
+
+
+def test_discovery_merges_gsc_queries(tmp_path, env):
+    from aeo.ranksim import discovery
+
+    box = _app(tmp_path)
+    _sign_in(box)
+    query = _connect(box)
+    _callback(box, {"code": "good-code", "state": query["state"]})
+    found = discovery.discover_with_plugins([], "Dirt Crew", host="www.dirtcrew.example", project=_project(box), ui=box.ui)
+    assert found[:2] == ["heavy civil software", "dirt work software"]
+    assert "dirt crew login" not in found  # branded, and below the bar on its own

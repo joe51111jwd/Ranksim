@@ -6,7 +6,7 @@ import { registerScreen } from '../hooks.js';
 import { hostPath, openSearch } from './searches.js';
 
 const SECOND_LEVEL = new Set(['co', 'com', 'org', 'net', 'ac', 'gov', 'edu', 'ne', 'or', 'go', 'gob']);
-const KIND_LABEL = { directory: 'Directory', marketplace: 'Marketplace', forum: 'Forum', social: 'Social', video: 'Video', platform: 'Platform', publisher: 'Publisher', service: 'Service business', software: 'Software vendor', other: 'Other' };
+const KIND_LABEL = { directory: 'Directory', marketplace: 'Marketplace', forum: 'Forum', social: 'Social', video: 'Video', platform: 'Platform', publisher: 'Publisher', service: 'Service business', software: 'Software vendor', other: 'Other', help: 'Help center' };
 
 /* The registrable domain, as the server groups it: help.hcss.com gives hcss.com. */
 export function baseDomain(domain) {
@@ -54,6 +54,7 @@ function trackButton(domain) {
 
 function stats(row) {
   return h('div', { class: 'm' },
+    row.slots != null ? h('span', { text: plural(row.slots, 'top 10 spot') }) : null,
     h('span', { text: plural(row.searches, 'search', 'searches') }),
     h('span', { text: `avg #${row.average}` }),
     h('span', { text: `best #${row.best}` }));
@@ -66,7 +67,7 @@ function profileCard(row, most) {
     h('button', { class: 'body linkish', type: 'button', onClick: () => openProfile(row) },
       h('div', { class: 't' }, h('span', { text: row.domain }), tracked ? h('span', { class: 'label label-you', text: 'Tracked' }) : null),
       stats(row),
-      h('div', { class: 'barwrap' }, bar(row.visibility / most, tracked ? 'dark' : 'gray'))),
+      h('div', { class: 'barwrap' }, bar((row.slots || 0) / most, tracked ? 'dark' : 'gray'))),
     h('div', { class: 'right' }, trackButton(row.domain)));
 }
 
@@ -85,7 +86,7 @@ export function renderCompetitors() {
   const callout = noSearchData();
   if (!profiles) return renderShare(R, callout);
   const comps = profiles.competitors || [];
-  const most = Math.max(1, ...comps.map((row) => row.visibility || 0));
+  const most = Math.max(1, ...comps.map((row) => row.slots || 0));
   const you = (R.share || []).find((row) => row.you);
   const tiles = [callout];
   tiles.push(h('section', { class: 'tile span-4' },

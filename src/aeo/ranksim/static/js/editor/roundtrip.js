@@ -772,6 +772,8 @@ export function exportHtml(source, base, draft) {
     for (const item of plan.inserts) markPlaced(item.node, E, placed);
   }
 
+  impliedTags(src, B, E, acct);
+
   // Scripts and other hidden parts right after a moved element go with it: a section's widget script needs its markup.
   const carried = new Map();
   const carriedSet = new Set();
@@ -797,6 +799,41 @@ export function exportHtml(source, base, draft) {
   if (changed.has('')) emitMerge(src, '', ctx);
   else emitWalk(src, ctx);
   return out.join('');
+}
+
+/* <html> or <body> the page never wrote (the browser made them up) whose attributes the user set: write the tag out
+   where the browser implies it, which parses to the same document. */
+function impliedTags(src, B, E, acct) {
+  for (const tag of ['html', 'body']) {
+    const b = B.tree.elements.find((el) => el.tag === tag);
+    const d = E.tree.elements.find((el) => el.tag === tag);
+    if (!b || !d || !isXid(b.rsid) || b.rsid !== d.rsid) continue;
+    const before = attrMap(b);
+    const after = attrMap(d);
+    if (sameAttrs(before, after) || !after.size) continue;
+    const at = tag === 'html' ? firstContent(src) : firstBodyContent(src, B);
+    if (!at) continue;
+    let raw = `<${tag}`;
+    for (const [k, v] of after) raw += v === '' ? ` ${k}` : ` ${k}="${escapeAttr(v)}"`;
+    if (!acct.before.has(at)) acct.before.set(at, []);
+    acct.before.get(at).unshift({ raw: `${raw}>` });
+  }
+}
+
+/* The first top-level source node after the doctype and leading comments. */
+function firstContent(src) {
+  return src.children.find((node) => node.type === 'element' || (node.type === 'text' && !isSpace(node.text))) || null;
+}
+
+/* The top-level source node that opens the body: the top-level ancestor of the base body's first element. */
+function firstBodyContent(src, B) {
+  const body = B.tree.elements.find((el) => el.tag === 'body');
+  const first = body ? [...body.walk()].find((node) => node.type === 'element' && node.rsid && !isXid(node.rsid)) : null;
+  if (!first) return null;
+  let node = null;
+  for (const el of src.elements) if (el.rsid === first.rsid) { node = el; break; }
+  while (node && node.parent && node.parent.type !== 'root' && !(node.parent.tag === 'html')) node = node.parent;
+  return node && (node.parent.type === 'root' || node.parent.tag === 'html') && !['head', 'body', 'html'].includes(node.tag) ? node : null;
 }
 
 function markPlaced(node, E, placed) {
@@ -859,9 +896,25 @@ function planMerge(srcNode, id, B, E, acct, suppressed) {
       e += 1;
       continue;
     }
+    const runStart = e;
     const run = [];
     while (e < items.length && !bOfE.has(e)) { run.push(items[e]); e += 1; }
     inserts.push(...run);
+    // New text that replaces base text the source holds somewhere else (misnested formatting, streamed content) takes
+    // that text's place, so it lands where the old words were and never inside a neighbour's formatting.
+    const prevB = runStart > 0 ? bOfE.get(runStart - 1) : -1;
+    const nextB = e < items.length ? bOfE.get(e) : bList.length;
+    let replaced = null;
+    for (let y = (prevB === undefined ? -1 : prevB) + 1; y < (nextB === undefined ? bList.length : nextB); y += 1) {
+      if (eOfB.has(y)) continue;
+      if (sOfB.has(y)) break; // a deleted item this parent holds: the usual rule below handles it
+      const home = bList[y].node.type === 'text' ? acct.home.get(bList[y].node) : null;
+      if (home) { replaced = home; break; }
+    }
+    if (replaced) {
+      put(acct.before, replaced, run);
+      continue;
+    }
     if (prevHome) {
       put(acct.after, prevHome, run);
       continue;
@@ -889,7 +942,7 @@ function emitWalk(srcNode, ctx) {
 
 function emitAnchored(node, ctx) {
   const before = ctx.acct.before.get(node);
-  if (before) for (const item of before) emitDraftNode(item.node, ctx);
+  if (before) for (const item of before) if (item.raw !== undefined) ctx.out.push(item.raw); else emitDraftNode(item.node, ctx);
   emitAnchoredNode(node, ctx);
   const after = ctx.acct.after.get(node);
   if (after) for (const item of after) emitDraftNode(item.node, ctx);

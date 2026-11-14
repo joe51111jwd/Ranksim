@@ -121,7 +121,10 @@ async function settled() {
   check(out.includes("<h1 class='hero'>Dirt work software for crews and yards</h1>"), 'the heading edit is exported in place');
   check(out.includes('<footer><p>Contact us today</p></footer>'), 'the first edit is exported');
   check(/"@type": "FAQPage"/.test(out), 'the FAQ structured data is exported');
-  check(!/data-rs/.test(out), 'no editor attributes are exported');
+  check(!/data-rs-(id|faq|a|reveal|pick)/.test(out), 'no editor attributes are exported');
+  check(out.includes('<div data-rs-slide="2" data-rs="hero">Slide two</div>'), "the page's own data-rs attributes are exported");
+  const clean = await editor(async () => (await import('/studio/js/editor/editor.js')).editorCtx().getHtml());
+  check(clean.includes('data-rs-slide="2"') && clean.includes('data-rs="hero"') && !clean.includes('data-rs-id'), "getHtml keeps the page's own data-rs attributes and none of the editor's");
   check(out.includes('Track crews, trucks &amp; haul tickets.<!-- --> Built for contractors&nbsp;&copy; 2026.'), 'untouched text keeps its entities');
 
   // at phone width the insert menu opens on screen

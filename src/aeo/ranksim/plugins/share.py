@@ -821,6 +821,16 @@ def weekly_summary(project, report: dict, issues: list[dict], changes: list[dict
     }
 
 
+def _search_console(report: dict):
+    """Search Console totals and average positions for the client report, from the gsc plugin when present."""
+    try:
+        from aeo.ranksim.plugins import gsc
+
+        return gsc.client_section(report)
+    except Exception:  # noqa: BLE001 - the plugin may be absent; it never breaks the client report
+        return None
+
+
 def client_report(ui, project, *, preview: bool = False) -> dict:
     report = owner_report(ui, project.slug)
     plans = issue_plans(project)
@@ -930,6 +940,7 @@ def client_report(ui, project, *, preview: bool = False) -> dict:
         "competitors": [domain for domain in (_domain(item) for item in (report.get("competitors") or [])[:20]) if domain],
         "changes": changes[:15],
         "weekly": weekly_summary(project, report, issues, changes),
+        "search_console": _search_console(report),  # gsc session, flagged edit
         "notes": [
             date_note,
             "Estimates marked PREDICTED come from Ranksim's model of the pages we stored for each search. They are not Google positions.",

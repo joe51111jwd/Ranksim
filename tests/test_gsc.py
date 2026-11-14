@@ -1009,3 +1009,20 @@ def test_page_feed_stays_on_the_site_and_off_when_gsc_is_off(tmp_path, env):
     _post(box, f"/api/v1/gsc/projects/{box.project.slug}", {"enabled": False})
     gsc.after_pull(project=_project(box), report=None, ui=box.ui)
     assert box.crawler.asked == []
+
+
+def test_client_report_carries_search_console_apart_from_google(tmp_path, env):
+    from aeo.ranksim.plugins import share
+
+    box = _connected_box(tmp_path)
+    data = share.client_report(box.ui, _project(box))
+    sc = data["search_console"]
+    assert sc["label"] == gsc.LABEL and sc["range"] and sc["totals"]["clicks"] == 120
+    assert [row["q"] for row in sc["positions"]] == ["dirt work software", "heavy civil software"]  # best average first
+    assert sc["positions"][0] == {"q": "dirt work software", "position": 8.4, "impressions": 900, "clicks": 30, "page": "/pricing"}
+    assert all(row["position"] is None for row in data["rankings"])  # Google positions stay empty
+    assert "not Google top 10 positions" in sc["note"]
+    _post(box, f"/api/v1/gsc/projects/{box.project.slug}", {"enabled": False})
+    share_state = share._state(box.ui)
+    share_state["cache"].clear()
+    assert share.client_report(box.ui, _project(box))["search_console"] is None

@@ -1058,6 +1058,34 @@ def rank_source(section: dict, rankings: list) -> dict:
     }
 
 
+def client_section(report: dict) -> dict | None:
+    """What the client report (share plugin) shows from Search Console: totals for the date range and the average
+    position per tracked search without Google data. Plain values only; None when Search Console has no data."""
+    section = report.get(NAME) if isinstance(report, dict) else None
+    if not isinstance(section, dict) or section.get("state") not in {"ready", "error"} or not isinstance(section.get("range"), dict):
+        return None
+    totals = section.get("totals") or {}
+    positions = []
+    for q, row in sorted((section.get("positions") or {}).items(), key=lambda item: item[1].get("position") or 99):
+        page = str(row.get("page") or "")
+        positions.append({
+            "q": str(q)[:200],
+            "position": round(float(row.get("position") or 0), 1),
+            "impressions": int(row.get("impressions") or 0),
+            "clicks": int(row.get("clicks") or 0),
+            "page": (urlsplit(page).path or "/") if page.startswith(("http://", "https://")) else "",
+        })
+    return {
+        "label": LABEL,
+        "range": str(section["range"].get("label") or "")[:80],
+        "totals": {key: totals.get(key) for key in ("clicks", "impressions", "ctr", "position") if isinstance(totals.get(key), (int, float))},
+        "positions": positions[:50],
+        "positions_label": str(section.get("positions_label") or "")[:120],
+        "note": "Search Console numbers are Google's own data for the site over the dates shown. Average positions are not "
+        "Google top 10 positions.",
+    }
+
+
 FEED_LIMIT = 15
 
 

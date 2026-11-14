@@ -34,8 +34,9 @@ needs_node = pytest.mark.skipif(not NODE, reason="node is not installed")
 
 
 @needs_node
-def test_charts_unit():
-    run = subprocess.run([NODE, "--test", str(HERE / "charts.test.mjs")], cwd=ROOT, capture_output=True, text=True, timeout=120)
+@pytest.mark.parametrize("name", ["charts.test.mjs", "hooks.test.mjs"])
+def test_node_unit(name):
+    run = subprocess.run([NODE, "--test", str(HERE / name)], cwd=ROOT, capture_output=True, text=True, timeout=120)
     assert run.returncode == 0, run.stdout[-4000:] + run.stderr[-2000:]
 
 

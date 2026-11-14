@@ -1,0 +1,41 @@
+{
+  "method": "95% interval, bootstrap over the 30 searches (2000 draws, seed 7). Computed from report.json rows after the single scoring run.",
+  "intervals": {
+    "hybrid_with_prior": {
+      "all": {
+        "low": 0.7444,
+        "high": 0.8318
+      },
+      "entrant_vs_returning": {
+        "low": 0.6968,
+        "high": 0.7988
+      },
+      "entrant_vs_entrant": {
+        "low": 0.5263,
+        "high": 0.6765
+      },
+      "never_seen_vs_never_seen": {
+        "low": 0.587,
+        "high": 0.8
+      }
+    },
+    "persistence_bottom": {
+      "all": {
+        "low": 0.5991,
+        "high": 0.7748
+      },
+      "entrant_vs_returning": {
+        "low": 0.6342,
+        "high": 0.8066
+      },
+      "entrant_vs_entrant": {
+        "low": 0.0,
+        "high": 0.0
+      },
+      "never_seen_vs_never_seen": {
+        "low": 0.0,
+        "high": 0.0
+      }
+    }
+  }
+}

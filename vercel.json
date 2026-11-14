@@ -5,5 +5,6 @@
       "maxDuration": 300,
       "excludeFiles": "{smartcrew/**,tests/**,docs/**,data/**,scripts/**,examples/**,evals/**,*.db}"
     }
-  }
+  },
+  "crons": [{ "path": "/api/v1/cron/recheck", "schedule": "17 9 * * *" }]
 }

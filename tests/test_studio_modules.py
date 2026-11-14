@@ -87,7 +87,7 @@ def test_hooks_api_matches_the_build_plan():
 
 # Which build session owns each core module (BUILD_PLAN section 5). core.js and hooks.js are the shared API.
 OWNER = {
-    "app.js": "shell", "core.js": "shell", "hooks.js": "shell", "screens/overview.js": "shell", "screens/settings.js": "shell",
+    "app.js": "shell", "charts.js": "shell", "core.js": "shell", "hooks.js": "shell", "screens/overview.js": "shell", "screens/settings.js": "shell",
     "screens/searches.js": "discover", "screens/competitors.js": "discover", "screens/issues.js": "audit",
     "editor/editor.js": "editor", "editor/preview.js": "editor", "editor/roundtrip.js": "editor", "editor/model.js": "editor",
     "editor/history.js": "editor", "editor/diff.js": "editor", "editor/blocks.js": "editor", "editor/tools.js": "editor", "editor/test.js": "predict", "editor/publish.js": "publish",

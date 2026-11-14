@@ -6,7 +6,6 @@ from collections import defaultdict
 from collections.abc import Iterable
 from urllib.parse import urljoin
 
-from bs4 import BeautifulSoup
 from sqlalchemy.orm import Session
 
 from aeo.crawl.urls import domain_of, normalize_url
@@ -91,6 +90,8 @@ def _normal_or_none(url: str) -> str | None:
 
 
 def _anchors(html: str, base: str) -> list[tuple[str, str]]:
+    from bs4 import BeautifulSoup  # lazy: keeps bs4 out of server start-up
+
     soup = BeautifulSoup(html, "lxml")
     found: list[tuple[str, str]] = []
     for anchor in soup.find_all("a", href=True):

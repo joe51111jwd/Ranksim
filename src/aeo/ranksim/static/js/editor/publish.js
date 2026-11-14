@@ -53,7 +53,8 @@ function editedPage(draft) {
   const exported = ctx && typeof ctx.exportHtml === 'function' ? ctx.exportHtml() : null;
   return {
     html: exported || (ctx ? ctx.getHtml() : draftFor(ED.refs ? ED.refs.page : draft.url).text) || draft.text,
-    roundTrip: !!exported,
+    // exportHtml before the page has loaded is the plain draft, not the original with scripts
+    roundTrip: !!exported && !!(ctx && ctx.draft && ctx.draft.loaded),
     diff: ctx && typeof ctx.diff === 'function' ? ctx.diff() : null,
     fixes: ctx ? appliedFixes(ctx) : [],
   };
@@ -179,7 +180,9 @@ async function plan(view) {
 function paintChanges(view, changes, error) {
   const tile = view.changes;
   clear(tile);
-  add(tile, h('div', { class: 'tile-head' }, h('h2', { text: 'What changes' }), view.page.diff && view.page.diff.summary ? h('span', { class: 'aside', text: view.page.diff.summary }) : null));
+  const diff = view.page.diff;
+  add(tile, h('div', { class: 'tile-head' }, h('h2', { text: 'What changes' })));
+  if (diff && diff.summary) add(tile, editsList(diff));
   if (error) {
     add(tile, h('p', { class: 'caveat', text: error }));
     return;
@@ -199,6 +202,7 @@ function paintChanges(view, changes, error) {
     return;
   }
   const rows = view.plan ? view.plan.rows : changes.map((c) => ({ ...c, apply: null }));
+  if (diff && diff.summary) add(tile, h('b', { class: 'publish-sub', text: 'What the site gets' }));
   add(tile, h('div', { class: 'publish-rows' }, rows.map((row) => h('div', { class: 'publish-row' },
     h('div', { class: 'publish-row-head' },
       h('b', { text: row.label }),
@@ -206,6 +210,20 @@ function paintChanges(view, changes, error) {
     h('div', { class: 'publish-before', text: row.before || 'Empty' }),
     h('div', { class: 'publish-after' }, icon('arrow'), h('span', { text: row.after || 'Empty' })),
     row.note ? h('p', { class: 'caveat', text: row.note }) : null))));
+}
+
+/* The editor's own account of the edits (ctx.diff): one sentence, then each changed block in plain words. */
+const SHOWN_EDITS = 8;
+function editsList(diff) {
+  const changes = diff.changes || [];
+  const line = (c) => h('li', null,
+    h('b', { text: c.label || c.kind || c.type }),
+    c.type === 'changed' && c.before ? h('span', { class: 'publish-before', text: c.before }) : null,
+    c.after ? h('span', { class: 'publish-after-text', text: c.after }) : c.type === 'removed' && c.before ? h('span', { class: 'publish-before', text: c.before }) : null);
+  return h('div', { class: 'publish-edits' },
+    h('p', { class: 'publish-summary', text: diff.summary }),
+    changes.length ? h('ul', null, changes.slice(0, SHOWN_EDITS).map(line)) : null,
+    changes.length > SHOWN_EDITS ? h('p', { class: 'caveat', text: `And ${changes.length - SHOWN_EDITS} more.` }) : null);
 }
 
 /* ------------------------------------------------------------------ ownership */

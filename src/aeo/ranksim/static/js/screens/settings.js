@@ -30,6 +30,7 @@ registerSettingsSection({
 registerSettingsSection({
   key: 'gsc',
   order: 20,
+  replaceable: true, // the gsc plugin replaces this placeholder with its own section
   render() {
     return h('section', { class: 'tile span-2' },
       h('div', { class: 'tile-head' }, h('h2', { text: 'Google Search Console' }), h('button', { class: 'toggle', type: 'button', role: 'switch', 'aria-checked': 'false', disabled: true, 'aria-label': 'Connect Google Search Console' })),

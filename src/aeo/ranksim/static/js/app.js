@@ -7,7 +7,7 @@ import {
   S, main, shell, api, stream, h, icon, clear, enc, hostOf, plural, initial, bar, toast, navigate, link, pathFor,
   parseLocation, loadProjects, openSite, closeSheet, footer, bootSpinner, sleep, emptyState,
 } from './core.js';
-import { registerEditorPanel, screen, screens, renderEntry } from './hooks.js';
+import { registerEditorPanel, screen, screens, renderEntry, sealBuiltIns } from './hooks.js';
 import './screens/overview.js';
 import './screens/issues.js';
 import './screens/searches.js';
@@ -462,6 +462,9 @@ registerEditorPanel({
 /* ------------------------------------------------------------------ start */
 
 Object.assign(shell, { route, render, renderBar, renderLogin, renderProblem });
+/* Everything registered up to here is built in; plugin modules run next, and a plugin key that matches a built-in
+   one logs a warning (see hooks.js). */
+sealBuiltIns();
 paintOffline();
 
 /* Module scripts run in page order before DOMContentLoaded, and the shell lists plugins after this file, so every

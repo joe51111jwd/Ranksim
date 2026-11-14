@@ -270,7 +270,10 @@ registerSearchColumn({
     if (!ready(g)) return null;
     const hit = (g.searches || {})[row.q];
     const tip = `${LABEL}, ${rangeText(g)}`;
-    if (!hit) return h('span', { class: 'gsc-cell none', title: `${tip}. No impressions for this search.`, text: 'No data' });
+    if (!hit) {
+      const capped = !!(g.capped && g.capped.queries);
+      return h('span', { class: 'gsc-cell none', title: capped ? `${tip}. Search Console sent its most clicked searches first and this one was not among them.` : `${tip}. No impressions for this search.`, text: capped ? 'Not in top searches' : 'No data' });
+    }
     const near = nearFor(g, row.q);
     const avg = !row.checked && (g.positions || {})[row.q];
     return h('span', { class: 'gsc-cell', title: avg ? `${g.positions_label}. Not a Google top 10 position. ${fmt(hit.clicks)} clicks, ${fmt(hit.impressions)} impressions.` : `${tip}. CTR ${pctText(hit.ctr)}, average position ${posText(hit.position)}.` },
@@ -435,7 +438,7 @@ function pagePanel(g, data) {
   const head = h('div', { class: 'tile-head' }, h('h2', { text: 'Search Console' }), h('span', { class: 'aside', text: '28 days' }));
   const label = h('div', { class: 'tile-k gsc-panel-k', text: `${LABEL}, ${rangeText(data.range ? data : g)}` });
   if (!p) {
-    return [head, label, h('p', { class: 'tile-sub', text: 'No impressions for this page in Google Search in these 28 days.' })];
+    return [head, label, h('p', { class: 'tile-sub', text: data.capped && data.capped.pages ? 'This page is not among the pages Search Console sent (it sends the most clicked first).' : 'No impressions for this page in Google Search in these 28 days.' })];
   }
   const stats = h('div', { class: 'gsc-panel-stats' },
     stat(fmt(p.clicks), 'clicks'), stat(fmt(p.impressions), 'impressions'), stat(pctText(p.ctr), 'CTR'), stat(posText(p.position), 'avg position'));

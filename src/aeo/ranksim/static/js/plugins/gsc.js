@@ -272,8 +272,10 @@ registerSearchColumn({
     const tip = `${LABEL}, ${rangeText(g)}`;
     if (!hit) return h('span', { class: 'gsc-cell none', title: `${tip}. No impressions for this search.`, text: 'No data' });
     const near = nearFor(g, row.q);
-    return h('span', { class: 'gsc-cell', title: `${tip}. CTR ${pctText(hit.ctr)}, average position ${posText(hit.position)}.` },
-      h('b', { text: `${fmt(hit.clicks)} clicks` }),
+    const avg = !row.checked && (g.positions || {})[row.q];
+    return h('span', { class: 'gsc-cell', title: avg ? `${g.positions_label}. Not a Google top 10 position. ${fmt(hit.clicks)} clicks, ${fmt(hit.impressions)} impressions.` : `${tip}. CTR ${pctText(hit.ctr)}, average position ${posText(hit.position)}.` },
+      avg ? h('b', { class: 'gsc-avg', text: `GSC avg #${posText(avg.position)}` }) : null,
+      h(avg ? 'small' : 'b', { text: `${fmt(hit.clicks)} clicks` }),
       h('small', { text: `${fmt(hit.impressions)} impr.` }),
       near ? h('span', { class: 'gsc-chip', text: 'Positions 8 to 20' }) : null);
   },
@@ -481,5 +483,25 @@ registerEditorPanel({
       clear(tile).append(...pagePanel(g, data));
     });
     return tile;
+  },
+});
+
+/* ------------------------------------------------------------------ Search Console positions (free rank source) */
+
+registerOverviewTile({
+  key: 'gsc-positions',
+  order: 14,
+  render(R) {
+    const g = gscOf(R);
+    const positions = (g && g.positions) || {};
+    const rows = Object.entries(positions).sort((a, b) => a[1].position - b[1].position);
+    if (!ready(g) || !rows.length) return null;
+    return h('section', { class: 'tile span-2 gsc-tile', 'data-gsc': 'positions' },
+      h('div', { class: 'tile-head' }, h('h2', { text: 'Where you show up' }), h('span', { class: 'aside', text: `${rows.length} without Google data` })),
+      h('div', { class: 'tile-k', text: g.positions_label }),
+      h('ol', { class: 'gsc-top' }, rows.slice(0, 8).map(([q, row]) => h('li', null,
+        h('span', { class: 'gsc-q' }, h('span', { text: q }), row.page ? h('small', { class: 'gsc-path gsc-sub', text: pathOf(row.page) }) : null),
+        h('span', { class: 'gsc-n' }, h('b', { text: `avg #${posText(row.position)}` }), ` ${fmt(row.impressions)} impr.`)))),
+      h('p', { class: 'tile-sub', text: 'Averages from Search Console, not Google top 10 positions. Refresh with search data for those.' }));
   },
 });

@@ -139,8 +139,10 @@ export function renderResult(run, animate) {
   const verdict = verdictOf(run);
   const after = run.after || {};
   const before = run.before;
-  const head = h('section', { class: 'tile white span-2' },
-    after.confidence && after.confidence !== 'n/a' ? h('span', { class: `label ${after.confidence === 'CLEARER' ? 'label-ok' : 'label-medium'}`, text: after.confidence === 'CLEARER' ? 'Clearer call' : 'Uncertain' }) : null,
+  // Anything short of CLEARER is drawn quieter: no big bold numbers for a call that is near a coin flip.
+  const sure = after.confidence === 'CLEARER';
+  const head = h('section', { class: `tile white span-2${sure ? '' : ' predict-unsure'}` },
+    h('span', { class: `label ${sure ? 'label-ok' : 'label-medium'}`, text: sure ? 'PREDICTED, CLEARER' : 'PREDICTED, UNSURE' }),
     h('h2', { class: `verdict ${verdict.cls}`, text: verdict.text }));
   if (after.position != null) {
     const ranks = h('div', { class: 'ranks' });
@@ -301,7 +303,7 @@ function searchesTile(run) {
     const conf = row.confidence || {};
     const toggle = h('button', { class: 'predict-toggle', type: 'button', 'aria-expanded': 'false' },
       h('span', { class: 'predict-q-t', text: row.search }), h('span', { class: 'predict-sub', text: conf.short || '' }));
-    const tr = h('tr', { class: row.search === run.search ? 'is-current' : null },
+    const tr = h('tr', { class: [row.search === run.search ? 'is-current' : '', conf.label === 'CLEARER' ? '' : 'is-unsure'].filter(Boolean).join(' ') || null },
       h('th', { scope: 'row', class: 'predict-q' }, toggle),
       nowCell(row),
       h('td', { class: 'predict-after', text: row.with_edit == null ? 'not placed' : posText(row.with_edit) }),

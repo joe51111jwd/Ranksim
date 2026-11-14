@@ -99,3 +99,16 @@ weekly usage resets). Each run: read notifications; restart any build session th
 (the 5-hour usage limit stops all sessions at once); merge finished branches in the merge order with the full suite
 after each; when everything is merged and green, deploy to Vercel, check the live site and tell James; hand
 finished sessions their phase C task.
+
+## Status at 12:40 UTC, Nov 14
+
+- Every workstream (phase A, B, C and the pre-deploy QA fixes) is merged on `claude/kind-hopper-lglg98` at ff77195.
+  992 tests pass, the Playwright end-to-end suite included. All ten build sessions are idle with nothing pending.
+- Not yet deployed: the production deploy of ff77195 needs James's approval (the deploy request was interrupted).
+  Live https://ranksim.vercel.app still runs 78c5425. Before deploying, read docs/DEPLOY.md (first boot migrates the
+  storage format; rollback requires `python -m aeo.ranksim.cloud export-legacy` first).
+- Owner actions: SERPER_API_KEY (Google rankings for any site), CRON_SECRET (scheduled re-checks), and for Search
+  Console the Google OAuth client per docs/plans/gsc.md "Owner setup guide". Optional RANKSIM_PUBLIC_URL.
+- Known limits: prediction accuracy is below the 90% target (forward: new pages 0.61 pairwise); web fonts served
+  cross-origin without CORS may fall back in the editor preview; Blob usage about 35% of the Hobby advanced-op cap
+  for one owner's normal month.

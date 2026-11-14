@@ -357,10 +357,10 @@ def test_the_client_report_labels_every_number(env):
     # the demo is labeled as demo, never as Google data, and an unrecorded date is not shown as a date
     assert data["source"] == "Demo" and data["data"]["demo"] is True
     assert data["google_date"] == "" and "not recorded" in data["notes"][0] and "Google results" not in data["notes"][0]
-    assert data["predictions"] is True
+    assert data["predictions"] is False  # demo estimates carry no CLEARER backtest, so a client sees none
     assert all(row["predicted"] is None or row["predicted"]["label"] == "PREDICTED" for row in data["rankings"])
     js = (share.SHARE_STATIC / "share.js").read_text(encoding="utf-8")
-    for label in ("PREDICTED", ' checked "', "Report made ", "Your position", "check date not recorded", "This week", "Position changes"):
+    for label in ("PREDICTED", ' checked "', "Report made ", "Your position", "check date not recorded", "This week", "Position changes", '"based on "', '" page pairs"'):
         assert label in js
 
 
@@ -482,7 +482,7 @@ def test_csv_exports(env):
     assert rankings.status_code == 200 and rankings.headers["content-type"].startswith("text/csv")
     assert rankings.headers["content-disposition"].startswith("attachment;") and "rankings" in rankings.headers["content-disposition"]
     lines = rankings.text.lstrip("﻿").splitlines()
-    assert lines[0] == "Search,Demo position,Demo data date,Page,PREDICTED position,PREDICTED of,Demo #1"
+    assert lines[0] == "Search,Demo position,Demo data date,Page,PREDICTED position,PREDICTED of,PREDICTED based on page pairs,Demo #1"
     assert len(lines) == 1 + len(data["rankings"])
     assert any(line.startswith("vinyl fence installation cost,5,") for line in lines)
     issues = client.get(link["path"] + "/issues.csv").text.lstrip("﻿")
@@ -1087,3 +1087,45 @@ def test_search_console_section_is_rewhitelisted(env, monkeypatch):
     assert "OWNERONLY" not in json.dumps(section)
     monkeypatch.setattr(gsc, "client_section", lambda report: None)
     assert share._search_console({}) is None
+
+
+
+def test_client_sees_an_estimate_only_when_predict_marks_it_clearer():
+    base = {"position": 3, "of": 9}
+    cases = [
+        (None, None),
+        (dict(base), None),  # before predict adds confidence: hidden
+        ({**base, "confidence": None}, None),  # predict sets null for pages that already rank
+        ({**base, "confidence": {"label": "UNSURE", "backtest_pairs": 120}}, None),
+        ({**base, "confidence": {"label": "CLEARER", "backtest_pairs": 0}}, None),
+        ({**base, "confidence": {"label": "CLEARER"}}, None),
+        ({**base, "confidence": "CLEARER"}, None),  # a label with no pair count is not enough
+        ({"position": None, "of": 9, "confidence": {"label": "CLEARER", "backtest_pairs": 40}}, None),
+        ({**base, "confidence": {"label": "clearer", "backtest_pairs": 40}}, None),
+        ({**base, "confidence": {"label": "CLEARER", "backtest_pairs": 42, "backtest_pairwise": 0.71, "text": "OWNERONLY"}},
+         {"position": 3, "of": 9, "label": "PREDICTED", "pairs": 42}),
+        ({**base, "confidence": "CLEARER", "backtest_pairs": 31}, {"position": 3, "of": 9, "label": "PREDICTED", "pairs": 31}),
+    ]
+    for predicted, expected in cases:
+        assert share._client_estimate(predicted) == expected, predicted
+
+
+def test_client_report_carries_clearer_estimates_with_their_pairs(env, monkeypatch):
+    real = share._project_report_fn()
+
+    def with_confidence(ui, slug):
+        report = json.loads(json.dumps(real(ui, slug)))
+        for index, row in enumerate(report["rankings"]):
+            if row.get("predicted"):
+                row["predicted"]["confidence"] = {"label": "CLEARER" if index == 0 else "UNSURE", "backtest_pairs": 48, "backtest_pairwise": 0.7}
+        return report
+
+    monkeypatch.setattr(share, "_project_report_fn", lambda: with_confidence)
+    share._state(env["ui"])["cache"].clear()
+    link = _link(env)
+    data = env["client"].get(link["path"] + "/data").json()
+    shown = [row for row in data["rankings"] if row["predicted"]]
+    assert len(shown) == 1 and shown[0]["predicted"] == {"position": shown[0]["predicted"]["position"], "of": shown[0]["predicted"]["of"], "label": "PREDICTED", "pairs": 48}
+    assert data["predictions"] is True and "0.7" not in json.dumps(data["rankings"])
+    csv_text = env["client"].get(link["path"] + "/rankings.csv").text
+    assert ",48," in csv_text

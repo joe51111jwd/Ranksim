@@ -735,7 +735,7 @@ def gap_for(search: str, page_url: str | None, page_html: str | None, above: lis
 MAX_BRIEF_SECTIONS = 8
 BRIEF_SHARE = 0.25  # a brief lists sections a quarter of the ranking pages share (gaps need 40%)
 MAX_BRIEF_QUESTIONS = 6
-QUESTION_WORDS = ("how", "what", "why", "when", "where", "which", "who", "is", "are", "can", "does", "do", "should")
+QUESTION_WORDS = ("how", "what", "why", "which", "who", "is", "are", "can", "does", "do", "should")  # "when ..." is often a heading
 
 
 def _brief_heading(label: str, brands: set[str]) -> bool:
@@ -921,7 +921,7 @@ def stored_html(database: str, urls: list[str]) -> dict[str, str]:
     return {url: found[loose_key(url)] for url in urls if loose_key(url) in found}
 
 
-SECTIONS_VERSION = 14
+SECTIONS_VERSION = 15
 
 
 def _fingerprint(project, meta, google, features, rows, pages, docs) -> str:

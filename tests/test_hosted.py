@@ -811,7 +811,8 @@ def test_export_legacy_hands_the_newest_state_back_to_the_old_format(tmp_path, f
 
 def test_an_instance_far_behind_never_loses_saves_to_pruning(tmp_path):
     """QA finding: 70 quick saves on A while B looked a moment ago. Saves younger than the age rule are never deleted,
-    so B applies every one of them; old saves are pruned only after PRUNE_AFTER_SECONDS."""
+    so B applies every one of them. An hour later old saves nobody references are pruned, while saves still holding
+    the bytes of an unchanged file are kept, and a cold instance assembles the project from them."""
     import aeo.ranksim.cloud as cloudmod
     from aeo.ranksim.objects import MemoryStore
 
@@ -820,16 +821,22 @@ def test_an_instance_far_behind_never_loses_saves_to_pruning(tmp_path):
     b = CloudState(data_dir=tmp_path / "b", db_file=tmp_path / "b" / "rank.db", enabled=True, store=store)
     demo = tmp_path / "a" / "projects" / "demo"
     demo.mkdir(parents=True)
+    (demo / "big-unchanged.json").write_text("x" * 5000)
     (demo / "n.json").write_text("0")
     a.save()
+    holder = a._seq  # the save that holds big-unchanged.json's bytes
     b.refresh(force=True)
     for n in range(1, 71):
-        (demo / f"f{n}.json").write_text(str(n))
+        (demo / "n.json").write_text(str(n))
+        if n % 10 == 0:
+            (demo / f"f{n}.json").write_text(str(n))
         a.save()
     assert b.refresh(force=True) is True
-    assert sorted(path.name for path in (tmp_path / "b" / "projects" / "demo").iterdir()) == sorted(path.name for path in demo.iterdir())
-    early = cloudmod.chain_name(2)
-    assert early in store.items  # young saves stay, even far behind the newest
+    got = tmp_path / "b" / "projects" / "demo"
+    assert sorted(path.name for path in got.iterdir()) == sorted(path.name for path in demo.iterdir())
+    assert (got / "n.json").read_text() == "70"
+    unreferenced = cloudmod.chain_name(holder + 2)  # held only n.json = 2, long since replaced
+    assert unreferenced in store.items  # young saves stay, even far behind the newest
     real_time = cloudmod.time.time
     try:
         cloudmod.time.time = lambda: real_time() + cloudmod.PRUNE_AFTER_SECONDS + 1
@@ -837,7 +844,41 @@ def test_an_instance_far_behind_never_loses_saves_to_pruning(tmp_path):
         a.save()
     finally:
         cloudmod.time.time = real_time
-    assert early not in store.items  # an hour later the old, unreferenced saves go
+    assert unreferenced not in store.items  # an hour later the old, unreferenced saves go
+    assert cloudmod.chain_name(holder) in store.items  # still holds big-unchanged.json
     c = CloudState(data_dir=tmp_path / "c", db_file=tmp_path / "c" / "rank.db", enabled=True, store=store)
     c.refresh(force=True)
-    assert (tmp_path / "c" / "projects" / "demo" / "late.json").is_file() and (tmp_path / "c" / "projects" / "demo" / "f1.json").is_file()
+    cold = tmp_path / "c" / "projects" / "demo"
+    assert (cold / "late.json").is_file() and (cold / "big-unchanged.json").read_text() == "x" * 5000 and (cold / "n.json").read_text() == "70"
+
+
+def test_a_small_edit_uploads_only_the_changed_file(tmp_path):
+    """QA finding: unchanged big files are referenced from the save that holds them, not uploaded again."""
+    import io
+    import os
+    import tarfile
+
+    from aeo.ranksim.objects import MemoryStore
+
+    store = MemoryStore()
+    a = CloudState(data_dir=tmp_path / "a", db_file=tmp_path / "a" / "rank.db", enabled=True, store=store)
+    demo = tmp_path / "a" / "projects" / "demo"
+    demo.mkdir(parents=True)
+    models, pages = os.urandom(100_000).hex(), os.urandom(100_000).hex()  # random: does not compress away
+    (demo / "models.json").write_text(models)
+    (demo / "pages.json").write_text(pages)
+    (demo / "project.json").write_text('{"v": 1}')
+    first = a.save()
+    (demo / "project.json").write_text('{"v": 2}')
+    second = a.save()
+    names = tarfile.open(fileobj=io.BytesIO(store.items[second]), mode="r:gz").getnames()
+    assert "p/demo/project.json" in names and "p/demo/models.json" not in names and "p/demo/pages.json" not in names
+    assert len(store.items[second]) < len(store.items[first]) / 5
+    b = CloudState(data_dir=tmp_path / "b", db_file=tmp_path / "b" / "rank.db", enabled=True, store=store)
+    b.refresh(force=True)  # a cold instance gets every file, the unchanged ones from the first save
+    got = tmp_path / "b" / "projects" / "demo"
+    assert (got / "models.json").read_text() == models and (got / "project.json").read_text() == '{"v": 2}'
+    (got / "pages.json").write_text("changed on b")
+    b.save()
+    a.refresh(force=True)
+    assert (demo / "pages.json").read_text() == "changed on b" and (demo / "models.json").read_text() == models

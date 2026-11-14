@@ -62,7 +62,8 @@
 
   function render(d) {
     root.textContent = "";
-    var googleNote = d.google_date ? "Google data " + d.google_date : "No Google data yet";
+    var src = d.source || "Google";
+    var googleNote = d.google_date ? src + " data " + d.google_date : d.search_data ? src + " data, date not recorded" : "No " + src + " data yet";
     document.title = "SEO report for " + (d.site || d.name || "your site");
 
     if (d.preview) {
@@ -98,7 +99,7 @@
       stat("In the top 10", (k.top10 || 0) + " of " + (k.checked || 0), googleNote, true),
       stat("In the top 3", k.top3 || 0, googleNote),
       stat("Average position", k.average === null || k.average === undefined ? "None" : k.average, "Searches in the top 10. " + googleNote),
-      stat("Searches tracked", k.searches || 0, (k.checked || 0) + " checked on Google"),
+      stat("Searches tracked", k.searches || 0, (k.checked || 0) + " checked"),
       stat("Issues found", k.issues || 0, (k.high || 0) + " high priority"),
     ]));
 
@@ -107,20 +108,24 @@
       var pos = r.position ? "#" + r.position : r.checked ? "Not in top 10" : "Not checked";
       var leader = (r.top || []).filter(function (t) { return t.position === 1; })[0];
       return h("tr", {}, [
-        h("td", { class: "q" }, [h("span", { text: r.q }), r.url ? h("span", { class: "muted small", text: pathOf(r.url) }) : null]),
+        h("td", { class: "q" }, [
+          h("span", { text: r.q }),
+          r.url ? h("span", { class: "muted small", text: pathOf(r.url) }) : null,
+          r.date && r.date !== d.google_date ? h("span", { class: "muted small", text: "Pulled " + r.date }) : null,
+        ]),
         h("td", { class: "num" + (r.position && r.position <= 3 ? " good" : ""), text: pos }),
         d.predictions ? h("td", { class: "num" }, r.predicted ? [h("span", { text: "#" + r.predicted.position + " of " + r.predicted.of }), h("span", { class: "tag", text: "PREDICTED" })] : ["None"]) : null,
         h("td", { class: "muted", text: leader ? leader.domain : "" }),
       ]);
     });
     root.appendChild(tile("", [
-      head("Where you rank", "Google positions from " + (d.google_date || "no pull yet") + "." + (d.predictions ? " PREDICTED is Ranksim's estimate, not a Google rank." : "")),
+      head("Where you rank", src + " positions. " + googleNote + "." + (d.predictions ? " PREDICTED is Ranksim's estimate, not a Google rank." : "")),
       rows.length ? h("div", { class: "table-wrap" }, [h("table", {}, [
         h("thead", {}, [h("tr", {}, [
           h("th", { text: "Search" }),
-          h("th", { class: "num", text: "Google position" }),
+          h("th", { class: "num", text: src + " position" }),
           d.predictions ? h("th", { class: "num", text: "PREDICTED" }) : null,
-          h("th", { text: "Google #1" }),
+          h("th", { text: src + " #1" }),
         ])]),
         h("tbody", {}, rows),
       ])]) : h("p", { class: "muted", text: "No searches yet." }),
@@ -160,7 +165,7 @@
             h("td", { class: "num", text: String(s.average) }),
           ]);
         })),
-      ])]) : h("p", { class: "muted", text: "No Google data yet." }),
+      ])]) : h("p", { class: "muted", text: "No " + src + " data yet." }),
     ]));
 
     // change log

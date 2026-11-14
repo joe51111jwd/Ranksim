@@ -47,9 +47,8 @@ MAX_LOG_ENTRIES = 500
 MAX_LOGO_BYTES = 200 * 1024
 MAX_AGENCY_CHARS = 80
 REPORT_TTL_SECONDS = 30.0
-REQUESTS_PER_MINUTE = 120
+REQUESTS_PER_MINUTE = 300
 BAD_TOKENS_PER_MINUTE = 20
-BAD_TOKENS_GLOBAL_PER_MINUTE = 600
 LAST_USED_EVERY_SECONDS = 600
 ROBOTS = "noindex, nofollow, noarchive, nosnippet"
 SHARE_CSP = (
@@ -179,22 +178,32 @@ def _b64(raw: bytes) -> str:
 _keys: dict[str, bytes] = {}
 
 
-def signing_key(root) -> bytes:
-    """RANKSIM_SECRET mixed with a random key kept with the data, so links survive restarts and cloud round trips."""
-    base = global_dir(root)
-    cache_key = str(base.resolve())
+def signing_key(root, *, create: bool = True) -> bytes | None:
+    """The link signing key. With RANKSIM_SECRET set (required for several instances) it is derived from that alone.
+    Otherwise a random key kept with the data, re-read whenever the file changes (a cloud refresh replaces it).
+    Read paths pass create=False, so a public GET never mints a key."""
     env = os.environ.get("RANKSIM_SECRET", "")
+    if env:
+        return hashlib.sha256(f"ranksim-share|env|{env}".encode("utf-8")).digest()
+    base = global_dir(root)
+    path = base / "secret.key"
     with _lock:
-        cached = _keys.get(cache_key + "|" + env)
+        try:
+            stamp = path.stat().st_mtime_ns
+        except OSError:
+            stamp = None
+        cache_key = f"{base.resolve()}|{stamp}"
+        cached = _keys.get(cache_key)
         if cached is not None:
             return cached
-        path = base / "secret.key"
         stored = ""
         try:
             stored = path.read_text(encoding="ascii").strip()
         except OSError:
             stored = ""
         if not re.match(r"^[0-9a-f]{64}$", stored):
+            if not create:
+                return None
             stored = secrets.token_hex(32)
             base.mkdir(parents=True, exist_ok=True)
             tmp = path.with_name(f".secret.{secrets.token_hex(4)}.tmp")
@@ -204,13 +213,19 @@ def signing_key(root) -> bytes:
             except OSError:
                 pass
             os.replace(tmp, path)
-        key = hashlib.sha256(f"ranksim-share|{env}|{stored}".encode("utf-8")).digest()
-        _keys[cache_key + "|" + env] = key
+            stamp = path.stat().st_mtime_ns
+            cache_key = f"{base.resolve()}|{stamp}"
+        key = hashlib.sha256(f"ranksim-share|file|{stored}".encode("utf-8")).digest()
+        _keys.clear()
+        _keys[cache_key] = key
         return key
 
 
-def _signature(root, slug: str, link_id: str) -> str:
-    digest = hmac.new(signing_key(root), f"share|{slug}|{link_id}".encode("utf-8"), hashlib.sha256).digest()
+def _signature(root, slug: str, link_id: str, *, create: bool = True) -> str | None:
+    key = signing_key(root, create=create)
+    if key is None:
+        return None
+    digest = hmac.new(key, f"share|{slug}|{link_id}".encode("utf-8"), hashlib.sha256).digest()
     return _b64(digest)[:22]
 
 
@@ -316,7 +331,10 @@ def resolve_token(ui, token: str, now: datetime | None = None):
         links_file = folder / "plugins" / "share" / "links.json"
         if not links_file.is_file():
             continue
-        if not hmac.compare_digest(signature, _signature(root, folder.name, link_id)):
+        expected = _signature(root, folder.name, link_id, create=False)
+        if expected is None:
+            return None
+        if not hmac.compare_digest(signature, expected):
             continue
         try:
             project = ui.project(folder.name)
@@ -473,7 +491,7 @@ def _pull_entry(pull_id: str, google_kind: str, with_results, when) -> dict:
     if google_kind == "api":
         kind, summary = "google", f"Google data refreshed for {count} search{'es' if count != 1 else ''}"
     elif google_kind == "import":
-        kind, summary = "google", f"Search positions imported for {count} search{'es' if count != 1 else ''}"
+        kind, summary = "analysis", f"Search positions imported for {count} search{'es' if count != 1 else ''}"
     elif google_kind == "carried":
         kind, summary = "analysis", "Site pages read again"
     else:
@@ -508,6 +526,7 @@ def _derived(project) -> list[dict]:
                     "detail": detail,
                     "key": f"test:{run.get('id')}",
                     "when": run.get("created") or run.get("id"),
+                    "public": False,  # exploratory tests stay with the owner
                 }
             )
     except Exception:  # noqa: BLE001
@@ -524,7 +543,7 @@ def changelog(project, *, public_only: bool = False, limit: int = 100) -> list[d
         moment = _parse_time(item["when"])
         if moment is None:
             continue
-        rows.append({"id": item["key"], "at": _iso(moment), "kind": item["kind"], "summary": item["summary"], "detail": item["detail"], "public": True, "key": item["key"]})
+        rows.append({"id": item["key"], "at": _iso(moment), "kind": item["kind"], "summary": item["summary"], "detail": item["detail"], "public": item.get("public", True), "key": item["key"]})
     rows.sort(key=lambda row: row.get("at") or "", reverse=True)
     out = []
     for row in rows:
@@ -621,7 +640,6 @@ def _state(ui) -> dict:
             "cache": {},
             "requests": RateLimiter(REQUESTS_PER_MINUTE),
             "bad": RateLimiter(BAD_TOKENS_PER_MINUTE),
-            "bad_all": RateLimiter(BAD_TOKENS_GLOBAL_PER_MINUTE),
         }
         ui._share_state = state
     return state
@@ -631,23 +649,56 @@ def _forget(ui, slug: str) -> None:
     _state(ui)["cache"].pop(slug, None)
 
 
+_build_locks: dict[str, threading.Lock] = {}
+
+
 def owner_report(ui, slug: str) -> dict:
-    cache = _state(ui)["cache"]
-    hit = cache.get(slug)
-    if hit is not None and time.monotonic() - hit[0] < REPORT_TTL_SECONDS:
-        return hit[1]
-    data = _project_report_fn()(ui, slug)
-    cache[slug] = (time.monotonic(), data)
-    return data
+    """The owner report, cached briefly. One build per project at a time: concurrent callers wait for it."""
+    state = _state(ui)
+    with _lock:
+        build_lock = _build_locks.setdefault(f"{id(ui)}|{slug}", threading.Lock())
+    with build_lock:
+        hit = state["cache"].get(slug)
+        if hit is not None and time.monotonic() - hit[0] < REPORT_TTL_SECONDS:
+            return hit[1]
+        data = _project_report_fn()(ui, slug)
+        state["cache"][slug] = (time.monotonic(), data)
+        return data
+
+
+def _search_dates(project) -> dict[str, tuple[str, str]]:
+    """search -> (sortable pull time, label). Searches can carry results pulled on different days."""
+    try:
+        from aeo.ranksim.project import PULL_DATE_NOT_RECORDED, latest_google
+
+        google = latest_google(project)
+    except Exception:  # noqa: BLE001
+        return {}
+    out = {}
+    for entry in (google.searches if google is not None else []):
+        if not entry.results:
+            continue
+        label = _text(entry.pulled_label, 40)
+        if not entry.pulled_at or label == PULL_DATE_NOT_RECORDED:
+            label = ""
+        out[entry.search] = (str(entry.pulled_at or ""), label)
+    return out
 
 
 def client_report(ui, project, *, preview: bool = False) -> dict:
     report = owner_report(ui, project.slug)
     plans = issue_plans(project)
+    dated = _search_dates(project)
     branding = load_branding(ui.root)
     data = report.get("data") or {}
     kind = _text(data.get("kind"), 40)
-    google_date = _text(report.get("pulled"), 40)
+    labels = [label for _stamp, label in sorted({value for value in dated.values() if value[1]})]
+    if not labels:
+        google_date = ""
+    elif len(labels) == 1:
+        google_date = labels[0]
+    else:
+        google_date = f"{labels[0]} to {labels[-1]}"
     kpis = report.get("kpis") or {}
     rankings = []
     for row in report.get("rankings") or []:
@@ -659,9 +710,10 @@ def client_report(ui, project, *, preview: bool = False) -> dict:
             {
                 "q": _text(row.get("q"), 200),
                 "position": _int(row.get("position")),
-                "url": _url(row.get("url")),
+                "url": _url(row.get("url")) if _int(row.get("position")) else None,
                 "checked": bool(row.get("checked")),
-                "predicted": {"position": position, "of": _int(predicted.get("of")), "label": "PREDICTED"} if predicted and position else None,
+                "date": dated.get(str(row.get("q") or ""), ("", ""))[1],
+                "predicted": {"position": position, "of": _int(predicted.get("of")), "label": "PREDICTED"} if predicted and position and _int(predicted.get("of")) else None,
                 "top": [
                     {
                         "position": _int(item.get("position")),
@@ -711,6 +763,13 @@ def client_report(ui, project, *, preview: bool = False) -> dict:
         if isinstance(row, dict)
     ]
     demo = kind == "synthetic"
+    source = "Demo" if demo else "Google"
+    if google_date:
+        date_note = f"{source} positions are from results pulled {google_date}."
+    elif report.get("search_data"):
+        date_note = f"{source} positions are shown; the date they were pulled was not recorded."
+    else:
+        date_note = "No search results have been pulled yet."
     return {
         "preview": bool(preview),
         "agency": {"name": branding["agency"], "logo": branding["logo"]},
@@ -718,6 +777,7 @@ def client_report(ui, project, *, preview: bool = False) -> dict:
         "site": _domain(report.get("site")) or _text(report.get("site"), 120),
         "report_date": _iso(_now())[:10],
         "google_date": google_date,
+        "source": source,
         "data": {
             "kind": kind,
             "label": _text(data.get("short"), 60),
@@ -733,7 +793,7 @@ def client_report(ui, project, *, preview: bool = False) -> dict:
         "competitors": [domain for domain in (_domain(item) for item in (report.get("competitors") or [])[:20]) if domain],
         "changes": changelog(project, public_only=True, limit=15),
         "notes": [
-            f"Google positions are from Google results pulled {google_date}." if google_date else "No Google results have been pulled yet.",
+            date_note,
             "PREDICTED positions are Ranksim's estimate among the stored pages for that search. They are not Google ranks.",
         ],
     }
@@ -767,14 +827,15 @@ def rankings_csv(data: dict) -> str:
             [
                 row["q"],
                 row["position"] if row["position"] else ("not in top 10" if row["checked"] else "not checked"),
-                data["google_date"] if row["checked"] else "",
+                row.get("date") or "",
                 row["url"] or "",
                 predicted.get("position") or "",
                 predicted.get("of") or "",
                 (leader or {}).get("domain", ""),
             ]
         )
-    return _csv(["Search", "Google position", "Google data date", "Page", "PREDICTED position", "PREDICTED of", "Google #1"], rows)
+    source = data.get("source") or "Google"
+    return _csv(["Search", f"{source} position", f"{source} data date", "Page", "PREDICTED position", "PREDICTED of", f"{source} #1"], rows)
 
 
 def issues_csv(data: dict) -> str:
@@ -830,9 +891,22 @@ def client_address(request) -> str:
     if os.environ.get("VERCEL"):
         forwarded = request.headers.get("x-real-ip") or (request.headers.get("x-forwarded-for") or "").split(",")[0]
         if forwarded.strip():
-            return forwarded.strip()[:64]
+            return _bucket(forwarded.strip()[:64])
     client = getattr(request, "client", None)
-    return (client.host if client else "") or "unknown"
+    address = (client.host if client else "") or "unknown"
+    return _bucket(address)
+
+
+def _bucket(address: str) -> str:
+    """IPv6 callers are limited per /64, the block one subscriber usually holds."""
+    if ":" in address:
+        import ipaddress
+
+        try:
+            return str(ipaddress.ip_network(f"{address.strip('[]')}/64", strict=False))
+        except ValueError:
+            return address
+    return address
 
 
 # ---------------------------------------------------------------------------
@@ -879,8 +953,18 @@ def register(app, ui) -> None:
         state = _state(ui)
         if not state["requests"].allow(address):
             return Response("Too many requests. Wait a minute and try again.", status_code=429, media_type="text/plain; charset=utf-8", headers={**public_headers, "retry-after": "60"})
-        if state["bad"].blocked(address) or state["bad_all"].blocked("all"):
-            return Response("Too many requests. Wait a minute and try again.", status_code=429, media_type="text/plain; charset=utf-8", headers={**public_headers, "retry-after": "60"})
+        return None
+
+    def too_many() -> Response:
+        return Response("Too many requests. Wait a minute and try again.", status_code=429, media_type="text/plain; charset=utf-8", headers={**public_headers, "retry-after": "60"})
+
+    def bad_attempt(request: Request) -> Response | None:
+        """Count a dead or unknown token. Only failures are limited, so nobody can lock clients out of a live link."""
+        address = client_address(request)
+        bad = _state(ui)["bad"]
+        if bad.blocked(address):
+            return too_many()
+        bad.allow(address)
         return None
 
     async def resolve(request: Request, token: str):
@@ -889,10 +973,7 @@ def register(app, ui) -> None:
             return None, blocked
         found = await run_in_threadpool(resolve_token, ui, token)
         if found is None:
-            state = _state(ui)
-            state["bad"].allow(client_address(request))
-            state["bad_all"].allow("all")
-            return None, None
+            return None, bad_attempt(request)
         return found, None
 
     def csv_response(text: str, filename: str, public: bool) -> Response:
@@ -967,10 +1048,7 @@ def register(app, ui) -> None:
         blocked = limited(request)
         if blocked is not None:
             return blocked
-        state = _state(ui)
-        state["bad"].allow(client_address(request))
-        state["bad_all"].allow("all")
-        return gone(rest.endswith("/data"))
+        return bad_attempt(request) or gone(rest.endswith("/data"))
 
     # -- owner: links, report preview, CSV, issue plans, change log ---------------------------------
 
@@ -1050,7 +1128,7 @@ def register(app, ui) -> None:
         if project is None:
             return error(404, "No such project.")
         body = await common._json_body(request, 8192)
-        entry = log_change(project, "note", body.get("summary") or "", detail=body.get("detail") or "", public=bool(body.get("public", True)))
+        entry = log_change(project, "note", body.get("summary") or "", detail=body.get("detail") or "", public=body.get("public") is True)
         if entry is None:
             return error(400, "Write a short note first.")
         return JSONResponse({"ok": True, "entries": changelog(project)})

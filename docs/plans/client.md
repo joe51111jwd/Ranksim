@@ -9,7 +9,8 @@ A read-only report at `/r/<token>`. No login, no editor, no settings, no other p
 
 - Header: agency name and logo, the site, the report date, the Google data date.
 - Overview numbers: searches tracked, searches checked, in the top 10, in the top 3, average position, issues.
-- Where the site ranks per search: Google position (labeled with the Google data date) and, when an engine is
+- Where the site ranks per search: Google position, each row with its own pull date (the header shows a range
+  when searches were pulled on different days; demo data says Demo, never Google) and, when an engine is
   built, the PREDICTED position among the stored candidates (always labeled PREDICTED).
 - Issues and what is being done: severity, title, comment, the fix, and the owner's status and plan
   (Not started, Planned, In progress, Done).
@@ -21,8 +22,9 @@ A read-only report at `/r/<token>`. No login, no editor, no settings, no other p
 ## Links
 
 - Token `<id>.<sig>`: `id` is 18 random bytes (base64url, 24 chars), `sig` is HMAC-SHA256 over
-  `share|<slug>|<id>` (22 chars). The key mixes `RANKSIM_SECRET` with a random key stored at
-  `<projects root>/_plugins/share/secret.key` so links survive restarts and cloud round trips.
+  `share|<slug>|<id>` (22 chars). With `RANKSIM_SECRET` set (needed when several instances run) the key comes
+  from it alone. Otherwise a random key is stored at `<projects root>/_plugins/share/secret.key` and re-read
+  whenever the file changes. A public request never creates a key.
 - Stored per project in `<project>/plugins/share/links.json`: id, label, created, expires, revoked, last used.
   The slug never appears in the URL. A token resolves only if the format, the signature, the stored link,
   the expiry and the revocation all check out. Every failure gets the same answer.
@@ -36,8 +38,9 @@ A read-only report at `/r/<token>`. No login, no editor, no settings, no other p
   Until then the plugin adds that policy as a second header (both are enforced).
 - `X-Robots-Tag: noindex, nofollow, noarchive, nosnippet`, `<meta name="robots">`, `Referrer-Policy: no-referrer`,
   `Cache-Control: no-store`.
-- Rate limit per client address: 120 requests a minute on `/r/`, 20 bad tokens a minute, and a global cap on
-  bad tokens. Answers 429.
+- Rate limit per client address (IPv6 per /64): 300 requests a minute on `/r/`, and 20 dead or unknown tokens a
+  minute. Only failed lookups count toward the second limit, so bad guesses never lock a client out of a live link.
+  Answers 429.
 - The client JSON is built from a whitelist, never by filtering the owner report. No page HTML, no element
   selectors, no evidence, no test runs, no slugs, no paths, no keys, no CSRF token, no pull metrics.
 - Logo: PNG, JPEG or WebP only (no SVG), at most 200 KB, magic bytes must match the declared type, stored as
@@ -49,7 +52,9 @@ A read-only report at `/r/<token>`. No login, no editor, no settings, no other p
 `log_change(project, kind, summary, *, detail="", public=True, key=None)` appends to
 `<project>/plugins/share/changelog.jsonl` (capped). Kinds: analysis, google, test, publish, issue, share, note.
 `key` makes an entry idempotent. `after_pull` logs every pull. Reading the log also folds in finished pulls and
-draft tests already on disk (keys `pull:<id>`, `test:<id>`), so old projects have a history. Other plugins call
+draft tests already on disk (keys `pull:<id>`, `test:<id>`), so old projects have a history. Test entries are
+owner only (exploratory tests can name searches the client never sees). Owner notes are private unless marked
+public. Other plugins call
 `log_change` (publish logs "edits published"). Marking an issue Done logs "issue resolved". The owner sees
 detail and private entries; the client sees public summaries only.
 

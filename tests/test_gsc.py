@@ -759,7 +759,9 @@ def test_first_analysis_uses_gsc_before_the_project_exists(tmp_path, env):
     _sign_in(box)
     query = _connect(box)
     _callback(box, {"code": "good-code", "state": query["state"]})
-    pages = [SimpleNamespace(url="https://www.other.example/", status="fetched", title="", h1="", h2s=[])]
+    from aeo.ranksim.site import SitePage
+
+    pages = [SitePage(url="https://www.other.example/", status="fetched")]  # a real page row, as discovery reads every field
     found = discovery.discover_with_plugins(pages, "Other", host="www.other.example", project=None, ui=box.ui)
     assert found[:2] == ["heavy civil software", "dirt work software"]
     assert any(path.endswith("/sites/https%3A%2F%2Fother.example%2F/searchAnalytics/query") for kind, path, _ in box.google.calls)
@@ -867,3 +869,19 @@ def test_stale_parked_data_is_deleted(tmp_path, env):
     box.ui.gsc_clock.now += gsc.PENDING_SECONDS + 1
     gsc.discovery_sources(project=None, pages=[SimpleNamespace(url="https://nomatch.example/")], ui=box.ui)
     assert list(folder.glob("*.json")) == []
+
+
+def test_discovery_skips_rarely_seen_queries(tmp_path, env):
+    box = _app(tmp_path)
+    _sign_in(box)
+    box.google.analytics = staticmethod(lambda body: {"rows": [
+        {"keys": ["big search"], "clicks": 10, "impressions": 5000, "ctr": 0.002, "position": 9.0},
+        {"keys": ["fifty search"], "clicks": 0, "impressions": 50, "ctr": 0.0, "position": 30.0},
+        {"keys": ["forty nine"], "clicks": 0, "impressions": 49, "ctr": 0.0, "position": 30.0},
+        {"keys": ["seen once"], "clicks": 0, "impressions": 1, "ctr": 0.0, "position": 60.0},
+    ]} if body.get("dimensions") == ["query"] else FakeGoogle.analytics(body))
+    query = _connect(box)
+    _callback(box, {"code": "good-code", "state": query["state"]})
+    rows = gsc.discovery_sources(project=_project(box), pages=[], ui=box.ui)
+    assert [row["q"] for row in rows] == ["big search", "fifty search"]  # 1% of 5,000 is 50
+    assert gsc.discovery_min_impressions(300) == 10 and gsc.discovery_min_impressions(5000) == 50 and gsc.discovery_min_impressions(5001) == 51

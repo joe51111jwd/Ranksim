@@ -5,8 +5,20 @@
 .predict-table th, .predict-table td { text-align: left; padding: 10px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
 .predict-table thead th { font-size: 12px; font-weight: 550; color: var(--ink-3); }
 .predict-table tr.is-current th, .predict-table tr.is-current td { background: var(--blue-wash); }
-.predict-q span { display: block; }
-.predict-q > span:first-child { font-weight: 550; color: var(--ink); }
+.predict-toggle { all: unset; cursor: pointer; display: block; }
+.predict-toggle:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; border-radius: 4px; }
+.predict-q-t { display: block; font-weight: 550; color: var(--ink); }
+.predict-toggle[aria-expanded="true"] .predict-q-t { color: var(--blue); }
+.predict-sub { display: block; font-size: 12px; color: var(--ink-3); font-weight: 450; }
+.predict-muted { color: var(--ink-3); }
+.predict-summary { margin-top: 6px; font-size: 16px; font-weight: 550; }
+.predict-detail td { background: var(--bg); font-size: 13px; color: var(--ink-2); }
+.predict-detail p + p { margin-top: 6px; }
+.predict-k { font-weight: 550; color: var(--ink); }
+.predict-how { margin-top: 12px; font-size: 13px; color: var(--ink-3); }
+.predict-how summary { cursor: pointer; }
+.predict-how p { margin-top: 6px; }
+.predict-guide details summary { cursor: pointer; font-weight: 550; }
 .predict-method, .predict-bt { font-size: 12px; color: var(--ink-3); font-weight: 450; display: block; }
 .predict-after { font-weight: 650; color: var(--blue); }
 .predict-conf { font-size: 11px; }

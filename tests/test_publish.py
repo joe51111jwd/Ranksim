@@ -1407,3 +1407,54 @@ def test_after_pull_saves_when_a_proof_was_rechecked(tmp_path, monkeypatch):
     pub.store.put_ownership(record)
     plugin.after_pull(project=project, report={}, ui=ui)
     assert saves == [ui]
+
+
+# ---------------------------------------------------------------------------
+# Guided WordPress connect
+# ---------------------------------------------------------------------------
+
+
+def wp_inspect(router, url="https://acme.com/about", **secret):
+    wp = CONNECTORS["wordpress"]({"base_url": "https://acme.com", "username": "james"}, {"app_password": "abcd efgh ijkl", **secret}, router.client(), allow_private=True)
+    return {s["key"]: s for s in wp.inspect(url)}
+
+
+def test_guided_wordpress_check_reports_each_step(tmp_path):
+    web = Web()
+    router, _ = wp_router(web, "https://acme.com/about", namespaces=("wp/v2", "rankmath/v1"))
+    router.routes.insert(0, ("GET", re.compile(r"/wp/v2/users/me"), lambda r, m: {"name": "James", "capabilities": {"edit_pages": True, "edit_posts": True}}))
+    steps = wp_inspect(router)
+    assert list(steps) == ["site", "login", "rights", "seo", "page"]
+    assert all(s["ok"] for s in steps.values())
+    assert "Rank Math" in steps["seo"]["detail"] and "Signed in as James" in steps["login"]["detail"]
+    assert steps["page"]["detail"] == 'Found the post "Old heading".'
+
+
+def test_guided_wordpress_check_explains_failures():
+    router = Router()
+    assert wp_inspect(router)["site"]["ok"] is False  # no WordPress API answered
+    router.on("GET", r"/wp-json/$", lambda r, m: {"name": "Acme", "namespaces": ["wp/v2"]})
+    router.on("GET", r"users/me", lambda r, m: httpx.Response(401, json={"message": "nope"}))
+    steps = wp_inspect(router)
+    assert steps["site"]["ok"] and not steps["login"]["ok"] and "not your normal password" in steps["login"]["detail"]
+    assert "abcd" not in json.dumps(steps)
+    router.routes = [r for r in router.routes if "users" not in r[1].pattern]
+    router.on("GET", r"users/me", lambda r, m: {"name": "Sam", "capabilities": {"edit_posts": True}})
+    router.on("GET", r"/wp/v2/(pages|posts)\?", lambda r, m: [])
+    steps = wp_inspect(router)
+    assert not steps["rights"]["ok"] and "cannot edit pages" in steps["rights"]["detail"]
+    assert "No Yoast or Rank Math" in steps["seo"]["detail"]
+    assert not steps["page"]["ok"]
+
+
+def test_check_route_saves_nothing_and_needs_csrf(app_env):
+    client, web, router, ui = app_env
+    router.on("GET", r"/wp-json/$", lambda r, m: {"namespaces": ["wp/v2", "yoast/v1"]})
+    router.on("GET", r"users/me", lambda r, m: {"name": "James"})
+    body = {"kind": "wordpress", "settings": {"base_url": "https://acme.com", "username": "james"}, "secret": {"app_password": "pw-123-secret"}}
+    assert client.post("/api/v1/projects/acme/publish/connections/check", json=body).status_code == 403
+    answer = client.post("/api/v1/projects/acme/publish/connections/check", json=body, headers=H)
+    assert answer.status_code == 200 and "pw-123-secret" not in answer.text
+    steps = {s["key"]: s for s in answer.json()["steps"]}
+    assert steps["seo"]["detail"].startswith("Yoast found")
+    assert client.get("/api/v1/projects/acme/publish/connections").json()["connections"] == []

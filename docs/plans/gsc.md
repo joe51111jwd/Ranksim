@@ -134,7 +134,8 @@ count.
   only, never the network.
 - `discovery_sources`: when on, up to 30 top queries `{q, weight, source: "gsc", impressions, clicks, position}`.
   The weight is on discovery's scale (a title phrase scores 3.0, 2.5 is the bar): `2.5 + 2.5 * impressions / top`,
-  so every query qualifies (2.5 to 5.0) and the most seen rank first. Refreshes stale data first
+  so every query sent qualifies (2.5 to 5.0) and the most seen rank first. Only queries with at least
+  max(10, 1% of the top query's) impressions are sent. Refreshes stale data first
   (best effort). Not called on a site's first analysis (no project yet), so GSC queries join from the next analysis.
 - `after_pull`: refresh stale data (best effort, errors recorded in settings).
 - `settings_schema`: toggle and property.

@@ -250,8 +250,8 @@ function detailsTile(run) {
 const posText = (value) => (value == null ? 'none' : `#${Math.max(1, Math.round(value))}`);
 
 function moveCell(row) {
-  if (row.move == null) return h('td', { class: 'predict-move', text: row.method === 'new page' ? 'new' : '' });
-  const steps = Math.round(row.move);
+  if (row.move == null) return h('td', { class: 'predict-move', text: row.with_edit == null ? '' : 'new' });
+  const steps = row.move_places != null ? row.move_places : Math.round(row.move);
   if (!steps) return h('td', { class: 'predict-move' }, h('span', { class: 'move same', text: 'same' }));
   return h('td', { class: 'predict-move' }, moveChip(steps));
 }
@@ -261,28 +261,78 @@ function confidenceChip(conf) {
   return h('span', { class: `label ${sure ? 'label-ok' : 'label-medium'} predict-conf`, text: sure ? 'CLEARER' : 'UNSURE' });
 }
 
-function backtestText(conf) {
-  if (!conf || conf.backtest_pairwise == null) return 'no backtest yet';
-  return `backtest ${pct(conf.backtest_pairwise)} of ${plural(conf.backtest_pairs || 0, 'pair')}${conf.near_chance ? ', near chance' : ''}`;
+function summaryLine(predict) {
+  const s = predict.summary;
+  if (!s) return '';
+  const parts = [];
+  if (s.up) parts.push(`${s.up} higher`);
+  if (s.down) parts.push(`${s.down} lower`);
+  if (s.same) parts.push(`${s.same} the same`);
+  if (s.new) parts.push(`${s.new} placed as a new page`);
+  if (s.not_placed) parts.push(`${s.not_placed} not placed`);
+  return `PREDICTED on ${plural(s.searches, 'search', 'searches')}: ${parts.join(', ')}. ${s.unsure} of ${s.searches} are UNSURE.`;
+}
+
+function nowCell(row) {
+  if (row.method === 'anchored') return h('td', null, h('span', { text: posText(row.observed_position) }), h('span', { class: 'predict-sub', text: `Google${row.google_seen ? `, ${row.google_seen}` : ''}` }));
+  if (row.now != null) return h('td', null, h('span', { text: posText(row.now) }), h('span', { class: 'predict-sub', text: 'PREDICTED' }));
+  return h('td', { class: 'predict-muted', text: 'not ranked' });
+}
+
+function guideList(items) {
+  return h('ol', { class: 'predict-guide' }, items.map((item) => {
+    const detail = guideDetail(item);
+    return h('li', null, detail ? h('details', null, h('summary', { text: item.text }), detail) : h('span', { class: 'predict-guide-t', text: item.text }));
+  }));
+}
+
+function detailRow(row) {
+  const conf = row.confidence || {};
+  const lines = [h('p', { text: conf.text || '' }), h('p', { text: row.method_text || '' })];
+  if (row.method === 'anchored') lines.push(h('p', { text: `Google #${Math.round(row.observed_position)} for this search${row.google_seen ? `, seen ${row.google_seen}` : ''}.` }));
+  if (row.guidance && row.guidance.length) lines.push(h('p', { class: 'predict-k', text: 'What would move you up (guidance, not a guarantee)' }), guideList(row.guidance));
+  return h('tr', { class: 'predict-detail' }, h('td', { colspan: '5' }, lines));
 }
 
 function searchesTile(run) {
-  const rows = run.predict.searches;
-  const body = rows.map((row) => h('tr', { class: row.search === run.search ? 'is-current' : null },
-    h('th', { scope: 'row', class: 'predict-q' }, h('span', { text: row.search }), h('span', { class: 'predict-method', text: row.method === 'anchored' ? `ranks #${Math.round(row.observed_position)} today` : row.method === 'new page' ? 'new page' : 'not placed' })),
-    h('td', { text: row.now == null ? 'not ranked' : posText(row.now) }),
-    h('td', { class: 'predict-after', text: row.with_edit == null ? 'not placed' : posText(row.with_edit) }),
-    moveCell(row),
-    h('td', { class: 'predict-sure' }, confidenceChip(row.confidence), h('span', { class: 'predict-bt', text: backtestText(row.confidence) }))));
+  const predict = run.predict;
+  const body = h('tbody');
+  for (const row of predict.searches) {
+    const conf = row.confidence || {};
+    const toggle = h('button', { class: 'predict-toggle', type: 'button', 'aria-expanded': 'false' },
+      h('span', { class: 'predict-q-t', text: row.search }), h('span', { class: 'predict-sub', text: conf.short || '' }));
+    const tr = h('tr', { class: row.search === run.search ? 'is-current' : null },
+      h('th', { scope: 'row', class: 'predict-q' }, toggle),
+      nowCell(row),
+      h('td', { class: 'predict-after', text: row.with_edit == null ? 'not placed' : posText(row.with_edit) }),
+      moveCell(row),
+      h('td', { class: 'predict-sure' }, confidenceChip(conf)));
+    let open = null;
+    toggle.addEventListener('click', () => {
+      if (open) {
+        open.remove();
+        open = null;
+        toggle.setAttribute('aria-expanded', 'false');
+        return;
+      }
+      open = detailRow(row);
+      tr.after(open);
+      toggle.setAttribute('aria-expanded', 'true');
+    });
+    body.append(tr);
+  }
   const table = h('div', { class: 'predict-scroll' }, h('table', { class: 'predict-table', 'aria-label': 'PREDICTED position for every search' },
-    h('thead', null, h('tr', null, h('th', { scope: 'col', text: 'Search' }), h('th', { scope: 'col', text: 'Now' }), h('th', { scope: 'col', text: 'With edit' }), h('th', { scope: 'col', text: 'Move' }), h('th', { scope: 'col', text: 'How sure' }))),
-    h('tbody', null, body)));
+    h('thead', null, h('tr', null, h('th', { scope: 'col', text: 'Search' }), h('th', { scope: 'col', text: 'Now' }), h('th', { scope: 'col', text: 'With edit' }), h('th', { scope: 'col', text: 'Move' }), h('th', { scope: 'col', text: 'Sure?' }))),
+    body));
+  const how = h('details', { class: 'predict-how' }, h('summary', { text: 'How these numbers are made' }),
+    h('p', { text: predict.backtest_note || '' }), predict.forward_check ? h('p', { text: predict.forward_check }) : null);
   return h('section', { class: 'tile white span-4 predict-tile' },
     h('div', { class: 'tile-head' }, h('h2', { text: 'Every search' }), h('span', { class: 'label predict-label', text: 'PREDICTED' })),
-    h('p', { class: 'tile-sub', text: 'Pages that rank today start from their real position. New pages are placed by the new page model.' }),
+    h('p', { class: 'predict-summary', text: summaryLine(predict) }),
+    (predict.notes || []).map((note) => h('p', { class: 'tile-sub', text: note })),
+    h('p', { class: 'tile-sub', text: 'Tap a search for details.' }),
     table,
-    h('p', { class: 'caveat', text: run.predict.backtest_note || '' }),
-    run.predict.forward_check ? h('p', { class: 'caveat', text: run.predict.forward_check }) : null);
+    how);
 }
 
 function guideDetail(item) {
@@ -295,14 +345,11 @@ function guidanceTile(run) {
   const rows = run.predict.searches;
   const row = rows.find((item) => item.search === run.search) || rows[0];
   const items = (row && row.guidance) || [];
-  const list = items.length
-    ? h('ol', { class: 'predict-guide' }, items.map((item) => h('li', null, h('span', { class: 'predict-guide-t', text: item.text }), guideDetail(item))))
-    : h('p', { class: 'tile-sub', text: row && row.with_edit != null && row.with_edit <= 1.5 ? 'Nothing is PREDICTED above this page here.' : 'No clear gap on the features this model trusts.' });
   const above = (row && row.above) || [];
+  const empty = row && row.with_edit != null && row.with_edit <= 1.5 ? 'Nothing is PREDICTED above this page here.' : 'No clear gap on the features this model trusts.';
   return h('section', { class: 'tile span-2 predict-tile' },
     h('div', { class: 'tile-head' }, h('h2', { text: 'What would move you up' }), h('span', { class: 'label predict-label', text: 'Guidance' })),
-    h('p', { class: 'tile-sub', text: above.length ? `Compared with ${plural(above.length, 'page')} just above you for ${row.search}: ${above.map((item) => hostOf(item.url)).join(', ')}.` : `For ${row ? row.search : 'this search'}.` }),
-    list,
-    h('p', { class: 'caveat', text: run.predict.guidance_note || 'Guidance, not a guarantee.' }));
+    items.length ? guideList(items) : h('p', { class: 'tile-sub', text: empty }),
+    above.length ? h('p', { class: 'tile-sub', text: `Compared with ${above.map((item) => hostOf(item.url)).join(', ')}, just above you for ${row.search}.` }) : null,
+    h('p', { class: 'caveat', text: 'Guidance, not a guarantee.' }));
 }
-

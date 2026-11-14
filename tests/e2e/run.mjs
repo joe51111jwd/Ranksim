@@ -289,6 +289,8 @@ try {
     expect((await page.locator(SEL.serpRow).count()) >= 5, 'the top 10 is listed');
     expect((await page.locator(SEL.serpYou).count()) === 1, 'your page is highlighted in the top 10');
     await audit(page, 'desktop-09-searches');
+    await page.keyboard.press('Escape');  // the search detail is a sheet (discover)
+    await page.waitForSelector(SEL.sheet, { state: 'detached' });
   });
 
   await step('competitors', async () => {

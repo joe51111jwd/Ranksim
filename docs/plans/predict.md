@@ -128,3 +128,16 @@ results were no better than simple rules, and that it does not measure other pro
 
 - A new page that uses none of a search's words gets no PREDICTED slot for that search.
 - Guidance compares against pages from other sites only.
+
+## Phase C (branch `claude/rs-predict-c`)
+
+- **Speed.** The first Test changes on SmartCrew took 9.9 s (7.4 s building the predictor).
+  - One structured-data regex over whole pages was 4.2 s of that. It is now a plain substring check.
+  - Page features are now worked out once per page and search, not again in every backtest fold.
+  - The fitted predictor is cached per pull in `<project>/plugins/predict/predictor-<pull>-<hash>.json`. Cloud storage mirrors that folder, so a new instance reads the file.
+  - Measured: the first test is now 3.4 s with a fresh build, and 2.0 s on a new instance with the file. About 1.6 s of either is loading the project, which this workstream does not own. A repeat test is 0.3 s.
+- **Clearer results.** The Every search tile opens with one PREDICTED summary line. Each search shows one short confidence line and an UNSURE or CLEARER chip. Tapping a search shows the backtest share with its pair count, the method, the Google position with its date, and the guidance for that search. Guidance items open to show the numbers behind them. The table and the summary use the same whole-place move.
+- **Gaps closed.**
+  - A project whose searches are all close variants gets one plain note, and every call says why it is UNSURE.
+  - A site that is not in any top 10 gets a note that its pages are placed as new pages from a site with no rankings here.
+  - A page that uses none of any search's words gets one hint on how to get placed.

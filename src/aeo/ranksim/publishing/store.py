@@ -37,6 +37,19 @@ def _box():
     return secretbox
 
 
+def encryption_ready() -> bool:
+    """True when credentials can be sealed here (secretbox present and its key set)."""
+    try:
+        box = _box()
+    except StoreError:
+        return False
+    configured = getattr(box, "configured", None)
+    try:
+        return bool(configured()) if callable(configured) else True
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def _lock_for(path: Path) -> threading.RLock:
     key = str(path.resolve())
     with _LOCKS_GUARD:
@@ -76,7 +89,9 @@ class PublishStore:
 
     @classmethod
     def for_project(cls, project) -> "PublishStore":
-        return cls(Path(project.dir) / "plugins" / "publish", scope=project.slug)
+        from aeo.ranksim import plugins
+
+        return cls(plugins.data_dir(project, "publish"), scope=project.slug)
 
     # -- state -------------------------------------------------------------
 
@@ -111,7 +126,11 @@ class PublishStore:
 
     def add_connection(self, *, kind: str, domain: str, label: str, settings: dict, secret: dict, now: float | None = None) -> dict:
         connection_id = "c" + secrets.token_hex(6)
-        sealed = _box().seal(json.dumps(secret, sort_keys=True), purpose=self._purpose(connection_id))
+        box = _box()
+        try:
+            sealed = box.seal(json.dumps(secret, sort_keys=True), purpose=self._purpose(connection_id))
+        except Exception as exc:  # noqa: BLE001 - no key set (RANKSIM_SECRET), never echo the secret
+            raise StoreError("Credential encryption is not set up on this server yet, so connections cannot be saved.") from exc
         connection = {
             "id": connection_id,
             "kind": kind,

@@ -27,19 +27,13 @@ from fastapi import Request
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import JSONResponse
 
+from aeo.ranksim.api import common
+
 from aeo.ranksim.publishing.service import PublishError, Publisher, catalog
-from aeo.ranksim.publishing.store import PublishStore
+from aeo.ranksim.publishing.store import PublishStore, encryption_ready
 
 log = logging.getLogger(__name__)
 BODY_LIMIT = 5 * 1024 * 1024  # two copies of a 2 MB page plus room
-
-
-def _helpers():
-    try:  # after the foundation refactor
-        from aeo.ranksim.api import common
-    except ImportError:  # before it
-        from aeo.ranksim import studio as common
-    return common
 
 
 def _error(status: int, message: str, **extra) -> JSONResponse:
@@ -91,7 +85,6 @@ def publisher_for(ui, project) -> Publisher:
 
 
 def register(app, ui) -> None:
-    common = _helpers()
 
     def guard(slug: str):
         blocked = common._not_public(ui)
@@ -126,7 +119,7 @@ def register(app, ui) -> None:
         if blocked:
             return blocked
         target = url or f"https://{ui.project(slug).site}/"
-        return await run(lambda: {**pub.status(target), "history": pub.history(url=target, limit=10)})
+        return await run(lambda: {**pub.status(target), "history": pub.history(url=target, limit=10), "encryption_ready": encryption_ready()})
 
     @app.post("/api/v1/projects/{slug}/publish/ownership")
     async def publish_ownership(slug: str, request: Request):

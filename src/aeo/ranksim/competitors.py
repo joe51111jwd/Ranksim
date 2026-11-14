@@ -74,6 +74,7 @@ GROUP = {
     "platform": "platforms",
     "publisher": "publishers",
     "service": "platforms",
+    "other": "platforms",
     "software": "platforms",
 }
 # A domain name ending in one of these words ("constructionreviews") is a directory; one starting with it
@@ -355,6 +356,7 @@ def classify_domain(domain: str, *, titles: list[str] | None = None, pages: list
     buttons = any(page.get("selling") for page in pages)
     articles_only = bool(pages) and all(set(t.lower() for t in page.get("schema") or []) <= ARTICLE_SCHEMA | {"organization", "website", "webpage", "breadcrumblist", "person", "imageobject", "itemlist", "faqpage"} for page in pages)
     listicles = len(titles) >= 2 and all(LISTICLE.search(title) for title in titles)
+    evidence: list[str] = []
     if own_offer:
         texts = list(titles) + [item for item in snippets or [] if item]
         for page in pages:
@@ -366,8 +368,16 @@ def classify_domain(domain: str, *, titles: list[str] | None = None, pages: list
         return "competitor", "marks up a product or service on its ranking pages"
     if listicles and articles_only:
         return "publisher", "only ranks with list articles"
+    # One stored list article ("10 Best Excavation Software") with no demo, trial or quote button is a review page.
+    if pages and titles and all(LISTICLE.search(title) for title in titles) and not buttons:
+        return "publisher", "ranks with lists of other products and sells nothing on them"
     if buttons:
         return "competitor", "has demo, trial or quote buttons on its ranking pages"
+    if own_offer and pages:
+        same = [name for name, _pattern in (SOFTWARE_EVIDENCE if own_offer == "software" else SERVICE_EVIDENCE) if name in evidence]
+        named = re.search(r"software|soft|saas|app|tech|cloud|systems?$|\.io$|\.ai$" if own_offer == "software" else r"excavat|contract|construct|plumb|roof|paving|septic|landscap|services?", host)
+        if not same and not named:
+            return "other", f"its pages don't say it {'sells software' if own_offer == 'software' else 'offers a local service'}"
     return "competitor", "a business site in your results"
 
 
@@ -434,6 +444,15 @@ def classify_domains(google, own_domain: str, *, profiles: dict[str, dict] | Non
         slot = grouped.setdefault(key, {"hosts": {}, "hits": []})
         slot["hosts"][host] = (kind, reason, len(found))
         slot["hits"].extend(found)
+    # A help center or video subdomain of a competitor ("help.hcss.com") is that competitor, whatever its pages say.
+    for key in list(grouped):
+        slot = grouped[key]
+        kinds = {kind for kind, _reason, _count in slot["hosts"].values()}
+        parent = grouped.get(base_domain(key))
+        if key != base_domain(key) and kinds <= {"other"} and parent is not None and any(kind == "competitor" for kind, _r, _c in parent["hosts"].values()):
+            parent["hosts"].update({host: ("competitor", "part of " + base_domain(key), count) for host, (_k, _r, count) in slot["hosts"].items()})
+            parent["hits"].extend(slot["hits"])
+            del grouped[key]
     rows = []
     for domain, slot in grouped.items():
         found = slot["hits"]
@@ -745,7 +764,7 @@ def stored_html(database: str, urls: list[str]) -> dict[str, str]:
     return {url: found[loose_key(url)] for url in urls if loose_key(url) in found}
 
 
-SECTIONS_VERSION = 5
+SECTIONS_VERSION = 7
 
 
 def _fingerprint(project, meta, google, features, rows, pages, docs) -> str:

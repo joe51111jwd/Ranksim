@@ -713,3 +713,28 @@ def test_gaps_name_page_elements_the_pages_above_have():
     assert elements["faq"]["evidence"] == ["https://a.example/", "https://b.example/"]
     footer_only = _page("", "D", "D", ["X"], "w " * 20).replace("</body>", "<footer><h3>FAQ</h3></footer></body>")
     assert "faq" not in cp.page_profile("https://d.example/", footer_only)["elements"]  # site chrome is not content
+
+
+def test_pages_that_sell_nothing_like_yours_are_other_sites():
+    google = GoogleSnapshot("p", "", "import", [SearchResults("excavation software", [
+        _result(1, "https://mitti.example/excavation", "Excavation Software | Mitti"),
+        _result(2, "https://help.mitti.example/article", "Help Center"),
+        _result(3, "https://essays.example/dirt-work", "Dirt Work: An Education in the Woods"),
+        _result(4, "https://dirtworksoftware.example/", "Dirt Work Software"),
+        _result(5, "https://lists.example/best", "10 Best Excavation Software Tools Ranked"),
+        _result(6, f"{SC_HOME}excavation-software/", "Excavation Software | SmartCrew"),
+    ], "import", "csv", None)])
+    plain = "A long essay about digging in the woods and what it teaches. " * 10
+    docs = {
+        "https://mitti.example/excavation": _vendor_page("Mitti"),
+        "https://help.mitti.example/article": _page("", "Help Center", "How to reset a password", ["Steps"], plain),
+        "https://essays.example/dirt-work": _page("", "Dirt Work: An Education in the Woods", "Dirt Work", ["Chapter one"], plain),
+        "https://dirtworksoftware.example/": _page("", "Dirt Work Software", "Welcome", [], "Loading"),
+        "https://lists.example/best": _page("", "10 Best Excavation Software Tools Ranked", "10 best", ["1. Mitti"], "Mitti has good pricing. " * 20),
+        f"{SC_HOME}excavation-software/": _vendor_page("SmartCrew"),
+    }
+    rows = {row["domain"]: row for row in cp.classify_domains(google, SC, profiles={url: cp.page_profile(url, html) for url, html in docs.items()})}
+    assert rows["mitti.example"]["kind"] == "competitor" and rows["mitti.example"]["hosts"] == ["help.mitti.example", "mitti.example"]
+    assert rows["essays.example"]["kind"] == "other" and "sells software" in rows["essays.example"]["reason"]
+    assert rows["dirtworksoftware.example"]["kind"] == "competitor"  # the name says software
+    assert rows["lists.example"]["kind"] == "publisher"

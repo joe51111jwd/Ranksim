@@ -28,7 +28,8 @@ actually pick, so a server with several keys shows the truth.
 `tracking.Budget(root)` is the `budget` object passed to `pull()`. The plugin puts one in `ui.pull_options["budget"]`
 when it registers, so every Studio pull and the classic screens use it with no edit to the pull routes.
 
-- Counter file: `<projects root>/.tracking/usage.json`. The projects folder is what cloud storage mirrors, so the
+- Counter file: `plugins.workspace_dir(ui, "tracking")/usage.json`, which is `<projects root>/_plugins/tracking/usage.json`.
+  Cloud storage keeps `_plugins/` like project data, so the
   counter persists on Vercel (it is saved with the next `cloud.save()`, which every pull already does).
   Shape: `{"months": {"2026-11": {"searches": 12, "reused": 30, "capped": 0, "errors": 1}},
   "last_ok_at": iso, "last_error": "HTTP 403", "last_error_at": iso}`. Writes are atomic (temp file plus rename)
@@ -59,7 +60,8 @@ weekly. `GET|POST /api/v1/projects/{slug}/tracking` reads and changes it (POST n
 
 `GET /api/v1/cron/recheck` with `Authorization: Bearer <CRON_SECRET>` (Vercel's documented scheme, checked
 2026-11-14 at vercel.com/docs/cron-jobs/manage-cron-jobs). No secret set, or a wrong header: 401, nothing runs. The
-route is exempt from the owner login (Vercel cannot sign in) and only does this one job.
+route sets `login_exempt = True` (Vercel cannot sign in), checks the secret with `secrets.compare_digest`, does only
+this one job, and calls `plugins.save(ui)` after its writes because a GET is not saved by the middleware.
 
 Due selection: projects that are not synthetic or historical, schedule not off, last REAL Google check (newest
 `pulled_at` in any pull, or never) older than the interval minus a 2 hour slack (daily 22 h, weekly 166 h), and no
@@ -131,15 +133,22 @@ Lists hold at most 10 items, strings at most 300 characters. Parsed for Serper, 
 `tracking.serp_features(project)` (latest snapshot, `{search: features}`) or straight from
 `latest_google(project).searches[i].features`.
 
-## 6. UI (phase B, after P0)
+## 6. UI (phase B, built)
 
-- Overview tile "Rank changes": up, down, new, lost counts and a small line chart of the average tracked position
-  per check (inline SVG).
-- Searches column via `registerSearchColumn`: sparkline of our position (inline SVG, lower is better, drawn top).
-- Per search history chart (sheet opened from the sparkline): our line plus top competitors, with PAA and related
-  searches listed under it.
-- Settings section: re-check schedule (off, daily, weekly) and the usage meter (used of cap, provider, health).
-- Charts are hand-written SVG, bento tokens only, no dashes in copy.
+All in `js/plugins/history.js` and `css/plugins/history.css`, through the P0 hooks only.
+
+- Overview tile "Rank changes" (`registerOverviewTile`, key `rank-changes`, order 55): up, down, new and lost counts
+  since the last check, then a stacked bar per check of searches on the first page (top 3 dark, rest of the top 10
+  blue), with a hover tooltip, a next check line and a link to the History screen. Before the second check it says so.
+- Searches column "Trend" (`registerSearchColumn`): a sparkline of our position at each check plus the change chip.
+  The Searches row is a button, so the cell is passive.
+- History screen (`registerScreen('history', {nav: false})`, `/app/<slug>/history`): every search with position,
+  sparkline and change. A row opens a sheet with our line plus the two best competitors (legend, crosshair tooltip,
+  a table view), people also ask, related searches and the other SERP features seen.
+- Settings section `tracking` (order 15): re-check schedule (off, daily, weekly) saved with POST, the monthly usage
+  meter, provider health, and a note when `CRON_SECRET` is not set.
+- Charts are hand-written SVG. Series colors: You is the brand blue; competitors use categorical slots 2 and 3
+  (orange, aqua), validated together for color vision deficiency in light and dark. Text stays in ink tokens.
 
 ## 7. Tests (`tests/test_tracking.py`, fakes only)
 

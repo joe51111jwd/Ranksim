@@ -24,13 +24,18 @@ from aeo.ranksim import workspace as ws
 STATIC = Path(__file__).resolve().parent / "static"
 MAX_DRAFT_BYTES = 2 * 1024 * 1024
 CSRF_HEADER = "x-ranksim-csrf"
+# The files under static/ that /studio/<path> serves, by extension. Anything else (the shell template, notes) is a 404.
 ASSETS = {
-    "studio.css": "text/css; charset=utf-8",
-    "studio.js": "application/javascript; charset=utf-8",
-    "sans.woff2": "font/woff2",
-    "mono.woff2": "font/woff2",
+    ".js": "application/javascript; charset=utf-8",
+    ".css": "text/css; charset=utf-8",
+    ".woff2": "font/woff2",
+    ".svg": "image/svg+xml",
+    ".png": "image/png",
+    ".ico": "image/x-icon",
 }
-VERSIONED = ("studio.css", "studio.js")
+# Feature plugins: the shell lists every file in these folders, so adding a file is enough (see their README.md).
+PLUGIN_JS = STATIC / "js" / "plugins"
+PLUGIN_CSS = STATIC / "css" / "plugins"
 SCREENS = {"studio", "rankings", "data", "overview", "issues", "searches", "competitors", "editor", "settings"}
 MAX_CSV_BYTES = 5 * 1024 * 1024
 DATE_RE = r"^\d{4}-\d{2}-\d{2}$"
@@ -48,25 +53,88 @@ def _serve():
 
 
 def _shell(ui) -> str:
-    """The app shell with this process's CSRF token. All content is rendered by studio.js from the API."""
+    """The app shell with this process's CSRF token. All content is rendered by js/app.js from the API.
+
+    Stylesheets come first (css/base.css, the other css/*.css, then css/plugins/*.css), each with a version query so a
+    new deploy restyles at once. Scripts are ES modules without query strings, because a module is keyed by its URL
+    and every module must share one copy of core.js; /studio/ answers them with no-cache and an ETag instead.
+    app.js comes before the plugins and boots on DOMContentLoaded, after every plugin has registered.
+    """
     from html import escape
 
+    styles, modules, plugins = _shell_assets()
+    lines = [f'<link rel="stylesheet" href="/studio/{escape(name)}?v={_asset_version([path])}">' for name, path in styles]
+    lines += [f'<link rel="modulepreload" href="/studio/{escape(name)}">' for name, _path in modules if name != "js/app.js"]
+    lines.append('<script type="module" src="/studio/js/app.js"></script>')
+    lines += [f'<script type="module" src="/studio/{escape(name)}"></script>' for name, _path in plugins]
     page = (STATIC / "studio.html").read_text(encoding="utf-8")
     return (
         page.replace("{{csrf}}", escape(ui.csrf, quote=True))
         .replace("{{mode}}", mode_of(ui))
-        .replace("{{version}}", _asset_version())
+        .replace("{{assets}}", "\n".join(lines))
     )
 
 
-def _asset_version() -> str:
-    """Changes whenever the CSS or JS changes, so a browser never mixes an old script with a new shell."""
+def _shell_assets() -> tuple[list[tuple[str, Path]], list[tuple[str, Path]], list[tuple[str, Path]]]:
+    """(stylesheets, core modules, plugin modules) as (published name, file) pairs in load order."""
+
+    def listed(folder: Path, prefix: str, suffix: str) -> list[tuple[str, Path]]:
+        if not folder.is_dir():
+            return []
+        found = [item for item in folder.iterdir() if item.suffix == suffix and item.is_file() and _plain(item.name)]
+        return [(f"{prefix}/{item.name}", item) for item in sorted(found, key=lambda item: item.name)]
+
+    css = listed(STATIC / "css", "css", ".css")
+    css.sort(key=lambda pair: pair[0] != "css/base.css")  # the design tokens load first; sort is stable
+    modules = []
+    for path in sorted((STATIC / "js").rglob("*.js")):
+        rel = path.relative_to(STATIC / "js")
+        if rel.parts[0] != "plugins" and all(_plain(part) for part in rel.parts):
+            modules.append(("js/" + rel.as_posix(), path))
+    return css + listed(PLUGIN_CSS, "css/plugins", ".css"), modules, listed(PLUGIN_JS, "js/plugins", ".js")
+
+
+def _asset_version(paths=None) -> str:
+    """A short hash of the files' bytes (by default every file the shell lists). It changes whenever one changes."""
     import hashlib
 
+    if paths is None:
+        styles, modules, plugins = _shell_assets()
+        paths = [path for _name, path in styles + modules + plugins]
     digest = hashlib.sha256()
-    for name in VERSIONED:
-        digest.update((STATIC / name).read_bytes())
+    for path in paths:
+        digest.update(Path(path).read_bytes())
     return digest.hexdigest()[:10]
+
+
+def _plain(part: str) -> bool:
+    """A file or folder name that is safe to publish: letters, digits, dot, dash and underscore, no leading dot."""
+    import re
+
+    return bool(re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", part))
+
+
+def _asset_file(name: str) -> Path | None:
+    """The file behind /studio/<name>: plain path parts only, an allowed extension, and never outside its folder."""
+    parts = name.split("/")
+    if not name or len(parts) > 4 or not all(_plain(part) for part in parts):
+        return None
+    if Path(parts[-1]).suffix not in ASSETS:
+        return None
+    if len(parts) == 3 and parts[:2] == ["js", "plugins"]:
+        root, rest = PLUGIN_JS, parts[2:]
+    elif len(parts) == 3 and parts[:2] == ["css", "plugins"]:
+        root, rest = PLUGIN_CSS, parts[2:]
+    else:
+        root, rest = STATIC, parts
+    try:
+        root = root.resolve()
+        path = root.joinpath(*rest).resolve()
+    except (OSError, RuntimeError):
+        return None
+    if not path.is_relative_to(root) or not path.is_file():
+        return None
+    return path
 
 
 def _error(status: int, message: str) -> JSONResponse:
@@ -482,12 +550,21 @@ def register(app: FastAPI, ui) -> None:
             return serve._not_found(ui)
         return shell_response()
 
-    @app.get("/studio/{name}")
-    def studio_asset(name: str) -> Response:
-        media = ASSETS.get(name)
-        if media is None:
+    @app.get("/studio/{name:path}")
+    def studio_asset(name: str, request: Request) -> Response:
+        import hashlib
+
+        path = _asset_file(name)
+        if path is None:
             return Response("Not found.", status_code=404, media_type="text/plain")
-        return FileResponse(STATIC / name, media_type=media, headers={"cache-control": "no-cache"})
+        data = path.read_bytes()
+        # no-cache plus a content ETag: the browser revalidates every load (a 304 is cheap), so a deploy is never stale
+        etag = f'"{hashlib.sha256(data).hexdigest()[:20]}"'
+        headers = {"cache-control": "no-cache", "etag": etag}
+        wanted = {tag.strip().removeprefix("W/") for tag in request.headers.get("if-none-match", "").split(",")}
+        if etag in wanted or "*" in wanted:
+            return Response(status_code=304, headers=headers)
+        return Response(data, media_type=ASSETS[path.suffix], headers=headers)
 
     # -- JSON API --------------------------------------------------------------
 

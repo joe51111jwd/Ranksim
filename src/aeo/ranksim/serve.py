@@ -560,10 +560,12 @@ class GuardMiddleware:
                     (b"x-content-type-options", b"nosniff"),
                     (b"referrer-policy", b"no-referrer"),
                     (b"x-frame-options", b"DENY"),
-                    (b"cache-control", b"no-store"),
                 ]
+                own = list(message.get("headers") or [])
+                if not any(key.lower() == b"cache-control" for key, _value in own):
+                    extra.append((b"cache-control", b"no-store"))  # a route that set its own (Studio assets) keeps it
                 message = dict(message)
-                message["headers"] = list(message.get("headers") or []) + extra
+                message["headers"] = own + extra
             await send(message)
 
         if scope.get("method") in {"POST", "PUT", "PATCH"}:

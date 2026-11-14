@@ -7,6 +7,7 @@ import re
 import pytest
 from fastapi.testclient import TestClient
 
+from aeo.ranksim import studio
 from aeo.ranksim import workspace as ws
 from aeo.ranksim.serve import create_app
 from tests.test_workspace import QUERY, make_settings
@@ -43,7 +44,7 @@ def test_shell_is_served_at_root_and_app_paths_with_its_own_policy(local):
     for path in ("/", "/app", f"/app/{ws.DEMO_SLUG}", f"/app/{ws.DEMO_SLUG}/studio", f"/app/{ws.DEMO_SLUG}/rankings"):
         page = client.get(path)
         assert page.status_code == 200, path
-        assert '<script src="/studio/studio.js?v=' in page.text and "<script>" not in page.text
+        assert '<script type="module" src="/studio/js/app.js"></script>' in page.text and "<script>" not in page.text
         assert not any(dash in page.text for dash in DASHES)
         csp = page.headers["content-security-policy"]
         assert "default-src 'self'" in csp and "script-src 'self'" in csp and "frame-ancestors 'none'" in csp
@@ -57,14 +58,119 @@ def test_shell_is_served_at_root_and_app_paths_with_its_own_policy(local):
 def test_assets_are_served_and_versioned(local):
     client = local["client"]
     page = client.get("/").text
-    version = re.search(r"studio\.css\?v=([0-9a-f]+)", page).group(1)
-    assert re.search(rf"studio\.js\?v={version}", page)
-    css = client.get("/studio/studio.css")
-    js = client.get("/studio/studio.js")
-    assert css.status_code == 200 and css.headers["content-type"].startswith("text/css")
-    assert js.status_code == 200 and "javascript" in js.headers["content-type"]
-    assert client.get("/studio/studio.html").status_code == 404
-    assert client.get("/studio/../serve.py").status_code == 404
+    sheets = re.findall(r'<link rel="stylesheet" href="([^"]+)">', page)
+    assert sheets and re.fullmatch(r"/studio/css/base\.css\?v=[0-9a-f]{10}", sheets[0])  # the design tokens load first
+    assert all(re.fullmatch(r"/studio/css/[a-z0-9._/-]+\.css\?v=[0-9a-f]{10}", href) for href in sheets)
+    modules = re.findall(r'<script type="module" src="([^"]+)"></script>', page)
+    preloads = re.findall(r'<link rel="modulepreload" href="([^"]+)">', page)
+    assert modules[0] == "/studio/js/app.js" and "/studio/js/core.js" in preloads and "/studio/js/hooks.js" in preloads
+    # a module is keyed by its URL: a query string would load a second copy of core.js and its state
+    assert not any("?" in src for src in modules + preloads)
+    for href in sheets + modules + preloads:
+        served = client.get(href)
+        assert served.status_code == 200, href
+    for name, kind in (("css/base.css", "text/css"), ("js/app.js", "javascript"), ("js/editor/editor.js", "javascript"), ("fonts/sans.woff2", "font/woff2"), ("fonts/mono.woff2", "font/woff2")):
+        served = client.get(f"/studio/{name}")
+        assert served.status_code == 200 and kind in served.headers["content-type"], name
+    assert "/studio/fonts/sans.woff2" in client.get("/studio/css/base.css").text
+    version = re.search(r"base\.css\?v=([0-9a-f]+)", page).group(1)
+    assert version == studio._asset_version([studio.STATIC / "css" / "base.css"])
+
+
+def test_assets_revalidate_with_an_etag_and_never_go_stale(local):
+    client = local["client"]
+    first = client.get("/studio/js/core.js")
+    assert first.status_code == 200 and first.headers["cache-control"] == "no-cache" and first.headers["etag"]
+    again = client.get("/studio/js/core.js", headers={"if-none-match": first.headers["etag"]})
+    assert again.status_code == 304 and again.content == b"" and again.headers["etag"] == first.headers["etag"]
+    assert client.get("/studio/js/core.js", headers={"if-none-match": '"stale"'}).status_code == 200
+    assert client.get("/studio/js/hooks.js").headers["etag"] != first.headers["etag"]
+    # pages and the API still say no-store
+    assert client.get("/").headers["cache-control"] == "no-store"
+    assert client.get("/api/v1/projects").headers["cache-control"] == "no-store"
+
+
+def test_asset_route_refuses_traversal_and_unknown_files(local):
+    client = local["client"]
+    for bad in (
+        "/studio/studio.html",
+        "/studio/js/plugins/README.md",
+        "/studio/fonts/FONTS.md",
+        "/studio/../serve.py",
+        "/studio/..%2fserve.py",
+        "/studio/%2e%2e/serve.py",
+        "/studio/js/../../studio.py",
+        "/studio/js/%2e%2e/%2e%2e/studio.py",
+        "/studio/css/..%2f..%2fstudio.py",
+        "/studio/js/.hidden.js",
+        "/studio/js//core.js",
+        "/studio/js\\core.js",
+        "/studio/%2fetc/passwd",
+        "/studio/js/core.js%00.css",
+        "/studio/js/core.JS",
+        "/studio/js/missing.js",
+        "/studio/",
+    ):
+        refused = client.get(bad)
+        assert refused.status_code == 404, bad
+        assert "javascript" not in refused.headers.get("content-type", "") and "import " not in refused.text, bad
+    assert client.get("/studio/js/core.js").status_code == 200
+
+
+def test_shell_lists_every_plugin_script_and_stylesheet(local, tmp_path, monkeypatch):
+    client = local["client"]
+    js, css = tmp_path / "js", tmp_path / "css"
+    js.mkdir()
+    css.mkdir()
+    (js / "zeta.js").write_text("import { on } from '../hooks.js';\n", encoding="utf-8")
+    (js / "alpha.js").write_text("export const alpha = 1;\n", encoding="utf-8")
+    (js / ".hidden.js").write_text("bad", encoding="utf-8")
+    (js / "notes.md").write_text("notes", encoding="utf-8")
+    (js / "has space.js").write_text("bad", encoding="utf-8")
+    (css / "alpha.css").write_text(".alpha-tile { color: var(--blue); }\n", encoding="utf-8")
+    (css / "notes.txt").write_text("notes", encoding="utf-8")
+    monkeypatch.setattr(studio, "PLUGIN_JS", js)
+    monkeypatch.setattr(studio, "PLUGIN_CSS", css)
+    page = client.get("/").text
+    modules = re.findall(r'<script type="module" src="([^"]+)"></script>', page)
+    assert modules == ["/studio/js/app.js", "/studio/js/plugins/alpha.js", "/studio/js/plugins/zeta.js"]  # app first, then sorted
+    sheets = re.findall(r'<link rel="stylesheet" href="([^"?]+)\?v=[0-9a-f]+">', page)
+    assert sheets[0] == "/studio/css/base.css" and sheets[-1] == "/studio/css/plugins/alpha.css"
+    assert ".hidden.js" not in page and "notes." not in page and "has space" not in page
+    served = client.get("/studio/js/plugins/alpha.js")
+    assert served.status_code == 200 and served.text == "export const alpha = 1;\n" and "javascript" in served.headers["content-type"]
+    assert client.get("/studio/css/plugins/alpha.css").headers["content-type"].startswith("text/css")
+    for bad in ("/studio/js/plugins/.hidden.js", "/studio/js/plugins/notes.md", "/studio/css/plugins/notes.txt", "/studio/js/plugins/../zeta.js"):
+        assert client.get(bad).status_code == 404, bad
+    # a new file shows up on the next page load, with no restart
+    (js / "beta.js").write_text("export {};\n", encoding="utf-8")
+    assert "/studio/js/plugins/beta.js" in client.get("/").text
+
+
+def test_shell_works_without_plugin_folders(local, tmp_path, monkeypatch):
+    monkeypatch.setattr(studio, "PLUGIN_JS", tmp_path / "none-js")
+    monkeypatch.setattr(studio, "PLUGIN_CSS", tmp_path / "none-css")
+    page = local["client"].get("/")
+    assert page.status_code == 200 and "/studio/js/plugins/" not in page.text and "/studio/css/plugins/" not in page.text
+
+
+def test_print_stylesheet_applies_only_when_printing(local, tmp_path, monkeypatch):
+    import shutil
+
+    static = tmp_path / "static"
+    shutil.copytree(studio.STATIC, static)
+    (static / "css" / "print.css").write_text(".foot { display: none; }\n", encoding="utf-8")
+    (static / "css" / "plugins" / "share.css").write_text("@media print { .share-x { display: none; } }\n", encoding="utf-8")
+    monkeypatch.setattr(studio, "STATIC", static)
+    monkeypatch.setattr(studio, "PLUGIN_JS", static / "js" / "plugins")
+    monkeypatch.setattr(studio, "PLUGIN_CSS", static / "css" / "plugins")
+    page = local["client"].get("/").text
+    links = re.findall(r"<link rel=\"stylesheet\"[^>]*>", page)
+    printed = [link for link in links if "/studio/css/print.css?v=" in link]
+    assert printed and all(link.endswith(' media="print">') for link in printed)
+    assert all("media=" not in link for link in links if link not in printed)
+    assert any("/studio/css/plugins/share.css?v=" in link for link in links)
+    assert local["client"].get("/studio/css/print.css").status_code == 200
 
 
 def test_classic_home_moved_to_projects_and_old_demo_link_still_redirects(local):

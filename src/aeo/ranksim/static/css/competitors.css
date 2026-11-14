@@ -1,0 +1,4 @@
+/* Competitors: the share bar under each site.
+   Owned with js/screens/competitors.js: the session that owns that module edits this file. */
+
+.barwrap { margin-top: 8px; }

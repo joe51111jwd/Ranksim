@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import html as htmllib
+import re
 import time
 import unicodedata
 from typing import Callable
@@ -271,8 +272,18 @@ class Publisher:
             state["changes"] = [{k: row.get(k) for k in ("field", "label", "before", "after")} for row in state["plan"]["rows"]]
         return state
 
-    def publish(self, url: str, html: str, connection_id: str, *, confirm: list[str] | None = None, options: dict | None = None) -> dict:
+    def publish(
+        self,
+        url: str,
+        html: str,
+        connection_id: str,
+        *,
+        confirm: list[str] | None = None,
+        options: dict | None = None,
+        fixes: list | None = None,
+    ) -> dict:
         self._check_inputs(url, html)
+        self._fixes = clean_fixes(fixes)
         record = self.require_ownership(url)
         connection = self._connection(connection_id)
         if not (own.site_key(url) == connection["domain"] or own.site_key(url).endswith("." + connection["domain"])):
@@ -332,6 +343,7 @@ class Publisher:
             "expected": {field: parts(html, connector.regions()).value(field) for field in prepared.applied_fields()},
             "regions": connector.regions(),
             "can_rollback": prepared.can_rollback,
+            "fixes": getattr(self, "_fixes", []),
             "verify": None,
             "rolled_back_at": None,
         }
@@ -433,6 +445,26 @@ class Publisher:
         entry["rollback"] = {"who": self.who, "at": entry["rolled_back_at"], **result}
         self.store.put_history(entry)
         return public_history(entry)
+
+
+FIX_ID = re.compile(r"^[a-z0-9][a-z0-9-]{0,119}$")
+
+
+def clean_fixes(fixes) -> list[dict]:
+    """Issues the editor applied a suggestion for ({id, title} from the audit), kept on the history entry so a live
+    publish can mark them done. Anything that is not that shape is dropped."""
+    found, seen = [], set()
+    for fix in fixes or []:
+        if not isinstance(fix, dict):
+            continue
+        fix_id = str(fix.get("id") or "").strip()
+        if not FIX_ID.match(fix_id) or fix_id in seen:
+            continue
+        seen.add(fix_id)
+        found.append({"id": fix_id, "title": " ".join(str(fix.get("title") or "").split())[:160]})
+        if len(found) >= 50:
+            break
+    return found
 
 
 def guarded(call, status: int, *, prefix: str = ""):

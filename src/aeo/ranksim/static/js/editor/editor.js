@@ -95,7 +95,7 @@ export function exportOf(draft) {
 /* Plain words diff against the page as loaded (diff.js). */
 export function diffOf(draft) {
   const rs = modelOf(draft);
-  if (!rs) return { changes: [], counts: { changed: 0, added: 0, removed: 0, moved: 0 }, total: 0 };
+  if (!rs) return { changes: [], counts: { changed: 0, added: 0, removed: 0, moved: 0 }, total: 0, summary: 'No changes yet.' };
   return diffBlocks(rs.base, rs.text);
 }
 

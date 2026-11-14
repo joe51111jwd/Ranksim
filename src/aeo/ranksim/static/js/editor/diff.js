@@ -178,7 +178,7 @@ export function diffBlocks(baseHtml, draftHtml, { all = false } = {}) {
     emitRemoved(i);
   });
   for (const anchor of [...removedAfter.keys()]) emitRemoved(anchor);
-  return { changes, counts, total: counts.changed + counts.added + counts.removed + counts.moved };
+  return { changes, counts, total: counts.changed + counts.added + counts.removed + counts.moved, summary: summary(counts) };
 }
 
 /* One plain sentence for the top of the diff view. */

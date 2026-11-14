@@ -20,6 +20,7 @@ test('an untouched page has no changes', () => {
   const d = diffBlocks(base, base);
   assert.equal(d.total, 0);
   assert.equal(summary(d.counts), 'No changes yet.');
+  assert.equal(d.summary, 'No changes yet.');
 });
 
 test('changed, added, removed and moved blocks read plainly', () => {

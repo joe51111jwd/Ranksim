@@ -672,11 +672,10 @@ def test_weekly_prefers_tracking_history_and_lists_what_is_next(env, monkeypatch
     }
     fake = types.ModuleType("aeo.ranksim.plugins.tracking")
     fake.build_history = lambda project, meta=None: full
-    monkeypatch.setitem(sys.modules, "aeo.ranksim.plugins.tracking", fake)
-    import aeo.ranksim.plugins as plugin_package
+    import aeo.ranksim.plugins as plugin_pkg
 
-    # once the real tracking plugin is loaded, "from aeo.ranksim.plugins import tracking" reads the package attribute
-    monkeypatch.setattr(plugin_package, "tracking", fake, raising=False)
+    monkeypatch.setitem(sys.modules, "aeo.ranksim.plugins.tracking", fake)
+    monkeypatch.setattr(plugin_pkg, "tracking", fake, raising=False)
     report = {
         "rankings": [{"q": "vinyl fence installation cost"}],
         # the compact form in the report has no dates and must not be read as dated points
@@ -707,6 +706,7 @@ def test_weekly_prefers_tracking_history_and_lists_what_is_next(env, monkeypatch
     assert share._tracking_history(project) is None
     assert share.weekly_summary(project, report, issues, changes, now=now)["moves"] == []
     monkeypatch.setitem(sys.modules, "aeo.ranksim.plugins.tracking", None)
+    monkeypatch.setattr(plugin_pkg, "tracking", None, raising=False)
     assert share._tracking_history(project) is None
     assert share._history_observations("not a dict") == {} and share._history_observations({"searches": "x"}) == {}
     assert share._history_observations(report["history"]) == {}
@@ -719,3 +719,51 @@ def test_published_edits_from_other_plugins_reach_the_weekly_summary(env):
     assert "Published new title on /widgets" in [item["summary"] for item in data["weekly"]["done"]]
     assert next(row for row in data["changes"] if row["summary"] == "Published new title on /widgets")["label"] == "Site update"
     assert "WordPress post 12" not in json.dumps(data)
+
+
+def test_publish_and_rollback_reach_owner_log_and_client_weekly_through_both_plugins(env):
+    """The real publish plugin's change log call, into the real share plugin, out through the owner API and /r/."""
+    publish = pytest.importorskip("aeo.ranksim.plugins.publish")
+    client = env["client"]
+    project = env["ui"].project(env["demo"])
+    entry = {
+        "id": "pub-e2e-1",
+        "url": "https://www.northwind-fencing.example/resources/vinyl-fence-installation-cost/",
+        "rows": [{"label": "Title", "apply": True}, {"label": "Main heading", "apply": True}, {"label": "Meta description", "apply": False}],
+        "connection": {"kind": "wordpress", "id": "conn-SECRET-ID"},
+        "verify": {"status": "live"},
+        "status": "published",
+    }
+    publish.log_change(project, entry, rollback=False)
+    publish.log_change(project, entry, rollback=False)  # a retried request logs once
+    publish.log_change(project, entry, rollback=True)
+    published = "Published changes to /resources/vinyl-fence-installation-cost/: title, main heading."
+    rolled = "Rolled back the published change to /resources/vinyl-fence-installation-cost/."
+
+    owner = client.get(f"/api/v1/projects/{env['demo']}/changelog").json()["entries"]
+    mine = [row for row in owner if row["kind"] == "publish" and row["summary"] in {published, rolled}]
+    assert sorted(row["summary"] for row in mine) == sorted([published, rolled])
+    assert all(row["detail"] == "wordpress, live check: live" and row["public"] for row in mine)
+
+    data = client.get(_link(env)["path"] + "/data").json()
+    done = [item for item in data["weekly"]["done"] if item["summary"] in {published, rolled}]
+    assert sorted(item["summary"] for item in done) == sorted([published, rolled])
+    assert all(item["label"] == "Site update" for item in done)
+    shown = [row for row in data["changes"] if row["summary"] in {published, rolled}]
+    assert len(shown) == 2 and all(set(row) == {"at", "date", "kind", "label", "summary"} for row in shown)
+    blob = json.dumps(data)
+    assert "live check" not in blob and "wordpress" not in blob and "conn-SECRET-ID" not in blob and "pub-e2e-1" not in blob
+
+
+def test_weekly_runs_with_the_real_tracking_plugin(env):
+    tracking = pytest.importorskip("aeo.ranksim.plugins.tracking")
+    project = env["ui"].project(env["demo"])
+    full = share._tracking_history(project)
+    assert full is None or isinstance(full, dict)
+    history = tracking.build_history(project)
+    assert isinstance(history.get("searches"), list)
+    observations = share._history_observations(history)
+    for search, points in observations.items():
+        assert isinstance(search, str) and all(point[0].tzinfo is not None for point in points)
+    weekly = env["client"].get(_link(env)["path"] + "/data").json()["weekly"]
+    assert isinstance(weekly["moves"], list) and weekly["moves_note"] or weekly["moves"]

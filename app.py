@@ -97,33 +97,27 @@ DATABASE = f"sqlite:///{DATA / 'rank.db'}"
 _deployment = os.environ.get("VERCEL_DEPLOYMENT_ID") or os.environ.get("VERCEL_GIT_COMMIT_SHA") or "ranksim-hosted"
 CSRF = hashlib.sha256(f"ranksim-csrf:{_deployment}:{os.environ.get('RANKSIM_SECRET', '')}".encode()).hexdigest()[:43]
 
-def _login_store():
-    """Where failed logins and "sign out everywhere" markers are shared by every instance of this deployment.
-
-    The private Vercel Blob store when it is connected; otherwise a folder under DATA (one machine's instances share
-    it). None if neither can be set up, which leaves the per-instance in-memory limits."""
-    try:
-        if os.environ.get("BLOB_READ_WRITE_TOKEN"):
-            from aeo.ranksim.objects import BlobStore
-
-            return BlobStore()
-        from aeo.ranksim.objects import DirStore
-
-        return DirStore(DATA / "objects")
-    except Exception as exc:  # noqa: BLE001 - login must keep working without a shared store
-        print(f"ranksim: login limits stay per instance: {type(exc).__name__}", file=sys.stderr, flush=True)
-        return None
-
-
 def _share_login_state(built) -> None:
-    """create_app builds its own Access without a store; swap in one that shares rate limits and revocations.
+    """create_app builds its own Access without shared state; swap in one that every instance agrees with.
 
-    The Studio routes and middleware read ui.access on every request, so replacing it on app.state.ui is enough.
-    The password and secret are the same, so the signing key and every issued cookie stay the same."""
+    On Vercel (cloud storage on) a global lockout and "sign out everywhere" live in the storage manifest each instance
+    already reads, so a login costs no Blob operation (Hobby caps them). Off Vercel a folder under DATA is shared by
+    one machine's processes. The password and secret are the same, so the signing key and every cookie stay the same.
+    """
     from aeo.ranksim.access import Access
 
     ui = built.state.ui
-    ui.access = Access(PASSWORD, os.environ.get("RANKSIM_SECRET") or None, store=_login_store())
+    secret = os.environ.get("RANKSIM_SECRET") or None
+    cloud = getattr(ui, "cloud", None)
+    if cloud is not None and cloud.enabled:
+        ui.access = Access(PASSWORD, secret, shared=cloud)
+        return
+    try:
+        from aeo.ranksim.objects import DirStore
+
+        ui.access = Access(PASSWORD, secret, store=DirStore(DATA / "objects"))
+    except Exception as exc:  # noqa: BLE001 - login must keep working without a shared store
+        print(f"ranksim: login limits stay per instance: {type(exc).__name__}", file=sys.stderr, flush=True)
 
 
 def _build():

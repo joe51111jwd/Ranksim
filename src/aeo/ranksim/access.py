@@ -48,6 +48,7 @@ BACKOFF_GLOBAL_AFTER = 50
 BACKOFF_BASE_SECONDS = 60
 BACKOFF_MAX_SECONDS = 3600
 REVOKE_CACHE_SECONDS = 10.0
+LOCK_PUBLISH_SECONDS = 300.0
 PRUNE_EVERY_SECONDS = 60.0
 
 FAIL_PREFIX = "ranksim/v2/auth/fail/"
@@ -69,14 +70,20 @@ def _client_of(name: str) -> str:
 
 
 class Access:
-    def __init__(self, password: str | None, secret: str | None = None, *, store=None, clock=None) -> None:
+    def __init__(self, password: str | None, secret: str | None = None, *, store=None, clock=None, shared=None) -> None:
         self.password = (password or "").strip()
         self.enabled = bool(self.password)
         seed = f"ranksim-session|{secret or ''}|{self.password}"
         self._key = hashlib.sha256(seed.encode("utf-8")).digest()
         # A separate key for client hashes, so a stored hash cannot be matched against guessed IPs without the secret.
         self._client_key = hashlib.sha256(f"ranksim-client|{secret or ''}|{self.password}".encode("utf-8")).digest()
-        self.store = store
+        # store: an object store for failure records and revocation markers (local runs, tests). shared: the cloud
+        # state (cloud.CloudState) on a hosted app, where Blob operations are budgeted: failures are then counted in
+        # memory, and only a global lockout and a revocation go to storage, inside the manifest every instance reads
+        # anyway. So a flood of wrong passwords costs at most one storage write per LOCK_PUBLISH_SECONDS.
+        self.store = store if shared is None else None
+        self.shared = shared
+        self._published_lock = 0.0
         self._clock = clock or time.time
         self._lock = threading.Lock()
         self._failures: list[tuple[float, str, str | None]] = []  # (time, client hash, stored name or None)
@@ -107,6 +114,9 @@ class Access:
             return 0
         now = self._clock()
         left = _lockout_left(self._recent_failures(now), self._client_hash(client), now)
+        if self.shared is not None:
+            shared_until = float((getattr(self.shared, "auth", {}) or {}).get("lock_until") or 0)
+            left = max(left, shared_until - now)
         return int(left) + (1 if left % 1 else 0)
 
     def _client_hash(self, client: str | None) -> str:
@@ -127,6 +137,8 @@ class Access:
         with self._lock:
             self._failures = [item for item in self._failures if now - item[0] < BACKOFF_WINDOW_SECONDS]
             self._failures.append((now, client_hash, name))
+        if self.shared is not None:
+            self._publish_lockout(now)
         if name is not None:
             self._maybe_prune(now)
 
@@ -166,6 +178,17 @@ class Access:
         except Exception:  # noqa: BLE001 - pruning is best effort
             return
 
+    def _publish_lockout(self, now: float) -> None:
+        """When this instance locks everyone out, tell the other instances through the manifest (rate limited)."""
+        left = _lockout_left(self._recent_failures(now), "", now)
+        if left <= 0 or now - self._published_lock < LOCK_PUBLISH_SECONDS:
+            return
+        self._published_lock = now
+        try:
+            self.shared.update_auth(lock_until=now + left)
+        except Exception:  # noqa: BLE001 - fail safe: this instance's own limit still applies
+            pass
+
     # -- session cookies --------------------------------------------------------------------------
 
     def issue(self, now: float | None = None) -> str:
@@ -204,6 +227,12 @@ class Access:
         name = _stamped_name(REVOKED_PREFIX, now)
         with self._lock:
             self._revoked_ms = max(self._revoked_ms, _marker_ms(name))
+        if self.shared is not None:
+            try:
+                self.shared.update_auth(revoked_ms=self._revoked_ms)
+            except Exception:  # noqa: BLE001
+                return False
+            return True
         if self.store is None:
             return True
         try:
@@ -213,7 +242,11 @@ class Access:
         return True
 
     def _revoked_since(self, now: float) -> int:
-        """Newest revocation time in ms (0 when none). Lists the store at most once per REVOKE_CACHE_SECONDS."""
+        """Newest revocation time in ms (0 when none). Lists the store at most once per REVOKE_CACHE_SECONDS; with a
+        shared cloud state it reads the manifest that instance already holds (no storage call)."""
+        if self.shared is not None:
+            shared_ms = int((getattr(self.shared, "auth", {}) or {}).get("revoked_ms") or 0)
+            return max(self._revoked_ms, shared_ms)
         if self.store is None:
             return self._revoked_ms
         with self._lock:

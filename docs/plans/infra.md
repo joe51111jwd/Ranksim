@@ -98,3 +98,15 @@ against a local server.
 
 ## Owner actions
 None required for storage or jobs: the existing `BLOB_READ_WRITE_TOKEN` is used. Optional `RANKSIM_JOB_BUDGET_SECONDS`.
+
+## Status (phase B done)
+- Analyze and pull are jobs (`api/sites.py`), keyed `site:<domain>`. The NDJSON stream is unchanged apart from a
+  `job` id on the start line and a `paused` line; posting again resumes. New routes: `GET /api/v1/jobs`,
+  `GET /api/v1/jobs/{id}?cursor=N`, `POST /api/v1/jobs/{id}/resume`.
+- A paused job keeps Google's answers in its checkpoint and stores pages already fetched, so a resume asks Google
+  once and fetches each page once. A resumed analysis skips the site read.
+- Not paused mid-step: the site read (about 30 pages) and model training. A very slow site read could still reach
+  the 300 s limit; the job then shows as stalled after 45 s and the next post takes it over from its checkpoint.
+- After a refresh the progress timer restarts from the refresh (cosmetic, `js/app.js`).
+- Browser check (Playwright, local server, slow fake sites): two sites analyzed at once, no 409; a refresh
+  mid-analysis reattached and finished; a paused analysis was re-posted by the app and finished.

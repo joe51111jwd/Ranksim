@@ -169,10 +169,30 @@ intercepted: not set up state with steps and redirect URI, toggle on, consent re
 offline access and consent prompt, callback, Settings totals and property picker, Overview tile, Searches column,
 phone width (390 px, no horizontal scroll), disconnect. No console errors.
 
+## Phase C additions
+
+- **Signed out at the callback.** `/api/v1/gsc/callback` is `login_exempt`. It still checks the sealed state and the
+  nonce cookie first (the session binding only when signed in). Signed out, it parks `{code, state}` sealed in the
+  HttpOnly cookie `rs_gsc_pending` (path `/api/v1/gsc`, expires with the state) and redirects to
+  `/app/<slug>/settings?gsc=signin`. After sign in, Settings calls `POST /api/v1/gsc/resume` (login and CSRF
+  required), which rechecks the state and nonce and finishes. Single use.
+- **First analysis.** `discovery_sources` with `project=None` (a new site) matches the site's host against the
+  account's properties, loads the snapshot, returns its queries, and parks it under `_plugins/gsc/pending/` for an
+  hour. `after_pull` then turns GSC on for a project that has no GSC settings yet when Google is connected (adopting
+  the parked data, or matching the property now). A project the owner turned off stays off.
+- **Searches column** is hidden until GSC has data: columns may define `when(report)`, honored by one line in
+  `js/screens/searches.js` (shared file).
+- **Opportunities** in `report["gsc"]["opportunities"]`: `near_page_one` (searches with at least max(20, 1% of total
+  impressions) impressions at average position 8 to 20, with the page that gets most of their impressions) and
+  `low_ctr` (pages on page one with that many impressions and under half a typical CTR for their position; the
+  typical curve is a rough benchmark and labeled as not Google data). Shown on an Overview tile (order 16), a
+  `gsc` screen (`/app/<slug>/gsc`, linked from the tile) with Open in editor and Track buttons, and a "Positions 8 to 20
+  one" mark in the Searches column. Labels: "Positions 8 to 20" and "Seen but not clicked" (benchmark CTR labeled not
+  Google data). Automatic matching (first analysis, new projects) never picks a parent domain property; a project
+  with no match is rechecked once a day. Parked first-analysis data older than an hour is deleted.
+
 ## Known gaps
 
 - One Google account per Ranksim. A client whose property lives under a different Google account must add James's
   account as a user in Search Console (the normal agency setup).
-- The callback answers a JSON 401 when the owner is signed out at the moment Google redirects back (the login
-  middleware handles `/api/` paths that way). Rare; signing in and starting again works.
 - Only web search type, final data, 1000 rows per dimension set. Capped flags say when more rows exist.

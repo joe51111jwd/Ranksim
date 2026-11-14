@@ -916,3 +916,68 @@ def test_fix_suggestions_read_naturally():
     long_meta = "SmartCrew runs crews, machines and job cost for dirt work companies of 5 to 100 people. It replaces paper timecards. Plans start at $49 per month with a free trial."
     meta = only(run({f"{SITE}/m/": page(meta=long_meta)}), "meta-long")[0]
     assert "$49" in meta["suggestion"] and len(meta["suggestion"]) <= A.META_TARGET
+
+
+# -- the audit cache (fast first report on a fresh server) ---------------------------------------------
+
+
+def _cache_project(tmp_path):
+    from types import SimpleNamespace
+
+    folder = tmp_path / "proj"
+    folder.mkdir()
+    return SimpleNamespace(dir=folder, slug="shovel", name="Shovel", domain="shovel.example", site="www.shovel.example", searches=[], is_our_url=lambda url: "shovel.example" in url)
+
+
+def _fixture_site():
+    pages = {
+        f"{SITE}/": page(title="Shovel", meta=""),
+        f"{SITE}/haul/": page(title="Haul ticket app for dirt work | Shovel", body=f"<main><h1>Haul tickets</h1><p>{FILLER}</p><img src='/i/excavator-crew-dashboard.png'></main>"),
+        f"{SITE}/thin/": page(body="<main><h1>Short</h1><p>Only a few words here.</p></main>"),
+    }
+    return [A.PageDoc(url, html.replace("{url}", url)) for url, html in pages.items()]
+
+
+def test_the_disk_cache_returns_identical_issues_without_parsing(tmp_path, monkeypatch):
+    project = _cache_project(tmp_path)
+    rows = [_row("haul ticket app", f"{SITE}/haul/", 6, RIVALS + [f"{SITE}/haul/"])]
+    docs = {url: _rival(1500, table=True, faq=True) for url in RIVALS}
+
+    from aeo.ranksim.site import page_facts
+
+    own = _fixture_site()
+    html = {doc.url: doc.html for doc in own} | docs
+    facts = [page_facts(doc.url, doc.html) for doc in own]  # what build_report passes: stored rows plus their HTML
+    doc_facts = {url: page_facts(url, text) for url, text in docs.items()}
+
+    def fresh():
+        return A.AuditContext(project, facts, rows, doc_facts, html=html)
+
+    A._CACHE.clear()
+    first = A.run_audit(fresh())
+    assert (project.dir / "plugins" / "audit" / "issues.json").exists()
+    A._CACHE.clear()  # a fresh server: nothing in memory, the file on disk
+
+    def no_parse(self):
+        raise AssertionError("a cached audit parsed a page")
+
+    monkeypatch.setattr(A.PageDoc, "soup", property(no_parse))
+    second = A.run_audit(fresh())
+    assert second == first
+
+
+def test_the_cache_key_ignores_the_models_guess_and_follows_the_code(tmp_path, monkeypatch):
+    project = _cache_project(tmp_path)
+    rows = [_row("haul ticket app", f"{SITE}/haul/", 6, [f"{SITE}/haul/"])]
+    with_guess = [dict(rows[0], predicted={"position": 3, "of": 10})]
+    key = A._cache_key(A.AuditContext(project, _fixture_site(), rows, {}, html={}))
+    assert key == A._cache_key(A.AuditContext(project, _fixture_site(), with_guess, {}, html={}))
+    monkeypatch.setattr(A, "AUDIT_VERSION", "other-code")
+    assert key != A._cache_key(A.AuditContext(project, _fixture_site(), rows, {}, html={}))
+
+
+def test_a_pull_warms_the_audit_cache():
+    from aeo.ranksim.plugins import audit_cache
+
+    assert callable(audit_cache.after_pull)
+    audit_cache.after_pull(project=None, report=None, ui=None)  # nothing to warm: never raises

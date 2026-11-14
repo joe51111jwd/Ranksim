@@ -378,7 +378,7 @@ def guidance(
                 "label": FEATURE_TEXT.get(name, name),
                 "gain": round(weight * gap, 4),
                 "yours": _display(name, mine, raw_draft),
-                "above": _display(name, target, None, raw_above),
+                "above": _display(name, target, None),
                 "text": _advice(name, mine, target, len(above), values, raw_draft, raw_above),
             }
         )
@@ -427,11 +427,11 @@ def _advice(name: str, mine: float, target: float, count: int, values: list[floa
         return f"Cover the terms the ranking pages share. The {pages} cover more of them."
     if name == "words":
         yours = _display("words", mine, raw)
-        theirs = _display("words", target, None, raw_list)
+        theirs = _display("words", target, None)
         return f"Add depth. You have {yours} words. The {pages} have about {theirs}."
     if name == "headings":
         yours = _display("headings", mine, raw)
-        theirs = _display("headings", target, None, raw_list)
+        theirs = _display("headings", target, None)
         return f"Break the page into sections. You have {yours} subheadings. The {pages} have about {theirs}."
     if name == "has_table":
         return f"Add a table. {have} of the {pages} have one."
@@ -441,7 +441,7 @@ def _advice(name: str, mine: float, target: float, count: int, values: list[floa
         return f"Add structured data (schema.org JSON-LD). {have} of the {pages} have it."
     if name == "links":
         yours = _display("links", mine, raw)
-        theirs = _display("links", target, None, raw_list)
+        theirs = _display("links", target, None)
         return f"Link to more related pages. You have {yours} links. The {pages} have about {theirs}."
     return f"Close the gap on {FEATURE_TEXT.get(name, name)}."
 

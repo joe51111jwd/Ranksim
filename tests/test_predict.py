@@ -242,3 +242,22 @@ def test_fit_pairwise_learns_the_sign_and_entrants_start_lower():
 def test_term_match_joins_split_words():
     assert term_match("all in one dirtwork software", "All-in-one dirt work software") >= 0.8
     assert term_match("hcss alternative", "Company blog") == 0.0
+
+
+def test_unknown_searches_are_refused(ctx):
+    with pytest.raises(predict_service.PredictError):
+        predict_service.test_searches(ctx, page("x", "x", 100, body_terms="hcss"), "https://ours.example/x", searches=["not a project search"])
+
+
+def test_backtest_hides_the_held_out_family_from_site_features(ctx, monkeypatch):
+    seen = []
+    real = predict_service._groups
+
+    def spy(items, rows):
+        seen.append({row[0] for row in rows})
+        return real(items, rows)
+
+    monkeypatch.setattr(predict_service, "_groups", spy)
+    predict_service.build_predictor(ctx)
+    assert seen[0] == set(SEARCHES)  # the final model sees everything
+    assert all(len(rows) < len(SEARCHES) for rows in seen[1:])  # each fold hides its family

@@ -231,7 +231,7 @@ export function shareBars(share, { width = 560, limit = 8, rowHeight = 28, label
     const part = total ? Math.round((row.slots / total) * 100) : 0;
     kids.push(el('g', { class: `rc-row${row.you ? ' rc-is-you' : ''}` },
       el('title', null, text(`${name}: ${plural(row.slots, 'top 10 spot')}, ${part}% of all spots${row.average != null ? `, average #${row.average}` : ''}`)),
-      el('text', { class: row.you ? 'rc-text rc-bold' : 'rc-text', x: label, y: r1(y + rowHeight / 2 + 4), 'text-anchor': 'end' }, text(clip(name, label))),
+      el('text', { class: row.you ? 'rc-text rc-bold' : 'rc-text', x: label, y: r1(y + rowHeight / 2 + 4), 'text-anchor': 'end' }, text(clip(row.domain, label))),
       el('rect', { class: cls, x: plotX, y: r1(y + rowHeight / 2 - 6), width: r1(barW), height: 12, rx: 6 }),
       el('text', { class: 'rc-value', x: r1(plotX + barW + 8), y: r1(y + rowHeight / 2 + 4) }, text(`${row.slots} · ${part}%`))));
   });

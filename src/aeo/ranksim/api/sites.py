@@ -62,6 +62,16 @@ def registry(ui) -> JobRegistry:
     return reg
 
 
+def local_registry(ui) -> JobRegistry:
+    """Jobs that only this instance needs to know about (a report build): no storage lock, no stored record, so they
+    cost no Blob operation. Another instance asking for the same report builds or reads its own."""
+    reg = getattr(ui, "local_job_registry", None)
+    if reg is None:
+        reg = JobRegistry(None, scrub=ui.scrub, frugal=False)
+        ui.local_job_registry = reg
+    return reg
+
+
 class _Events:
     """The queue-like object the analysis and pull code put events on, writing them to the job instead."""
 
@@ -235,6 +245,10 @@ def register(app: FastAPI, ui) -> None:
             return analyze_work(str(params.get("site") or ""), params.get("searches"))
         if record.get("kind") == "pull":
             return pull_work(str(params.get("slug") or ""), bool(params.get("google")))
+        if record.get("kind") == "report":
+            from aeo.ranksim.api.projects import report_work
+
+            return report_work(ui, str(params.get("slug") or ""))
         return None
 
     @app.get("/api/v1/jobs")
@@ -253,7 +267,9 @@ def register(app: FastAPI, ui) -> None:
         if not valid_job_id(job_id):
             return _error(404, "No such job.")
         try:
-            view = registry(ui).events_since(job_id, cursor)
+            view = local_registry(ui).events_since(job_id, cursor) if local_registry(ui)._local(job_id) else None
+            if view is None:
+                view = registry(ui).events_since(job_id, cursor)
         except StoreError as exc:
             return _store_error(exc)
         if view is None:

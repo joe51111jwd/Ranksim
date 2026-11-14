@@ -181,6 +181,61 @@ def project_overview(ui, slug: str) -> dict:
     return data
 
 
+REPORT_WAIT_SECONDS = 25.0
+PERSIST_IF_SLOWER_SECONDS = 5.0  # a build this slow is saved to cloud storage at once, so other instances reuse it
+
+
+def cached_report(ui, slug: str) -> dict | None:
+    """The cached report when it matches the project's data. On a miss, look for a newer save once (another instance
+    may have built it a moment ago; one storage read, rate limited), then answer None."""
+    from aeo.ranksim import reportcache
+
+    project = ui.project(slug)
+    google_ready = google_status(ui)["ready"]
+    hit = reportcache.load(project, reportcache.signature(ui, project, google_ready=google_ready))
+    cloud = getattr(ui, "cloud", None)
+    if hit is None and cloud is not None and getattr(cloud, "enabled", False) and hasattr(cloud, "stamp"):
+        if cloud.refresh(hint=cloud.stamp + 1):
+            ui.forget(slug)
+            project = ui.project(slug)
+            hit = reportcache.load(project, reportcache.signature(ui, project, google_ready=google_ready))
+    return hit
+
+
+def start_report_job(ui, slug: str) -> dict:
+    """Start building the report as a job, or join the build already running for this project."""
+    from aeo.ranksim.api.sites import local_registry
+
+    return local_registry(ui).start("report", f"report:{slug}", f"Report for {slug}", report_work(ui, slug), params={"slug": slug})
+
+
+def report_work(ui, slug: str):
+    def work(ctx) -> dict:
+        import time
+
+        ctx.emit({"type": "step", "step": "report", "state": "active", "message": "Building the report."})
+        began = time.monotonic()
+        project_report(ui, slug, cached=False)  # writes the cache file into the project folder
+        cloud = getattr(ui, "cloud", None)
+        if time.monotonic() - began > PERSIST_IF_SLOWER_SECONDS and cloud is not None and getattr(cloud, "enabled", False):
+            cloud.save()  # one put: every other instance now reads it instead of building for as long
+        return {"slug": slug, "ready": True}
+
+    return work
+
+
+def wait_for_report_job(ui, record: dict) -> dict | None:
+    """Wait up to REPORT_WAIT_SECONDS when the job runs in this process. The finished record, or None."""
+    from aeo.ranksim.api.sites import local_registry
+
+    reg = local_registry(ui)
+    if reg._local(record["id"]) is None:
+        return record if record.get("status") in {"done", "error"} else None  # running on another instance
+    if not reg.join(record["id"], REPORT_WAIT_SECONDS):
+        return None
+    return reg.get(record["id"])
+
+
 def project_report(ui, slug: str, *, cached: bool = True) -> dict:
     """The report, from the on-disk cache when nothing it is built from changed (reportcache.py), else built."""
     from aeo.ranksim import reportcache
@@ -379,7 +434,25 @@ def register(app: FastAPI, ui) -> None:
 
     @app.get("/api/v1/projects/{slug}/report")
     async def api_report(slug: str) -> JSONResponse:
+        """The cached report at once. Without one, the build runs as a job (any instance joins it rather than starting
+        another); this request waits up to REPORT_WAIT_SECONDS for it, else answers 202 {"building": true, "job"}:
+        ask again (or poll GET /api/v1/jobs/{job}). Never a request held for minutes."""
         try:
-            return JSONResponse(await run_in_threadpool(project_report, ui, slug))
+            hit = await run_in_threadpool(cached_report, ui, slug)
         except LookupError:
             return _error(404, "No such project.")
+        if hit is not None:
+            return JSONResponse(hit)
+        from aeo.ranksim.objects import StoreError
+
+        try:
+            record = await run_in_threadpool(start_report_job, ui, slug)
+        except StoreError as exc:
+            return _error(503, f"Could not reach storage ({type(exc).__name__}). Try again in a moment.")
+        finished = await run_in_threadpool(wait_for_report_job, ui, record)
+        if finished is not None and finished.get("status") == "error":
+            return _error(500, finished.get("error") or "The report could not be built.")
+        hit = await run_in_threadpool(cached_report, ui, slug) if finished is not None else None
+        if hit is not None:
+            return JSONResponse(hit)
+        return JSONResponse({"building": True, "job": record["id"], "retry_after": 3}, status_code=202, headers={"retry-after": "3"})

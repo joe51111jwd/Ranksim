@@ -133,9 +133,8 @@ count.
   query_count, page_count, searches: {<project search>: {clicks, impressions, ctr, position, page}}}`. Reads files
   only, never the network.
 - `discovery_sources`: when on, up to 30 top queries `{q, weight, source: "gsc", impressions, clicks, position}`.
-  The weight is on discovery's scale (a title phrase scores 3.0 to 4.5, 2.5 is the bar): `1.5 + 3.5 * sqrt(share)`
-  where share is impressions over the top query's, so the top query scores 5.0, a query with a tenth of its
-  impressions about 2.6, and a rare query only counts when the site's pages also use it. Refreshes stale data first
+  The weight is on discovery's scale (a title phrase scores 3.0, 2.5 is the bar): `2.5 + 2.5 * impressions / top`,
+  so every query qualifies (2.5 to 5.0) and the most seen rank first. Refreshes stale data first
   (best effort). Not called on a site's first analysis (no project yet), so GSC queries join from the next analysis.
 - `after_pull`: refresh stale data (best effort, errors recorded in settings).
 - `settings_schema`: toggle and property.

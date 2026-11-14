@@ -101,6 +101,23 @@ function empty(width, title, message) {
 
 const plural = (n, one, many) => `${n} ${n === 1 ? one : many || `${one}s`}`;
 
+/* ------------------------------------------------------------------ predictions */
+
+/* One search's prediction, or null. Copes with the report before and after predict added confidence:
+   predicted may be null (for example a page that already ranks), lack a position, or carry
+   confidence 'CLEARER' | 'UNSURE'. An UNSURE prediction is drawn quietly (a dashed gray ring) and says so. */
+export function predictionOf(row) {
+  const p = row && row.predicted;
+  if (!p || p.position == null || !(Number(p.position) >= 1)) return null;
+  const confidence = typeof p.confidence === 'string' ? p.confidence.toUpperCase() : '';
+  return { position: Number(p.position), of: p.of || null, unsure: confidence === 'UNSURE', confidence };
+}
+
+export function predictionText(pred) {
+  if (!pred) return '';
+  return `PREDICTED #${pred.position}${pred.of ? ` of ${pred.of}` : ''}${pred.unsure ? ', unsure' : ''}`;
+}
+
 /* ------------------------------------------------------------------ 1. where you rank, per search */
 
 /* rows: [{q, position (1..10 or null), checked, predicted: {position, of} | null}]
@@ -130,19 +147,22 @@ export function rankDots(rows, { width = 560, rowHeight = 30, labelWidth } = {})
 
   let ranked = 0;
   let withPrediction = 0;
+  let unsure = 0;
   sorted.forEach((row, index) => {
     const cy = top + index * rowHeight + rowHeight / 2;
     const real = row.position && row.position >= 1 && row.position <= 10 ? row.position : null;
-    const pred = row.predicted && row.predicted.position != null ? Number(row.predicted.position) : null;
+    const prediction = predictionOf(row);
+    const pred = prediction ? prediction.position : null;
     if (real) ranked += 1;
     const g = [];
-    g.push(el('title', null, text(`${row.q}: ${real ? `#${real} on Google` : row.checked === false ? 'not checked yet' : 'not in the top 10'}${pred != null ? `, PREDICTED #${pred}${row.predicted.of ? ` of ${row.predicted.of}` : ''}` : ''}`)));
+    g.push(el('title', null, text(`${row.q}: ${real ? `#${real} on Google` : row.checked === false ? 'not checked yet' : 'not in the top 10'}${prediction ? `, ${predictionText(prediction)}` : ''}`)));
     g.push(el('text', { class: 'rc-text', x: label, y: r1(cy + 4), 'text-anchor': 'end' }, text(clip(row.q, label))));
     g.push(el('line', { class: 'rc-track', x1: r1(x(1)), x2: r1(x(10)), y1: crisp(cy), y2: crisp(cy) }));
-    if (pred != null && pred >= 1) {
-      withPrediction += 1;
+    if (prediction) {
+      if (prediction.unsure) unsure += 1;
+      else withPrediction += 1;
       const px = pred <= 10 ? x(pred) : outX;
-      g.push(el('circle', { class: 'rc-pred', cx: r1(px), cy: r1(cy), r: 6.5 }));
+      g.push(el('circle', { class: prediction.unsure ? 'rc-pred rc-unsure' : 'rc-pred', cx: r1(px), cy: r1(cy), r: 6.5 }));
     }
     if (real) {
       g.push(el('circle', { class: real <= 3 ? 'rc-you rc-strong' : 'rc-you', cx: r1(x(real)), cy: r1(cy), r: 5 }));
@@ -153,7 +173,8 @@ export function rankDots(rows, { width = 560, rowHeight = 30, labelWidth } = {})
   });
 
   const desc = `${plural(sorted.length, 'search', 'searches')}. You rank in the top 10 for ${ranked}.`
-    + (withPrediction ? ` Open rings are PREDICTED positions for ${plural(withPrediction, 'search', 'searches')}.` : '');
+    + (withPrediction ? ` Open rings are PREDICTED positions for ${plural(withPrediction, 'search', 'searches')}.` : '')
+    + (unsure ? ` Dashed rings are PREDICTED but unsure, for ${plural(unsure, 'search', 'searches')}.` : '');
   return frame(width, height, title, desc, kids, 'rc-dots');
 }
 
@@ -245,8 +266,8 @@ export function shareBars(share, { width = 560, limit = 8, rowHeight = 28, label
    x = real position, y = PREDICTED position; dots on the diagonal mean the model agreed. */
 export function predictedVsReal(rows, { width = 300, height = 260 } = {}) {
   const title = 'PREDICTED versus real position';
-  const pairs = (rows || []).filter((row) => row && row.position >= 1 && row.predicted && row.predicted.position >= 1)
-    .map((row) => ({ q: row.q, real: Number(row.position), pred: Number(row.predicted.position), of: row.predicted.of }));
+  const pairs = (rows || []).filter((row) => row && row.position >= 1 && predictionOf(row))
+    .map((row) => ({ q: row.q, real: Number(row.position), pred: predictionOf(row).position, of: predictionOf(row).of }));
   if (!pairs.length) return empty(width, title, 'No PREDICTED positions yet');
   const maxPos = Math.max(10, ...pairs.map((pair) => Math.max(pair.real, pair.pred)));
   const pad = { left: 30, right: 10, top: 10, bottom: 30 };

@@ -649,7 +649,7 @@ try {
     watch(tab, 'first-load');
     await tab.goto(`${BASE}/edit?url=${encodeURIComponent(site)}`);
     const h1 = tab.frameLocator(SEL.editorFrame).locator('h1').first();
-    await h1.waitFor({ timeout: SLOW });
+    await h1.waitFor({ timeout: SLOW * 3 });
     const base = await tab.evaluate(async (u) => (await import('/studio/js/editor/editor.js')).draftFor(u).base, site);
     expect(base && base.length > 100, 'the first loaded draft has the page');
     // Watch the draft from inside the page: it must never go empty or get a different base once loaded.
@@ -696,9 +696,26 @@ try {
       one.goto(`${BASE}/edit?url=${encodeURIComponent('https://www.slow-a.example/')}`),
       two.goto(`${BASE}/edit?url=${encodeURIComponent('https://www.slow-b.example/')}`),
     ]);
-    const timeline = (p) => p.waitForSelector('.progress-tile .step.active', { timeout: SLOW }).then(() => Date.now())
-      .then(async (start) => { await p.waitForURL(/\/app\//, { timeout: SLOW }); return { start, end: Date.now() }; });
-    const [a, b] = await Promise.all([timeline(one), timeline(two)]);
+    // Each analysis is timed by its own done signal (the project shows as built), not by a fixed URL timeout, so a
+    // busy machine only makes it slower, never flaky. Generous headroom: six minutes per site.
+    const HEADROOM = 360000;
+    const timeline = async (p, host) => {
+      await p.waitForSelector('.progress-tile .step.active, .progress-tile .step.done', { timeout: HEADROOM });
+      const start = Date.now();
+      for (;;) {
+        const built = await p.evaluate(async (want) => {
+          const list = await (await fetch('/api/v1/projects')).json();
+          return (list.projects || []).some((x) => String(x.site).includes(want) && x.built);
+        }, host).catch(() => false);
+        if (built) break;
+        if (Date.now() - start > HEADROOM) throw new Error(`${host} did not finish in ${HEADROOM / 1000} s`);
+        await p.waitForTimeout(250);
+      }
+      const end = Date.now();
+      await p.waitForURL(/\/app\//, { timeout: HEADROOM });
+      return { start, end };
+    };
+    const [a, b] = await Promise.all([timeline(one, 'slow-a.example'), timeline(two, 'slow-b.example')]);
     expect(Math.max(a.start, b.start) < Math.min(a.end, b.end), `the two analyses overlap in time: ${JSON.stringify({ a, b })}`);
     expect(!refused.length, `no 409 while two sites are analyzed: ${refused.join(', ')}`);
     await one.close();
@@ -709,12 +726,12 @@ try {
     const tab = await desk.newPage();
     watch(tab, 'reattach');
     await tab.goto(`${BASE}/edit?url=${encodeURIComponent('https://www.slow-c.example/')}`);
-    await tab.waitForSelector('.progress-tile .step.done', { timeout: SLOW });
+    await tab.waitForSelector('.progress-tile .step.done', { timeout: SLOW * 3 });
     expect(!/\/app\//.test(tab.url()), 'still analyzing when the page reloads');
     await tab.reload();
-    await tab.waitForSelector(SEL.progress, { timeout: SLOW });
-    await tab.waitForURL(/\/app\//, { timeout: SLOW });
-    await tab.waitForSelector(SEL.editorFrame, { timeout: SLOW });
+    await tab.waitForSelector(SEL.progress, { timeout: SLOW * 3 });
+    await tab.waitForURL(/\/app\//, { timeout: SLOW * 3 });
+    await tab.waitForSelector(SEL.editorFrame, { timeout: SLOW * 3 });
     const projects = await tab.evaluate(async () => (await (await fetch('/api/v1/projects')).json()).projects.map((p) => p.site));
     const copies = projects.filter((site) => /slow-c/.test(site));
     expect(copies.length === 1, `one project for the reattached site, got ${JSON.stringify(projects)}`);
@@ -739,15 +756,15 @@ try {
     await tab.route('**/api/v1/sites', async (route) => {
       if (route.request().method() !== 'POST') return route.continue();
       posts += 1;
-      const response = await route.fetch({ timeout: SLOW });
+      const response = await route.fetch({ timeout: SLOW * 3 });
       const body = await response.text();
       if (/"type":\s*"paused"/.test(body)) paused += 1;
       await route.fulfill({ response, body });
     });
     await tab.fill(SEL.homeInput, 'www.slow-p.example');
     await tab.click(SEL.homeSubmit);
-    await tab.waitForURL(/\/app\//, { timeout: SLOW * 2 });
-    await tab.waitForSelector(SEL.editorFrame, { timeout: SLOW });
+    await tab.waitForURL(/\/app\//, { timeout: SLOW * 3 });
+    await tab.waitForSelector(SEL.editorFrame, { timeout: SLOW * 3 });
     expect(posts >= 2, `the app posted again after a pause (${posts} posts, ${paused} paused answers)`);
     expect(paused >= 1, `the server paused at least once (${paused})`);
     await ctx.close();

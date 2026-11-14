@@ -1006,3 +1006,18 @@ def test_counts_from_two_instances_survive_the_real_cloud_merge(tmp_path):
     two.save_project("_plugins")
     one.refresh(force=True)
     assert a.used() == 8
+
+
+def test_cron_route_accepts_a_vercel_schedules_path_call(tmp_path, monkeypatch):
+    client, ui = _client(tmp_path)
+    monkeypatch.setenv("CRON_SECRET", "cron-test-secret")
+    headers = {
+        "authorization": "Bearer cron-test-secret",
+        "user-agent": "vercel-cron/1.0",
+        "x-vercel-cron-schedule": "17 9 * * *",
+        "ce-specversion": "1.0",
+        "ce-type": "com.vercel.schedule.v1beta",
+        "ce-vssschedulename": "track-recheck",
+    }
+    assert client.get(tracking.CRON_PATH, headers=headers).status_code == 200
+    assert client.get(tracking.CRON_PATH, headers={**headers, "authorization": ""}).status_code == 401

@@ -191,7 +191,9 @@
         data = null;
       }
       if (response.status === 401 && data && data.login) renderLogin();
-      throw new Error((data && data.error) || `Ranksim answered ${response.status}.`);
+      const err = new Error((data && data.error) || `Ranksim answered ${response.status}.`);
+      err.status = response.status;
+      throw err;
     }
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
@@ -606,31 +608,21 @@
     S.open.state = 'analyzing';
     paintSide();
     let result = null;
-    try {
-      await stream('/api/v1/sites', { site: url }, (event) => {
+    for (let wait = 0; wait < 40; wait += 1) {
+      try {
+        await analyzeOnce(url, (done) => { result = done; });
+        break;
+      } catch (err) {
         if (!S.open || S.open.url !== url) return;
-        if (event.type === 'step') {
-          const key = event.step === 'save' ? 'model' : event.step;
-          if (S.open.current && S.open.current !== key) {
-            const prev = S.open.steps.get(S.open.current);
-            if (prev && prev.state === 'active') prev.state = 'done';
-          }
-          if (event.state === 'active') S.open.current = key;
-          S.open.steps.set(key, { state: event.state, message: event.message, done: event.done, total: event.total, searches: event.searches, competitors: event.competitors });
-          if (event.state === 'skipped' && key === 'google') {
-            for (const name of ['pages', 'model', 'competitors']) S.open.steps.set(name, { state: 'skipped', message: 'Needs Google results for this site.' });
-          }
+        if (err.status === 409) {
+          S.open.steps.set('site', { state: 'active', message: 'Another analysis is running. Starting as soon as it finishes.' });
           paintProgress();
-        } else if (event.type === 'project') {
-          S.open.slug = event.slug;
-        } else if (event.type === 'done') {
-          result = event;
-        } else if (event.type === 'error') {
-          S.open.error = event.error;
+          await new Promise((resolve) => setTimeout(resolve, 6000));
+          continue;
         }
-      });
-    } catch (err) {
-      S.open.error = err.message;
+        S.open.error = err.message;
+        break;
+      }
     }
     if (!S.open || S.open.url !== url) return;
     if (!result) {
@@ -640,6 +632,31 @@
     }
     await loadProjects();
     await finishOpen(result.slug, url);
+  }
+
+  async function analyzeOnce(url, onDone) {
+    await stream('/api/v1/sites', { site: url }, (event) => {
+      if (!S.open || S.open.url !== url) return;
+      if (event.type === 'step') {
+        const key = event.step === 'save' ? 'model' : event.step;
+        if (S.open.current && S.open.current !== key) {
+          const prev = S.open.steps.get(S.open.current);
+          if (prev && prev.state === 'active') prev.state = 'done';
+        }
+        if (event.state === 'active') S.open.current = key;
+        S.open.steps.set(key, { state: event.state, message: event.message, done: event.done, total: event.total, searches: event.searches, competitors: event.competitors });
+        if (event.state === 'skipped' && key === 'google') {
+          for (const name of ['pages', 'model', 'competitors']) S.open.steps.set(name, { state: 'skipped', message: 'Needs Google results for this site.' });
+        }
+        paintProgress();
+      } else if (event.type === 'project') {
+        S.open.slug = event.slug;
+      } else if (event.type === 'done') {
+        onDone(event);
+      } else if (event.type === 'error') {
+        S.open.error = event.error;
+      }
+    });
   }
 
   async function finishOpen(slug, url) {
@@ -1030,6 +1047,7 @@ img,video{max-width:100%;height:auto;border-radius:10px}
   function cleanDoc(text) {
     const doc = new DOMParser().parseFromString(asHtml(text || ''), 'text/html');
     doc.querySelectorAll('script,noscript,iframe,frame,frameset,object,embed,base,meta[http-equiv]').forEach((node) => node.remove());
+    settleStreamedContent(doc);
     for (const el of doc.querySelectorAll('*')) {
       for (const attr of Array.from(el.attributes)) {
         const name = attr.name.toLowerCase();
@@ -1037,6 +1055,42 @@ img,video{max-width:100%;height:auto;border-radius:10px}
       }
     }
     return doc;
+  }
+
+  /* React streaming (Next.js and others) sends a loading placeholder first and the real content later inside
+     <div hidden id="S:n">, then a script swaps it into the <template id="B:n"> boundary. Scripts never run here, so
+     do the swap: the page then reads the way a browser shows it. */
+  function settleStreamedContent(doc) {
+    for (const hidden of Array.from(doc.querySelectorAll('div[hidden][id^="S:"]'))) {
+      const slot = doc.getElementById(`P:${hidden.id.slice(2)}`); // a segment: replaces its placeholder
+      if (slot && slot.parentNode) {
+        while (hidden.firstChild) slot.parentNode.insertBefore(hidden.firstChild, slot);
+        slot.remove();
+        hidden.remove();
+        continue;
+      }
+      const boundary = doc.getElementById(`B:${hidden.id.slice(2)}`); // a boundary: replaces its fallback
+      if (!boundary || !boundary.parentNode) continue;
+      const parent = boundary.parentNode;
+      let node = boundary.nextSibling;
+      let depth = 0;
+      while (node) {
+        const next = node.nextSibling;
+        if (node.nodeType === 8) {
+          if (node.data === '/$') {
+            if (depth === 0) break;
+            depth -= 1;
+          } else if (node.data.startsWith('$')) {
+            depth += 1;
+          }
+        }
+        node.remove(); // the loading placeholder
+        node = next;
+      }
+      while (hidden.firstChild) parent.insertBefore(hidden.firstChild, node);
+      boundary.remove();
+      hidden.remove();
+    }
   }
 
   function serialize(doc) {
@@ -1416,7 +1470,11 @@ html:has([data-rs-reveal]),body:has([data-rs-reveal]){background:#fff!important;
 
   function testTile(draft) {
     const R = S.report;
-    if (!R) return progressTile();
+    if (!R) {
+      const box = h('div', { class: 'side-stack' }, progressTile());
+      box.append(h('div', { class: 'result-actions' }, publishButton(draft)));
+      return box;
+    }
     const q = ED.refs.q;
     const tile = h('section', { class: 'tile' });
     if (!R.rankings.length || !S.project || !S.project.engine || !S.project.engine.ready) {

@@ -80,6 +80,50 @@ class Shopify(Connector):
     def check(self) -> str:
         return (self.gql("{ shop { name } }").get("shop") or {}).get("name") or "store"
 
+    def inspect(self, url: str = "") -> list[dict]:
+        """The guided Shopify check: store address, token, permissions, this page, and what the API can change."""
+        steps: list[dict] = []
+
+        def step(key, label, ok, detail):
+            steps.append({"key": key, "label": label, "ok": ok, "detail": detail})
+            return ok
+
+        try:
+            self.endpoint
+        except ConnectorError as exc:
+            step("site", "Store address", False, str(exc))
+            return steps
+        step("site", "Store address", True, f"Using {self.settings.get('shop', '').strip().lower()}.")
+        try:
+            data = self.gql("{ shop { name } currentAppInstallation { accessScopes { handle } } }")
+        except ConnectorError as exc:
+            text = str(exc)
+            if " 401" in text or " 403" in text:
+                text = "Shopify did not accept the token. Paste the Admin API access token of your custom app (it starts with shpat_)."
+            elif " 404" in text:
+                text = "No Shopify store answered at that address. Check the myshopify.com address."
+            step("login", "Access token", False, text)
+            return steps
+        step("login", "Access token", True, f"Connected to {(data.get('shop') or {}).get('name') or 'your store'}.")
+        scopes = {s.get("handle") for s in ((data.get("currentAppInstallation") or {}).get("accessScopes") or [])}
+        missing = [scope for scope in ("write_online_store_pages", "write_content") if scope not in scopes]
+        if not scopes:
+            step("rights", "Permissions", True, "Shopify did not list the app's permissions. Ranksim finds out when it publishes.")
+        else:
+            step("rights", "Permissions", not missing,
+                 "The app can change pages and blog posts." if not missing
+                 else f"The app is missing {', '.join(missing)}. Add it in the app's Admin API scopes, then reinstall the app.")
+        if url:
+            try:
+                found = self.locate(url)
+                noun = "page" if found["type"] == "page" else "blog post"
+                step("page", "This page", True, f"Found the {noun} \"{found['item'].get('title') or found['item'].get('handle')}\".")
+            except ConnectorError as exc:
+                step("page", "This page", False, str(exc))
+        step("limits", "What Ranksim can change", True,
+             "Page and blog post titles, body text, SEO titles and descriptions. Not products, collections or theme text, which stay in Shopify.")
+        return steps
+
     def locate(self, url: str) -> dict:
         segments = [unquote(s) for s in path_of(url).strip("/").split("/") if s]
         if len(segments) == 2 and segments[0] == "pages":

@@ -48,3 +48,5 @@
 .publish-edits li { display: grid; gap: 2px; font-size: 13.5px; min-width: 0; overflow-wrap: anywhere; }
 .publish-after-text { color: var(--ink); }
 .publish-sub { font-size: 13px; color: var(--ink-2); font-weight: 550; margin-top: 4px; }
+.publish-steps .info svg { color: var(--ink-3); }
+.publish-can { display: grid; gap: 6px; padding: 12px 14px; border-radius: var(--r-card); background: var(--tile); font-size: 14px; }

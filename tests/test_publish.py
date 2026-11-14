@@ -1690,3 +1690,58 @@ def test_fix_ids_are_checked_against_the_current_report(app_env, monkeypatch):
     monkeypatch.setattr(plugin, "known_issues", lambda ui, slug: None)  # no report: nothing is recorded
     again = client.post("/api/v1/projects/acme/publish", json={"url": url, "html": page(h1="Newer"), "connection_id": conn["id"], "fixes": fixes}, headers=H).json()
     assert again["status"] == "live" and again["fixes"] == []
+
+
+# ---------------------------------------------------------------------------
+# Guided Shopify and Webflow connect
+# ---------------------------------------------------------------------------
+
+
+def test_guided_shopify_check(tmp_path):
+    router, state = shop_router(Web())
+    original = router.routes[0][2]
+
+    def gql(request, m):
+        if "accessScopes" in json.loads(request.content)["query"]:
+            return {"data": {"shop": {"name": "Acme Store"}, "currentAppInstallation": {"accessScopes": [{"handle": "write_online_store_pages"}]}}}
+        return original(request, m)
+
+    router.routes[0] = (router.routes[0][0], router.routes[0][1], gql)
+    shop = CONNECTORS["shopify"]({"shop": "acme-store.myshopify.com"}, {"access_token": "shpat_test"}, router.client())
+    steps = {s["key"]: s for s in shop.inspect("https://acme.com/pages/about")}
+    assert steps["login"]["ok"] and "Acme Store" in steps["login"]["detail"]
+    assert not steps["rights"]["ok"] and "write_content" in steps["rights"]["detail"]
+    assert steps["page"]["ok"] and 'Found the page "Old heading"' in steps["page"]["detail"]
+    assert "Not products" in steps["limits"]["detail"]
+    bad = CONNECTORS["shopify"]({"shop": "evil.com"}, {"access_token": "x"}, router.client())
+    assert bad.inspect()[0]["ok"] is False
+    denied = Router()
+    denied.on("POST", r"myshopify", lambda r, m: httpx.Response(401, json={"errors": "Invalid API key or access token"}))
+    steps = {s["key"]: s for s in CONNECTORS["shopify"]({"shop": "acme-store.myshopify.com"}, {"access_token": "shpat_bad"}, denied.client()).inspect()}
+    assert not steps["login"]["ok"] and "shpat_" in steps["login"]["detail"] and "shpat_bad" not in json.dumps(steps)
+
+
+def test_guided_webflow_check(tmp_path):
+    router, _ = wf_router(Web())
+    wf = CONNECTORS["webflow"]({"site_id": "site1"}, {"api_token": "wf-token"}, router.client())
+    static = {s["key"]: s for s in wf.inspect("https://acme.com/about")}
+    assert static["login"]["ok"] and static["rights"]["ok"]
+    assert "static page" in static["page"]["detail"] and "Designer" in static["page"]["detail"]
+    item = {s["key"]: s for s in wf.inspect("https://acme.com/blog/hello")}
+    assert "CMS item" in item["page"]["detail"]
+    missing = {s["key"]: s for s in CONNECTORS["webflow"]({"site_id": "nosite"}, {"api_token": "wf-token"}, router.client()).inspect()}
+    assert not missing["site"]["ok"] and "Site ID" in missing["site"]["detail"]
+    denied = Router()
+    denied.on("GET", r"/sites/site1$", lambda r, m: httpx.Response(401, json={"message": "Invalid token"}))
+    steps = CONNECTORS["webflow"]({"site_id": "site1"}, {"api_token": "bad"}, denied.client()).inspect()
+    assert steps[-1]["key"] == "login" and not steps[-1]["ok"]
+
+
+def test_check_can_save_when_only_the_page_is_missing(app_env):
+    client, web, router, ui = app_env
+    router.on("GET", r"/wp-json/$", lambda r, m: {"namespaces": ["wp/v2"]})
+    router.on("GET", r"users/me", lambda r, m: {"name": "James"})
+    router.on("GET", r"/wp/v2/(pages|posts)\?", lambda r, m: [])
+    body = {"kind": "wordpress", "url": "https://acme.com/nowhere", "settings": {"base_url": "https://acme.com", "username": "james"}, "secret": {"app_password": "pw"}}
+    answer = client.post("/api/v1/projects/acme/publish/connections/check", json=body, headers=H).json()
+    assert answer["ok"] is False and answer["can_save"] is True

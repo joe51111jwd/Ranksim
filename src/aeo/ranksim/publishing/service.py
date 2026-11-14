@@ -201,7 +201,8 @@ class Publisher:
         with self.http_factory() as client:
             connector = cls(clean_settings, clean_secret, client, allow_private=self.allow_private)
             steps = guarded(lambda: connector.inspect(url), 502)
-        return {"ok": all(s["ok"] for s in steps), "steps": steps}
+        # The page step informs; a connection that works can be saved even when this page is not on the platform.
+        return {"ok": all(s["ok"] for s in steps), "can_save": all(s["ok"] for s in steps if s["key"] != "page"), "steps": steps}
 
     def remove_connection(self, connection_id: str) -> bool:
         return self.store.remove_connection(connection_id)

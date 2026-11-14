@@ -378,8 +378,8 @@ function paintForm(view) {
     clear(form);
     const platform = platforms.find((p) => p.kind === kind);
     if (!platform) return;
-    if (kind === 'wordpress') {
-      wordpressGuide(view, form, platform);
+    if (GUIDES[kind]) {
+      guidedConnect(view, form, platform, GUIDES[kind]);
       return;
     }
     add(form, h('p', { class: 'caveat', text: platform.summary }));
@@ -422,69 +422,136 @@ function paintForm(view) {
   add(tile, seg, form);
 }
 
-/* ------------------------------------------------------------------ guided WordPress connect */
+/* ------------------------------------------------------------------ guided connect
 
-/* Step by step: the address, an application password made in WordPress, a live Check that says what it found
-   (sign in, permission, SEO plugin, this page), then Save. Nothing is stored until Save. */
-function wordpressGuide(view, form, platform) {
-  const origin = new URL(view.url).origin;
-  const address = h('input', { class: 'field', name: 'base_url', type: 'url', value: origin, required: true, spellcheck: 'false', autocomplete: 'off' });
-  const user = h('input', { class: 'field', name: 'username', type: 'text', required: true, spellcheck: 'false', autocomplete: 'off', placeholder: 'Your WordPress username, not your email' });
-  const password = h('input', { class: 'field mono', name: 'app_password', type: 'password', required: true, autocomplete: 'new-password', placeholder: 'xxxx xxxx xxxx xxxx xxxx xxxx' });
-  const profile = h('a', { class: 'btn', target: '_blank', rel: 'noopener' }, 'Open your WordPress profile');
-  const setProfile = () => {
-    try {
-      profile.href = `${new URL(address.value).origin}/wp-admin/profile.php#application-passwords-section`;
-    } catch (_err) {
-      profile.removeAttribute('href');
-    }
-  };
-  address.addEventListener('input', setProfile);
-  setProfile();
+   WordPress, Shopify and Webflow get numbered steps in plain words: where to make the credential, what to paste, a
+   live Check that says what it found (sign in, permissions, this page, what the platform's API can and cannot
+   change), then Save. Nothing is stored until Save. Each platform is a short spec below. */
+
+const GUIDES = {
+  wordpress: {
+    intro: 'Ranksim uses an application password, a separate password you can remove at any time. It never needs your normal password.',
+    steps: [
+      { title: 'Your WordPress address', fields: [['base_url', 'Site address', 'url', (view) => new URL(view.url).origin]] },
+      {
+        title: 'Make an application password',
+        text: 'In WordPress, open Users, then Profile. Scroll to Application Passwords, type Ranksim as the name, and click Add New Application Password. WordPress shows it once, so copy it.',
+        link: ['Open your WordPress profile', (v) => `${new URL(v.base_url).origin}/wp-admin/profile.php#application-passwords-section`],
+      },
+      { title: 'Paste it here', fields: [['username', 'WordPress username', 'text', null, 'Your WordPress username, not your email'], ['app_password', 'Application password', 'secret', null, 'xxxx xxxx xxxx xxxx xxxx xxxx']] },
+    ],
+    check: 'Check signs in, looks for an SEO plugin and finds this page. Nothing is saved yet.',
+  },
+  shopify: {
+    intro: 'Ranksim uses a custom app token for your store. You can remove the app at any time.',
+    steps: [
+      { title: 'Your store address', fields: [['shop', 'Store address', 'text', null, 'your-store.myshopify.com']], text: 'Find it in Shopify admin under Settings, Domains. It ends in myshopify.com.' },
+      {
+        title: 'Make a custom app',
+        text: 'In Shopify admin, open Settings, then Apps and sales channels, then Develop apps. Create an app named Ranksim. Under Configuration, turn on the Admin API scopes write_online_store_pages and write_content. Install the app, then reveal the Admin API access token. Shopify shows it once.',
+        link: ['Open Develop apps', (v) => (/^[a-z0-9-]+\.myshopify\.com$/.test(v.shop || '') ? `https://${v.shop}/admin/settings/apps/development` : null)],
+      },
+      { title: 'Paste it here', fields: [['access_token', 'Admin API access token', 'secret', null, 'shpat_...']] },
+    ],
+    check: 'Check connects to your store, reads the app permissions and finds this page. Nothing is saved yet.',
+  },
+  webflow: {
+    intro: 'Ranksim uses a site API token. You can delete it in Webflow at any time.',
+    steps: [
+      { title: 'Your site ID', fields: [['site_id', 'Site ID', 'text', null, '24 letters and digits']], text: 'In Webflow, open the site, then Settings, General. Copy the Site ID.' },
+      {
+        title: 'Make a site API token',
+        text: 'In the same Settings, open Apps and integrations, then API access, and generate a token. Give it read and write access to Pages and CMS, and Sites publish if Ranksim should publish the site.',
+      },
+      { title: 'Paste it here', fields: [['api_token', 'Site API token', 'secret', null, '']] },
+    ],
+    check: 'Check connects to the site, reads its pages and CMS, and says what Webflow lets Ranksim change on this page. Nothing is saved yet.',
+  },
+};
+
+function guidedConnect(view, form, platform, guide) {
+  const inputs = {};
+  const links = [];
   const results = h('ul', { class: 'publish-steps' });
   const checkBtn = h('button', { class: 'btn btn-dark', type: 'button' }, 'Check');
   const save = h('button', { class: 'btn btn-primary', type: 'submit', disabled: true }, 'Save connection');
-  const values = () => ({ settings: { base_url: address.value.trim(), username: user.value.trim() }, secret: { app_password: password.value } });
+  const values = () => {
+    const settings = {};
+    const secret = {};
+    for (const [key, input] of Object.entries(inputs)) {
+      if (platform.secrets.includes(key)) secret[key] = input.value;
+      else if (input.value.trim()) settings[key] = input.value.trim();
+    }
+    return { settings, secret };
+  };
+  const plain = () => Object.fromEntries(Object.entries(inputs).map(([key, input]) => [key, input.value.trim()]));
+  const relink = () => {
+    for (const [a, make] of links) {
+      let href = null;
+      try {
+        href = make(plain());
+      } catch (_err) {
+        href = null;
+      }
+      if (href) a.href = href;
+      else a.removeAttribute('href');
+    }
+  };
   const reset = () => {
     save.disabled = true;
     clear(results);
+    relink();
   };
-  for (const input of [address, user, password]) input.addEventListener('input', reset);
+  const stepBox = (n, title, ...kids) => h('div', { class: 'publish-guide-step' }, h('span', { class: 'publish-num', text: String(n) }), h('div', null, h('b', { text: title }), ...kids));
+  add(form, h('p', { class: 'caveat', text: guide.intro }));
+  guide.steps.forEach((step, index) => {
+    const kids = [];
+    if (step.text) kids.push(h('p', { class: 'publish-step', text: step.text }));
+    for (const [key, label, type, initial, placeholder] of step.fields || []) {
+      const secret = type === 'secret';
+      const input = h('input', {
+        class: `field${secret ? ' mono' : ''}`, name: key, type: secret ? 'password' : type, required: true, spellcheck: 'false',
+        autocomplete: secret ? 'new-password' : 'off', placeholder: placeholder || '', value: initial ? initial(view) : '',
+      });
+      input.addEventListener('input', reset);
+      inputs[key] = input;
+      kids.push(h('label', { class: 'publish-field' }, h('span', { text: label }), input));
+    }
+    if (step.link) {
+      const a = h('a', { class: 'btn', target: '_blank', rel: 'noopener' }, step.link[0]);
+      links.push([a, step.link[1]]);
+      kids.push(h('div', { class: 'form-actions' }, a));
+    }
+    add(form, stepBox(index + 1, step.title, ...kids));
+  });
+  relink();
   checkBtn.addEventListener('click', async () => {
     if (!form.reportValidity()) return;
     const done = busy(checkBtn, 'Checking...');
     clear(results);
     try {
-      const answer = await api.post(`${base()}/connections/check`, { kind: 'wordpress', url: view.url, ...values() });
-      add(results, answer.steps.map((step) => h('li', { class: step.ok ? 'ok' : 'miss' }, icon(step.ok ? 'check' : 'x'),
-        h('span', null, h('b', { text: `${step.label}: ` }), step.detail))));
-      save.disabled = !answer.ok;
-      if (!answer.ok) add(results, h('li', { class: 'unsure' }, icon('warn'), h('span', { text: 'Fix the first item marked with a cross, then Check again.' })));
+      const answer = await api.post(`${base()}/connections/check`, { kind: platform.kind, url: view.url, ...values() });
+      add(results, answer.steps.map((step) => h('li', { class: step.ok ? (step.key === 'limits' ? 'info' : 'ok') : 'miss' },
+        icon(step.ok ? (step.key === 'limits' ? 'doc' : 'check') : 'x'), h('span', null, h('b', { text: `${step.label}: ` }), step.detail))));
+      const canSave = answer.can_save !== undefined ? answer.can_save : answer.ok;
+      save.disabled = !canSave;
+      if (!canSave) add(results, h('li', { class: 'unsure' }, icon('warn'), h('span', { text: 'Fix the first item marked with a cross, then Check again.' })));
+      else if (!answer.ok) add(results, h('li', { class: 'unsure' }, icon('warn'), h('span', { text: 'The connection works. This page cannot be published through it, but other pages can.' })));
     } catch (err) {
       add(results, h('li', { class: 'miss' }, icon('x'), h('span', { text: err.message })));
     }
     done();
   });
-  const stepBox = (n, title, ...kids) => h('div', { class: 'publish-guide-step' }, h('span', { class: 'publish-num', text: String(n) }), h('div', null, h('b', { text: title }), ...kids));
   add(form,
-    h('p', { class: 'caveat', text: 'Four steps. Ranksim uses an application password, a separate password you can remove at any time. It never needs your normal password.' }),
-    stepBox(1, 'Your WordPress address', h('label', { class: 'publish-field' }, h('span', { text: 'Site address' }), address)),
-    stepBox(2, 'Make an application password',
-      h('p', { class: 'publish-step', text: 'In WordPress, open Users, then Profile. Scroll to Application Passwords, type Ranksim as the name, and click Add New Application Password. WordPress shows it once, so copy it.' }),
-      h('div', { class: 'form-actions' }, profile)),
-    stepBox(3, 'Paste it here',
-      h('label', { class: 'publish-field' }, h('span', { text: 'WordPress username' }), user),
-      h('label', { class: 'publish-field' }, h('span', { text: 'Application password' }), password)),
-    stepBox(4, 'Check it works',
-      h('p', { class: 'publish-step', text: 'Check signs in, looks for an SEO plugin and finds this page. Nothing is saved yet.' }),
-      h('div', { class: 'form-actions' }, checkBtn), results),
-    h('ul', { class: 'publish-limits' }, platform.limits.map((text) => h('li', { text }))),
+    stepBox(guide.steps.length + 1, 'Check it works', h('p', { class: 'publish-step', text: guide.check }), h('div', { class: 'form-actions' }, checkBtn), results),
+    h('div', { class: 'publish-can' }, h('b', { text: 'What it can and cannot change' }), h('p', { class: 'caveat', text: platform.summary }),
+      h('ul', { class: 'publish-limits' }, platform.limits.map((text) => h('li', { text })))),
     h('div', { class: 'form-actions' }, save));
   form.onsubmit = async (event) => {
     event.preventDefault();
     const done = busy(save, 'Saving...');
     try {
-      const made = await api.post(`${base()}/connections`, { kind: 'wordpress', site: view.domain, ...values() });
+      const made = await api.post(`${base()}/connections`, { kind: platform.kind, site: view.domain, ...values() });
       form.reset();
       toast(`Connected ${made.label}.`);
       view.connection = made.id;

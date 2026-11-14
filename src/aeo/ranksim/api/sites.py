@@ -266,6 +266,40 @@ def register(app: FastAPI, ui) -> None:
         return _job_stream(ui, record, {"type": "start", "google": google_status(ui)["ready"]}, work)
 
 
+class _CheckpointedSerp:
+    """A Google provider that keeps every answer in the job's checkpoint and replays it on a resumed attempt."""
+
+    def __init__(self, inner, ctx) -> None:
+        import threading
+
+        self.inner, self.ctx = inner, ctx
+        self.name = inner.name
+        self.is_google = getattr(inner, "is_google", True)
+        self.synthetic = getattr(inner, "synthetic", False)
+        self._lock = threading.Lock()
+
+    def search(self, query: str, count: int = 10) -> list:
+        from dataclasses import asdict
+
+        from aeo.ranksim.serp import SerpHit
+
+        key = f"{count}|{query}"
+        with self._lock:
+            kept = (self.ctx.checkpoint.get("serp") or {}).get(key)
+        if kept is not None:
+            return [SerpHit(**row) for row in kept]
+        hits = self.inner.search(query, count)
+        with self._lock:
+            self.ctx.checkpoint.setdefault("serp", {})[key] = [asdict(hit) for hit in hits]
+            self.ctx.save_checkpoint()
+        return hits
+
+    def close(self) -> None:
+        closer = getattr(self.inner, "close", None)
+        if callable(closer):
+            closer()
+
+
 def _save_now(ui) -> None:
     cloud = getattr(ui, "cloud", None)
     if cloud is not None and cloud.enabled:
@@ -278,13 +312,29 @@ def _pausing_fetcher(ui, ctx, base, delay_seconds: float):
     Each page the pull fetches is stored as it arrives, so a resumed pull skips them (they are fresh). With no
     injected fetcher, one robots-respecting Crawler serves a whole host batch, as project._crawler_batch does.
     """
+    def pause(done: list) -> None:
+        """Keep the pages this batch already fetched (the pull stores a batch only when it returns), then pause."""
+        fetched = [item for item in done if getattr(item, "status", "") == "fetched" and getattr(item, "html", "")]
+        if fetched:
+            from aeo.ranksim.loop import store_fetched_page
+            from aeo.ranksim.store import open_session
+
+            session = open_session(ui.database)
+            try:
+                for item in fetched:
+                    store_fetched_page(session, item)
+                session.commit()
+            finally:
+                session.close()
+        raise JobPaused("time budget")
+
     if base is not None:
 
         def fetch_injected(urls: list[str]) -> list:
             out = []
             for url in urls:
                 if ctx.should_pause():
-                    raise JobPaused("time budget")
+                    pause(out)
                 out.extend(base([url]))
             return out
 
@@ -307,7 +357,7 @@ def _pausing_fetcher(ui, ctx, base, delay_seconds: float):
         try:
             for url in urls:
                 if ctx.should_pause():
-                    raise JobPaused("time budget")
+                    pause(out)
                 began = time.perf_counter()
                 try:
                     got = crawler.fetch(url)
@@ -337,17 +387,15 @@ def _run_pull(ui, project, use_google: bool, events, *, notify: bool = True, ctx
     """One pull, the same call the classic screens make, with hosted defaults: no AI engines, Google only with a key.
 
     notify=False leaves the after_pull hook to the caller (an analysis calls it once, when it has finished).
-    ctx (a running job) makes the crawl pause before the time budget runs out (JobPaused, after saving), and a resumed
-    pull skips Google when the paused attempt already asked it, so credits are never spent twice.
+    ctx (a running job) makes the crawl pause before the time budget runs out (JobPaused, after saving). Google's
+    answers are kept in the job's checkpoint as they arrive, so a resumed pull replays them and never spends credits
+    twice for one search (a pull writes its google.json only when it finishes).
     """
     from datetime import date
 
     from aeo.ranksim.project import pull
 
     def progress(event) -> None:
-        if ctx is not None and event.step in {"crawl", "train"} and not ctx.checkpoint.get("pull_google_done"):
-            ctx.checkpoint["pull_google_done"] = True  # Google's answers are saved with the pull by now
-            ctx.save_checkpoint()
         events.put(
             {
                 "type": "progress",
@@ -368,9 +416,12 @@ def _run_pull(ui, project, use_google: bool, events, *, notify: bool = True, ctx
     else:
         options.setdefault("skip_google", not use_google)
     if ctx is not None:
-        if ctx.checkpoint.get("pull_google_done"):
-            options["skip_google"] = True
-            events.put({"type": "progress", "step": "google", "message": "Using the Google results from before the pause.", "done": 1, "total": 1, "seconds": 0})
+        if not options.get("skip_google"):
+            from aeo.ranksim.project import _google_provider
+
+            provider, _reason = _google_provider(ui.settings, options.get("serp_provider"))
+            if provider is not None:
+                options["serp_provider"] = _CheckpointedSerp(provider, ctx)
         options["fetcher"] = _pausing_fetcher(ui, ctx, options.get("fetcher"), float(options.get("delay_seconds", 0.4)))
     try:
         report = pull(project, ui.settings, database=ui.database, progress=progress, **options)

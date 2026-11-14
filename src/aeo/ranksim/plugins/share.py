@@ -916,7 +916,7 @@ def client_report(ui, project, *, preview: bool = False) -> dict:
         "weekly": weekly_summary(project, report, issues, changes),
         "notes": [
             date_note,
-            "PREDICTED positions are Ranksim's estimate among the stored pages for that search. They are not Google ranks.",
+            "Estimates marked PREDICTED come from Ranksim's model of the pages we stored for each search. They are not Google positions.",
         ],
     }
 

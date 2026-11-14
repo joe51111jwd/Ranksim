@@ -360,7 +360,7 @@ def test_the_client_report_labels_every_number(env):
     assert data["predictions"] is True
     assert all(row["predicted"] is None or row["predicted"]["label"] == "PREDICTED" for row in data["rankings"])
     js = (share.SHARE_STATIC / "share.js").read_text(encoding="utf-8")
-    for label in ("PREDICTED", ' data "', "Report date ", ' position"', "date not recorded"):
+    for label in ("PREDICTED", ' checked "', "Report made ", "Your position", "check date not recorded", "This week", "Position changes"):
         assert label in js
 
 

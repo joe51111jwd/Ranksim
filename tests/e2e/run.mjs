@@ -175,6 +175,8 @@ try {
     slug = decodeURIComponent(new URL(page.url()).pathname.split('/')[2]);
     expect(slug, 'a project slug after analysis');
     await page.waitForSelector(SEL.editorFrame, { timeout: SLOW });
+    await page.waitForFunction((sel) => /Report ready/.test(document.querySelector(sel).textContent), SEL.toast);
+    expect(await page.isVisible(SEL.nav), 'the section nav appears once the report exists');
     await audit(page, 'desktop-04-opened');
   });
 

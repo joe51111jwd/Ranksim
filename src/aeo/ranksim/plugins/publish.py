@@ -30,8 +30,8 @@ from fastapi.responses import JSONResponse
 
 from aeo.ranksim.api import common
 
-from aeo.ranksim.publishing.service import PublishError, Publisher, catalog
-from aeo.ranksim.publishing.store import PublishStore, encryption_ready
+# The publishing package (BeautifulSoup, lxml) loads on the first publish request, never at startup: a cold start on
+# Vercel must stay light (tests/test_coldstart.py).
 
 log = logging.getLogger(__name__)
 BODY_LIMIT = 5 * 1024 * 1024  # two copies of a 2 MB page plus room
@@ -71,7 +71,10 @@ def proof_fetcher(settings):
     return fetch
 
 
-def publisher_for(ui, project) -> Publisher:
+def publisher_for(ui, project):
+    from aeo.ranksim.publishing.service import Publisher
+    from aeo.ranksim.publishing.store import PublishStore
+
     # Tests set ui.publish_overrides (a mocked http_factory and fetcher, no sleeping). The app never does.
     kwargs = dict(getattr(ui, "publish_overrides", None) or {})
     if "proof_fetch" not in kwargs:
@@ -100,7 +103,11 @@ def register(app, ui) -> None:
     async def run(fn, *args, **kwargs):
         try:
             return JSONResponse(await run_in_threadpool(fn, *args, **kwargs))
-        except PublishError as exc:
+        except Exception as exc:
+            from aeo.ranksim.publishing.service import PublishError
+
+            if not isinstance(exc, PublishError):
+                raise
             # An error answer is not saved by the middleware, but it may follow a write: a failed publish keeps its
             # history entry, and a stale proof that is gone is revoked. Save those now.
             await run_in_threadpool(save_quietly, ui)
@@ -115,6 +122,8 @@ def register(app, ui) -> None:
 
     @app.get("/api/v1/publish/platforms")
     def publish_platforms():
+        from aeo.ranksim.publishing.service import catalog
+
         return JSONResponse({"platforms": catalog()})
 
     @app.get("/api/v1/projects/{slug}/publish/status")
@@ -123,6 +132,8 @@ def register(app, ui) -> None:
         if blocked:
             return blocked
         target = url or f"https://{ui.project(slug).site}/"
+        from aeo.ranksim.publishing.store import encryption_ready
+
         return await run(lambda: {**pub.status(target), "history": pub.history(url=target, limit=10), "encryption_ready": encryption_ready()})
 
     @app.post("/api/v1/projects/{slug}/publish/ownership")

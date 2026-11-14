@@ -64,7 +64,7 @@ GENERIC = {
     "faqs", "news", "resources", "support", "help", "menu", "search", "page not found", "cookie policy", "sitemap",
     "thank you", "our team", "get started", "learn more", "read more", "request a demo", "book a demo", "features",
     "testimonials", "case studies", "partners", "press", "events", "jobs", "team", "products", "services", "solutions",
-    "all posts", "all articles", "privacy notice", "legal", "accessibility", "cookie settings", "our story", "about the company",
+    "home service", "home services", "all posts", "all articles", "privacy notice", "legal", "accessibility", "cookie settings", "our story", "about the company",
 }
 LABEL_STARTS = (
     "questions", "frequently asked", "common questions", "articles", "guides", "resources", "related", "latest", "more ",
@@ -84,7 +84,8 @@ STRONG_LABEL_STARTS = (
     "meet ", "about ", "plans", "table of contents", "in this article", "key takeaways", "conclusion",
     "final thoughts", "summary", "next steps", "share this", "subscribe", "follow us", "stay ", "thanks", "hear from",
     "loved by", "customer stories", "product updates", "top picks", "use of ", "no charge", "refer ", "what it ",
-    "key differences", "differences between", "pros and cons",
+    "key differences", "differences between", "pros and cons", "what real ", "what users", "what customers",
+    "honest review", "real reviews",
     "what you ", "how we ", "who we ", "what we ",
 )
 # Words that only appear in legal pages and documents.
@@ -665,6 +666,7 @@ def _gather(text: str, source: str, weight: float, page: str | None, *, max_word
         piece = " ".join(word for word in piece.split() if not YEAR.fullmatch(word))  # searchers rarely type the year
         piece = re.sub(r"\s+(?:in|for|of|from|on|to)$", "", piece)  # "buildertrend pricing in" after the year went
         piece = re.sub(r"^\d{1,2}\s+(?=(?:best|top)\b)", "", piece)  # "7 best joist alternatives" is "best joist alternatives"
+        piece = re.sub(r"^(.+\b(?:alternatives?|vs \S+(?: \S+)?))\s+for\s+.+$", r"\1", piece)  # "projul alternative for dirtwork crews"
         reason = _label_reason(piece) or _tagline_reason(piece) or ("too general" if _general(piece) else None) or _noise_reason(piece, source)
         words = piece.split()
         if not reason and not 2 <= len(words) <= max_words:
@@ -922,12 +924,32 @@ def discover(
     scored.sort(key=lambda item: (-item.score, len(item.q), item.q))
 
     picked: list[Found] = []
+    pattern_counts: Counter = Counter()
     for found in scored:
+        pattern = _pattern(found.q)
+        if pattern and pattern_counts[pattern] >= PATTERN_CAP[pattern]:
+            dropped.append({"q": found.q, "reason": f"enough {pattern} searches", "source": found.sources[0]})
+            continue
         if len(picked) >= limit:
             dropped.append({"q": found.q, "reason": "over the limit", "source": found.sources[0]})
             continue
         picked.append(found)
+        if pattern:
+            pattern_counts[pattern] += 1
     return Discovery(searches=picked, dropped=_unique_drops(dropped), limit=limit, brand=brand)
+
+
+# A site with 40 "X alternative" pages would fill the list with them; category searches matter more.
+PATTERN_CAP = {"alternative": 8, "versus": 5}
+
+
+def _pattern(query: str) -> str | None:
+    words = query.split()
+    if any(word in {"alternative", "alternatives"} for word in words):
+        return "alternative"
+    if any(word in {"vs", "versus"} for word in words):
+        return "versus"
+    return None
 
 
 def _texts(items) -> list[str]:

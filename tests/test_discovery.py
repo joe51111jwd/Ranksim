@@ -837,3 +837,15 @@ def test_more_shapes_from_live_sites():
     for junk in ("software alternatives by crew size", "dirt crews or home service", "leads to crew in one app", "midsized contractors",
                  "whats the best tool", "key differences for contractors", "buildertrend pricing in"):
         assert junk not in queries, junk
+
+
+def test_alternative_pages_do_not_fill_the_list():
+    names = ["goaudits", "gocanvas", "myosh", "tulip", "cority", "evotix", "sphera", "yoobic", "enablon", "intelex", "jotform", "obzervr"]
+    titles = [f"{name.title()} Alternative | Acme" for name in names] + ["Projul Alternative for Dirtwork Crews | Acme", "Home Service | Acme", "What Real Users Are Saying | Acme"]
+    urls = [f"https://acme.com/{name}-alternative" for name in names] + ["https://acme.com/compare/projul-alternative", "https://acme.com/home-service", "https://acme.com/reviews-page"]
+    found = _phrases(titles, urls=urls)
+    alternatives = [q for q in found.queries if "alternative" in q]
+    assert len(alternatives) == dn.PATTERN_CAP["alternative"]
+    assert "dirt work software" in found.queries  # the category search still gets in
+    assert "home service" not in found.queries and "what real users are saying" not in found.queries
+    assert any(item["q"] == "projul alternative" for item in found.to_dict()["searches"]) or any(item["reason"].startswith("enough") and item["q"] == "projul alternative" for item in found.dropped)

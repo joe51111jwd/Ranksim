@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+import time
 import sqlite3
 from types import SimpleNamespace
 
@@ -558,3 +559,42 @@ def test_workspace_plugin_data_is_its_own_object(tmp_path, fake_blob):
     a.save()
     puts = [call for call in fake_blob.calls if call.startswith("put") and call.endswith(".tgz")]
     assert len(puts) == 1 and "/_plugins/" in puts[0]
+
+
+def test_login_limit_is_per_client_and_says_when_to_retry(hosted, monkeypatch):
+    import aeo.ranksim.access as access_module
+
+    monkeypatch.setattr(access_module, "FAILURE_DELAY_SECONDS", 0)
+    monkeypatch.setattr("aeo.ranksim.access.time.sleep", lambda _s: None)
+    client, token = hosted["client"], hosted["token"]
+    for _ in range(access_module.MAX_CLIENT_FAILURES_PER_MINUTE):
+        assert client.post("/api/v1/login", json={"password": "nope"}, headers={"x-ranksim-csrf": token, "x-real-ip": "203.0.113.9"}).status_code == 401
+    refused = client.post("/api/v1/login", json={"password": PASSWORD}, headers={"x-ranksim-csrf": token, "x-real-ip": "203.0.113.9"})
+    assert refused.status_code == 429 and int(refused.headers["retry-after"]) >= 1
+    other = client.post("/api/v1/login", json={"password": PASSWORD}, headers={"x-ranksim-csrf": token, "x-real-ip": "198.51.100.7"})
+    assert other.status_code == 200  # another client is not locked out by the first one's failures
+
+
+def test_sign_out_everywhere_revokes_every_session(hosted):
+    client, token = hosted["client"], hosted["token"]
+    _sign_in(hosted)
+    stolen = client.cookies.get(COOKIE)
+    assert client.get("/api/v1/projects").status_code == 200
+    out = client.post("/api/v1/logout", json={"everywhere": True}, headers={"x-ranksim-csrf": token})
+    assert out.status_code == 200 and out.json()["everywhere"] is True
+    client.cookies.clear()
+    client.cookies.set(COOKIE, stolen)  # a copy of the old cookie no longer works
+    assert client.get("/api/v1/projects").status_code == 401
+    client.cookies.clear()
+    time.sleep(0.01)  # a cookie issued in the revocation's own millisecond is refused by design
+    _sign_in(hosted)
+    assert client.get("/api/v1/projects").status_code == 200  # signing in again works
+
+
+def test_security_headers(hosted):
+    client = hosted["client"]
+    plain = client.get("/")
+    assert "camera=()" in plain.headers["permissions-policy"] and plain.headers["cross-origin-opener-policy"] == "same-origin"
+    assert "strict-transport-security" not in plain.headers  # only over https
+    secure = client.get("/", headers={"x-forwarded-proto": "https"})
+    assert secure.headers["strict-transport-security"].startswith("max-age=")

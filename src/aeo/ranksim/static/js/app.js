@@ -299,7 +299,8 @@ async function openUrl(raw) {
   let result = null;
   for (let wait = 0; wait < 40; wait += 1) {
     try {
-      await analyzeOnce(url, (done) => { result = done; });
+      const paused = await analyzeOnce(url, (done) => { result = done; });
+      if (paused && !result && !S.open.error) continue; /* a long analysis continues in a new request */
       break;
     } catch (err) {
       if (!S.open || S.open.url !== url) return;
@@ -324,7 +325,9 @@ async function openUrl(raw) {
 }
 
 async function analyzeOnce(url, onDone) {
+  let paused = false;
   await stream('/api/v1/sites', { site: url }, (event) => {
+    if (event.type === 'paused') paused = true;
     if (!S.open || S.open.url !== url) return;
     if (event.type === 'step') {
       const key = event.step === 'save' ? 'model' : event.step;
@@ -346,6 +349,7 @@ async function analyzeOnce(url, onDone) {
       S.open.error = event.error;
     }
   });
+  return paused;
 }
 
 async function finishOpen(slug, url) {

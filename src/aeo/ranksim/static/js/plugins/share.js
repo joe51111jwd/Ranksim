@@ -252,7 +252,7 @@ registerSettingsSection({ key: 'share-log', order: 54, render: logSection });
 registerSettingsSection({ key: 'share-brand', order: 56, render: brandingSection });
 
 registerOverviewTile({
-  key: 'share',
+  key: 'client-report', // not 'share': that key is the built-in Who takes the top 10 tile
   order: 95,
   render(_report, { slug }) {
     return h('section', { class: 'tile span-2 no-print' },

@@ -225,7 +225,7 @@ def _difficulty_table(rows) -> str:
             f"<td>{e(row.keyword)}</td>"
             f'<td class="num">{e(score)}</td>'
             f"<td class=\"num\">{e(f'{row.coverage:.2f}')}</td>"
-            f"<td>{e(row.label)}</td>"
+            f"<td>{e(row.label)}{'<div class=\"small\">' + e(row.navigational_note) + '</div>' if row.navigational else ''}</td>"
             "</tr>"
         )
     return _table("Difficulty", ("Keyword", "Score", "Coverage", "Label"), body)

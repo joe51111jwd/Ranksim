@@ -12,13 +12,8 @@ from pathlib import Path
 
 import httpx
 
-from aeo.ranksim.kwresearch.difficulty import (
-    DifficultyResult,
-    load_composition,
-    load_majestic_ranks,
-    load_tranco_ranks,
-    score_difficulty,
-)
+from aeo.ranksim.kwresearch.authority_cache import load_authority_sources
+from aeo.ranksim.kwresearch.difficulty import DifficultyResult, load_composition, score_difficulty
 from aeo.ranksim.kwresearch.http import USER_AGENT, PoliteHttp, scrub
 from aeo.ranksim.kwresearch.models import (
     Attempt,
@@ -214,14 +209,29 @@ def keyword_difficulty(
     majestic_path: str | None = None,
     today: str | None = None,
     log: Log | None = None,
+    fetch_authority: bool = True,
+    authority_cache: str | Path | None = None,
+    authority_client: httpx.Client | None = None,
 ) -> list[DifficultyResult]:
     words = _unique(keywords)
     day = today or utc_today()
     say = log or (lambda _line: None)
     store = KeywordStore(cache)
     per = search_credits(10)
-    tranco = _maybe_ranks(load_tranco_ranks, tranco_path or os.environ.get("RANKSIM_TRANCO_PATH"))
-    majestic = _maybe_ranks(load_majestic_ranks, majestic_path or os.environ.get("RANKSIM_MAJESTIC_PATH"))
+    tranco_source, majestic_source = load_authority_sources(
+        cache_dir=authority_cache,
+        tranco_path=tranco_path or os.environ.get("RANKSIM_TRANCO_PATH"),
+        majestic_path=majestic_path or os.environ.get("RANKSIM_MAJESTIC_PATH"),
+        fetch=fetch_authority,
+        client=authority_client,
+    )
+    tranco = tranco_source.ranks
+    majestic = majestic_source.ranks
+    for source, label in ((tranco_source, "Tranco"), (majestic_source, "Majestic")):
+        if source.ranks is not None and source.list_date:
+            say(f"{label} list date {source.list_date}.")
+        elif source.note:
+            say(f"{label}: {source.note}.")
     composition = load_composition()
     key = (api_key or "").strip() or None
     uncached = [keyword for keyword in words if refresh or store.get_serp(keyword, day) is None]
@@ -277,6 +287,10 @@ def keyword_difficulty(
                 serp_day=day if payload is not None else "",
                 serp_cached=cached,
                 credits=spent,
+                tranco_date=tranco_source.list_date,
+                majestic_date=majestic_source.list_date,
+                tranco_note=tranco_source.note,
+                majestic_note=majestic_source.note,
             )
             if error and payload is None:
                 if result.score is None:
@@ -309,6 +323,9 @@ def keyword_report(
     majestic_path: str | None = None,
     today: str | None = None,
     log: Log | None = None,
+    fetch_authority: bool = True,
+    authority_cache: str | Path | None = None,
+    authority_client: httpx.Client | None = None,
 ) -> list[dict]:
     volumes = keyword_volume(
         keywords,
@@ -333,6 +350,9 @@ def keyword_report(
             majestic_path=majestic_path,
             today=today,
             log=log,
+            fetch_authority=fetch_authority,
+            authority_cache=authority_cache,
+            authority_client=authority_client,
         ):
             difficulty_by_keyword[norm_keyword(row.keyword)] = row.to_dict()
     else:
@@ -376,6 +396,8 @@ def format_difficulty_text(rows: list[DifficultyResult]) -> str:
             used = f"{factor.weight_used:.2f}" if factor.status == "present" else "0"
             sub = "" if factor.subscore is None else f"{factor.subscore:.1f}"
             lines.append(f"  {factor.name}\t{factor.status}\traw {factor.raw}\tsub {sub}\tweight {factor.weight:.2f}\tused {used}")
+        if row.navigational:
+            lines.append(f"  navigational\ttrue\t{row.navigational_note}")
         if row.reason:
             lines.append(f"  note\t{row.reason}")
     return "\n".join(lines)
@@ -391,7 +413,13 @@ def format_report_text(rows: list[dict]) -> str:
         reason = row.get("blank_reason") or row.get("difficulty_reason") or ""
         body.append((row.get("keyword") or "", volume, row.get("provider") or "", row.get("data_date") or "", difficulty, coverage, reason))
     text = _text_table(header, body)
-    return "Difficulty, when shown, is a heuristic score, not a Google prediction.\n" + text
+    notes = [
+        f"{row.get('keyword')}: {row.get('navigational_note')}"
+        for row in rows
+        if row.get("navigational") and row.get("navigational_note")
+    ]
+    extra = ("\n" + "\n".join(notes)) if notes else ""
+    return "Difficulty, when shown, is a heuristic score, not a Google prediction.\n" + text + extra
 
 
 def write_csv(rows: list[dict], path: str | Path, fields: list[str]) -> None:
@@ -409,7 +437,9 @@ VOLUME_FIELDS = [
     "data_date", "fetched_at", "cpc_usd", "competition", "competition_index", "semrush_us_volume",
     "semrush_url", "semrush_data_date", "notes", "blank_reason", "list_sources",
 ]
-REPORT_FIELDS = VOLUME_FIELDS + ["difficulty", "coverage", "heuristic", "difficulty_reason"]
+REPORT_FIELDS = VOLUME_FIELDS + [
+    "difficulty", "coverage", "heuristic", "difficulty_reason", "navigational", "navigational_note",
+]
 
 
 def _report_row(volume: VolumeRecord, difficulty: dict | None) -> dict:
@@ -421,11 +451,15 @@ def _report_row(volume: VolumeRecord, difficulty: dict | None) -> dict:
         row["coverage"] = None
         row["heuristic"] = ""
         row["difficulty_reason"] = "difficulty not run"
+        row["navigational"] = False
+        row["navigational_note"] = ""
         return row
     row["difficulty"] = difficulty.get("score")
     row["coverage"] = difficulty.get("coverage")
     row["heuristic"] = difficulty.get("label") or "Heuristic score, not a Google prediction."
     row["difficulty_reason"] = difficulty.get("reason") or ""
+    row["navigational"] = bool(difficulty.get("navigational"))
+    row["navigational_note"] = difficulty.get("navigational_note") or ""
     row["factors"] = difficulty.get("factors") or []
     return row
 
@@ -585,16 +619,6 @@ def _record_from_csv(row: dict) -> VolumeRecord | None:
 def _organic(payload: dict) -> list[dict]:
     hits = parse_serper(payload, 10)
     return [{"position": hit.position, "url": hit.url, "title": hit.title, "snippet": hit.snippet} for hit in hits]
-
-
-def _maybe_ranks(loader, path: str | None):
-    text = (path or "").strip()
-    if not text:
-        return None
-    file_path = Path(text)
-    if not file_path.is_file():
-        return None
-    return loader(file_path)
 
 
 def _unique(keywords: list[str]) -> list[str]:

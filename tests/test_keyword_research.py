@@ -405,7 +405,15 @@ def test_serp_cache_makes_the_second_difficulty_run_free(tmp_path):
 
     cache = tmp_path / "kw.sqlite"
     client = httpx.Client(transport=httpx.MockTransport(handler))
-    first = keyword_difficulty(["hcss"], cache, api_key="serper-test-key", credit_cap=5, client=client, today="2026-11-14")
+    first = keyword_difficulty(
+        ["hcss"],
+        cache,
+        api_key="serper-test-key",
+        credit_cap=5,
+        client=client,
+        today="2026-11-14",
+        fetch_authority=False,
+    )
     assert calls["n"] == 1
     assert first[0].credits == 1
     assert first[0].serp_cached is False
@@ -420,6 +428,7 @@ def test_serp_cache_makes_the_second_difficulty_run_free(tmp_path):
         credit_cap=5,
         client=httpx.Client(transport=httpx.MockTransport(boom)),
         today="2026-11-14",
+        fetch_authority=False,
     )
     assert again[0].serp_cached is True
     assert again[0].credits == 0
@@ -437,6 +446,7 @@ def test_credit_cap_blocks_the_serper_call(tmp_path):
         credit_cap=0,
         client=httpx.Client(transport=httpx.MockTransport(handler)),
         today="2026-11-14",
+        fetch_authority=False,
     )
     assert "cap" in rows[0].reason.lower()
 
@@ -512,3 +522,209 @@ def test_stale_live_cache_is_not_treated_as_fresh(tmp_path):
     )[0]
     assert row.us_monthly_volume == 9900
     assert row.fetched_at != old
+
+
+def _zip_bytes(text: str) -> bytes:
+    import io
+    import zipfile
+
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as archive:
+        archive.writestr("top-1m.csv", text)
+    return buffer.getvalue()
+
+
+def test_authority_lists_download_once_and_name_their_dates(tmp_path):
+    from aeo.ranksim.kwresearch.authority_cache import load_authority_sources
+
+    calls = {"n": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls["n"] += 1
+        if request.url.host == "tranco-list.eu":
+            return httpx.Response(
+                200,
+                content=_zip_bytes("1,google.com\n4,busybusy.com\n"),
+                headers={"last-modified": "Fri, 13 Nov 2026 12:00:00 GMT"},
+            )
+        if request.url.host == "downloads.majestic.com":
+            body = "GlobalRank,Domain\n10,google.com\n20,workyard.com\n"
+            return httpx.Response(200, content=body.encode(), headers={"last-modified": "Sun, 01 Nov 2026 00:00:00 GMT"})
+        raise AssertionError(request.url.host)
+
+    cache = tmp_path / "authority"
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    tranco, majestic = load_authority_sources(cache_dir=cache, fetch=True, client=client)
+    assert tranco.ranks is not None and tranco.ranks["busybusy.com"] == 4
+    assert tranco.list_date == "2026-11-13"
+    assert majestic.ranks is not None and majestic.ranks["workyard.com"] == 20
+    assert majestic.list_date == "2026-11-01"
+    assert calls["n"] == 2
+
+    def boom(request: httpx.Request) -> httpx.Response:
+        raise AssertionError(f"refetched {request.url.host}")
+
+    again, _majestic = load_authority_sources(
+        cache_dir=cache,
+        fetch=True,
+        client=httpx.Client(transport=httpx.MockTransport(boom)),
+    )
+    assert again.ranks is not None and again.ranks["busybusy.com"] == 4
+    assert again.list_date == "2026-11-13"
+
+
+def test_authority_cache_refreshes_after_30_days(tmp_path):
+    from datetime import datetime, timedelta, timezone
+
+    from aeo.ranksim.kwresearch.authority_cache import MANIFEST_NAME, load_authority_sources
+
+    cache = tmp_path / "authority"
+    cache.mkdir()
+    (cache / "tranco-top-1m.csv.zip").write_bytes(_zip_bytes("4,busybusy.com\n"))
+    (cache / "majestic_million.csv").write_text("GlobalRank,Domain\n20,workyard.com\n", encoding="utf-8")
+    old = (datetime.now(timezone.utc) - timedelta(days=31)).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    (cache / MANIFEST_NAME).write_text(
+        '{"tranco": {"fetched_at": "%s", "list_date": "2026-10-01", "source_url": "https://tranco-list.eu/top-1m.csv.zip"},'
+        '"majestic": {"fetched_at": "%s", "list_date": "2026-10-01", "source_url": "https://downloads.majestic.com/majestic_million.csv"}}\n'
+        % (old, old),
+        encoding="utf-8",
+    )
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.host == "tranco-list.eu":
+            return httpx.Response(
+                200,
+                content=_zip_bytes("9,busybusy.com\n"),
+                headers={"last-modified": "Fri, 13 Nov 2026 12:00:00 GMT"},
+            )
+        if request.url.host == "downloads.majestic.com":
+            return httpx.Response(503, text="no")
+        raise AssertionError(request.url.host)
+
+    tranco, majestic = load_authority_sources(
+        cache_dir=cache,
+        fetch=True,
+        client=httpx.Client(transport=httpx.MockTransport(handler)),
+    )
+    assert tranco.ranks is not None and tranco.ranks["busybusy.com"] == 9
+    assert tranco.list_date == "2026-11-13"
+    assert majestic.ranks is not None and majestic.ranks["workyard.com"] == 20
+    assert majestic.list_date == "2026-10-01"
+    assert "cached list" in majestic.note
+
+
+def test_authority_download_failure_drops_the_list(tmp_path):
+    from aeo.ranksim.kwresearch.authority_cache import load_authority_sources
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(503, text="unavailable")
+
+    tranco, majestic = load_authority_sources(
+        cache_dir=tmp_path / "empty",
+        fetch=True,
+        client=httpx.Client(transport=httpx.MockTransport(handler)),
+    )
+    assert tranco.ranks is None and majestic.ranks is None
+    assert "download failed" in tranco.note
+
+
+def test_navigational_brand_at_position_1_is_flagged_and_counts_as_a_homepage():
+    from aeo.ranksim.kwresearch.difficulty import WEIGHTS
+
+    assert WEIGHTS == {
+        "serp_composition": 0.30,
+        "domain_authority": 0.25,
+        "exact_match": 0.15,
+        "ai_overview": 0.10,
+        "cpc": 0.10,
+        "ads_competition": 0.10,
+    }
+    for keyword, url in (
+        ("busybusy", "https://www.busybusy.com/"),
+        ("quoteiq", "https://quoteiq.com/"),
+        ("workyard", "https://www.workyard.com/"),
+    ):
+        result = score_difficulty(
+            keyword,
+            organic=[{"position": 1, "url": url, "title": keyword}],
+            payload={},
+            volume=None,
+            tranco=None,
+            majestic=None,
+            tranco_date="2026-11-13",
+        )
+        assert result.navigational is True
+        assert "brand owning its own SERP" in result.navigational_note
+        composition = next(factor for factor in result.factors if factor.name == "serp_composition")
+        assert composition.raw.startswith("brand_homepages=1")
+        assert composition.weight == 0.30
+        authority = next(factor for factor in result.factors if factor.name == "domain_authority")
+        assert authority.status == "missing"
+
+    inner = score_difficulty(
+        "busybusy",
+        organic=[{"position": 1, "url": "https://busybusy.com/pricing", "title": "Pricing"}],
+        payload={},
+        volume=None,
+        tranco=None,
+        majestic=None,
+    )
+    assert inner.navigational is True
+    composition = next(factor for factor in inner.factors if factor.name == "serp_composition")
+    assert composition.raw.startswith("brand_homepages=0")
+
+    other = score_difficulty(
+        "construction time tracking software",
+        organic=[{"position": 1, "url": "https://www.busybusy.com/", "title": "BusyBusy"}],
+        payload={},
+        volume=None,
+        tranco=None,
+        majestic=None,
+    )
+    assert other.navigational is False
+    assert other.navigational_note == ""
+
+
+def test_difficulty_command_uses_the_cached_lists_and_shows_the_date(tmp_path):
+    from aeo.ranksim.kwresearch.store import KeywordStore
+
+    cache = tmp_path / "kw.sqlite"
+    store = KeywordStore(cache)
+    store.put_serp(
+        "busybusy",
+        "2026-11-14",
+        {"organic": [{"position": 1, "title": "BusyBusy", "link": "https://www.busybusy.com/", "snippet": ""}]},
+        "2026-11-14T00:00:00Z",
+    )
+    store.close()
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.host == "tranco-list.eu":
+            return httpx.Response(
+                200,
+                content=_zip_bytes("12,busybusy.com\n"),
+                headers={"last-modified": "Fri, 13 Nov 2026 12:00:00 GMT"},
+            )
+        if request.url.host == "downloads.majestic.com":
+            return httpx.Response(503, text="no")
+        raise AssertionError(request.url.host)
+
+    rows = keyword_difficulty(
+        ["busybusy"],
+        cache,
+        api_key=None,
+        credit_cap=0,
+        today="2026-11-14",
+        fetch_authority=True,
+        authority_cache=tmp_path / "lists",
+        authority_client=httpx.Client(transport=httpx.MockTransport(handler)),
+    )
+    result = rows[0]
+    assert result.navigational is True
+    assert result.credits == 0
+    authority = next(factor for factor in result.factors if factor.name == "domain_authority")
+    assert authority.status == "present"
+    assert "Tranco list date 2026-11-13" in authority.raw
+    assert "Majestic" not in authority.raw
+    assert "busybusy.com (Tranco 12)" in authority.raw
+

@@ -15,6 +15,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from urllib.parse import urlsplit
 
+from aeo.crawl.urls import domain_of
 from aeo.ranksim.kwresearch.models import VolumeRecord, now_iso
 from aeo.ranksim.site_history import site_key
 
@@ -70,6 +71,9 @@ class DifficultyResult:
     serp_cached: bool
     reason: str
     credits: int = 0
+    navigational: bool = False
+    navigational_domain: str = ""
+    navigational_note: str = ""
 
     def to_dict(self) -> dict:
         data = asdict(self)
@@ -147,11 +151,16 @@ def score_difficulty(
     serp_day: str = "",
     serp_cached: bool = False,
     credits: int = 0,
+    tranco_date: str = "",
+    majestic_date: str = "",
+    tranco_note: str = "",
+    majestic_note: str = "",
 ) -> DifficultyResult:
     lists = composition if composition is not None else load_composition()
+    nav_domain = navigational_domain(keyword, organic)
     factors = [
-        _composition(organic, tranco, majestic, lists),
-        _authority(organic, tranco, majestic),
+        _composition(organic, tranco, majestic, lists, nav_domain),
+        _authority(organic, tranco, majestic, tranco_date, majestic_date, tranco_note, majestic_note),
         _exact_match(keyword, organic),
         _ai_overview(payload),
         _cpc(volume),
@@ -182,6 +191,9 @@ def score_difficulty(
         serp_cached=serp_cached,
         reason=reason,
         credits=credits,
+        navigational=bool(nav_domain),
+        navigational_domain=nav_domain,
+        navigational_note=_navigational_note(keyword, nav_domain),
     )
 
 
@@ -189,17 +201,52 @@ def _factor(name: str, status: str, raw: str, subscore: float | None) -> Factor:
     return Factor(name, status, EXPLANATIONS[name], raw, subscore, WEIGHTS[name], 0.0)
 
 
+def navigational_domain(keyword: str, organic: list[dict] | None) -> str:
+    """Registrable domain at position 1 whose brand name is the keyword."""
+    top = _top_result(organic)
+    if top is None:
+        return ""
+    site = _site(str(top.get("url") or ""))
+    brand = site.split(".", 1)[0] if site else ""
+    token = re.sub(r"[^a-z0-9]", "", keyword.lower())
+    if len(token) < 2 or token != brand:
+        return ""
+    return site
+
+
+def _navigational_note(keyword: str, domain: str) -> str:
+    if not domain:
+        return ""
+    return (
+        f"Navigational. This score mostly reflects the brand owning its own SERP. "
+        f"{domain} ranks #1 for {keyword}."
+    )
+
+
+def _top_result(organic: list[dict] | None) -> dict | None:
+    if not organic:
+        return None
+    if any("position" in hit for hit in organic):
+        ordered = sorted(organic, key=lambda hit: int(hit.get("position") or 10**9))
+        top = ordered[0]
+        if int(top.get("position") or 0) != 1:
+            return None
+        return top
+    return organic[0]
+
+
 def _composition(
     organic: list[dict] | None,
     tranco: dict[str, int] | None,
     majestic: dict[str, int] | None,
     lists: dict[str, set[str]],
+    navigational_site: str = "",
 ) -> Factor:
     if organic is None:
         return _factor("serp_composition", "missing", "no live SERP", None)
     counts = {"brand_homepage": 0, "review_ugc": 0, "niche": 0}
     for hit in organic:
-        counts[classify_result(str(hit.get("url") or ""), tranco, majestic, lists)] += 1
+        counts[classify_result(str(hit.get("url") or ""), tranco, majestic, lists, navigational_site)] += 1
     total = sum(counts.values())
     if total == 0:
         return _factor("serp_composition", "missing", "SERP had no organic results", None)
@@ -212,6 +259,8 @@ def _composition(
         f"brand_homepages={counts['brand_homepage']}, review_ugc={counts['review_ugc']}, "
         f"niche={counts['niche']} of {total}"
     )
+    if navigational_site:
+        raw += f". Navigational homepage: {navigational_site}"
     return _factor("serp_composition", "present", raw, sub)
 
 
@@ -220,10 +269,13 @@ def classify_result(
     tranco: dict[str, int] | None,
     majestic: dict[str, int] | None,
     lists: dict[str, set[str]],
+    navigational_site: str = "",
 ) -> str:
     site = _site(url)
     if site and site in lists.get("review_ugc", set()):
         return "review_ugc"
+    if navigational_site and site == navigational_site and _is_apex_homepage(url, site):
+        return "brand_homepage"
     if _is_homepage(url) and site and _is_big_brand(site, tranco, majestic, lists):
         return "brand_homepage"
     return "niche"
@@ -249,6 +301,10 @@ def _authority(
     organic: list[dict] | None,
     tranco: dict[str, int] | None,
     majestic: dict[str, int] | None,
+    tranco_date: str = "",
+    majestic_date: str = "",
+    tranco_note: str = "",
+    majestic_note: str = "",
 ) -> Factor:
     if organic is None:
         return _factor("domain_authority", "missing", "no live SERP", None)
@@ -280,7 +336,33 @@ def _authority(
     raw = "; ".join(parts)
     if unknown:
         raw += ". Flagged unknown: " + ", ".join(dict.fromkeys(unknown))
+    header = _list_dates(tranco, majestic, tranco_date, majestic_date, tranco_note, majestic_note)
+    if header:
+        raw = header + ". " + raw
     return _factor("domain_authority", "present", raw, sub)
+
+
+def _list_dates(
+    tranco: dict[str, int] | None,
+    majestic: dict[str, int] | None,
+    tranco_date: str,
+    majestic_date: str,
+    tranco_note: str,
+    majestic_note: str,
+) -> str:
+    parts = []
+    if tranco is not None:
+        parts.append(_list_label("Tranco", tranco_date, tranco_note))
+    if majestic is not None:
+        parts.append(_list_label("Majestic", majestic_date, majestic_note))
+    return ". ".join(parts)
+
+
+def _list_label(name: str, list_date: str, note: str) -> str:
+    text = f"{name} list date {list_date}" if list_date else f"{name} list date unknown"
+    if note:
+        text += f" ({note})"
+    return text
 
 
 def _rank_score(rank: int) -> float:
@@ -394,6 +476,15 @@ def _phrase(text: str) -> str:
 def _url_slug(url: str) -> str:
     parts = urlsplit(url)
     return f"{parts.netloc} {parts.path}"
+
+
+def _is_apex_homepage(url: str, site: str) -> bool:
+    if not site or not _is_homepage(url):
+        return False
+    try:
+        return domain_of(url) == site
+    except ValueError:
+        return False
 
 
 def _is_homepage(url: str) -> bool:

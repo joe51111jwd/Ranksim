@@ -1316,7 +1316,7 @@ def _keyword_research(settings, args) -> None:
         else:
             print(text)
         if args.out:
-            write_csv(payload, args.out, ["keyword", "score", "coverage", "kind", "label", "reason", "serp_day", "credits"])
+            write_csv(payload, args.out, ["keyword", "score", "coverage", "kind", "label", "reason", "serp_day", "credits", "navigational", "navigational_note"])
         return
     if command == "report":
         rows = keyword_report(

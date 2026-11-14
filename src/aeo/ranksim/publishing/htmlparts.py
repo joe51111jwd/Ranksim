@@ -6,6 +6,7 @@ platform fields that can really be changed, and the live check uses it to confir
 
 from __future__ import annotations
 
+import difflib
 import re
 from dataclasses import dataclass
 
@@ -136,3 +137,42 @@ def same_document(left: str, right: str) -> bool:
 def short(text: str, limit: int = 240) -> str:
     text = squash(text)
     return text if len(text) <= limit else text[: limit - 3].rstrip() + "..."
+
+
+def excerpt_pair(before: str, after: str, context: int = 12, limit: int = 3) -> tuple[str, str, int]:
+    """Where two long texts differ, in words: the changed spans with a few words around each, "..." for the gaps.
+    Returns (before excerpt, after excerpt, number of changed places). A page body is long and starts with the
+    navigation, so showing its first characters would show the same words on both sides."""
+    old, new = squash(before).split(" "), squash(after).split(" ")
+    spans = [op for op in difflib.SequenceMatcher(None, old, new, autojunk=False).get_opcodes() if op[0] != "equal"]
+    if not spans:
+        return short(before), short(after), 0
+
+    def cut(words: list[str], ranges: list[tuple[int, int]]) -> str:
+        pieces, last = [], 0
+        for start, end in ranges:
+            lo, hi = max(0, start - context), min(len(words), end + context)
+            if lo > last or (not pieces and lo > 0):
+                pieces.append("...")
+            pieces.append(" ".join(words[max(lo, last):hi]))
+            last = hi
+        if last < len(words):
+            pieces.append("...")
+        return " ".join(p for p in pieces if p).replace(" ... ", " ... ").strip()
+
+    shown = spans[:limit]
+    return (
+        cut(old, [(i1, i2) for _tag, i1, i2, _j1, _j2 in shown]),
+        cut(new, [(j1, j2) for _tag, _i1, _i2, j1, j2 in shown]),
+        len(spans),
+    )
+
+
+def display(row: dict) -> dict:
+    """A change row as the Publish sheet shows it: the body as excerpts around what changed, other fields shortened."""
+    before, after = row.get("before", ""), row.get("after", "")
+    if row.get("field") == "body":
+        old, new, places = excerpt_pair(before, after)
+        extra = {"places": places} if places > 3 else {}
+        return {**row, "before": old, "after": new, **extra}
+    return {**row, "before": short(before), "after": short(after)}

@@ -267,7 +267,9 @@ class Publisher:
         before, after = parts(before_html), parts(html)
         from .htmlparts import changes as field_changes
 
-        state["changes"] = [{**c, "before": short(c["before"]), "after": short(c["after"])} for c in field_changes(before, after)]
+        from .htmlparts import display
+
+        state["changes"] = [display(c) for c in field_changes(before, after)]
         state["plan"] = None
         if connection_id:
             connection = self._connection(connection_id)

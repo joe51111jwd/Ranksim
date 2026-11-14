@@ -74,3 +74,45 @@ def test_route_answers_per_id_and_caches(local):  # noqa: F811
     text = str(body).lower().replace("not accuracy", "")
     assert "accuracy" not in text and "guarantee" in text
     assert "—" not in str(body) and "–" not in str(body)
+
+
+def test_issues_without_a_suggestion_get_a_stand_in_or_a_plain_reason():
+    predict_service._CACHE.clear()
+    ctx = make_ctx()
+    h1 = {"id": "h", "kind": "h1-search", "page": "https://ours.example/main", "search": "hcss alternative", "element": {"selector": "h1"}}
+    got = pi.estimate(ctx, h1, OURS, [])
+    assert got["status"] in {"estimate", "no_change"} and "Assumes the H1" in got["assumption"]
+    schema = {"id": "s", "kind": "schema-gap", "page": "https://ours.example/main", "search": "hcss alternative", "element": {"selector": "head"}}
+    with_schema = OURS.replace("</head>", '<script type="application/ld+json">{}</script></head>')
+    assert "already has some" in pi.estimate(ctx, schema, with_schema, [])["reason"]
+    added = pi.estimate(ctx, schema, OURS, [])
+    assert added.get("assumption") == "Assumes structured data is added to the page." or "same" in added.get("reason", "")
+    for kind in ("not-ranking", "thin-vs-top", "script-built", "few-links"):
+        out = pi.estimate(ctx, {"id": kind, "kind": kind, "page": "https://ours.example/main", "search": "hcss alternative", "element": {"selector": "main"}}, OURS, [])
+        if out["status"] == "no_estimate":
+            assert out["reason"] and "today" not in out
+        else:
+            assert "Assumes three links" in out["assumption"]
+
+
+def test_sent_issues_skip_the_report_and_never_fill_the_id_cache(local, monkeypatch):  # noqa: F811
+    client, token = local["client"], local["token"]
+    path = f"/api/v1/projects/{ws.DEMO_SLUG}/issues/impact"
+    report = client.get(f"/api/v1/projects/{ws.DEMO_SLUG}/report").json()
+    issues = report.get("issues", [])[:3]
+    assert issues
+
+    def no_report(*_args, **_kwargs):
+        raise AssertionError("the report was rebuilt although the issues were sent")
+
+    import aeo.ranksim.api.projects as projects
+
+    monkeypatch.setattr(projects, "project_report", no_report)
+    body = _post(client, path, {"ids": [item["id"] for item in issues], "issues": issues}, token)
+    assert body.status_code == 200, body.text
+    assert [row["id"] for row in body.json()["impacts"]] == [item["id"] for item in issues]
+    forged = dict(issues[0], suggestion="<h1>forged</h1>", action="append", element={"selector": "body"})
+    _post(client, path, {"ids": [forged["id"]], "issues": [forged]}, token)
+    monkeypatch.undo()
+    honest = _post(client, path, {"ids": [issues[0]["id"]]}, token).json()["impacts"][0]
+    assert "forged" not in str(honest)

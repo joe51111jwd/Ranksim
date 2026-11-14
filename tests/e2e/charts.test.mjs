@@ -130,11 +130,12 @@ test('shareBars highlights you and tracked competitors and always shows you', ()
   for (const r of find(cut, (n) => n.tag === 'rect')) assert.ok(r.attrs.x + r.attrs.width <= 560);
 });
 
-test('predictedVsReal only plots searches with both, and says how many agree', () => {
+test('predictedVsReal only plots searches with both, and never reads as accuracy', () => {
   const tree = predictedVsReal(ROWS);
   assertAccessible(tree);
   assert.equal(find(tree, (n) => n.tag === 'circle').length, 2);
-  assert.match(toSvg(tree), /2 searches with both\. PREDICTED within one place of real for 1\./);
+  assert.match(toSvg(tree), /2 searches with both a Google position and a PREDICTED one\. Same Google snapshot the model learned from, so this is not accuracy\./);
+  assert.doesNotMatch(toSvg(tree), /within one place/);
   assert.match(toSvg(tree), /PREDICTED versus real/);
 });
 

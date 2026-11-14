@@ -5,13 +5,358 @@
 
 import {
   S, api, h, icon, clear, main, enc, debounce, hostOf, pathOf, looseKey, initial, go, navigate, page, footer,
-  reduceMotion,
+  reduceMotion, toast,
 } from '../core.js';
 import { call, editorPanels, editorTools, registerEditorPanel, registerEditorTool, registerScreen, renderAll, renderEntry } from '../hooks.js';
-import { cleanDoc, facts, frameSource, normalize, pick, revealHidden, serialize } from './preview.js';
+import { asHtml, cleanDoc, cleanParsed, facts, frameSource, normalize as cleanNormalize, pick, revealHidden, serialize } from './preview.js';
 import { renderResult, runTest } from './test.js';
+import { exportHtml, stripRs } from './roundtrip.js';
+import { draftFromHtml, makeBase, serializeDraft } from './model.js';
+import { History, undoKey } from './history.js';
+import { diffBlocks } from './diff.js';
+import { syncFaq } from './blocks.js';
+import './tools.js';
 
-export { normalize };
+/* ------------------------------------------------------------------ round trip
+
+   draft.text stays what it always was: the cleaned page, no editor attributes, for panels, plugins and tests.
+   draft.rs holds the round trip (roundtrip.js): source (the page as fetched, scripts and all), base (source with
+   data-rs-id markers, cleaned) and text (base plus edits, the same markers). The preview shows rs.text, so every
+   element carries its marker, and the export puts the edits back into the source. */
+
+const SOURCES = new Map(); // cleaned page -> the HTML it came from (a few recent pages)
+
+/* The cleaned page, as before. Remembers what it came from, so the editor can export edits onto the original. */
+export function normalize(html) {
+  const text = cleanNormalize(html);
+  SOURCES.delete(text);
+  SOURCES.set(text, asHtml(String(html || '')));
+  while (SOURCES.size > 12) SOURCES.delete(SOURCES.keys().next().value);
+  return text;
+}
+
+/* The round trip state of a draft, made on first use. Null before the page has loaded. */
+export function modelOf(draft) {
+  if (!draft || !draft.text) return null;
+  const key = draft.base || '';
+  if (draft.rs && draft.rs.key === key) return draft.rs;
+  const source = SOURCES.get(key) || SOURCES.get(draft.text) || asHtml(draft.base || draft.text);
+  let base;
+  try {
+    base = makeBase(source, cleanParsed);
+  } catch (err) {
+    console.error('Ranksim: the page could not be prepared for round trip editing', err);
+    return null;
+  }
+  let text = base;
+  if (draft.text !== draft.base) {
+    try {
+      text = draftFromHtml(base, draft.text, cleanParsed);
+    } catch (_err) {
+      text = base;
+    }
+  }
+  const history = new History();
+  history.reset(text);
+  draft.rs = { key, source, base, text, history };
+  restoreAutosave(draft);
+  return draft.rs;
+}
+
+/* Saves new draft markup (with markers). `group` merges quick typing into one undo step. */
+function commit(draft, text, { group = null, record = true } = {}) {
+  const rs = modelOf(draft);
+  if (rs) {
+    syncFaqText(rs, text);
+    rs.text = rs.pendingText || text;
+    rs.pendingText = null;
+    if (record) rs.history.record(rs.text, { group });
+    if (rs.pages) rs.pages.set(rs.text, { source: rs.source, base: rs.base });
+    draft.text = stripRs(rs.text);
+  } else {
+    draft.text = text;
+  }
+  draft.touched = true;
+  autosave(draft);
+}
+
+function syncFaqText(rs, text) {
+  if (!/data-rs-faq-ld=/.test(text)) return;
+  const doc = new DOMParser().parseFromString(text, 'text/html');
+  if (syncFaq(doc)) rs.pendingText = serializeDraft(doc);
+}
+
+/* The page with every edit, scripts and all: what a download or a publish should hold. */
+export function exportOf(draft) {
+  const rs = modelOf(draft);
+  if (!rs) return draft.text || '';
+  return exportHtml(rs.source, rs.base, rs.text);
+}
+
+/* Plain words diff against the page as loaded (diff.js). */
+export function diffOf(draft) {
+  const rs = modelOf(draft);
+  if (!rs) return { changes: [], counts: { changed: 0, added: 0, removed: 0, moved: 0 }, total: 0, summary: 'No changes yet.' };
+  return diffBlocks(rs.base, rs.text);
+}
+
+/* ------------------------------------------------------------------ undo and redo */
+
+export function canUndo(draft) {
+  const rs = modelOf(draft);
+  return !!rs && rs.history.canUndo;
+}
+
+export function canRedo(draft) {
+  const rs = modelOf(draft);
+  return !!rs && rs.history.canRedo;
+}
+
+export function undo() {
+  return step('undo');
+}
+
+export function redo() {
+  return step('redo');
+}
+
+function step(which) {
+  if (!ED.refs) return false;
+  const draft = draftFor(ED.refs.page);
+  syncFromFrame();
+  const rs = modelOf(draft);
+  if (!rs) return false;
+  const text = which === 'undo' ? rs.history.undo() : rs.history.redo();
+  if (text === null) return false;
+  usePageOf(draft, text);
+  showText(draft, text);
+  changed(which);
+  return true;
+}
+
+/* Steps made on a different copy of the page (a saved version opened on a page that has changed since) remember
+   that copy, so undo and redo always pair a draft with the page it was made on. */
+export function usePageOf(draft, text) {
+  const rs = modelOf(draft);
+  const page = rs && rs.pages ? rs.pages.get(text) : null;
+  if (!page || (page.source === rs.source && page.base === rs.base)) return;
+  setPage(draft, page.source, page.base);
+}
+
+/* Switches the copy of the page the draft is measured against (a version, an autosave). draft.base follows, so Test
+   compares with the page the edits were made on. */
+export function setPage(draft, source, base) {
+  const rs = modelOf(draft);
+  if (!rs) return;
+  if (!rs.pages) {
+    rs.pages = new Map();
+    const here = { source: rs.source, base: rs.base };
+    for (const text of [...rs.history.past, rs.history.present, ...rs.history.future]) rs.pages.set(text, here);
+  }
+  rs.source = source;
+  rs.base = base;
+  draft.base = stripRs(base);
+  rs.key = draft.base;
+  SOURCES.set(draft.base, source);
+}
+
+/* Puts a whole draft on screen without recording it (undo, redo, a loaded version). */
+export function showText(draft, text) {
+  const rs = modelOf(draft);
+  if (!rs) return;
+  rs.text = text;
+  draft.text = stripRs(text);
+  draft.touched = true;
+  autosave(draft);
+  if (ED.mode === 'html' && ED.code) {
+    ED.code.value = tidy(draft.text);
+    ED.codeSeen = ED.code.value;
+  } else if (!morph(text, draft)) {
+    paintFrame();
+  }
+  paintSide();
+}
+
+/* Updates the live preview in place to show `text`, keeping the scroll position and the loaded styles. Returns false
+   when the head changed in ways only a fresh preview shows. */
+function morph(text, draft) {
+  const doc = liveDoc();
+  if (!doc) return false;
+  const fresh = new DOMParser().parseFromString(frameSource(text, draft.url), 'text/html');
+  const headKey = (head) => Array.from(head.children).filter((el) => !el.hasAttribute('data-rs') && !/^(TITLE|META|SCRIPT)$/.test(el.tagName)).map((el) => el.outerHTML).join('');
+  if (headKey(doc.head) !== headKey(fresh.head)) return false;
+  const dataOf = (head) => Array.from(head.children).filter((el) => !el.hasAttribute('data-rs') && /^(TITLE|META|SCRIPT)$/.test(el.tagName));
+  const now = dataOf(doc.head);
+  const want = dataOf(fresh.head);
+  if (now.length !== want.length) return false; // a title or description added or removed: repaint
+  now.forEach((el, k) => { if (el.outerHTML !== want[k].outerHTML) el.replaceWith(doc.importNode(want[k], true)); });
+  const win = doc.defaultView;
+  const y = win ? win.scrollY : 0;
+  doc.body.replaceWith(doc.importNode(fresh.body, true));
+  revealHidden(doc);
+  if (win) win.scrollTo(0, y);
+  ED.caret = null;
+  return true;
+}
+
+function handleUndoKey(event) {
+  const which = undoKey(event);
+  if (!which || !ED.refs) return false;
+  event.preventDefault();
+  if (which === 'undo') undo();
+  else redo();
+  return true;
+}
+
+document.addEventListener('keydown', (event) => {
+  if (S.screen !== 'editor' || !ED.refs) return;
+  const target = event.target;
+  const typing = target && (TYPING.has(target.tagName) || target.isContentEditable) && target !== ED.code;
+  if (!typing) handleUndoKey(event);
+});
+
+/* ------------------------------------------------------------------ autosave (this browser only)
+
+   The latest draft of each page is kept in IndexedDB with its own copy of the page, so a refresh never loses work,
+   even when the live page has changed since (many sites send new HTML on every request). Saved versions on the
+   server are separate (tools.js). Autosave is a convenience: when storage is blocked it quietly does nothing. */
+
+const DB_NAME = 'ranksim-editor';
+let dbPromise = null;
+
+function db() {
+  if (!dbPromise) {
+    dbPromise = new Promise((resolve) => {
+      try {
+        const open = indexedDB.open(DB_NAME, 1);
+        open.onupgradeneeded = () => open.result.createObjectStore('drafts');
+        open.onsuccess = () => resolve(open.result);
+        open.onerror = () => resolve(null);
+        open.onblocked = () => resolve(null);
+      } catch (_err) {
+        resolve(null);
+      }
+    });
+  }
+  return dbPromise;
+}
+
+async function store(mode, fn) {
+  const handle = await db();
+  if (!handle) return null;
+  return new Promise((resolve) => {
+    try {
+      const tx = handle.transaction('drafts', mode);
+      const req = fn(tx.objectStore('drafts'));
+      tx.oncomplete = () => resolve(req ? req.result : null);
+      tx.onerror = () => resolve(null);
+      tx.onabort = () => resolve(null);
+    } catch (_err) {
+      resolve(null);
+    }
+  });
+}
+
+const pendingSaves = new Map(); // url -> { timer, draft }
+
+function writeAutosave(draft) {
+  const url = draft.url;
+  const rs = draft.rs;
+  if (!url || !rs) return;
+  if (rs.text === rs.base) store('readwrite', (os) => os.delete(url));
+  else store('readwrite', (os) => os.put({ source: rs.source, base: rs.base, text: rs.text, at: Date.now() }, url));
+}
+
+function autosave(draft) {
+  const url = draft.url;
+  if (!url || pendingSaves.has(url)) return;
+  pendingSaves.set(url, {
+    draft,
+    timer: setTimeout(() => {
+      pendingSaves.delete(url);
+      writeAutosave(draft);
+    }, 800),
+  });
+}
+
+/* A short fingerprint of a page copy, to pair a last-moment save with the copy it belongs to. */
+function fingerprint(text) {
+  let a = 0x811c9dc5;
+  for (let k = 0; k < text.length; k += 1) a = Math.imul(a ^ text.charCodeAt(k), 16777619) >>> 0;
+  return `${a.toString(36)}.${text.length}`;
+}
+
+const LAST = 'ranksim:editor-last:';
+
+/* Leaving or hiding the page: read the preview now and save at once, so the last words typed are kept. IndexedDB may
+   not finish while a page unloads, so the draft also goes to localStorage, which writes at once. */
+function flushAutosave() {
+  if (S.screen === 'editor' && ED.refs) {
+    syncFromFrame();
+    const draft = draftFor(ED.refs.page);
+    const rs = draft.rs;
+    if (rs && draft.url) {
+      try {
+        if (rs.text === rs.base) localStorage.removeItem(LAST + draft.url);
+        else localStorage.setItem(LAST + draft.url, JSON.stringify({ base: fingerprint(rs.base), text: rs.text, at: Date.now() }));
+      } catch (_err) {
+        // storage full or blocked: the IndexedDB copy still stands
+      }
+    }
+  }
+  for (const [url, item] of pendingSaves) {
+    clearTimeout(item.timer);
+    pendingSaves.delete(url);
+    writeAutosave(item.draft);
+  }
+}
+
+function lastMoment(url) {
+  try {
+    const raw = localStorage.getItem(LAST + url);
+    localStorage.removeItem(LAST + url);
+    const data = raw ? JSON.parse(raw) : null;
+    return data && typeof data.text === 'string' ? data : null;
+  } catch (_err) {
+    return null;
+  }
+}
+
+window.addEventListener('pagehide', flushAutosave);
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'hidden') flushAutosave();
+});
+
+/* Called once per new model: brings back unsaved edits, unless the person already started editing. */
+function restoreAutosave(draft) {
+  const rs = draft.rs;
+  const url = draft.url;
+  store('readonly', (os) => os.get(url)).then((found) => {
+    let saved = found && typeof found.text === 'string' && typeof found.source === 'string' && typeof found.base === 'string' ? found : null;
+    const last = lastMoment(url);
+    if (last) { // newer words typed just before the page closed, on the same copy of the page
+      if (saved && last.at > (saved.at || 0) && last.base === fingerprint(saved.base)) saved = { ...saved, text: last.text };
+      else if (!saved && last.base === fingerprint(rs.base)) saved = { source: rs.source, base: rs.base, text: last.text };
+    }
+    if (!saved) return;
+    if (draft.rs !== rs || rs.history.canUndo || rs.text !== rs.base || saved.text === saved.base) return;
+    if (saved.source !== rs.source || saved.base !== rs.base) {
+      setPage(draft, saved.source, saved.base); // the copy of the page the edits were made on
+      rs.history.reset(saved.base);
+      rs.pages = null;
+    }
+    rs.history.record(saved.text);
+    if (ED.refs && draftFor(ED.refs.page) === draft) {
+      showText(draft, saved.text);
+      call('draft-changed', editorCtx({ source: 'restore' }));
+    } else {
+      rs.text = saved.text;
+      draft.text = stripRs(saved.text);
+      draft.touched = true;
+    }
+    toast('Your edits to this page were restored. Undo to start over.');
+  });
+}
 
 /* ------------------------------------------------------------------ drafts and page data */
 
@@ -42,7 +387,7 @@ export async function getCompare(q) {
 }
 
 /* The editor's view state. refs holds the painted screen: { viewport, side, result, address, hint, page, q }. */
-export const ED = { mode: 'visual', device: 'desktop', frame: null, code: null, refs: null, ready: null };
+export const ED = { mode: 'visual', device: 'desktop', frame: null, code: null, refs: null, ready: null, caret: null, codeSeen: null };
 
 function tokens(text) {
   return new Set(String(text || '').toLowerCase().replace(/[^a-z0-9 ]+/g, ' ').split(/\s+/).filter((w) => w.length > 2 && !['and', 'the', 'for', 'with', 'your', 'you'].includes(w)));
@@ -146,15 +491,22 @@ export function editorCtx(extra) {
   const edit = (fn) => {
     if (!here()) return false;
     const live = liveDoc();
-    if (!live) syncFromFrame();
-    const doc = live || cleanDoc(draft.text);
+    syncFromFrame(); // typing still waiting in the debounce is its own undo step, not part of this one
+    const rs = modelOf(draft);
+    if (rs) rs.history.seal();
+    const doc = live || (rs ? new DOMParser().parseFromString(rs.text, 'text/html') : cleanDoc(draft.text));
+    const before = rs ? rs.text : draft.text;
     if (fn(doc) === false) return false;
-    draft.text = serialize(doc);
+    if (rs) syncFaq(doc);
+    const after = rs ? serializeDraft(doc) : serialize(doc);
+    if (after === before) return false;
+    commit(draft, after);
     if (!live) {
-      if (ED.mode === 'html' && ED.code) ED.code.value = tidy(draft.text);
-      else paintFrame();
+      if (ED.mode === 'html' && ED.code) {
+        ED.code.value = tidy(draft.text);
+        ED.codeSeen = ED.code.value;
+      } else paintFrame();
     }
-    draft.touched = true;
     paintSide();
     changed('api');
     return true;
@@ -190,10 +542,12 @@ export function editorCtx(extra) {
     },
     setHtml(html) {
       if (!here()) return false;
-      draft.text = normalize(String(html || ''));
-      draft.touched = true;
-      if (ED.mode === 'html' && ED.code) ED.code.value = tidy(draft.text);
-      else paintFrame();
+      const rs = modelOf(draft);
+      commit(draft, rs ? draftFromHtml(rs.text, String(html || ''), cleanParsed) : normalize(String(html || '')));
+      if (ED.mode === 'html' && ED.code) {
+        ED.code.value = tidy(draft.text);
+        ED.codeSeen = ED.code.value;
+      } else paintFrame();
       paintSide();
       changed('api');
       return true;
@@ -235,6 +589,22 @@ export function editorCtx(extra) {
     },
     repaint: () => paintSide(),
     test: () => runTest(),
+    exportHtml() {
+      if (here()) syncFromFrame();
+      return exportOf(draft);
+    },
+    diff() {
+      if (here()) syncFromFrame();
+      return diffOf(draft);
+    },
+    undo: () => (here() ? undo() : false),
+    redo: () => (here() ? redo() : false),
+    get canUndo() {
+      return canUndo(draft);
+    },
+    get canRedo() {
+      return canRedo(draft);
+    },
   };
   return extra ? Object.assign(ctx, extra) : ctx;
 }
@@ -323,10 +693,31 @@ export function syncFromFrame() {
   if (!ED.refs) return;
   const draft = draftFor(ED.refs.page);
   if (ED.mode === 'visual' && ED.frame && ED.ready === ED.frame && ED.frame.contentDocument && ED.frame.contentDocument.body && draft.touched) {
-    draft.text = serialize(ED.frame.contentDocument);
-  } else if (ED.mode === 'html' && ED.code) {
-    draft.text = ED.code.value;
+    const doc = ED.frame.contentDocument;
+    const rs = modelOf(draft);
+    if (rs) {
+      syncFaq(doc);
+      const text = serializeDraft(doc);
+      if (text !== rs.text) commit(draft, text, { group: 'visual' });
+    } else {
+      draft.text = serialize(doc);
+    }
+  } else if (ED.mode === 'html' && ED.code && ED.code.value !== ED.codeSeen) {
+    readCode(draft);
   }
+}
+
+/* HTML mode: what the person typed becomes the draft, with the markers put back by alignment (roundtrip.js). */
+function readCode(draft) {
+  const typed = ED.code.value;
+  ED.codeSeen = typed;
+  const rs = modelOf(draft);
+  if (!rs) {
+    draft.text = typed;
+    draft.touched = true;
+    return;
+  }
+  commit(draft, draftFromHtml(rs.text, typed, cleanParsed), { group: 'html' });
 }
 
 export function paintFrame() {
@@ -346,12 +737,18 @@ export function paintFrame() {
   }
   if (ED.mode === 'html') {
     const code = h('textarea', { class: 'code', spellcheck: 'false', 'aria-label': 'Page HTML', value: tidy(draft.text) });
-    code.addEventListener('input', () => {
-      draft.text = code.value;
-      draft.touched = true;
-      debouncedSide();
+    ED.codeSeen = code.value;
+    const readSoon = debounce(() => {
+      if (ED.code !== code) return;
+      readCode(draft);
+      paintSide();
       changed('html');
+    }, 400);
+    code.addEventListener('input', () => {
+      draft.touched = true;
+      readSoon();
     });
+    code.addEventListener('keydown', (event) => handleUndoKey(event));
     viewport.append(code);
     ED.code = code;
     queueMicrotask(() => {
@@ -360,7 +757,8 @@ export function paintFrame() {
     return;
   }
   const frame = h('iframe', { sandbox: 'allow-same-origin', title: 'Editable page', referrerpolicy: 'no-referrer' });
-  frame.srcdoc = frameSource(draft.text, draft.url);
+  const rs = modelOf(draft);
+  frame.srcdoc = frameSource(rs ? rs.text : draft.text, draft.url);
   frame.addEventListener('load', () => {
     const doc = frame.contentDocument;
     if (!doc || !doc.body) return;
@@ -370,16 +768,39 @@ export function paintFrame() {
       ED.refs.hint.title = revealed ? 'The live site builds its look with scripts, which never run here. This is the HTML Google and Ranksim score. Click any text to edit it.' : '';
     }
     doc.designMode = 'on';
+    try {
+      doc.execCommand('styleWithCSS', false, false); // no inline styles from the browser's own editing
+      doc.execCommand('defaultParagraphSeparator', false, 'p');
+    } catch (_err) {
+      // older engines: the defaults are fine
+    }
+    doc.addEventListener('input', () => { draft.touched = true; }); // at once, so a quick mode switch reads the edit
     doc.addEventListener('input', debounce(() => {
-      draft.text = serialize(doc);
+      if (ED.frame !== frame) return;
       draft.touched = true;
+      syncFromFrame();
       paintSide();
       changed('visual');
     }, 250));
     doc.addEventListener('keydown', (event) => {
+      if (handleUndoKey(event)) return;
       if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
         event.preventDefault();
         runTest();
+      }
+    });
+    doc.addEventListener('beforeinput', (event) => { // Edit menu undo would desync the draft: use ours
+      if (event.inputType === 'historyUndo' || event.inputType === 'historyRedo') {
+        event.preventDefault();
+        if (event.inputType === 'historyUndo') undo();
+        else redo();
+      }
+    });
+    doc.addEventListener('selectionchange', () => {
+      const sel = doc.getSelection();
+      if (sel && sel.anchorNode && doc.body.contains(sel.anchorNode)) {
+        ED.caret = sel.anchorNode;
+        call('editor-caret', editorCtx());
       }
     });
     if (ED.frame === frame) {
@@ -404,7 +825,8 @@ function setHead(field, value) {
   const draft = draftFor(ED.refs.page);
   if (draft.touched) syncFromFrame();
   const live = ED.mode === 'visual' && ED.frame && ED.ready === ED.frame && ED.frame.contentDocument && ED.frame.contentDocument.head;
-  const target = live ? ED.frame.contentDocument : cleanDoc(draft.text);
+  const rs = modelOf(draft);
+  const target = live ? ED.frame.contentDocument : (rs ? new DOMParser().parseFromString(rs.text, 'text/html') : cleanDoc(draft.text));
   if (field === 'title') {
     let el = target.querySelector('title');
     if (!el) {
@@ -421,9 +843,11 @@ function setHead(field, value) {
     }
     el.setAttribute('content', value);
   }
-  draft.text = serialize(target);
-  draft.touched = true;
-  if (ED.mode === 'html' && ED.code) ED.code.value = tidy(draft.text);
+  commit(draft, rs ? serializeDraft(target) : serialize(target), { group: field });
+  if (ED.mode === 'html' && ED.code) {
+    ED.code.value = tidy(draft.text);
+    ED.codeSeen = ED.code.value;
+  }
   changed(field);
 }
 

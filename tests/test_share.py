@@ -331,8 +331,11 @@ def test_nothing_private_leaks_into_the_client_report(env, monkeypatch):
     data = client.get(path + "/data").json()
     assert set(data) == {
         "preview", "agency", "name", "site", "report_date", "google_date", "source", "data", "search_data", "predictions",
-        "kpis", "rankings", "issues", "share", "competitors", "changes", "notes",
+        "kpis", "rankings", "issues", "share", "competitors", "changes", "notes", "weekly",
     }
+    assert set(data["weekly"]) == {"since", "moves", "moves_note", "done", "checks", "next"}
+    weekly_blob = json.dumps(data["weekly"])
+    assert "INTERNAL-NOTE-ONLY-OWNER" not in weekly_blob and "OWNER-DETAIL-XYZ" not in weekly_blob
     summaries = [row["summary"] for row in data["changes"]]
     assert "Public note for the client" in summaries
     assert not any(summary.startswith("Page change tested") for summary in summaries)  # tests stay with the owner
@@ -357,7 +360,7 @@ def test_the_client_report_labels_every_number(env):
     assert data["predictions"] is True
     assert all(row["predicted"] is None or row["predicted"]["label"] == "PREDICTED" for row in data["rankings"])
     js = (share.SHARE_STATIC / "share.js").read_text(encoding="utf-8")
-    for label in ("PREDICTED", ' data "', "Report date ", ' position"', "date not recorded"):
+    for label in ("PREDICTED", ' checked "', "Report made ", "Your position", "check date not recorded", "This week", "Position changes"):
         assert label in js
 
 
@@ -518,8 +521,8 @@ def test_change_log_helper_hook_and_merge(env):
     share.after_pull(project=project, report={}, ui=ui)
     entries = client.get(f"/api/v1/projects/{env['other']}/changelog").json()["entries"]
     summaries = [row["summary"] for row in entries]
-    assert summaries.count("Google data refreshed for 2 searches") == 1
-    assert "Site pages read again" in summaries and "Edits published to /pricing" in summaries
+    assert summaries.count("Checked Google for 2 searches") == 1
+    assert "Checked the site's pages again" in summaries and "Edits published to /pricing" in summaries
     assert entries == sorted(entries, key=lambda row: row["at"], reverse=True)
     published = next(row for row in entries if row["summary"] == "Edits published to /pricing")
     assert published["detail"] == "Webhook 200" and published["label"] == "Published"
@@ -553,7 +556,7 @@ def test_resolving_an_issue_is_logged_and_shown_to_the_client(env):
     data = client.get(_link(env)["path"] + "/data").json()
     shown = next(row for row in data["issues"] if row["id"] == issue["id"])
     assert shown["status_label"] == "Done" and shown["plan"] == "Rewrote the title"
-    resolved = [row for row in data["changes"] if row["summary"] == f"Issue resolved: {issue['title']}"]
+    resolved = [row for row in data["changes"] if row["summary"] == f"Fixed: {issue['title']}"]
     assert len(resolved) == 1
 
 
@@ -606,3 +609,414 @@ def test_rows_carry_their_own_pull_date(env, monkeypatch):
     assert by_q[searches[0]]["date"] == "Oct 1, 2026" and by_q[searches[1]]["date"] == "Nov 9, 2026"
     lines = share.rankings_csv(data).splitlines()
     assert any(line.startswith(searches[0] + ",") and "Oct 1, 2026" in line for line in lines)
+
+
+# ---------------------------------------------------------------------------
+# weekly client summary
+# ---------------------------------------------------------------------------
+
+
+def test_weekly_summary_on_the_demo_degrades_without_dated_checks(env):
+    data = env["client"].get(_link(env)["path"] + "/data").json()
+    weekly = data["weekly"]
+    assert weekly["moves"] == []  # demo results carry no pull date, so no week over week claim is made
+    assert "checked twice, a week apart" in weekly["moves_note"]
+    assert all(item["status"] in {"planned", "doing", "open"} for item in weekly["next"])
+
+
+def test_weekly_moves_from_dated_checks():
+    from datetime import datetime, timezone
+
+    now = datetime(2026, 11, 14, tzinfo=timezone.utc)
+
+    def at(day):
+        return datetime(2026, 11, day, tzinfo=timezone.utc)
+
+    observations = {
+        "up": [(at(1), 9), (at(6), 7), (at(13), 3)],
+        "down": [(at(6), 2), (at(13), 5)],
+        "same": [(at(6), 4), (at(13), 4)],
+        "new": [(at(6), None), (at(13), 8)],
+        "too-recent": [(at(10), 9), (at(13), 2)],  # only three days apart: not a weekly move
+        "stale": [(at(1), 9), (at(8) - timedelta(days=30), 1)],
+    }
+    moves = share._moves(observations, list(observations), now)
+    by_q = {move["q"]: move for move in moves}
+    assert set(by_q) == {"up", "down", "new"}
+    assert by_q["up"]["from"] == 7 and by_q["up"]["to"] == 3 and by_q["up"]["from_date"] == "2026-11-06"
+    assert by_q["new"]["from"] is None and by_q["new"]["to"] == 8
+    assert [move["q"] for move in moves] == ["up", "down", "new"]  # biggest first; outside the top 10 counts as 11 (tie keeps order)
+
+
+def test_weekly_prefers_tracking_history_and_lists_what_is_next(env, monkeypatch):
+    import sys
+    import types
+    from datetime import datetime, timezone
+
+    project = env["ui"].project(env["demo"])
+    now = datetime(2026, 11, 14, tzinfo=timezone.utc)
+    full = {  # the real shape of plugins.tracking.build_history(project)
+        "searches": [
+            {
+                "search": "vinyl fence installation cost", "position": 5, "previous": 8, "change": "up", "delta": 3,
+                "url": "https://www.northwind-fencing.example/resources/vinyl-fence-installation-cost/",
+                "points": [
+                    {"at": "2026-11-06T09:00:00Z", "position": 8, "url": "https://www.northwind-fencing.example/a/"},
+                    {"at": "2026-11-13T09:00:00Z", "position": 5, "url": "https://www.northwind-fencing.example/a/"},
+                    "junk",
+                ],
+                "competitors": {},
+            }
+        ],
+        "checks": 2, "first_at": "2026-11-06T09:00:00Z", "last_at": "2026-11-13T09:00:00Z", "changes": {}, "trend": [],
+    }
+    fake = types.ModuleType("aeo.ranksim.plugins.tracking")
+    fake.build_history = lambda project, meta=None: full
+    import aeo.ranksim.plugins as plugin_pkg
+
+    monkeypatch.setitem(sys.modules, "aeo.ranksim.plugins.tracking", fake)
+    monkeypatch.setattr(plugin_pkg, "tracking", fake, raising=False)
+    report = {
+        "rankings": [{"q": "vinyl fence installation cost"}],
+        # the compact form in the report has no dates and must not be read as dated points
+        "history": {"searches": [{"search": "vinyl fence installation cost", "position": 5, "previous": 8, "change": "up", "delta": 3, "spark": [8, 5]}]},
+    }
+    issues = [
+        {"title": "Low open", "severity": "low", "status": "open", "status_label": "Not started", "plan": ""},
+        {"title": "High open", "severity": "high", "status": "open", "status_label": "Not started", "plan": ""},
+        {"title": "Planned", "severity": "medium", "status": "planned", "status_label": "Planned", "plan": "Next week"},
+        {"title": "Doing", "severity": "low", "status": "doing", "status_label": "In progress", "plan": "Now"},
+        {"title": "Done", "severity": "high", "status": "done", "status_label": "Done", "plan": ""},
+    ]
+    changes = [
+        {"at": "2026-11-12T10:00:00Z", "date": "2026-11-12", "kind": "publish", "label": "Site update", "summary": "Published the pricing page"},
+        {"at": "2026-11-12T10:00:00Z", "date": "2026-11-12", "kind": "google", "label": "Google check", "summary": "Checked Google"},
+        {"at": "2026-10-01T10:00:00Z", "date": "2026-10-01", "kind": "issue", "label": "Fixed", "summary": "Old fix"},
+    ]
+    weekly = share.weekly_summary(project, report, issues, changes, now=now)
+    assert weekly["moves"] == [{"q": "vinyl fence installation cost", "from": 8, "to": 5, "from_date": "2026-11-06", "to_date": "2026-11-13"}]
+    assert [item["summary"] for item in weekly["done"]] == ["Published the pricing page"] and weekly["checks"] == 1
+    assert [item["title"] for item in weekly["next"]] == ["Doing", "Planned", "High open"]
+
+    # tracking that raises, or is absent, falls back to the stored pull snapshots without failing
+    def boom(project, meta=None):
+        raise RuntimeError("tracking broke")
+
+    fake.build_history = boom
+    assert share._tracking_history(project) is None
+    assert share.weekly_summary(project, report, issues, changes, now=now)["moves"] == []
+    monkeypatch.setitem(sys.modules, "aeo.ranksim.plugins.tracking", None)
+    monkeypatch.setattr(plugin_pkg, "tracking", None, raising=False)
+    assert share._tracking_history(project) is None
+    assert share._history_observations("not a dict") == {} and share._history_observations({"searches": "x"}) == {}
+    assert share._history_observations(report["history"]) == {}
+
+
+def test_published_edits_from_other_plugins_reach_the_weekly_summary(env):
+    project = env["ui"].project(env["other"])
+    share.log_change(project, "publish", "Published new title on /widgets", detail="WordPress post 12", key="publish:wp:12")
+    data = share.client_report(env["ui"], project)
+    assert "Published new title on /widgets" in [item["summary"] for item in data["weekly"]["done"]]
+    assert next(row for row in data["changes"] if row["summary"] == "Published new title on /widgets")["label"] == "Site update"
+    assert "WordPress post 12" not in json.dumps(data)
+
+
+def test_publish_and_rollback_reach_owner_log_and_client_weekly_through_both_plugins(env):
+    """The real publish plugin's change log call, into the real share plugin, out through the owner API and /r/."""
+    publish = pytest.importorskip("aeo.ranksim.plugins.publish")
+    client = env["client"]
+    project = env["ui"].project(env["demo"])
+    entry = {
+        "id": "pub-e2e-1",
+        "url": "https://www.northwind-fencing.example/resources/vinyl-fence-installation-cost/",
+        "rows": [{"label": "Title", "apply": True}, {"label": "Main heading", "apply": True}, {"label": "Meta description", "apply": False}],
+        "connection": {"kind": "wordpress", "id": "conn-SECRET-ID"},
+        "verify": {"status": "live"},
+        "status": "published",
+    }
+    publish.log_change(project, entry, rollback=False)
+    publish.log_change(project, entry, rollback=False)  # a retried request logs once
+    publish.log_change(project, entry, rollback=True)
+    published = "Published changes to /resources/vinyl-fence-installation-cost/: title, main heading."
+    rolled = "Rolled back the published change to /resources/vinyl-fence-installation-cost/."
+
+    owner = client.get(f"/api/v1/projects/{env['demo']}/changelog").json()["entries"]
+    mine = [row for row in owner if row["kind"] == "publish" and row["summary"] in {published, rolled}]
+    assert sorted(row["summary"] for row in mine) == sorted([published, rolled])
+    assert all(row["detail"] == "wordpress, live check: live" and row["public"] for row in mine)
+
+    data = client.get(_link(env)["path"] + "/data").json()
+    done = [item for item in data["weekly"]["done"] if item["summary"] in {published, rolled}]
+    assert sorted(item["summary"] for item in done) == sorted([published, rolled])
+    assert all(item["label"] == "Site update" for item in done)
+    shown = [row for row in data["changes"] if row["summary"] in {published, rolled}]
+    assert len(shown) == 2 and all(set(row) == {"at", "date", "kind", "label", "summary"} for row in shown)
+    blob = json.dumps(data)
+    assert "live check" not in blob and "wordpress" not in blob and "conn-SECRET-ID" not in blob and "pub-e2e-1" not in blob
+
+
+def test_weekly_runs_with_the_real_tracking_plugin(env):
+    tracking = pytest.importorskip("aeo.ranksim.plugins.tracking")
+    project = env["ui"].project(env["demo"])
+    full = share._tracking_history(project)
+    assert full is None or isinstance(full, dict)
+    history = tracking.build_history(project)
+    assert isinstance(history.get("searches"), list)
+    observations = share._history_observations(history)
+    for search, points in observations.items():
+        assert isinstance(search, str) and all(point[0].tzinfo is not None for point in points)
+    weekly = env["client"].get(_link(env)["path"] + "/data").json()["weekly"]
+    assert isinstance(weekly["moves"], list) and weekly["moves_note"] or weekly["moves"]
+
+
+# ---------------------------------------------------------------------------
+# weekly update email (owner only)
+# ---------------------------------------------------------------------------
+
+
+def _weekly_data(**over) -> dict:
+    data = {
+        "name": "Acme Fencing",
+        "site": "acme.example",
+        "agency": {"name": "Camarota SEO", "logo": False},
+        "report_date": "2026-11-14",
+        "google_date": "Nov 13, 2026",
+        "source": "Google",
+        "search_data": True,
+        "data": {"demo": False},
+        "kpis": {"top10": 4, "checked": 6},
+        "weekly": {
+            "since": "2026-11-07",
+            "moves": [{"q": "vinyl fence cost", "from": 7, "to": 3, "from_date": "2026-11-06", "to_date": "2026-11-13"},
+                      {"q": "gate repair", "from": None, "to": 9, "from_date": "2026-11-06", "to_date": "2026-11-13"}],
+            "moves_note": "",
+            "done": [{"date": "2026-11-12", "label": "Site update", "summary": "Published changes to /pricing <script>alert(1)</script>"}],
+            "checks": 2,
+            "next": [{"title": "No page for \"gate repair\"", "severity": "high", "status": "doing", "status_label": "In progress", "plan": "Writing it now"}],
+        },
+    }
+    data.update(over)
+    return data
+
+
+def test_weekly_update_text_and_html():
+    update = share.weekly_update(_weekly_data(), "https://ranksim.example/r/abc.def")
+    text, html = update["text"], update["html"]
+    assert update["subject"] == "Acme Fencing: weekly search update, Nov 14, 2026"
+    assert text.startswith("Hi Acme Fencing team,")
+    assert '"vinyl fence cost": #7 on Nov 6, 2026, now #3 on Nov 13, 2026 (up 4, Google positions)' in text
+    assert '"gate repair": not on page one on Nov 6, 2026, now #9 on Nov 13, 2026 (new on page one, Google positions)' in text
+    assert "On page one of Google for 4 of 6 searches we track (Google checked Nov 13, 2026)." in text
+    assert "In progress. Writing it now" in text and "Full report: https://ranksim.example/r/abc.def" in text
+    assert text.rstrip().endswith("Camarota SEO")
+    assert "style=" not in html and "<script>" not in html and "&lt;script&gt;" in html and 'href="https://ranksim.example/r/abc.def"' in html
+    for blob in (text, html, update["subject"]):
+        assert not any(dash in blob for dash in DASHES)
+        assert "PREDICTED" not in blob and "estimate" not in blob.lower()  # an email never carries a model estimate
+
+
+def test_weekly_update_empty_week_and_demo():
+    data = _weekly_data(data={"demo": True}, source="Demo", google_date="")
+    data["weekly"].update(moves=[], moves_note="Position changes show here once Google has been checked twice, a week apart.", done=[], next=[])
+    text = share.weekly_update(data)["text"]
+    assert "will be in this update once Google has been checked twice" in text
+    assert "Nothing new to report this week." in text and "No open fixes right now." in text
+    assert "demo positions, not Google results" in text and "Demo check date not recorded" in text
+    assert "Full report" not in text and "Your SEO team" not in text
+
+
+def test_weekly_update_route_is_owner_only_and_links_the_newest_live_link(tmp_path):
+    settings = make_settings(tmp_path, **FAKE_KEYS)
+    app = create_app(settings=settings, database=settings.ranksim_database_url, projects_root=tmp_path / "projects",
+                     public_demo=False, access_password="owner-pass", access_secret="test-secret")
+    owner = TestClient(app)
+    csrf = _csrf(owner)
+    headers = {"x-ranksim-csrf": csrf}
+    owner.post("/api/v1/login", json={"password": "owner-pass"}, headers=headers)
+    owner.post("/api/v1/demo", json={}, headers=headers)
+    path = f"/api/v1/projects/{ws.DEMO_SLUG}/weekly-update"
+    first = owner.get(path).json()
+    assert first["has_link"] is False and "Full report" not in first["text"]
+    link = owner.post(f"/api/v1/projects/{ws.DEMO_SLUG}/share", json={"label": "SECRET-LABEL"}, headers=headers).json()
+    update = owner.get(path).json()
+    assert update["has_link"] and f"http://testserver{link['path']}" in update["text"] and "SECRET-LABEL" not in update["text"]
+    owner.post(f"/api/v1/projects/{ws.DEMO_SLUG}/share/{link['id']}/revoke", headers=headers)
+    assert owner.get(path).json()["has_link"] is False
+    assert TestClient(app).get(path).status_code == 401
+    assert owner.get("/api/v1/projects/nope/weekly-update").status_code == 404
+    # the share page itself never asks for it: the button exists only in the owner preview
+    js = (share.SHARE_STATIC / "share.js").read_text(encoding="utf-8")
+    assert "d.preview && preview ? weeklyCopyButton" in js
+    stranger = TestClient(app)
+    for suffix in ("/weekly-update", "/weekly-update/x"):
+        response = stranger.get(link["path"].replace(link["token"], link["token"]) + suffix)
+        assert response.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# adversarial: everything merged since (tracking, gsc, publish, predict) stays off /r/
+# ---------------------------------------------------------------------------
+
+
+def test_owner_only_report_data_from_every_plugin_never_reaches_a_share_link(env, monkeypatch):
+    client = env["client"]
+    real = share._project_report_fn()
+    marker = "OWNERONLY"
+
+    def poisoned(ui, slug):
+        report = json.loads(json.dumps(real(ui, slug)))
+        # plugin namespaces: Search Console, rank tracking, publish, anything new
+        report["gsc"] = {"connected": True, "property": f"sc-domain:{marker}-property", "token": f"{marker}-oauth-token",
+                         "queries": [{"q": f"{marker} query", "clicks": 999, "impressions": 12345, "ctr": 0.08, "position": 4.2}]}
+        report["history"] = {"searches": [{"search": "vinyl fence installation cost", "position": 5, "previous": 8, "change": "up", "delta": 3,
+                                           "spark": [8, 5], "competitors": {f"{marker}-rival.example": [1, 2]}}], "cost": f"{marker} $4.20"}
+        report["publish"] = {"connections": [{"kind": "wordpress", "secret": f"{marker}-app-password"}], "history": [{"id": f"{marker}-entry"}]}
+        report["predict"] = {"model": f"{marker}-lambdamart", "pairwise": 0.991, "features": {"bm25": 1.0}}
+        report["engine"] = {"ready": True, "path": f"/srv/{marker}/engine"}
+        report["pages"] = [{"url": f"https://x.example/{marker}-draft", "status": "fetched", "html": f"<html>{marker}</html>"}]
+        report["name"] = "Poisoned Report Name"  # allowed through: proves this report is the one served
+        report["kpis"]["pairwise"] = 0.99
+        report["data"]["long"] = f"{marker} provider label"
+        for row in report["rankings"]:
+            row["gsc_clicks"] = 77
+            row["note"] = f"{marker} internal note"
+            if row.get("predicted"):
+                row["predicted"].update({"features": {marker: 1}, "why": f"{marker} explanation", "score": 0.42})
+            for item in row.get("top") or []:
+                item["snippet"] = f"{marker} snippet"
+                item["html"] = f"<p>{marker}</p>"
+        for issue in report["issues"]:
+            issue["element"] = {"selector": f"#{marker}", "text": f"{marker} text"}
+            issue["suggestion"] = f"{marker} suggestion"
+            issue["evidence"] = [f"{marker} evidence"]
+            issue["kind"] = f"{marker}-kind"
+        for row in report["share"]:
+            row["platform"] = f"{marker}-platform"
+        report["competitors"] = list(report["competitors"]) + [f"{marker}<script>.example"]
+        return report
+
+    monkeypatch.setattr(share, "_project_report_fn", lambda: poisoned)
+    share._state(env["ui"])["cache"].clear()
+    link = _link(env)
+    bodies = [client.get(link["path"] + suffix) for suffix in ("", "/data", "/rankings.csv", "/issues.csv", "/logo")]
+    for response in bodies:
+        assert marker not in response.text and marker.lower() not in response.text.lower()
+        assert "0.991" not in response.text and "pairwise" not in response.text
+    data = bodies[1].json()
+    assert data["name"] == "Poisoned Report Name"
+    assert data["kpis"] == {key: data["kpis"][key] for key in ("searches", "checked", "top10", "top3", "average", "issues", "high")}
+    assert all(set(row["predicted"]) == {"position", "of", "label"} for row in data["rankings"] if row["predicted"])
+    # the owner preview of the same data is held to the same whitelist
+    preview = client.get(f"/api/v1/projects/{env['demo']}/client-report").text
+    assert marker not in preview
+    # and the weekly email built from it
+    assert marker not in json.dumps(client.get(f"/api/v1/projects/{env['demo']}/weekly-update").json())
+
+
+def test_publish_history_and_tracking_files_on_disk_never_reach_a_share_link(env):
+    client = env["client"]
+    project = env["ui"].project(env["demo"])
+    root = Path(project.dir) / "plugins"
+    for feature, name, body in (
+        ("publish", "state.json", {"connections": [{"sealed": "v1.OWNERONLY-SEALED"}]}),
+        ("tracking", "usage.json", {"spent": "OWNERONLY-COST"}),
+        ("gsc", "token.json", {"refresh_token": "OWNERONLY-REFRESH"}),
+    ):
+        (root / feature).mkdir(parents=True, exist_ok=True)
+        (root / feature / name).write_text(json.dumps(body))
+    link = _link(env)
+    for suffix in ("/data", "/rankings.csv", "/issues.csv", "/../plugins/publish/state.json", "/plugins/gsc/token.json"):
+        response = client.get(link["path"] + suffix)
+        assert "OWNERONLY" not in response.text, suffix
+
+
+# ---------------------------------------------------------------------------
+# Monday digest (owner only, every client)
+# ---------------------------------------------------------------------------
+
+
+def test_page_one_a_week_ago_uses_dated_checks_only():
+    from datetime import datetime, timezone
+
+    now = datetime(2026, 11, 14, tzinfo=timezone.utc)
+
+    def at(day):
+        return datetime(2026, 11, day, tzinfo=timezone.utc)
+
+    observations = {
+        "a": [(at(6), 4), (at(13), 2)],
+        "b": [(at(6), None), (at(13), 9)],
+        "c": [(at(5), 8), (at(13), 12)],
+        "d": [(at(12), 3), (at(13), 3)],  # no check a week back: not counted either way
+    }
+    assert share._page_one_then(observations, ["a", "b", "c", "d"], now) == (2, "2026-11-06")
+    assert share._page_one_then({"d": [(at(12), 3), (at(13), 3)]}, ["d"], now) == (None, "")
+    assert share._page_one_then({}, ["a"], now) == (None, "")
+    stale = {"a": [(at(1) - timedelta(days=40), 3), (at(1) - timedelta(days=30), 2)]}
+    assert share._page_one_then(stale, ["a"], now) == (None, "")
+
+
+def test_digest_lists_every_client_and_isolates_each_clients_email(env, monkeypatch):
+    client = env["client"]
+    ui = env["ui"]
+    demo, other = ui.project(env["demo"]), ui.project(env["other"])
+    share.log_change(demo, "note", "ALPHA-ONLY public note")
+    share.log_change(demo, "note", "ALPHA-PRIVATE note", public=False)
+    share.log_change(other, "publish", "BRAVO-ONLY published /widgets", detail="BRAVO-DETAIL", key="publish:bravo-1")
+    share.log_change(other, "note", "BRAVO-PRIVATE note", public=False)
+    demo_link = _link(env)
+    other_link = _link(env, slug=env["other"])
+
+    data = client.get("/api/v1/digest").json()
+    by_slug = {row["slug"]: row for row in data["projects"]}
+    assert set(by_slug) == {env["demo"], env["other"]} and data["failed"] == []
+    assert all("_data" not in row for row in data["projects"])
+    row = by_slug[env["demo"]]
+    assert row["demo"] is True and row["page_one"]["now"] == 4 and row["page_one"]["of"] == 6
+    assert row["page_one"]["week_ago"] is None  # the demo has no dated checks, so no week-ago claim
+    assert row["report_url"] == f"http://testserver{demo_link['path']}"
+    assert by_slug[env["other"]]["last_publish"]["summary"] == "BRAVO-ONLY published /widgets"
+    assert "Monday digest" in data["text"] and "(demo data)" in data["text"] and OTHER_NAME in data["text"]
+    assert by_slug[env["other"]]["checked"] is False and "not checked on Google yet" in data["text"]
+
+    updates = {item["slug"]: item for item in data["updates"]}
+    alpha, bravo = updates[env["demo"]], updates[env["other"]]
+    for update, mine, theirs, link in ((alpha, "ALPHA-ONLY", "BRAVO", demo_link), (bravo, "BRAVO-ONLY", "ALPHA", other_link)):
+        blob = update["subject"] + update["text"] + update["html"]
+        assert mine in blob and theirs not in blob
+        assert link["path"] in blob
+        other_path = (other_link if link is demo_link else demo_link)["path"]
+        assert other_path not in blob
+    assert OTHER_NAME not in alpha["text"] and "Northwind" not in bravo["text"]
+    whole = json.dumps(data)
+    for secret in ("ALPHA-PRIVATE", "BRAVO-PRIVATE", "BRAVO-DETAIL", *FAKE_KEYS.values(), str(env["root"]), env["csrf"]):
+        assert secret not in whole, secret
+    assert "updates_text" in data and data["updates_text"].count("Subject: ") == 2
+    # each link in an update opens only its own client's report
+    assert client.get(other_link["path"] + "/data").json()["name"] == OTHER_NAME
+
+
+def test_digest_is_owner_only_and_survives_a_broken_project(env, tmp_path, monkeypatch):
+    settings = make_settings(tmp_path)
+    app = create_app(settings=settings, database=settings.ranksim_database_url, projects_root=tmp_path / "projects",
+                     public_demo=False, access_password="owner-pass", access_secret="test-secret")
+    assert TestClient(app).get("/api/v1/digest").status_code == 401
+
+    real = share.client_report
+
+    def flaky(ui, project, **kw):
+        if project.slug == env["other"]:
+            raise RuntimeError("broken project")
+        return real(ui, project, **kw)
+
+    monkeypatch.setattr(share, "client_report", flaky)
+    data = env["client"].get("/api/v1/digest").json()
+    assert [row["slug"] for row in data["projects"]] == [env["demo"]] and data["failed"] == [env["other"]]
+    assert "Could not build" in data["text"]
+
+
+def test_digest_html_is_escaped(env):
+    project = env["ui"].project(env["other"])
+    share.log_change(project, "publish", "<img src=x onerror=alert(1)> published", key="publish:xss")
+    data = env["client"].get("/api/v1/digest").json()
+    assert "<img" not in data["html"] and "<img" not in data["updates_html"] and "&lt;img" in data["updates_html"]

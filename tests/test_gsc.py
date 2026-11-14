@@ -47,6 +47,7 @@ class FakeGoogle:
         self.give_refresh = True
         self.fail_next_api_with: int | None = None
         self.forbidden_sites: set[str] = set()
+        self.challenge = ""  # the code_challenge of the last authorization URL, checked at the exchange
 
     def transport(self) -> httpx.MockTransport:
         return httpx.MockTransport(self.handle)
@@ -65,6 +66,8 @@ class FakeGoogle:
             if form.get("client_id") != CLIENT_ID or form.get("client_secret") != CLIENT_SECRET:
                 return httpx.Response(401, json={"error": "invalid_client"})
             if form["grant_type"] == "authorization_code":
+                if self.challenge and gsc.pkce_challenge(form.get("code_verifier", "")) != self.challenge:
+                    return httpx.Response(400, json={"error": "invalid_grant", "error_description": "Missing code verifier."})
                 if form.get("code") != "good-code":
                     return httpx.Response(400, json={"error": "invalid_grant"})
                 reply = {"access_token": self._token(), "expires_in": 3599, "scope": self.scope, "token_type": "Bearer"}
@@ -125,6 +128,7 @@ class FakeGoogle:
                 "rows": [
                     {"keys": ["https://www.dirtcrew.example/"], "clicks": 70, "impressions": 3500, "ctr": 0.02, "position": 9.0},
                     {"keys": ["https://www.dirtcrew.example/pricing"], "clicks": 50, "impressions": 900, "ctr": 0.0556, "position": 6.2},
+                    {"keys": ["https://www.dirtcrew.example/features"], "clicks": 6, "impressions": 1200, "ctr": 0.005, "position": 4.2},
                 ]
             }
         if dims == ["query", "page"]:
@@ -133,6 +137,7 @@ class FakeGoogle:
                     {"keys": ["heavy civil software", "https://www.dirtcrew.example/"], "clicks": 45, "impressions": 2800, "ctr": 0.016, "position": 10.9},
                     {"keys": ["heavy civil software", "https://www.dirtcrew.example/pricing"], "clicks": 5, "impressions": 200, "ctr": 0.025, "position": 13.0},
                     {"keys": ["dirt work software", "https://www.dirtcrew.example/pricing"], "clicks": 30, "impressions": 900, "ctr": 0.0333, "position": 8.4},
+                    {"keys": ["estimating software", "https://www.dirtcrew.example/features"], "clicks": 6, "impressions": 1200, "ctr": 0.005, "position": 4.2},
                 ]
             }
         return {"rows": []}
@@ -150,11 +155,12 @@ def env(monkeypatch):
     monkeypatch.setenv(gsc.CLIENT_SECRET_ENV, CLIENT_SECRET)
     monkeypatch.setenv(secretbox.SECRET_ENV, SECRET)
     monkeypatch.delenv(gsc.REDIRECT_ENV, raising=False)
+    monkeypatch.delenv(gsc.PUBLIC_URL_ENV, raising=False)
 
 
 @pytest.fixture()
 def no_env(monkeypatch):
-    for name in (gsc.CLIENT_ID_ENV, gsc.CLIENT_SECRET_ENV, gsc.REDIRECT_ENV, secretbox.SECRET_ENV):
+    for name in (gsc.CLIENT_ID_ENV, gsc.CLIENT_SECRET_ENV, gsc.REDIRECT_ENV, gsc.PUBLIC_URL_ENV, secretbox.SECRET_ENV):
         monkeypatch.delenv(name, raising=False)
 
 
@@ -203,7 +209,9 @@ def _connect(box) -> dict:
     assert started.status_code == 200, started.text
     url = started.json()["url"]
     assert url.startswith(gsc.AUTH_URL + "?")
-    return {key: values[0] for key, values in parse_qs(urlsplit(url).query).items()}
+    query = {key: values[0] for key, values in parse_qs(urlsplit(url).query).items()}
+    box.google.challenge = query["code_challenge"]  # what Google remembers for this code
+    return query
 
 
 def _callback(box, params: dict):
@@ -278,7 +286,8 @@ def test_not_configured_says_exactly_what_to_do(tmp_path, no_env):
     setup = status["setup"]
     assert set(setup["missing"]) == {gsc.CLIENT_ID_ENV, gsc.CLIENT_SECRET_ENV, secretbox.SECRET_ENV}
     text = " ".join(setup["steps"])
-    for needed in ("Web application", "Search Console API", gsc.HOSTED_REDIRECT_URI, gsc.CLIENT_ID_ENV, gsc.CLIENT_SECRET_ENV, "Vercel", "In production"):
+    assert len(setup["steps"]) <= 5 and gsc.HOSTED_REDIRECT_URI not in text  # built from this server's address
+    for needed in ("Web application", "Search Console API", gsc.CLIENT_ID_ENV, gsc.CLIENT_SECRET_ENV, "In production", secretbox.SECRET_ENV):
         assert needed in text
     assert "http://testserver/api/v1/gsc/callback" in text  # the address this server answers on is listed too
     project = box.client.get(f"/api/v1/gsc/projects/{box.project.slug}").json()
@@ -352,7 +361,7 @@ def test_full_flow_connect_pick_fetch_report_refresh_disconnect(tmp_path, env):
     assert report["rankings"] == [] and section["label"] == "Google Search Console data"
     assert [row["q"] for row in section["queries"]] == ["heavy civil software", "dirt work software", "dirt crew login"]
     assert section["queries"][0] == {"q": "heavy civil software", "clicks": 50, "impressions": 3000, "ctr": 0.0167, "position": 11.1}
-    assert [row["page"] for row in section["pages"]] == ["https://www.dirtcrew.example/", "https://www.dirtcrew.example/pricing"]
+    assert [row["page"] for row in section["pages"]] == ["https://www.dirtcrew.example/", "https://www.dirtcrew.example/pricing", "https://www.dirtcrew.example/features"]
     assert section["searches"]["heavy civil software"]["page"] == "https://www.dirtcrew.example/"
     assert section["searches"]["dirt work software"]["clicks"] == 30
     assert "excavation estimating" not in section["searches"]
@@ -518,13 +527,49 @@ def test_state_is_bound_to_the_owner_session(tmp_path, env):
     assert gsc.check_state(box.ui, same_session, query["state"])["slug"] == box.project.slug
 
 
-def test_callback_needs_the_signed_in_owner(tmp_path, env):
+def test_signed_out_callback_sends_the_owner_to_sign_in_then_finishes(tmp_path, env):
     box = _app(tmp_path)
     _sign_in(box)
     query = _connect(box)
     _post(box, "/api/v1/logout")
-    refused = _callback(box, {"code": "good-code", "state": query["state"]})
-    assert refused.status_code == 401 and refused.json()["login"] is True
+    parked = _callback(box, {"code": "good-code", "state": query["state"]})
+    assert parked.status_code == 303 and parked.headers["location"] == f"/app/{box.project.slug}/settings?gsc=signin"
+    pending = box.client.cookies.get(gsc.PENDING_COOKIE)
+    assert pending and "good-code" not in pending  # sealed, never the bare code
+    assert box.google.calls == [] and not gsc.account_path(box.ui).exists()
+    # Signed out, nothing else opens: the resume route needs the login.
+    assert _post(box, "/api/v1/gsc/resume").status_code == 401
+    _sign_in(box)
+    assert _post(box, "/api/v1/gsc/resume", csrf=False).status_code == 403
+    done = _post(box, "/api/v1/gsc/resume")
+    assert done.status_code == 200 and done.json()["result"] == "connected" and done.json()["slug"] == box.project.slug
+    assert gsc.account_path(box.ui).exists()
+    assert box.client.get(f"/api/v1/gsc/projects/{box.project.slug}").json()["state"] == "ready"
+    again = _post(box, "/api/v1/gsc/resume")
+    assert again.status_code == 409 and again.json()["result"] == "nothing_pending"  # single use
+
+
+def test_signed_out_callback_still_checks_the_state(tmp_path, env):
+    box = _app(tmp_path)
+    _sign_in(box)
+    query = _connect(box)
+    _post(box, "/api/v1/logout")
+    tampered = query["state"][:-3] + ("AAA" if not query["state"].endswith("AAA") else "BBB")
+    assert _callback(box, {"code": "good-code", "state": tampered}).headers["location"] == "/app?gsc=bad_state"
+    assert gsc.PENDING_COOKIE not in box.client.cookies
+    # Another browser (no nonce cookie) gets nothing parked.
+    other = TestClient(box.app)
+    refused = other.get("/api/v1/gsc/callback", params={"code": "good-code", "state": query["state"]}, follow_redirects=False)
+    assert refused.headers["location"] == "/app?gsc=bad_nonce" and gsc.PENDING_COOKIE not in other.cookies
+    # A parked code expires with its state. (A failed callback ended the flow above, so start a new one.)
+    _sign_in(box)
+    query = _connect(box)
+    _post(box, "/api/v1/logout")
+    assert _callback(box, {"code": "good-code", "state": query["state"]}).headers["location"].endswith("?gsc=signin")
+    _sign_in(box)
+    box.ui.gsc_clock.now += gsc.STATE_SECONDS + 1
+    late = _post(box, "/api/v1/gsc/resume")
+    assert late.status_code == 409 and late.json()["result"] == "expired_state"
     assert box.google.calls == []
 
 
@@ -711,3 +756,189 @@ def test_discovery_weight_range():
     assert gsc.discovery_weight(1, 100000) >= 2.5
     assert gsc.discovery_weight(0, 0) == 2.5
     assert all(2.5 <= gsc.discovery_weight(n, 500) <= 5.0 for n in (0, 1, 250, 500, 9999))
+
+
+def test_first_analysis_uses_gsc_before_the_project_exists(tmp_path, env):
+    from aeo.ranksim import discovery
+
+    box = _app(tmp_path)
+    _sign_in(box)
+    query = _connect(box)
+    _callback(box, {"code": "good-code", "state": query["state"]})
+    from aeo.ranksim.site import SitePage
+
+    pages = [SitePage(url="https://www.other.example/", status="fetched")]  # a real page row, as discovery reads every field
+    found = discovery.discover_with_plugins(pages, "Other", host="www.other.example", project=None, ui=box.ui)
+    assert found[:2] == ["heavy civil software", "dirt work software"]
+    assert any(path.endswith("/sites/https%3A%2F%2Fother.example%2F/searchAnalytics/query") for kind, path, _ in box.google.calls)
+    # The analysis then creates the project and runs after_pull: GSC is on with the parked data, no second fetch.
+    project = create_project("Other", "www.other.example", found, root=tmp_path / "projects")
+    calls = len(box.google.calls)
+    gsc.after_pull(project=project, report=None, ui=box.ui)
+    settings = gsc.load_settings(project)
+    assert settings["enabled"] and settings["property"] == "https://other.example/"
+    assert gsc.project_state(box.ui, project)["state"] == "ready"
+    assert len(box.google.calls) == calls
+    assert not list((gsc.account_path(box.ui).parent / "pending").glob("*.json"))
+
+
+def test_a_new_project_is_turned_on_but_an_off_switch_is_kept(tmp_path, env):
+    box = _app(tmp_path)
+    _sign_in(box)
+    query = _connect(box)
+    _callback(box, {"code": "good-code", "state": query["state"]})
+    fresh = create_project("Other", "other.example", ["a search"], root=tmp_path / "projects")
+    gsc.after_pull(project=fresh, report=None, ui=box.ui)
+    assert gsc.project_state(box.ui, fresh)["state"] == "ready"  # matched and fetched, no parked data needed
+    _post(box, f"/api/v1/gsc/projects/{fresh.slug}", {"enabled": False})
+    gsc.after_pull(project=fresh, report=None, ui=box.ui)
+    assert gsc.load_settings(fresh)["enabled"] is False
+
+
+def test_first_analysis_without_a_matching_property_adds_nothing(tmp_path, env):
+    box = _app(tmp_path)
+    _sign_in(box)
+    query = _connect(box)
+    _callback(box, {"code": "good-code", "state": query["state"]})
+    pages = [SimpleNamespace(url="https://unknown.example/")]
+    assert gsc.discovery_sources(project=None, pages=pages, ui=box.ui) == []
+
+
+def test_opportunities_near_page_one_and_low_ctr(tmp_path, env):
+    box = _app(tmp_path)
+    _sign_in(box)
+    query = _connect(box)
+    _callback(box, {"code": "good-code", "state": query["state"]})
+    section = box.client.get(f"/api/v1/projects/{box.project.slug}/report").json()["gsc"]
+    opp = section["opportunities"]
+    assert opp["min_impressions"] == 64  # 1% of 6,400
+    near = opp["near_page_one"]
+    assert [row["q"] for row in near] == ["heavy civil software", "dirt work software"]  # positions 11.1 and 8.4
+    assert near[0]["page"] == "https://www.dirtcrew.example/"  # the page with most of its impressions
+    low = opp["low_ctr"]
+    assert [row["page"] for row in low] == ["https://www.dirtcrew.example/features"]  # 0.5% CTR at position 4
+    assert low[0]["benchmark_ctr"] == 0.07 and low[0]["q"] == "estimating software" and "missed_clicks" not in low[0]
+    assert "not Google data" in opp["rules"]["low_ctr"]
+    text = json.dumps(opp, ensure_ascii=False)
+    assert not any(dash in text for dash in DASHES)
+
+
+def test_opportunity_rules():
+    snapshot = {
+        "totals": {"impressions": 1000},
+        "queries": [
+            {"q": "a", "clicks": 0, "impressions": 19, "ctr": 0.0, "position": 9.0},  # under the 20 floor
+            {"q": "b", "clicks": 1, "impressions": 50, "ctr": 0.02, "position": 7.9},  # above page one's bottom
+            {"q": "c", "clicks": 1, "impressions": 50, "ctr": 0.02, "position": 20.0},
+            {"q": "d", "clicks": 1, "impressions": 50, "ctr": 0.02, "position": 20.1},
+        ],
+        "pages": [
+            {"page": "p1", "clicks": 10, "impressions": 100, "ctr": 0.1, "position": 1.0},  # 10% at #1: low
+            {"page": "p2", "clicks": 3, "impressions": 100, "ctr": 0.03, "position": 7.0},  # typical: fine
+            {"page": "p3", "clicks": 0, "impressions": 500, "ctr": 0.0, "position": 14.0},  # not on page one
+        ],
+        "query_pages": [],
+    }
+    opp = gsc.opportunities(snapshot)
+    assert [row["q"] for row in opp["near_page_one"]] == ["c"]
+    assert [row["page"] for row in opp["low_ctr"]] == ["p1"] and opp["low_ctr"][0]["page"] == "p1"
+
+
+def test_automatic_matching_never_takes_a_parent_domain(tmp_path, env):
+    box = _app(tmp_path)
+    _sign_in(box)
+    query = _connect(box)
+    _callback(box, {"code": "good-code", "state": query["state"]})
+    pages = [SimpleNamespace(url="https://client.dirtcrew.example/")]
+    assert gsc.discovery_sources(project=None, pages=pages, ui=box.ui) == []  # sc-domain:dirtcrew.example is a parent
+    sub = create_project("Client", "client.dirtcrew.example", ["a search"], root=tmp_path / "projects")
+    gsc.after_pull(project=sub, report=None, ui=box.ui)
+    assert gsc.load_settings(sub)["enabled"] is False
+    listed = len([c for c in box.google.calls if c[1] == "/sites"])
+    gsc.after_pull(project=sub, report=None, ui=box.ui)
+    assert len([c for c in box.google.calls if c[1] == "/sites"]) == listed  # checked once a day, not every pull
+    box.ui.gsc_clock.now += gsc.ADOPT_RETRY_SECONDS + 1
+    gsc.after_pull(project=sub, report=None, ui=box.ui)
+    assert len([c for c in box.google.calls if c[1] == "/sites"]) == listed + 1
+    # The owner can still pick the parent domain by hand.
+    assert gsc.match_property(sub, [{"url": "sc-domain:dirtcrew.example", "usable": True}]) == "sc-domain:dirtcrew.example"
+
+
+def test_stale_parked_data_is_deleted(tmp_path, env):
+    box = _app(tmp_path)
+    _sign_in(box)
+    query = _connect(box)
+    _callback(box, {"code": "good-code", "state": query["state"]})
+    gsc.discovery_sources(project=None, pages=[SimpleNamespace(url="https://www.other.example/")], ui=box.ui)
+    folder = gsc.account_path(box.ui).parent / "pending"
+    assert len(list(folder.glob("*.json"))) == 1
+    box.ui.gsc_clock.now += gsc.PENDING_SECONDS + 1
+    gsc.discovery_sources(project=None, pages=[SimpleNamespace(url="https://nomatch.example/")], ui=box.ui)
+    assert list(folder.glob("*.json")) == []
+
+
+def test_discovery_skips_rarely_seen_queries(tmp_path, env):
+    box = _app(tmp_path)
+    _sign_in(box)
+    box.google.analytics = staticmethod(lambda body: {"rows": [
+        {"keys": ["big search"], "clicks": 10, "impressions": 5000, "ctr": 0.002, "position": 9.0},
+        {"keys": ["fifty search"], "clicks": 0, "impressions": 50, "ctr": 0.0, "position": 30.0},
+        {"keys": ["forty nine"], "clicks": 0, "impressions": 49, "ctr": 0.0, "position": 30.0},
+        {"keys": ["seen once"], "clicks": 0, "impressions": 1, "ctr": 0.0, "position": 60.0},
+    ]} if body.get("dimensions") == ["query"] else FakeGoogle.analytics(body))
+    query = _connect(box)
+    _callback(box, {"code": "good-code", "state": query["state"]})
+    rows = gsc.discovery_sources(project=_project(box), pages=[], ui=box.ui)
+    assert [row["q"] for row in rows] == ["big search", "fifty search"]  # 1% of 5,000 is 50
+    assert gsc.discovery_min_impressions(300) == 10 and gsc.discovery_min_impressions(5000) == 50 and gsc.discovery_min_impressions(5001) == 51
+
+
+def test_page_data_for_the_editor_panel(tmp_path, env):
+    box = _app(tmp_path)
+    _sign_in(box)
+    slug = box.project.slug
+    off = box.client.get(f"/api/v1/gsc/projects/{slug}/page", params={"url": "https://www.dirtcrew.example/pricing"}).json()
+    assert off["state"] == "off" and "page" not in off
+    query = _connect(box)
+    _callback(box, {"code": "good-code", "state": query["state"]})
+    data = box.client.get(f"/api/v1/gsc/projects/{slug}/page", params={"url": "http://dirtcrew.example/pricing/?utm=x#top"}).json()
+    assert data["state"] == "ready" and data["range"]["days"] == 28 and data["label"] == gsc.LABEL
+    assert data["page"] == {"page": "https://www.dirtcrew.example/pricing", "clicks": 50, "impressions": 900, "ctr": 0.0556, "position": 6.2}
+    assert [row["q"] for row in data["page_queries"]] == ["dirt work software", "heavy civil software"]
+    home = box.client.get(f"/api/v1/gsc/projects/{slug}/page", params={"url": "https://www.dirtcrew.example"}).json()
+    assert home["page"]["clicks"] == 70 and home["page_queries"][0]["q"] == "heavy civil software"
+    none = box.client.get(f"/api/v1/gsc/projects/{slug}/page", params={"url": "https://www.dirtcrew.example/new-page"}).json()
+    assert none["page"] is None and none["page_queries"] == []
+    assert gsc.page_key("HTTPS://WWW.Example.com/A/") == "example.com/A" and gsc.page_key("https://example.com") == "example.com/"
+
+
+def test_pkce_s256(tmp_path, env):
+    box = _app(tmp_path)
+    _sign_in(box)
+    query = _connect(box)
+    assert query["code_challenge_method"] == "S256" and len(query["code_challenge"]) == 43
+    payload = json.loads(secretbox.unseal(query["state"], purpose=gsc.STATE_PURPOSE))
+    assert gsc.pkce_challenge(payload["verifier"]) == query["code_challenge"]
+    assert payload["verifier"] not in json.dumps(query)  # never in the URL, only sealed inside the state
+    done = _callback(box, {"code": "good-code", "state": query["state"]})
+    assert done.headers["location"].endswith("?gsc=connected")
+    exchange = [form for kind, grant, form in box.google.calls if kind == "token"][0]
+    assert exchange["code_verifier"] == payload["verifier"]
+    # A code redeemed with another flow's verifier is refused by Google.
+    other = _connect(box)
+    box.google.challenge = "not-the-challenge-for-this-verifier-0000000"
+    refused = _callback(box, {"code": "good-code", "state": other["state"]})
+    assert refused.headers["location"].endswith("?gsc=invalid_grant")
+
+
+def test_public_url_pins_the_redirect_uri(monkeypatch):
+    request = SimpleNamespace(headers={"host": "evil.example"}, url=SimpleNamespace(scheme="http", netloc="evil.example"))
+    monkeypatch.delenv(gsc.REDIRECT_ENV, raising=False)
+    monkeypatch.delenv(gsc.PUBLIC_URL_ENV, raising=False)
+    assert gsc.redirect_uri_for(request) == "http://evil.example/api/v1/gsc/callback"
+    monkeypatch.setenv(gsc.PUBLIC_URL_ENV, "https://ranksim.example/")
+    assert gsc.redirect_uri_for(request) == "https://ranksim.example/api/v1/gsc/callback"
+    monkeypatch.setenv(gsc.PUBLIC_URL_ENV, "ranksim.example")
+    assert gsc.redirect_uri_for(request) == "https://ranksim.example/api/v1/gsc/callback"
+    monkeypatch.setenv(gsc.REDIRECT_ENV, "https://other.example/api/v1/gsc/callback")
+    assert gsc.redirect_uri_for(request) == "https://other.example/api/v1/gsc/callback"

@@ -37,3 +37,21 @@
   .gsc-top li { flex-direction: column; gap: 2px; }
   .gsc-cell small { display: none; }
 }
+
+/* Opportunities */
+.gsc-chip { display: inline-block; margin-top: 3px; font-size: 11px; font-weight: 600; color: var(--blue); }
+.gsc-group { display: flex; flex-direction: column; gap: 8px; margin-top: 12px; }
+.gsc-group-k { font-size: 12.5px; font-weight: 600; color: var(--ink-2); }
+.gsc-opp .m { row-gap: 4px; }
+.gsc-path { overflow-wrap: anywhere; }
+.gsc-opp-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.gsc-rule { margin-bottom: 12px; }
+.gsc-details summary { cursor: pointer; font-size: 13.5px; font-weight: 550; color: var(--blue); }
+.gsc-details[open] summary { margin-bottom: 10px; }
+.gsc-details .gsc-uri-row { margin-top: 10px; }
+
+/* Editor panel */
+.gsc-panel-k { margin-bottom: 10px; }
+.gsc-panel-stats { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.gsc-panel-stats .gsc-stat b { font-size: 16px; }
+.gsc-panel-q { margin-top: 6px; }

@@ -1,21 +1,50 @@
-/* Searches: the list of searches with positions. Extra columns from registerSearchColumn line up on a subgrid.
+/* Searches: the table of searches, suggestions and the search sheet (gaps, sources).
    Owned with js/screens/searches.js: the session that owns that module edits this file. */
 
-.split { display: grid; grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr); gap: 14px; align-items: start; }
-.qlist { display: grid; gap: 6px; }
-.qrow { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px 12px; align-items: center; padding: 12px 14px; border-radius: var(--r-card); background: var(--card); box-shadow: var(--shadow); border: 0; text-align: left; width: 100%; color: var(--ink); }
-.qrow:hover { box-shadow: var(--shadow-lift); }
-.qrow[aria-pressed="true"] { box-shadow: inset 0 0 0 2px var(--blue), var(--shadow); }
-.qrow .q { font-weight: 550; font-size: 14.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.qrow .p { font-size: 18px; font-weight: 650; letter-spacing: -0.03em; font-variant-numeric: tabular-nums; }
-.qrow .p.none { font-size: 13px; font-weight: 500; color: var(--ink-3); letter-spacing: 0; }
-.qrow .track { grid-column: 1 / -1; }
-.qlist.has-cols { grid-template-columns: minmax(0, 1fr) auto repeat(var(--qcols, 1), auto); column-gap: 12px; }
-.qlist.has-cols > .qrow, .qlist.has-cols > .qhead { grid-column: 1 / -1; grid-template-columns: subgrid; }
-.qhead { display: grid; gap: 6px 12px; padding: 0 14px 2px; font-size: 12px; font-weight: 550; color: var(--ink-3); }
-.qhead > span:first-child { min-width: 0; }
-.qcol { font-size: 13px; color: var(--ink-2); font-variant-numeric: tabular-nums; text-align: right; white-space: nowrap; }
-.qhead .qcol { font-size: inherit; color: inherit; }
-@media (max-width: 1080px) {
-  .split { grid-template-columns: minmax(0, 1fr); }
+.stable { display: grid; grid-template-columns: minmax(0, 2fr) auto auto auto auto minmax(0, 1.3fr) auto; column-gap: 14px; row-gap: 6px; }
+.srow { grid-column: 1 / -1; display: grid; grid-template-columns: subgrid; align-items: center; padding: 8px 10px 8px 14px; border-radius: var(--r-card); background: var(--card); box-shadow: var(--shadow); min-height: 52px; }
+.srow:hover { box-shadow: var(--shadow-lift); }
+.srow.shead { background: transparent; box-shadow: none; min-height: 0; padding-top: 0; padding-bottom: 2px; font-size: 12px; font-weight: 550; color: var(--ink-3); }
+.srow .c-q { border: 0; background: transparent; padding: 0; text-align: left; color: var(--ink); min-width: 0; font: inherit; cursor: pointer; }
+.srow .c-q .q { display: block; font-weight: 550; font-size: 14.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.srow .c-q:hover .q { color: var(--blue); }
+.srow .c-num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.srow .p { font-size: 17px; font-weight: 650; letter-spacing: -0.03em; }
+.srow .pred { font-size: 14px; font-weight: 550; color: var(--blue); }
+.srow .none { font-size: 13px; font-weight: 500; color: var(--ink-3); letter-spacing: 0; }
+.srow .c-source, .srow .c-page { font-size: 13px; color: var(--ink-2); white-space: nowrap; }
+.srow .c-page { min-width: 0; }
+.srow.shead .c-source, .srow.shead .c-page { color: inherit; font-size: inherit; }
+.srow .c-open { justify-self: end; }
+.srow .qcol { font-size: 13px; color: var(--ink-2); font-variant-numeric: tabular-nums; text-align: right; white-space: nowrap; }
+.srow.shead .qcol { font-size: inherit; color: inherit; }
+.chip.intent-informational, .chip.intent-navigational { background: var(--tile); color: var(--ink-2); }
+.chip.intent-transactional { background: var(--dark); color: #fff; }
+.sgrid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.sgrid .num { font-size: 32px; font-weight: 650; letter-spacing: -0.04em; margin-top: 4px; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.gapline { padding: 10px 12px; border-radius: 12px; background: var(--card); }
+.gaprow { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.gaptext { min-width: 0; flex: 1; }
+.gapline .btn-sm { flex-shrink: 0; padding: 6px 11px; font-size: 13px; }
+.gapline .quote { display: grid; gap: 2px; margin-top: 4px; font-size: 13px; color: var(--ink-2); }
+.gapline .evidence a { color: var(--ink-3); }
+.gapline .chips { margin-top: 8px; }
+.gapline .t { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; font-weight: 550; font-size: 14px; }
+.gapline .count { font-size: 12.5px; color: var(--ink-3); font-weight: 500; font-variant-numeric: tabular-nums; }
+.evidence { display: grid; gap: 2px; margin-top: 4px; font-size: 12.5px; color: var(--ink-3); }
+.srcline { display: flex; align-items: center; gap: 10px; font-size: 13px; color: var(--ink-2); min-width: 0; }
+
+@media (max-width: 760px) {
+  .stable { display: flex !important; flex-direction: column; gap: 6px; }
+  .srow { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; padding: 12px 10px 12px 14px; }
+  .srow.shead { display: none; }
+  .srow .c-q { flex: 1 1 calc(100% - 52px); order: 0; }
+  .srow .c-open { order: 1; }
+  .srow > :not(.c-q):not(.c-open) { order: 2; }
+  .srow .c-page { flex: 1 1 100%; }
+  .srow .c-page:empty, .srow .pred.none { display: none; }
+  .srow .qcol[data-label]:not([data-label=''])::before { content: attr(data-label) ' '; font-size: 11px; color: var(--ink-3); font-weight: 550; }
+  .srow .pred:not(.none)::before { content: 'PREDICTED '; font-size: 11px; color: var(--ink-3); font-weight: 550; }
+  .sgrid .num { font-size: 26px; }
 }

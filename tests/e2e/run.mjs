@@ -15,6 +15,8 @@ const args = Object.fromEntries(process.argv.slice(2).reduce((pairs, value, inde
   return pairs;
 }, []));
 const BASE = (args.base || 'http://127.0.0.1:8799').replace(/\/$/, '');
+// Optional second server whose job budget is so short that analyses pause and the app has to post again.
+const PAUSED_BASE = args['paused-base'] ? args['paused-base'].replace(/\/$/, '') : '';
 const OUT = args.out || 'tests/e2e/screenshots';
 const PASSWORD = process.env.E2E_PASSWORD || 'e2e-pass';
 const SITE = process.env.E2E_SITE || 'www.dirtcrew.example';
@@ -48,8 +50,12 @@ function expect(cond, message) {
 
 function watch(page, label) {
   page.on('console', (msg) => {
-    if (msg.type() !== 'error') return;
     const text = msg.text();
+    if (msg.type() === 'warning' && /replaces the built-in/.test(text)) {
+      consoleErrors.push({ page: label, phase, text: `plugin key collision: ${text}` });
+      return;
+    }
+    if (msg.type() !== 'error') return;
     if (allowed.some((a) => a.phase === phase && a.pattern.test(text))) return;
     consoleErrors.push({ page: label, phase, text });
   });
@@ -83,6 +89,21 @@ async function audit(page, name) {
   const dash = facts.text.match(new RegExp(`.{0,30}${DASHES.source}.{0,30}`));
   expect(!dash, `${name}: em or en dash in copy: "${dash && dash[0]}"`);
   await page.screenshot({ path: join(OUT, `${name}.png`), fullPage: true });
+}
+
+/* The Test changes tiles from the predict session: Every search (PREDICTED) and What would move you up (Guidance). */
+async function checkPredictTiles(page) {
+  const all = page.locator(SEL.predictAll);
+  const move = page.locator(SEL.predictMove);
+  await all.waitFor({ timeout: SLOW });
+  await move.waitFor({ timeout: SLOW });
+  expect(/PREDICTED/.test(await all.innerText()), 'Every search is labeled PREDICTED');
+  expect(/Guidance/.test(await move.innerText()), 'What would move you up is labeled Guidance');
+  const width = page.viewportSize().width;
+  for (const tile of [all, move]) {
+    const box = await tile.boundingBox();
+    expect(box && box.x >= 0 && box.x + box.width <= width + 1, `tile fits the ${width}px screen: ${JSON.stringify(box)}`);
+  }
 }
 
 async function goto(page, path) {
@@ -154,6 +175,8 @@ try {
     slug = decodeURIComponent(new URL(page.url()).pathname.split('/')[2]);
     expect(slug, 'a project slug after analysis');
     await page.waitForSelector(SEL.editorFrame, { timeout: SLOW });
+    await page.waitForFunction((sel) => /Report ready/.test(document.querySelector(sel).textContent), SEL.toast);
+    expect(await page.isVisible(SEL.nav), 'the section nav appears once the report exists');
     await audit(page, 'desktop-04-opened');
   });
 
@@ -192,6 +215,58 @@ try {
     await page.waitForSelector(SEL.sheet, { state: 'detached' });
   });
 
+  await step('gsc-not-set-up', async () => {
+    const tile = page.locator(SEL.gscTile);
+    await tile.waitFor();
+    expect(/not set up yet/i.test(await tile.innerText()), 'the Overview tile says Search Console is not set up');
+    await goto(page, `/app/${encodeURIComponent(slug)}/settings`);
+    const section = page.locator(SEL.gscSection);
+    await section.waitFor();
+    await section.filter({ hasText: 'Not set up yet' }).waitFor();
+    expect((await page.locator(SEL.gscSection).count()) === 1, 'one Search Console section: the plugin replaced the placeholder');
+    await audit(page, 'desktop-06c-settings-gsc');
+  });
+
+  await step('client-share-link', async () => {
+    await page.waitForSelector(SEL.shareSection);
+    await page.fill(SEL.shareLabel, 'E2E client');
+    await page.click(SEL.shareCreate);
+    await page.waitForSelector(SEL.shareUrl);
+    const url = (await page.innerText(SEL.shareUrl)).trim();
+    expect(/\/r\//.test(url), `a share URL: ${url}`);
+    const sharePath = new URL(url, BASE).pathname;
+    const guest = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, isMobile: true, hasTouch: true });
+    const reader = await guest.newPage();
+    watch(reader, 'share-reader');
+    await reader.goto(BASE + sharePath, { waitUntil: 'networkidle' });
+    const text = await reader.innerText('body');
+    expect(/DirtCrew|dirtcrew/i.test(text), 'the signed-out phone sees the client report');
+    expect(!(await reader.$(SEL.password)), 'no login on a share link');
+    await audit(reader, 'phone-share-report');
+    page.once('dialog', (dialog) => dialog.accept());
+    await page.click(SEL.shareOff);
+    await page.waitForFunction(() => /Turned off/.test(document.querySelector('.share-row').innerText));
+    allowed.push({ phase: 'client-share-link', pattern: /status of 410|status of 404/ });
+    const gone = await reader.goto(BASE + sharePath, { waitUntil: 'networkidle' });
+    const after = await reader.innerText('body');
+    expect(gone.status() >= 400 || /expired or was turned off/.test(after), `a turned off link stops working (status ${gone.status()})`);
+    expect(!/dirt work software/i.test(after), 'no report data after turning the link off');
+    await guest.close();
+    await goto(page, `/app/${encodeURIComponent(slug)}`);
+  });
+
+  await step('skeleton', async () => {
+    let release;
+    const held = new Promise((resolve) => { release = resolve; });
+    await page.route('**/api/v1/projects/*/report', async (route) => { await held; await route.continue(); });
+    await page.goto(`${BASE}/app/${encodeURIComponent(slug)}/issues`, { waitUntil: 'domcontentloaded' });
+    await page.waitForSelector(SEL.skeleton('issues'));
+    await audit(page, 'desktop-06d-skeleton-issues');
+    release();
+    await page.waitForSelector(SEL.issueRow);
+    await page.unroute('**/api/v1/projects/*/report');
+  });
+
   await step('issues', async () => {
     await page.click(SEL.navLink('Issues'));
     await page.waitForURL(/\/issues/);
@@ -214,6 +289,8 @@ try {
     expect((await page.locator(SEL.serpRow).count()) >= 5, 'the top 10 is listed');
     expect((await page.locator(SEL.serpYou).count()) === 1, 'your page is highlighted in the top 10');
     await audit(page, 'desktop-09-searches');
+    await page.keyboard.press('Escape');  // the search detail is a sheet (discover)
+    await page.waitForSelector(SEL.sheet, { state: 'detached' });
   });
 
   await step('competitors', async () => {
@@ -240,6 +317,7 @@ try {
     await page.waitForSelector(SEL.verdict, { timeout: SLOW });
     const body = await page.innerText('main');
     expect(/predict/i.test(body), 'the result says it is a prediction');
+    await checkPredictTiles(page);
     await audit(page, 'desktop-11-editor-result');
   });
 
@@ -272,6 +350,74 @@ try {
     await page.setViewportSize({ width: 1280, height: 900 });
   });
 
+  await step('parallel-analysis', async () => {
+    const one = await desk.newPage();
+    const two = await desk.newPage();
+    watch(one, 'site-a');
+    watch(two, 'site-b');
+    const refused = [];
+    for (const p of [one, two]) p.on('response', (r) => { if (r.url().includes('/api/v1/sites') && r.status() === 409) refused.push(r.url()); });
+    await Promise.all([
+      one.goto(`${BASE}/edit?url=${encodeURIComponent('https://www.slow-a.example/')}`),
+      two.goto(`${BASE}/edit?url=${encodeURIComponent('https://www.slow-b.example/')}`),
+    ]);
+    const timeline = (p) => p.waitForSelector('.progress-tile .step.active', { timeout: SLOW }).then(() => Date.now())
+      .then(async (start) => { await p.waitForURL(/\/app\//, { timeout: SLOW }); return { start, end: Date.now() }; });
+    const [a, b] = await Promise.all([timeline(one), timeline(two)]);
+    expect(Math.max(a.start, b.start) < Math.min(a.end, b.end), `the two analyses overlap in time: ${JSON.stringify({ a, b })}`);
+    expect(!refused.length, `no 409 while two sites are analyzed: ${refused.join(', ')}`);
+    await one.close();
+    await two.close();
+  });
+
+  await step('reattach-after-refresh', async () => {
+    const tab = await desk.newPage();
+    watch(tab, 'reattach');
+    await tab.goto(`${BASE}/edit?url=${encodeURIComponent('https://www.slow-c.example/')}`);
+    await tab.waitForSelector('.progress-tile .step.done', { timeout: SLOW });
+    expect(!/\/app\//.test(tab.url()), 'still analyzing when the page reloads');
+    await tab.reload();
+    await tab.waitForSelector(SEL.progress, { timeout: SLOW });
+    await tab.waitForURL(/\/app\//, { timeout: SLOW });
+    await tab.waitForSelector(SEL.editorFrame, { timeout: SLOW });
+    const projects = await tab.evaluate(async () => (await (await fetch('/api/v1/projects')).json()).projects.map((p) => p.site));
+    const copies = projects.filter((site) => /slow-c/.test(site));
+    expect(copies.length === 1, `one project for the reattached site, got ${JSON.stringify(projects)}`);
+    const jobs = await tab.evaluate(async () => (await fetch('/api/v1/jobs')).json());
+    const live = (jobs.jobs || []).filter((job) => /slow-c/.test(JSON.stringify(job))); // the list holds running or paused jobs only
+    expect(!live.length, `no job left running: ${JSON.stringify(live)}`);
+    await tab.close();
+  });
+
+  await step('paused-resume', async () => {
+    if (!PAUSED_BASE) throw new Error('no --paused-base server given');
+    const ctx = await browser.newContext({ viewport: { width: 1280, height: 900 }, deviceScaleFactor: 2 });
+    const tab = await ctx.newPage();
+    watch(tab, 'paused');
+    await tab.goto(PAUSED_BASE + '/');
+    await tab.fill(SEL.password, PASSWORD);
+    await tab.click(SEL.loginSubmit);
+    await tab.waitForSelector(SEL.homeInput);
+    let posts = 0;
+    let paused = 0;
+    // Buffer each analysis answer through a route so its NDJSON lines can be read (this test does not need streaming).
+    await tab.route('**/api/v1/sites', async (route) => {
+      if (route.request().method() !== 'POST') return route.continue();
+      posts += 1;
+      const response = await route.fetch({ timeout: SLOW });
+      const body = await response.text();
+      if (/"type":\s*"paused"/.test(body)) paused += 1;
+      await route.fulfill({ response, body });
+    });
+    await tab.fill(SEL.homeInput, 'www.slow-p.example');
+    await tab.click(SEL.homeSubmit);
+    await tab.waitForURL(/\/app\//, { timeout: SLOW * 2 });
+    await tab.waitForSelector(SEL.editorFrame, { timeout: SLOW });
+    expect(posts >= 2, `the app posted again after a pause (${posts} posts, ${paused} paused answers)`);
+    expect(paused >= 1, `the server paused at least once (${paused})`);
+    await ctx.close();
+  });
+
   state = await desk.storageState();
 
   await step('signed-out', async () => {
@@ -298,8 +444,22 @@ try {
       await goto(mobile, name === 'home' ? '/' : `/app/${encodeURIComponent(slug)}${path}`);
       await mobile.waitForSelector(name === 'home' ? SEL.homeInput : 'main h1, main h2');
       await audit(mobile, `phone-${name}`);
+      if (name !== 'home') {
+        const nav = await mobile.$eval(SEL.nav, (el) => ({ sw: el.scrollWidth, cw: el.clientWidth }));
+        expect(nav.sw <= nav.cw + 1, `phone nav fits without sideways scrolling (${nav.sw} > ${nav.cw})`);
+      }
     });
   }
+
+  await step('phone-test-changes', async () => {
+    const pageUrl = `https://${SITE}/dirt-work-software/`;
+    await goto(mobile, `/app/${encodeURIComponent(slug)}/editor?page=${encodeURIComponent(pageUrl)}&q=${encodeURIComponent(SEARCHES[0])}`);
+    await mobile.waitForSelector(`${SEL.testButton}:not([disabled])`, { timeout: SLOW });
+    await mobile.click(SEL.testButton);
+    await mobile.waitForSelector(SEL.verdict, { timeout: SLOW });
+    await checkPredictTiles(mobile);
+    await audit(mobile, 'phone-editor-result');
+  });
 
   await step('sign-out', async () => {
     await goto(mobile, '/');

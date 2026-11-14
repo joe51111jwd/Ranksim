@@ -7,7 +7,7 @@ import {
   S, main, shell, api, stream, h, icon, clear, enc, hostOf, plural, initial, bar, toast, navigate, link, pathFor,
   parseLocation, loadProjects, openSite, closeSheet, footer, bootSpinner, sleep, emptyState,
 } from './core.js';
-import { registerEditorPanel, screen, screens, renderEntry } from './hooks.js';
+import { registerEditorPanel, screen, screens, renderEntry, sealBuiltIns } from './hooks.js';
 import './screens/overview.js';
 import './screens/issues.js';
 import './screens/searches.js';
@@ -406,6 +406,8 @@ async function finishOpen(slug, url) {
   history.replaceState({}, '', pathFor('editor', { page: url }));
   renderBar();
   render();
+  const K = S.report && S.report.kpis;
+  toast(K ? `Report ready: ${plural(K.searches, 'search', 'searches')}, ${K.top10} in the top 10, ${plural(K.issues, 'issue')}. See Overview.` : 'Report ready. See Overview.');
 }
 
 function progressTile() {
@@ -418,16 +420,26 @@ function progressTile() {
     return tile;
   }
   const list = h('div', { class: 'steps compact' });
+  let done = 0;
   for (const [key, label] of STEPS) {
     const info = O.steps.get(key) || { state: 'pending' };
+    if (info.state === 'done' || info.state === 'skipped') done += 1;
     const box = h('span', { class: 'box' });
     if (info.state === 'active') box.append(h('span', { class: 'spinner', 'aria-hidden': 'true' }));
     else if (info.state === 'done') box.append(icon('check'));
-    const row = h('div', { class: `step ${info.state || 'pending'}` }, box, h('div', { class: 'body' }, h('div', { class: 't', text: label }), info.message && info.state !== 'pending' ? h('div', { class: 'c', text: info.message }) : null));
+    /* A first-time reader needs what is happening now, not the counters of finished steps: the detail line shows on
+       the active or skipped step only; finished steps show what they found (searches, competitors) as chips. */
+    const detail = (info.state === 'active' || info.state === 'skipped' || info.state === 'failed') && info.message ? h('div', { class: 'c', text: info.message }) : null;
+    const row = h('div', { class: `step ${info.state || 'pending'}` }, box, h('div', { class: 'body' }, h('div', { class: 't', text: label }), detail));
     if (info.state === 'active' && info.total) row.querySelector('.body').append(bar(info.done / info.total));
-    if (info.searches && info.state === 'done') row.querySelector('.body').append(h('div', { class: 'found' }, info.searches.slice(0, 8).map((q) => h('span', { class: 'chip chip-gray', text: q }))));
+    const found = info.state === 'done' ? (Array.isArray(info.searches) ? info.searches : Array.isArray(info.competitors) ? info.competitors : null) : null;
+    if (found && found.length) {
+      row.querySelector('.body').append(h('div', { class: 'found' }, found.slice(0, 6).map((q) => h('span', { class: 'chip chip-gray', text: q })),
+        found.length > 6 ? h('span', { class: 'chip chip-gray', text: `+${found.length - 6}` }) : null));
+    }
     list.append(row);
   }
+  tile.append(h('div', { class: 'open-overall', role: 'progressbar', 'aria-label': 'Analysis progress', 'aria-valuemin': '0', 'aria-valuemax': String(STEPS.length), 'aria-valuenow': String(done) }, bar(done / STEPS.length)));
   tile.append(h('p', { class: 'tile-sub', text: 'Edit the page while this runs. Testing unlocks when it finishes.' }), list);
   if (timer >= 60) tile.append(h('p', { class: 'slow-note', role: 'status', text: 'This site is taking a while. It keeps running, and your edits are safe.' }));
   return tile;
@@ -462,6 +474,9 @@ registerEditorPanel({
 /* ------------------------------------------------------------------ start */
 
 Object.assign(shell, { route, render, renderBar, renderLogin, renderProblem });
+/* Everything registered up to here is built in; plugin modules run next, and a plugin key that matches a built-in
+   one logs a warning (see hooks.js). */
+sealBuiltIns();
 paintOffline();
 
 /* Module scripts run in page order before DOMContentLoaded, and the shell lists plugins after this file, so every

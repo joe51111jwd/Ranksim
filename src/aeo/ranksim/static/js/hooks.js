@@ -8,7 +8,10 @@
 
    Every registry is sorted by `order` (ascending; ties keep registration order). Every entry may carry a `key`:
    registering a key that already exists replaces that entry, so a plugin can replace a built-in one (built-in keys
-   are listed below). A render or listener that throws is logged to the console and skipped, never fatal.
+   are listed below). Replacing a built-in by accident is easy (a 'share' tile once hid Who takes the top 10), so
+   after app.js has registered the built-ins it calls sealBuiltIns(), and from then on a key that matches a built-in
+   logs a console warning unless the built-in was registered with replaceable: true (the gsc Settings placeholder)
+   or the new spec says replace: true to show the replacement is meant. A render or listener that throws is logged to the console and skipped, never fatal.
    A render returns a Node, an array of Nodes, or null for nothing.
 
    ---------------------------------------------------------------- screens
@@ -40,10 +43,12 @@
    registerEditorPanel({ key, order, render(ctx) })
      Adds a tile to the editor's side column. Panels repaint whenever the draft changes, except the panel that holds
      keyboard focus: it stays as it is, and stays still on screen while the panels around it change height. Built-in
-     keys and orders: open-progress 5 (while a new site is analyzed), test 10, snippet 20, fields 30, stats 40.
+     keys and orders: open-progress 5 (while a new site is analyzed), test 10, editor-changes 15, snippet 20,
+     editor-outline 25, fields 30, stats 40, editor-versions 50.
 
    registerEditorTool({ key, order, render(ctx) })
-     Adds a control to the editor toolbar (right side). Built-in keys and orders: mode 50, device 60.
+     Adds a control to the editor toolbar (right side). Built-in keys and orders: editor-history 20 (undo, redo), editor-block 30
+     (Text, H2, H3), editor-insert 40, mode 50, device 60.
 
    The editor ctx (panels, tools, and the editor events below):
      url           the address of the page being edited (the draft's own URL once loaded)
@@ -77,6 +82,18 @@
                    the draft changed, fires 'draft-changed'. Returns true when an element matched.
      repaint()     repaints the side column.
      test()        runs Test changes for the current search.
+     exportHtml()  the full page to publish or download: the original HTML as fetched (scripts, styles, comments
+                   intact) with the draft's edits applied, and no data-rs attributes. Untouched parts are byte for byte
+                   the original. Before the page has loaded it is draft.text.
+     diff()        what changed against the page as loaded, block by block in plain words:
+                   { changes: [{ type: 'changed' | 'added' | 'removed' | 'moved', kind, label, before, after,
+                   words? }], counts: { changed, added, removed, moved }, total, summary }. summary is one sentence such
+                   as "1 change and 2 additions." or "No changes yet.". label reads like "Main heading
+                   changed"; words is a word diff [{ op: '=' | '+' | '-', text }] for changed blocks.
+     undo(), redo()  step through the draft's history (visual, HTML, inserted blocks, title and description share one
+                   history). Return true when something changed. canUndo, canRedo: booleans.
+     The preview marks every element with data-rs-id (the round trip uses it). serialize-time rules above still
+     hold: getHtml() and draft.text never contain data-rs attributes.
 
    ---------------------------------------------------------------- settings and searches
 
@@ -102,8 +119,10 @@
      'report-loaded'  { report, project, slug }  after a site's report and project load or reload.
      'editor-ready'   editor ctx  each time the editor shows a draft: in Visual mode once the preview document has
                       loaded (ctx.doc() is live), in HTML mode once the code view is shown (ctx.doc() is null).
-     'draft-changed'  editor ctx plus { source: 'visual' | 'html' | 'title' | 'meta' | 'api' }  after the draft
-                      HTML changes. Visual edits are debounced; HTML typing fires per change, so debounce heavy work.
+     'draft-changed'  editor ctx plus { source: 'visual' | 'html' | 'title' | 'meta' | 'api' | 'undo' | 'redo' |
+                      'restore' }  after the draft HTML changes ('restore': edits brought back from this browser's
+                      autosave). Visual edits are debounced; HTML typing is debounced too.
+     'editor-caret'   editor ctx  when the cursor moves in the preview (the block toolbar follows it).
      'test-finished'  { run, search, url, page, html, editor }  after Test changes returns. run is the API answer;
                       editor is the editor ctx, or null if the person already left the editor.
 
@@ -165,6 +184,21 @@ function flat(items) {
 /* ------------------------------------------------------------------ registries */
 
 let seq = 0;
+let sealed = false;
+
+/* Marks every entry registered so far as built in. app.js calls it once, after its own imports and registrations
+   and before any plugin module runs. Returns the number of entries marked. */
+export function sealBuiltIns() {
+  sealed = true;
+  let count = 0;
+  for (const reg of REGISTRIES) {
+    for (const entry of reg.list()) {
+      entry.builtIn = true;
+      count += 1;
+    }
+  }
+  return count;
+}
 
 function registry(kind) {
   const entries = [];
@@ -174,7 +208,14 @@ function registry(kind) {
       const entry = { order: 100, ...spec, seq: seq += 1 };
       if (entry.key != null) {
         const at = entries.findIndex((item) => item.key === entry.key);
-        if (at >= 0) entries.splice(at, 1);
+        if (at >= 0) {
+          const old = entries[at];
+          if (sealed && old.builtIn && !old.replaceable && !entry.replace) {
+            console.warn(`Ranksim: a plugin registered the ${kind} key '${entry.key}', which replaces the built-in ${kind} with that key. Pick a new key, or pass replace: true if replacing it is intended.`);
+          }
+          if (old.builtIn) entry.replaced = true;
+          entries.splice(at, 1);
+        }
       }
       entries.push(entry);
       return entry;
@@ -194,6 +235,7 @@ const PANELS = registry('editor panel');
 const TOOLS = registry('editor tool');
 const SECTIONS = registry('settings section');
 const COLUMNS = registry('search column');
+const REGISTRIES = [SCREENS, TILES, PANELS, TOOLS, SECTIONS, COLUMNS];
 
 export function registerScreen(key, { label, nav = true, order = 100, render }) {
   if (!/^[a-z0-9][a-z0-9_-]{0,39}$/.test(String(key))) {

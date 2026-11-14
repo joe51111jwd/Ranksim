@@ -41,7 +41,7 @@ DIRECTORIES = {
     "technologyadvice.com", "softwarereviews.com", "featuredcustomers.com", "crunchbase.com", "zoominfo.com",
     "buildzoom.com", "porch.com", "bark.com", "expertise.com", "nextdoor.com", "tripadvisor.com", "mapquest.com",
     "softwareconnect.com", "itqlick.com", "financesonline.com", "comparecamp.com", "getapp.co.uk", "capterra.co.uk",
-    "softwareadvice.co.uk", "g2crowd.com", "stackshare.io", "builtin.com", "glassdoor.com", "indeed.com",
+    "softwareadvice.co.uk", "g2crowd.com", "stackshare.io",
     "constructconnect.com", "dodge.construction.com", "bluebook.com", "thebluebook.com",
 }
 MARKETPLACES = {
@@ -64,6 +64,9 @@ PUBLISHERS = {
     "latimes.com", "nypost.com", "independent.co.uk", "telegraph.co.uk", "dailymail.co.uk", "businessinsider.com",
 }
 BIG_PLATFORMS = {"google.com", "apple.com", "microsoft.com", "github.com", "adobe.com", "support.google.com"}
+JOB_SITES = {"glassdoor.com", "indeed.com", "ziprecruiter.com", "monster.com", "builtin.com", "simplyhired.com", "careerbuilder.com"}
+# A vendor's help center ranks for its own name ("hcss alternative" finds a HeavyBid help article): not a rival page.
+HELP_PREFIXES = ("help.", "support.", "docs.", "kb.", "knowledge.", "academy.", "learn.", "university.", "status.", "developer.", "developers.")
 GROUP = {
     "competitor": "competitors",
     "directory": "directories",
@@ -75,6 +78,7 @@ GROUP = {
     "publisher": "publishers",
     "service": "platforms",
     "other": "platforms",
+    "help": "platforms",
     "software": "platforms",
 }
 # A domain name ending in one of these words ("constructionreviews") is a directory; one starting with it
@@ -346,8 +350,12 @@ def classify_domain(domain: str, *, titles: list[str] | None = None, pages: list
         match = _known(host, base, known)
         if match:
             return kind, f"{match} is a known {kind}"
+    if host in JOB_SITES or base in JOB_SITES:
+        return "platform", "a job site"
     if host.startswith(FORUM_PREFIXES):
         return "forum", "a community or forum site"
+    if host.startswith(HELP_PREFIXES):
+        return "help", f"the help center of {base}"
     tld = host.rsplit(".", 1)[-1]
     if tld in {"gov", "edu", "mil"} or base.split(".")[-2:-1] in (["gov"], ["edu"], ["ac"], ["gob"]):
         return "publisher", "a government or school site"
@@ -491,7 +499,7 @@ def classify_domains(google, own_domain: str, *, profiles: dict[str, dict] | Non
                 "hits": sorted(found, key=lambda hit: (hit["position"], hit["q"])),
             }
         )
-    rows.sort(key=lambda row: (-row["visibility"], -row["slots"], row["average"], row["domain"]))
+    rows.sort(key=lambda row: (-row["slots"], -row["visibility"], row["average"], row["domain"]))  # share of the top 10 first
     return rows
 
 
@@ -773,7 +781,7 @@ def stored_html(database: str, urls: list[str]) -> dict[str, str]:
     return {url: found[loose_key(url)] for url in urls if loose_key(url) in found}
 
 
-SECTIONS_VERSION = 8
+SECTIONS_VERSION = 9
 
 
 def _fingerprint(project, meta, google, features, rows, pages, docs) -> str:

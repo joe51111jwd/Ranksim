@@ -109,7 +109,9 @@ def read_site(site: str, settings, database: str, *, fetcher=None, max_pages: in
     if not urls:
         urls = [urljoin(home, link) for link in home_page.links]
     own = [url for url in _unique(urls) if _same_site(url, host) and _is_page(url) and url.rstrip("/") != home.rstrip("/")]
-    own = _spread(own, max_pages - 1)
+    from aeo.ranksim.discovery import rank_site_urls  # discover: product and compare pages first, no legal or utility pages
+
+    own = rank_site_urls(own, max_pages - 1)
     for index, url in enumerate(own, start=1):
         say(f"Reading {urlsplit(url).path or '/'}", index, len(own))
         results.append((url, fetch([url])[0]))

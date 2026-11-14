@@ -251,7 +251,7 @@ def test_competitors_are_businesses_and_directories_are_their_own_group():
     assert kinds["reddit.com"] == "forum" and kinds["youtube.com"] == "video"
     assert kinds["smartcrewhq.example"] == "you"
     assert kinds["mitti.example"] == "competitor" and kinds["getonecrew.example"] == "competitor"
-    assert kinds["help.hcss.example"] == "competitor"
+    assert kinds["help.hcss.example"] == "help"  # a help article ranks by name, not as a rival page
     assert kinds["dirtnews.example"] == "publisher"
     assert all(row["reason"] for row in rows)
     picked = cp.pick_competitors(_google(), SC)
@@ -307,7 +307,7 @@ def test_profiles_show_what_each_competitor_ranks_with():
     assert mitti["best_pages"][0]["url"].startswith("https://mitti.example/") and "searches" in mitti["best_pages"][0]
     assert mitti["pages_stored"] == 2 and mitti["pages_ranking"] == 3
     assert [row["domain"] for row in profiles["directories"]] == ["g2.com", "capterra.com"]
-    assert {row["domain"] for row in profiles["platforms"]} == {"reddit.com", "youtube.com"}
+    assert {row["domain"] for row in profiles["platforms"]} == {"reddit.com", "youtube.com", "help.hcss.example"}
     assert not any(row["domain"] == SC for group in profiles.values() for row in group)
     # without stored pages the profile still has rankings and title patterns, and says nothing about words
     bare = cp.competitor_profiles(_google(), SC, {})
@@ -457,12 +457,13 @@ def test_classification_handles_country_sites_names_and_subdomains():
     kind, reason = cp.classify_domain("play.google.com")
     assert kind == "marketplace" and "play.google.com" in reason
     rows = {row["domain"]: row for row in cp.classify_domains(_google(), SC)}
-    assert "hcss.example" in rows or "help.hcss.example" in rows  # one host alone keeps its name
+    assert rows["help.hcss.example"]["kind"] == "help"
     two = GoogleSnapshot("p", "", "import", [
-        SearchResults("a", [_result(1, "https://hcss.example/x", "HCSS"), _result(2, "https://help.hcss.example/y", "Help")], "import", "csv", None),
+        SearchResults("a", [_result(1, "https://hcss.example/x", "HCSS"), _result(2, "https://app.hcss.example/y", "App"), _result(3, "https://help.hcss.example/z", "Help")], "import", "csv", None),
     ])
     merged = {row["domain"]: row for row in cp.classify_domains(two, SC)}
-    assert list(merged) == ["hcss.example"] and merged["hcss.example"]["hosts"] == ["hcss.example", "help.hcss.example"]
+    assert merged["hcss.example"]["hosts"] == ["app.hcss.example", "hcss.example"] and merged["help.hcss.example"]["kind"] == "help"
+    assert cp.classify_domain("www.glassdoor.com") == ("platform", "a job site")
 
 
 def test_list_articles_that_mention_pricing_are_still_publishers():
@@ -734,7 +735,22 @@ def test_pages_that_sell_nothing_like_yours_are_other_sites():
         f"{SC_HOME}excavation-software/": _vendor_page("SmartCrew"),
     }
     rows = {row["domain"]: row for row in cp.classify_domains(google, SC, profiles={url: cp.page_profile(url, html) for url, html in docs.items()})}
-    assert rows["mitti.example"]["kind"] == "competitor" and rows["mitti.example"]["hosts"] == ["help.mitti.example", "mitti.example"]
+    assert rows["mitti.example"]["kind"] == "competitor" and rows["help.mitti.example"]["kind"] == "help"
     assert rows["essays.example"]["kind"] == "other" and "sells software" in rows["essays.example"]["reason"]
     assert rows["dirtworksoftware.example"]["kind"] == "competitor"  # the name says software
     assert rows["lists.example"]["kind"] == "publisher"
+
+
+def test_best_page_prefers_the_page_that_targets_the_search():
+    from aeo.ranksim.site import SitePage
+
+    pages = [
+        SitePage(url=f"{SC_HOME}best-construction-management-software-for-small-business/", status="fetched", title="Best Construction Management Software for Small Excavation Businesses", h1="Excavation and construction software compared"),
+        SitePage(url=f"{SC_HOME}best-excavation-software/", status="fetched", title="Best Excavation Software (2026)", h1="Best excavation software"),
+        SitePage(url=f"{SC_HOME}all-in-one-dirt-work-software/", status="fetched", title="All-in-One Dirtwork Software | SmartCrew", h1="All in one dirtwork software"),
+        SitePage(url=f"{SC_HOME}legal/terms/", status="fetched", title="Excavation software terms", h1="Terms"),
+    ]
+    assert dn.best_page("excavation software", pages) == f"{SC_HOME}best-excavation-software/"
+    assert dn.best_page("all in one dirt work software", pages) == f"{SC_HOME}all-in-one-dirt-work-software/"
+    assert dn.best_page("hcss alternative", pages) is None
+    assert dn.best_page("software", pages) is None

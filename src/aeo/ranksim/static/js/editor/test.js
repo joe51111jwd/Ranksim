@@ -151,6 +151,9 @@ export function renderResult(run, animate) {
   head.append(h('p', { class: 'reason', text: reasonOf(run) }), h('p', { class: 'caveat', text: 'Among the pages that rank for this search today. A prediction, not a Google ranking.' }));
   const grid = h('div', { class: 'bento' }, head);
   if (after.order && after.order.length) grid.append(orderTile(run, animate));
+  const predict = run.predict;
+  if (predict && predict.searches && predict.searches.length) grid.append(searchesTile(run), guidanceTile(run));
+  else if (predict && predict.error) grid.append(h('section', { class: 'tile span-2' }, h('div', { class: 'tile-k', text: 'Every search' }), h('p', { class: 'tile-sub', text: predict.error })));
   grid.append(detailsTile(run));
   host.append(grid);
 }
@@ -241,3 +244,59 @@ function detailsTile(run) {
     h('div', { class: 'span-2' }, h('div', { class: 'tile-head' }, h('h2', { text: fb ? 'What changed' : 'Your page' })), table),
     h('div', { class: 'span-2' }, h('div', { class: 'tile-head' }, h('h2', { text: 'How sure is this' })), notes)));
 }
+
+/* -- every search the page targets, and what would move it up (predict workstream) -------------------------- */
+
+const posText = (value) => (value == null ? 'none' : `#${Math.max(1, Math.round(value))}`);
+
+function moveCell(row) {
+  if (row.move == null) return h('td', { class: 'predict-move', text: row.method === 'new page' ? 'new' : '' });
+  const steps = Math.round(row.move);
+  if (!steps) return h('td', { class: 'predict-move' }, h('span', { class: 'move same', text: 'same' }));
+  return h('td', { class: 'predict-move' }, moveChip(steps));
+}
+
+function confidenceChip(conf) {
+  const sure = conf && conf.label === 'CLEARER';
+  return h('span', { class: `label ${sure ? 'label-ok' : 'label-medium'} predict-conf`, text: sure ? 'CLEARER' : 'UNSURE' });
+}
+
+function backtestText(conf) {
+  if (!conf || conf.backtest_pairwise == null) return 'no backtest yet';
+  return `backtest ${pct(conf.backtest_pairwise)} of ${plural(conf.backtest_pairs || 0, 'pair')}${conf.near_chance ? ', near chance' : ''}`;
+}
+
+function searchesTile(run) {
+  const rows = run.predict.searches;
+  const body = rows.map((row) => h('tr', { class: row.search === run.search ? 'is-current' : null },
+    h('th', { scope: 'row', class: 'predict-q' }, h('span', { text: row.search }), h('span', { class: 'predict-method', text: row.method === 'anchored' ? `ranks #${Math.round(row.observed_position)} today` : row.method === 'new page' ? 'new page' : 'not placed' })),
+    h('td', { text: row.now == null ? 'not ranked' : posText(row.now) }),
+    h('td', { class: 'predict-after', text: row.with_edit == null ? 'not placed' : posText(row.with_edit) }),
+    moveCell(row),
+    h('td', { class: 'predict-sure' }, confidenceChip(row.confidence), h('span', { class: 'predict-bt', text: backtestText(row.confidence) }))));
+  const table = h('div', { class: 'predict-scroll' }, h('table', { class: 'predict-table', 'aria-label': 'PREDICTED position for every search' },
+    h('thead', null, h('tr', null, h('th', { scope: 'col', text: 'Search' }), h('th', { scope: 'col', text: 'Now' }), h('th', { scope: 'col', text: 'With edit' }), h('th', { scope: 'col', text: 'Move' }), h('th', { scope: 'col', text: 'How sure' }))),
+    h('tbody', null, body)));
+  return h('section', { class: 'tile white span-4 predict-tile' },
+    h('div', { class: 'tile-head' }, h('h2', { text: 'Every search' }), h('span', { class: 'label predict-label', text: 'PREDICTED' })),
+    h('p', { class: 'tile-sub', text: 'Pages that rank today start from their real position. New pages are placed by the new page model.' }),
+    table,
+    h('p', { class: 'caveat', text: run.predict.backtest_note || '' }),
+    run.predict.forward_check ? h('p', { class: 'caveat', text: run.predict.forward_check }) : null);
+}
+
+function guidanceTile(run) {
+  const rows = run.predict.searches;
+  const row = rows.find((item) => item.search === run.search) || rows[0];
+  const items = (row && row.guidance) || [];
+  const list = items.length
+    ? h('ol', { class: 'predict-guide' }, items.map((item) => h('li', null, h('span', { class: 'predict-guide-t', text: item.text }), h('span', { class: 'predict-guide-d', text: `You: ${item.yours}. Pages above: ${item.above}.` }))))
+    : h('p', { class: 'tile-sub', text: row && row.with_edit != null && row.with_edit <= 1.5 ? 'Nothing is PREDICTED above this page here.' : 'No clear gap on the features this model trusts.' });
+  const above = (row && row.above) || [];
+  return h('section', { class: 'tile span-2 predict-tile' },
+    h('div', { class: 'tile-head' }, h('h2', { text: 'What would move you up' }), h('span', { class: 'label predict-label', text: 'Guidance' })),
+    h('p', { class: 'tile-sub', text: above.length ? `Compared with ${plural(above.length, 'page')} just above you for ${row.search}: ${above.map((item) => hostOf(item.url)).join(', ')}.` : `For ${row ? row.search : 'this search'}.` }),
+    list,
+    h('p', { class: 'caveat', text: run.predict.guidance_note || 'Guidance, not a guarantee.' }));
+}
+

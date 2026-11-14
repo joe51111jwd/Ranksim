@@ -90,7 +90,7 @@ def test_session_cookie_is_signed_and_expires():
 def test_everything_but_the_shell_needs_the_password(hosted):
     client, token = hosted["client"], hosted["token"]
     assert client.get("/").status_code == 200 and 'data-mode="private"' in client.get("/").text
-    assert client.get("/studio/studio.js").status_code == 200
+    assert client.get("/studio/js/app.js").status_code == 200 and client.get("/studio/css/base.css").status_code == 200
     session = client.get("/api/v1/session").json()
     assert session == {"mode": "private", "login_required": True, "signed_in": False}  # no key status before login
     for path in ("/api/v1/projects", "/api/v1/projects/x/setup"):

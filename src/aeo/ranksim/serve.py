@@ -115,6 +115,12 @@ def csp_for(path: str) -> str:
         return LEGACY_CSP
     if path in {"/", "/app", "/start", "/edit"} or path.startswith("/app/"):
         return STUDIO_CSP
+    if not path.startswith(("/api/", "/studio/", "/static/")):
+        from aeo.ranksim import plugins
+
+        custom = plugins.csp_for(path)  # a plugin page, for example a public share link
+        if custom:
+            return custom
     return STRICT_CSP
 STEP_LABELS = {
     "google": "Google top 10 (REAL)",
@@ -560,10 +566,12 @@ class GuardMiddleware:
                     (b"x-content-type-options", b"nosniff"),
                     (b"referrer-policy", b"no-referrer"),
                     (b"x-frame-options", b"DENY"),
-                    (b"cache-control", b"no-store"),
                 ]
+                own = list(message.get("headers") or [])
+                if not any(key.lower() == b"cache-control" for key, _value in own):
+                    extra.append((b"cache-control", b"no-store"))  # a route that set its own (Studio assets) keeps it
                 message = dict(message)
-                message["headers"] = list(message.get("headers") or []) + extra
+                message["headers"] = own + extra
             await send(message)
 
         if scope.get("method") in {"POST", "PUT", "PATCH"}:
@@ -1184,6 +1192,10 @@ def _pull_work(ui: UiState, slug: str, job: Job) -> str:
             "(query, url, position) with 'Import Google positions from a CSV' under Key searches on this page. Nothing was invented."
         ) from exc
     ui.forget(slug)
+    from aeo.ranksim import plugins
+    from aeo.ranksim.api.common import _pull_summary
+
+    plugins.call_all("after_pull", project=project, report=_pull_summary(report), ui=ui)
     job.timings = [asdict(step) for step in report.all_steps()]
     ui.jobs.event(job, "done", f"Pull {report.pull_id} finished in {report.total_seconds:.1f} s.", 1, 1)
     return f"/p/{slug}?pulled={report.pull_id}"

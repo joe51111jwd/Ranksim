@@ -79,6 +79,12 @@ _SCHEMA = re.compile(r"application/ld\+json|itemtype\s*=", re.I)
 _HEADING_TAG = re.compile(r"<h[2-6][\s>]", re.I)
 
 
+def has_schema(html: str) -> bool:
+    """JSON-LD or microdata present. Plain substring checks: a regex over a large page was the slowest step."""
+    lower = html.lower()
+    return "application/ld+json" in lower or "itemtype" in lower
+
+
 def _compact(text: str) -> str:
     return re.sub(r"[^a-z0-9]", "", (text or "").lower())
 
@@ -110,7 +116,7 @@ def page_signals(query: str, doc, html: str | None, peers: Iterable = ()) -> dic
     peer_list = [peer for peer in peers if getattr(peer, "url", None) != doc.url]
     body = (doc.body or "")[:20000]
     heading_count = float(len(_HEADING_TAG.findall(html))) if html else float("nan")
-    schema = (1.0 if _SCHEMA.search(html) else 0.0) if html else float("nan")
+    schema = (1.0 if has_schema(html) else 0.0) if html else float("nan")
     return {
         "title_match": term_match(query, doc.title),
         "h1_match": term_match(query, doc.h1),

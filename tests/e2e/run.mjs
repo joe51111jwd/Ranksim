@@ -20,7 +20,14 @@ const PAUSED_BASE = args['paused-base'] ? args['paused-base'].replace(/\/$/, '')
 const OUT = args.out || 'tests/e2e/screenshots';
 // --group main | jobs | all. pytest runs main and jobs at the same time against separate servers to keep the run short.
 const GROUP = args.group || 'all';
-const JOB_STEPS = new Set(['first-load-kept', 'parallel-analysis', 'reattach-after-refresh', 'paused-resume']);
+// Three groups run at the same time against three servers: main (the core flow), more (plugin features on a project
+// it seeds through the API), jobs (analysis jobs on slow fake sites).
+const GROUPS = {
+  jobs: new Set(['first-load-kept', 'parallel-analysis', 'reattach-after-refresh', 'paused-resume']),
+  more: new Set(['seed', 'discover-searches', 'discover-competitors', 'audit-issues', 'audit-details', 'audit-fix-top', 'audit-apply',
+    'track', 'publish', 'phone-issue-sheet', 'phone-test-changes', 'phone-publish']),
+};
+const groupOf = (name) => (GROUPS.jobs.has(name) ? 'jobs' : GROUPS.more.has(name) ? 'more' : 'main');
 const PASSWORD = process.env.E2E_PASSWORD || 'e2e-pass';
 const SITE = process.env.E2E_SITE || 'www.dirtcrew.example';
 const SEARCHES = JSON.parse(process.env.E2E_SEARCHES || '["dirt work software","excavation crew app","grading job costing","paving crew scheduling"]');
@@ -36,7 +43,7 @@ let phase = 'start';
 const allowed = []; // [{phase, pattern}] console errors expected in one phase only
 
 async function step(name, fn) {
-  if (GROUP !== 'all' && name !== 'login' && (GROUP === 'jobs') !== JOB_STEPS.has(name)) return;
+  if (name !== 'login' && (GROUP === 'all' ? name === 'seed' : groupOf(name) !== GROUP)) return;
   phase = name;
   const started = Date.now();
   try {
@@ -136,6 +143,22 @@ try {
     await page.fill(SEL.password, PASSWORD);
     await page.click(SEL.loginSubmit);
     await page.waitForSelector(SEL.homeInput);
+  });
+
+  await step('seed', async () => {
+    // The same site as the main flow, built through the API: analyze, set the searches, pull Google again.
+    slug = await page.evaluate(async ([site, searches]) => {
+      const csrf = document.getElementById('csrf').value;
+      const post = (path, body) => fetch(path, { method: 'POST', headers: { 'content-type': 'application/json', 'x-ranksim-csrf': csrf }, body: JSON.stringify(body) });
+      const lines = (await (await post('/api/v1/sites', { site })).text()).trim().split('\n').map((line) => JSON.parse(line));
+      const done = lines.find((line) => line.type === 'done');
+      if (!done) throw new Error(`analysis did not finish: ${JSON.stringify(lines.slice(-2))}`);
+      await post(`/api/v1/projects/${encodeURIComponent(done.slug)}/settings`, { queries: searches.join('\n') });
+      const pull = (await (await post(`/api/v1/projects/${encodeURIComponent(done.slug)}/pull`, { google: true })).text()).trim().split('\n').map((line) => JSON.parse(line));
+      if (!pull.some((line) => line.type === 'done')) throw new Error(`pull did not finish: ${JSON.stringify(pull.slice(-2))}`);
+      return done.slug;
+    }, [SITE, SEARCHES]);
+    expect(slug, 'a seeded project');
   });
 
   await step('home', async () => {

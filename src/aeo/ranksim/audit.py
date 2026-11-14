@@ -134,6 +134,11 @@ INLINE = {"a", "abbr", "b", "bdi", "bdo", "cite", "code", "data", "dfn", "em", "
 BANNER = re.compile(r"banner|announce|promo|alert|notice|cookie|consent|topbar|top-bar|marquee|ticker", re.I)
 
 
+def _streamed(tag) -> bool:
+    ident = tag.get("id") if isinstance(tag, Tag) else None
+    return tag.name == "div" and isinstance(ident, str) and ident.startswith("S:")
+
+
 def text_of(tag) -> str:
     """An element's text as a reader sees it: inline parts joined without a space ("QR Code Form" + "s" reads
     "QR Code Forms"), blocks and line breaks with one."""
@@ -491,7 +496,7 @@ class PageDoc:
 
     def is_hidden(self, tag: Tag) -> bool:
         if tag.has_attr("hidden"):
-            return True
+            return not _streamed(tag)  # React streaming parks real content in <div hidden id="S:n"> until a script swaps it in
         style = (tag.get("style") or "").replace(" ", "").lower()
         if "display:none" in style or "visibility:hidden" in style or "clip:rect(0" in style:
             return True
@@ -655,7 +660,8 @@ class PageDoc:
     def content_words(self) -> int:
         """Words in the main content: no nav, header, footer, aside, form, script or hidden block."""
         count = 0
-        stack = [(self.main, False)]
+        roots = [self.main] + [tag for tag in self.body_tags("div") if _streamed(tag) and self.main not in tag.parents and tag is not self.main]
+        stack = [(root, False) for root in roots]
         while stack:
             node, hidden = stack.pop()
             for child in node.children:
@@ -928,6 +934,11 @@ class AuditContext:
         nothing else; an alias of another page gets none (its canonical page carries them)."""
         return [page for page in self.parsed if page.ok and not self.blocked(page) and not self.is_alias(page)]
 
+    @cached_property
+    def content_docs(self) -> list[PageDoc]:
+        """ok_docs without legal, account and form pages: the pages title, description, heading and URL advice is for."""
+        return [page for page in self.ok_docs if not self.utility(page)]
+
     def utility(self, page: PageDoc) -> bool:
         """Legal, account, form and other utility pages: no content, link or search advice for them."""
         return bool(UTILITY_PATH.search(_split(page.url).path or "/"))
@@ -944,7 +955,7 @@ class AuditContext:
     def ranking_page(self, url: str | None) -> PageDoc | None:
         """The page a ranking row is about, with an alias swapped for the page it names."""
         page = self.page(url)
-        if page is not None and self.is_alias(page):
+        if page is not None and self.is_alias(page) and self.aliases[url_key(page.url)] is not None:
             return self.aliases[url_key(page.url)]
         return page
 
@@ -963,7 +974,8 @@ class AuditContext:
         out: dict[str, list[dict]] = defaultdict(list)
         for row in self.rankings:
             if row.get("url"):
-                out[url_key(row["url"])].append(row)
+                page = self.ranking_page(row["url"])  # a ranking on an alias counts for the page it names
+                out[url_key(page.url if page is not None else row["url"])].append(row)
         return out
 
     def searches_for(self, page: PageDoc) -> list[dict]:
@@ -1023,9 +1035,13 @@ class AuditContext:
 
 
 LANGUAGE_CODE = re.compile(r"[a-z]{2}(-[A-Za-z]{2,4})?")
+NOT_A_PAGE = re.compile(r"content.type\W+(image|video|audio|font|application/(pdf|zip|octet|json|xml))", re.I)
+NOT_A_PAGE_URL = re.compile(r"\.(png|jpe?g|gif|webp|avif|svg|ico|pdf|zip|mp4|mov|webm|mp3|woff2?|ttf|css|js|json|xml)$", re.I)
 SLOW_FETCH = re.compile(r"time ?out|timed out|took too long|read timeout|deadline", re.I)
 UTILITY_PATH = re.compile(
     r"/(legal|privacy|terms|tos|cookies?|policy|policies|gdpr|imprint|impressum|disclaimer|accessibility|security|"
+    r"rechtliches|datenschutz\w*|nutzungsbedingungen|agb|juridi\w*|aviso-legal|mentions-legales|privacidad|privacite|"
+    r"terminos\w*|condiciones|voorwaarden|privacybeleid|"
     r"login|log-in|signin|sign-in|signup|sign-up|register|account|cart|checkout|unsubscribe|thank-you|thanks|"
     r"search|404|careers|jobs|press|newsroom|referrals?|schedule|book-a-demo|summit|sitemap|dev-[a-z0-9-]*|staging)(/|$|[-_])",
     re.I,
@@ -1258,11 +1274,27 @@ def _capped(items: list, page: PageDoc, noun: str) -> list:
 # -- checks: can Google read and index the page ----------------------------------------------------
 
 
+def _sitewide(issues: list[dict], kind: str, ctx: "AuditContext", title: str, comment: str, fix: str, limit: int = 5) -> list[dict]:
+    """More than limit pages with the same page-wide gap is one template fix: one issue that lists the pages."""
+    same = [issue for issue in issues if issue["kind"] == kind]
+    if len(same) <= limit:
+        return issues
+    pages = [issue["page"] for issue in same]
+    home = next((page for page in ctx.content_docs if page.is_home), None)
+    anchor = home.url if home is not None and home.url in pages else pages[0]
+    merged = make_issue(kind, title.format(count=len(pages)), comment.format(count=len(pages)), page=anchor, fix=fix, key="sitewide")
+    merged["pages"] = pages
+    merged["count"] = len(pages)
+    return [issue for issue in issues if issue["kind"] != kind] + [merged]
+
+
 @check
 def check_indexable(ctx: AuditContext) -> list[dict]:
     issues = []
     for page in ctx.parsed:
         if ctx.blocked(page):
+            if ctx.utility(page):
+                continue  # a staging, account or legal path kept out of Google on purpose
             issues.append(
                 make_issue(
                     "robots-blocked", f"robots.txt blocks {page.path}", f"Google is told not to crawl {page.path}, so it can't read the page or rank its content.",
@@ -1273,6 +1305,8 @@ def check_indexable(ctx: AuditContext) -> list[dict]:
             continue
         if page.status != "fetched" or (page.http_status is not None and page.http_status >= 400) or not (page.html or "").strip():
             reason = f"HTTP {page.http_status}" if page.http_status else (page.error or page.status or "no HTML")
+            if NOT_A_PAGE.search(reason) or NOT_A_PAGE_URL.search(_split(page.url).path or ""):
+                continue  # an image, PDF or other file the sitemap lists: not a page, nothing to say
             if page.http_status is None and SLOW_FETCH.search(reason):
                 issues.append(
                     make_issue(
@@ -1333,7 +1367,11 @@ def check_indexable(ctx: AuditContext) -> list[dict]:
                     fix="Add a canonical link to the page's own URL in the head.",
                 )
             )
-    return issues
+    return _sitewide(
+        issues, "canonical-missing", ctx, "{count} pages have no canonical tag",
+        "{count} pages have no canonical tag, so Google picks the main address itself when a page is reachable at several.",
+        "Add a canonical link to each page's own URL in the site's page template.",
+    )
 
 
 @check
@@ -1387,7 +1425,7 @@ def check_titles(ctx: AuditContext) -> list[dict]:
     issues = []
     brand = ctx.brand
     by_title: dict[str, list[PageDoc]] = defaultdict(list)
-    for page in ctx.ok_docs:
+    for page in ctx.content_docs:
         title = page.title
         target = ctx.target(page)
         if title and ctx.indexed(page):
@@ -1444,7 +1482,7 @@ def check_titles(ctx: AuditContext) -> list[dict]:
             others = [other.path for other in group if other is not page]
             lead = page.h1 if page.h1 and page.h1.lower() != page.title.lower() else ""
             suggestion = compose_title(lead, "", ctx.brand) if lead else None
-            if suggestion and any(suggestion.lower() == compose_title(other.h1, "", ctx.brand).lower() for other in group if other is not page and other.h1):
+            if suggestion and any(suggestion.lower() == (compose_title(other.h1, "", ctx.brand) or "").lower() for other in group if other is not page and other.h1):
                 suggestion = None
             issues.append(
                 make_issue(
@@ -1486,7 +1524,7 @@ def _meta_from_page(page: PageDoc) -> str | None:
 def check_meta(ctx: AuditContext) -> list[dict]:
     issues = []
     by_meta: dict[str, list[PageDoc]] = defaultdict(list)
-    for page in ctx.ok_docs:
+    for page in ctx.content_docs:
         meta = page.meta
         if not meta:
             suggestion = _meta_from_page(page)
@@ -1551,7 +1589,7 @@ def _html_text(text: str | None) -> str:
 @check
 def check_headings(ctx: AuditContext) -> list[dict]:
     issues = []
-    for page in ctx.ok_docs:
+    for page in ctx.content_docs:
         h1s = page.h1s
         target = ctx.target(page)
         if not h1s:
@@ -1744,7 +1782,7 @@ def _image_width(tag: Tag, src: str) -> int:
 @check
 def check_images(ctx: AuditContext) -> list[dict]:
     issues = []
-    for page in ctx.ok_docs:
+    for page in ctx.content_docs:
         missing, huge = [], []
         for tag in page.images:
             src = (tag.get("src") or tag.get("data-src") or "").strip()
@@ -1898,7 +1936,11 @@ def check_structured_data(ctx: AuditContext) -> list[dict]:
                     fix=f"Add {kind} JSON-LD that matches what the page shows." + (" Write the questions and answers on the page first." if kind == "FAQPage" and not suggestion else ""),
                 )
             )
-    return issues
+    return _sitewide(
+        issues, "schema-missing", ctx, "{count} pages have no structured data",
+        "{count} pages have no structured data, so Google has to guess what each one is: a product, an article, a company.",
+        "Add JSON-LD for what each kind of page is in its template. Only describe things the pages really say.",
+    )
 
 
 @check
@@ -1962,7 +2004,7 @@ def check_mobile(ctx: AuditContext) -> list[dict]:
 @check
 def check_urls(ctx: AuditContext) -> list[dict]:
     issues = []
-    for page in ctx.ok_docs:
+    for page in ctx.content_docs:
         parts = _split(page.url)
         path = unquote(parts.path or "/")
         problems = []

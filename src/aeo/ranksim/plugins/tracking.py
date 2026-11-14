@@ -126,7 +126,8 @@ def _read_json(path: Path) -> dict:
 def _write_json(path: Path, data: dict) -> None:
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    temp = path.with_name(f".{path.name}.{secrets.token_hex(4)}.tmp")
+    # cloud.py never packs ".ranksim-tmp-*" files, so a half-written file is never uploaded
+    temp = path.with_name(f".ranksim-tmp-{path.name}.{secrets.token_hex(4)}")
     temp.write_text(json.dumps(data, indent=2, sort_keys=True), encoding="utf-8")
     os.replace(temp, path)
 
@@ -945,7 +946,7 @@ def _default_run_pull(ui, project) -> dict:
 
     def work(ctx) -> dict:
         events = _JobEvents(ui, sites._Events(ctx))
-        return {"report": sites._run_pull(ui, ui.project(project.slug), True, events, ctx=ctx)}
+        return {"report": sites._run_pull(ui, ui.project(project.slug), True, events, ctx=ctx, locked=True)}  # recheck holds project_lock
 
     def error_text(exc: BaseException) -> str:
         return _scrub(ui, f"{type(exc).__name__}: {str(exc)[:300]}")

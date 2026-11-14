@@ -12,16 +12,71 @@ average position (labeled as Google Search Console data with the date range), an
 search discovery. When the owner has not created the Google OAuth client yet, every screen shows a clear
 "Not set up yet" state with the exact steps.
 
-## Owner setup (once)
+## Owner setup guide (for James, about 15 minutes, once)
 
-1. Google Cloud Console: enable the **Google Search Console API**.
-2. OAuth consent screen: External, scope `https://www.googleapis.com/auth/webmasters.readonly`, publishing status
-   **In production** (in Testing, Google ends refresh tokens after 7 days; an unverified app warning is shown when
-   connecting, click Advanced, then continue).
-3. Credentials: OAuth client ID of type **Web application**, authorized redirect URI
-   `https://ranksim.vercel.app/api/v1/gsc/callback` (plus `http://127.0.0.1:8765/api/v1/gsc/callback` for local use).
-4. Vercel env vars: `GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET`. `RANKSIM_SECRET` must already be set
-   (it keys the token encryption). Optional `GOOGLE_OAUTH_REDIRECT_URI` overrides the computed redirect URI.
+You need: the Google account that can see your clients in Search Console, and access to the ranksim project on Vercel.
+Google renames menu items now and then; if a name below differs, look for the closest match.
+
+**A. Google Cloud: create the project and turn on the API**
+
+1. Open https://console.cloud.google.com and sign in with that Google account.
+2. In the project picker at the top, click **New project**. Name it `Ranksim`, click **Create**, then select it.
+3. Open the menu (top left), **APIs and services**, **Library**. Search for **Google Search Console API**, open it,
+   click **Enable**.
+
+**B. Google Cloud: the sign in screen (OAuth consent)**
+
+4. Menu, **APIs and services**, **OAuth consent screen** (newer consoles call it **Google Auth Platform**; click
+   **Get started** if asked).
+5. **App name** `Ranksim`, **User support email** your email. **Audience**: **External**. **Contact email** your
+   email. Agree and click **Create** (or **Save and continue** on older screens).
+6. **Data access** (older: **Scopes**): **Add or remove scopes**, paste
+   `https://www.googleapis.com/auth/webmasters.readonly` in the manual box, **Add to table**, **Update**, **Save**.
+7. **Audience** (older: **OAuth consent screen** summary): click **Publish app**, then **Confirm**, so the status is
+   **In production**. Leave it in production: in Testing, Google ends the connection after 7 days.
+   Google may say the app needs verification. You do not need it for your own account: when you connect, Google shows
+   "Google hasn't verified this app"; click **Advanced**, then **Go to Ranksim**.
+
+**C. Google Cloud: the OAuth client**
+
+8. **Clients** (older: **Credentials**, then **Create credentials**, **OAuth client ID**): click **Create client**.
+9. **Application type**: **Web application**. **Name**: `Ranksim`.
+10. Under **Authorized redirect URIs** click **Add URI** and paste exactly
+    `https://ranksim.vercel.app/api/v1/gsc/callback`. Leave **Authorized JavaScript origins** empty.
+11. Click **Create**. Copy the **Client ID** and the **Client secret** from the dialog (or download the JSON). Keep
+    the secret private.
+
+**D. Vercel: the settings**
+
+12. Open https://vercel.com, the **ranksim** project, **Settings**, **Environment Variables**.
+13. Add each of these (Key, Value, environment **Production**, **Save**):
+    - `GOOGLE_OAUTH_CLIENT_ID` = the Client ID
+    - `GOOGLE_OAUTH_CLIENT_SECRET` = the Client secret (mark it **Sensitive** if offered)
+    - `RANKSIM_PUBLIC_URL` = `https://ranksim.vercel.app`
+    - `RANKSIM_SECRET` only if it is not set yet or is shorter than 32 characters: a long random value, for example
+      the output of `openssl rand -base64 32`. Changing it signs you out and you connect Google again.
+14. **Deployments**, the latest production deployment, the **...** menu, **Redeploy**. Settings apply to new
+    deployments only.
+
+**E. Ranksim: connect**
+
+15. Open a client site in Ranksim, the gear (**Settings**), **Google Search Console**, turn it **on**.
+16. Pick the Google account, accept the read only Search Console access (keep the box ticked), and you come back to
+    Settings. The property is picked for you when your account has one for the site (`sc-domain:client.com` or
+    `https://www.client.com/`); otherwise pick it from the list.
+17. Every other client site turns on the same way, without signing in again. New sites you analyze turn on by
+    themselves when your account has their property.
+
+**If something goes wrong**
+
+- "Not set up yet" in Settings: a Vercel variable is missing or the redeploy has not finished. The missing names are
+  listed under **Setup steps**.
+- Google says `redirect_uri_mismatch`: the URI in step 10 does not match exactly (https, no trailing slash).
+- Google says "Access blocked" or the connection stops after a week: the app is still in Testing (step 7).
+- "This Google account cannot read <property>": add your account as a user on that property in Search Console
+  (Settings, Users and permissions), then **Refresh now**.
+- To disconnect: Settings, **Disconnect Google** (stops Search Console for every site). You can also remove Ranksim
+  at https://myaccount.google.com/permissions.
 
 ## secretbox (shared helper)
 
@@ -220,5 +275,6 @@ Without a search data key, new sites have no Google positions. When GSC is on:
 ## Known gaps
 
 - One Google account per Ranksim. A client whose property lives under a different Google account must add James's
-  account as a user in Search Console (the normal agency setup).
+  account as a user in Search Console (the normal agency setup). Reconnecting with another account re-matches each
+  site's property on that site's next connect or toggle; other sites show "cannot read <property>" until then.
 - Only web search type, final data, 1000 rows per dimension set. Capped flags say when more rows exist.

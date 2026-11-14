@@ -488,15 +488,19 @@ def complete_connection(ui, project, code: str, payload: dict) -> str:
     store_tokens(ui, tokens)
     settings = save_settings(ui, project, {"enabled": True, "last_error": "", "error_at": ""})
     result = "connected"
-    if not settings["property"]:
-        try:
-            chosen = match_property(project, list_properties(ui))
-        except GscError:
-            chosen = ""
-        if chosen:
+    try:
+        properties = list_properties(ui)
+    except GscError:
+        properties = None  # keep what is stored; the next refresh says what is wrong
+    if properties is not None:
+        usable = {item["url"] for item in properties if item.get("usable")}
+        if settings["property"] not in usable:
+            # No property yet, or another Google account that cannot read the stored one: match again.
+            chosen = match_property(project, properties)
             save_settings(ui, project, {"property": chosen})
-        else:
-            result = "needs_property"
+            if not chosen:
+                result = "needs_property"
+        _rematch_other_sites(ui, project, usable, properties)
     if load_settings(project)["property"]:
         try:
             refresh_project(ui, project, force=True)
@@ -511,6 +515,28 @@ def pkce_challenge(verifier: str) -> str:
 
     digest = hashlib.sha256(verifier.encode("ascii")).digest()
     return base64.urlsafe_b64encode(digest).decode("ascii").rstrip("=")
+
+
+def _rematch_other_sites(ui, connected_project, usable: set[str], properties: list[dict]) -> None:
+    """After a (re)connect, every other site with GSC on whose property this Google account cannot read is matched
+    again, or left without a property so Settings asks for one."""
+    from aeo.ranksim.project import list_projects, load_project
+
+    try:
+        summaries = list_projects(root=ui.root)
+    except Exception:  # noqa: BLE001 - one unreadable project never stops a connect
+        return
+    for summary in summaries:
+        slug = getattr(summary, "slug", "")
+        if not slug or slug == connected_project.slug:
+            continue
+        try:
+            other = load_project(slug, root=ui.root)
+        except Exception:  # noqa: BLE001
+            continue
+        settings = load_settings(other)
+        if settings["enabled"] and settings["property"] and settings["property"] not in usable:
+            save_settings(ui, other, {"property": match_property(other, properties), "last_error": "", "error_at": ""})
 
 
 def auth_url(config: dict, redirect_uri: str, state: str, *, challenge: str = "") -> str:
@@ -1447,6 +1473,14 @@ def register(app, ui) -> None:
         if not changes:
             return common._error(400, "Nothing to change.")
         current = save_settings(ui, project, changes)
+        if changes.get("enabled") and not current["property"] and connected(ui) and oauth_config()["ready"]:
+            # Google is already connected (another site did it): pick this site's property as the callback would.
+            try:
+                chosen = match_property(project, await run_in_threadpool(list_properties, ui))
+            except GscError:
+                chosen = ""
+            if chosen:
+                current = save_settings(ui, project, {"property": chosen})
         if current["enabled"] and current["property"] and connected(ui) and oauth_config()["ready"]:
             try:
                 await run_in_threadpool(refresh_project, ui, project)  # fetches only when missing, stale or a new property

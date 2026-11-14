@@ -197,6 +197,11 @@ phone width (390 px, no horizontal scroll), disconnect. No console errors.
   no network; pages matched without scheme, www, query or trailing slash). Labeled Google Search Console data with
   the date range. Hidden when GSC is not ready.
 
+- **PKCE (S256).** `make_state` adds a random verifier to the sealed state; the authorization URL carries its
+  S256 `code_challenge`, and the exchange sends `code_verifier`. The verifier never appears in a URL.
+- **`RANKSIM_PUBLIC_URL`** (optional) pins the redirect URI's base, for example `https://ranksim.vercel.app`.
+  `GOOGLE_OAUTH_REDIRECT_URI` still overrides the whole URI. With neither, the request origin is used.
+
 ## Known gaps
 
 - One Google account per Ranksim. A client whose property lives under a different Google account must add James's

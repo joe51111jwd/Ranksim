@@ -224,6 +224,15 @@ def page_profile(url: str, html: str) -> dict:
     }
 
 
+# Structured data worth adding when the pages above have it: types that change how a result shows or what it says.
+# Plumbing every site emits (WebPage, WebSite, ListItem, Organization, ImageObject) is never a gap.
+USEFUL_SCHEMA = {
+    "FAQPage", "HowTo", "Product", "SoftwareApplication", "WebApplication", "Review", "AggregateRating", "BreadcrumbList",
+    "VideoObject", "Article", "BlogPosting", "NewsArticle", "LocalBusiness", "ItemList", "Service", "Course", "Event",
+    "Offer", "QAPage", "Recipe", "HomeAndConstructionBusiness", "GeneralContractor", "ProfessionalService",
+}
+
+
 # Parts of a page that the pages above often have, named the way the search sheet says them.
 ELEMENTS = {
     "faq": "an FAQ section",
@@ -697,7 +706,7 @@ def gap_for(search: str, page_url: str | None, page_html: str | None, above: lis
     result["schema"] = [
         {"type": kind, "pages": len(urls), "of": total, "evidence": urls[:6]}
         for kind, urls in sorted(schema.items(), key=lambda kv: -len(kv[1]))
-        if _common(len(urls), total) and kind not in mine_schema
+        if kind in USEFUL_SCHEMA and _common(len(urls), total) and kind not in mine_schema
     ]
     have: dict[str, list[str]] = defaultdict(list)
     for page in pages:
@@ -764,7 +773,7 @@ def stored_html(database: str, urls: list[str]) -> dict[str, str]:
     return {url: found[loose_key(url)] for url in urls if loose_key(url) in found}
 
 
-SECTIONS_VERSION = 7
+SECTIONS_VERSION = 8
 
 
 def _fingerprint(project, meta, google, features, rows, pages, docs) -> str:

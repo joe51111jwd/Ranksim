@@ -488,15 +488,18 @@ def complete_connection(ui, project, code: str, payload: dict) -> str:
     store_tokens(ui, tokens)
     settings = save_settings(ui, project, {"enabled": True, "last_error": "", "error_at": ""})
     result = "connected"
-    if not settings["property"]:
-        try:
-            chosen = match_property(project, list_properties(ui))
-        except GscError:
-            chosen = ""
-        if chosen:
+    try:
+        properties = list_properties(ui)
+    except GscError:
+        properties = None  # keep what is stored; the next refresh says what is wrong
+    if properties is not None:
+        usable = {item["url"] for item in properties if item.get("usable")}
+        if settings["property"] not in usable:
+            # No property yet, or another Google account that cannot read the stored one: match again.
+            chosen = match_property(project, properties)
             save_settings(ui, project, {"property": chosen})
-        else:
-            result = "needs_property"
+            if not chosen:
+                result = "needs_property"
     if load_settings(project)["property"]:
         try:
             refresh_project(ui, project, force=True)

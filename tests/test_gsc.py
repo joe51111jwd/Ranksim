@@ -1026,3 +1026,77 @@ def test_client_report_carries_search_console_apart_from_google(tmp_path, env):
     share_state = share._state(box.ui)
     share_state["cache"].clear()
     assert "search_console" not in share.client_report(box.ui, _project(box))  # absent when off: the key set stays as before
+
+
+# -- end to end scenarios ------------------------------------------------------------------------------------------
+
+
+def _instance(tmp_path, google):
+    settings = make_settings(tmp_path)
+    app = create_app(
+        settings=settings,
+        database=settings.ranksim_database_url,
+        projects_root=tmp_path / "projects",
+        public_demo=False,
+        access_password=PASSWORD,
+        access_secret="session-secret",
+        csrf_token="shared-deployment-csrf-token-0123456789",
+    )
+    app.state.ui.gsc_transport = google.transport()
+    app.state.ui.gsc_clock = Clock()
+    return app
+
+
+def test_connect_on_one_instance_and_finish_on_another(tmp_path, env):
+    google = FakeGoogle()
+    one, two = _instance(tmp_path, google), _instance(tmp_path, google)
+    project = create_project("Dirt Crew", "www.dirtcrew.example", ["heavy civil software"], root=tmp_path / "projects")
+    a, b = TestClient(one), TestClient(two)
+    headers = {"x-ranksim-csrf": "shared-deployment-csrf-token-0123456789"}
+    assert a.post("/api/v1/login", json={"password": PASSWORD}, headers=headers).status_code == 200
+    started = a.post(f"/api/v1/gsc/projects/{project.slug}/connect", json={}, headers=headers).json()["url"]
+    query = {key: values[0] for key, values in parse_qs(urlsplit(started).query).items()}
+    google.challenge = query["code_challenge"]
+    for name, value in a.cookies.items():  # the same browser, routed to another instance
+        b.cookies.set(name, value)
+    done = b.get("/api/v1/gsc/callback", params={"code": "good-code", "state": query["state"]}, follow_redirects=False)
+    assert done.headers["location"].endswith("?gsc=connected")
+    # The first instance reads what the second stored (one disk here; on Vercel the cloud mirror carries it).
+    assert a.get(f"/api/v1/gsc/projects/{project.slug}").json()["state"] == "ready"
+
+
+def test_token_expiring_mid_use_is_refreshed_once_and_kept(tmp_path, env):
+    box = _connected_box(tmp_path)
+    slug = box.project.slug
+    box.ui.gsc_clock.now += 3600  # the access token expires while the owner works
+    assert box.client.get(f"/api/v1/gsc/projects/{slug}/properties").status_code == 200
+    assert box.client.get(f"/api/v1/gsc/projects/{slug}/properties").status_code == 200
+    grants = [grant for kind, grant, _ in box.google.calls if kind == "token"]
+    assert grants == ["authorization_code", "refresh_token"]  # refreshed once, then the new token is reused
+    # Reports never call Google, even with an expired token.
+    calls = len(box.google.calls)
+    box.ui.gsc_clock.now += 3600
+    assert box.client.get(f"/api/v1/projects/{slug}/report").json()["gsc"]["state"] == "ready"
+    assert len(box.google.calls) == calls
+
+
+def test_reconnecting_a_different_google_account_replaces_the_old_one(tmp_path, env):
+    box = _connected_box(tmp_path)
+    slug = box.project.slug
+    assert _post(box, "/api/v1/gsc/disconnect").json()["revoked"] is True
+    assert box.client.get(f"/api/v1/gsc/projects/{slug}").json()["state"] == "not_connected"
+    # The other account only has a URL-prefix property: the stored property no longer exists for it.
+    box.google.sites = [{"siteUrl": "https://www.dirtcrew.example/", "permissionLevel": "siteFullUser"}]
+    box.google.refresh_tokens.clear()
+    query = _connect(box)
+    assert _callback(box, {"code": "good-code", "state": query["state"]}).headers["location"].endswith("?gsc=connected")
+    status = box.client.get(f"/api/v1/gsc/projects/{slug}").json()
+    assert status["connected"] and status["property"] == "https://www.dirtcrew.example/"  # re-matched for this account
+    assert status["state"] == "ready"
+    # An account that cannot see the site at all: the stale property is cleared and the owner is asked to pick.
+    _post(box, "/api/v1/gsc/disconnect")
+    box.google.sites = [{"siteUrl": "https://other.example/", "permissionLevel": "siteOwner"}]
+    box.google.refresh_tokens.clear()
+    query = _connect(box)
+    assert _callback(box, {"code": "good-code", "state": query["state"]}).headers["location"].endswith("?gsc=needs_property")
+    assert box.client.get(f"/api/v1/gsc/projects/{slug}").json()["state"] == "needs_property"

@@ -1,9 +1,10 @@
 /* Google Search Console: the on/off switch and property picker in Settings, a Search Console column on Searches,
-   and an Overview tile. Every number shown is Google Search Console data for the stated date range.
+   and an Overview tile. Numbers are Google Search Console data for the stated date range, except the benchmark click
+   rate in "Seen but not clicked", which is a rough industry curve and labeled so.
    Server side: src/aeo/ranksim/plugins/gsc.py (routes under /api/v1/gsc). */
 
-import { registerSettingsSection, registerSearchColumn, registerOverviewTile } from '../hooks.js';
-import { S, h, icon, api, enc, toast, link, clear } from '../core.js';
+import { registerSettingsSection, registerSearchColumn, registerOverviewTile, registerScreen } from '../hooks.js';
+import { S, h, icon, api, enc, toast, link, clear, go, page, pathOf, reloadSite } from '../core.js';
 
 const LABEL = 'Google Search Console data';
 const fmt = (n) => (n == null ? '' : Number(n).toLocaleString('en-US'));
@@ -43,13 +44,23 @@ function rangeText(g) {
 }
 
 /* After Google sends the browser back to /app/<slug>/settings?gsc=<result>: say what happened once, then clean the address. */
-function announceResult() {
-  const result = S.params && S.params.get('gsc');
-  if (!result) return;
-  toast(RESULTS[result] || 'Search Console sign in did not finish. Try again.');
+async function announceResult() {
+  let result = S.params && S.params.get('gsc');
+  if (!result) return false;
   S.params.delete('gsc');
   const rest = S.params.toString();
   history.replaceState({}, '', `${location.pathname}${rest ? `?${rest}` : ''}`);
+  if (result === 'signin') {
+    // Google sent the browser back while signed out. Now signed in: finish the connection it parked.
+    try {
+      result = (await api.post('/api/v1/gsc/resume', {})).result;
+    } catch (err) {
+      toast(err.message);
+      return true;
+    }
+  }
+  toast(RESULTS[result] || 'Search Console sign in did not finish. Try again.');
+  return result === 'connected' || result === 'needs_property';
 }
 
 /* ------------------------------------------------------------------ Settings */
@@ -68,20 +79,23 @@ async function startConnect(button) {
 function setupCard(status) {
   const setup = status.setup || {};
   const uri = status.redirect_uri || setup.redirect_uri || '';
-  const copy = h('button', { class: 'btn gsc-copy', type: 'button' }, icon('doc'), 'Copy');
-  copy.addEventListener('click', async () => {
-    try {
-      await navigator.clipboard.writeText(uri);
-      toast('Redirect URI copied.');
-    } catch (_err) {
-      toast(uri);
-    }
-  });
+  const copy = uri ? h('button', { class: 'btn gsc-copy', type: 'button' }, icon('doc'), 'Copy') : null;
+  if (copy) {
+    copy.addEventListener('click', async () => {
+      try {
+        await navigator.clipboard.writeText(uri);
+        toast('Redirect URI copied.');
+      } catch (_err) {
+        toast(uri);
+      }
+    });
+  }
   return h('div', { class: 'gsc-setup' },
-    h('div', { class: 'callout' }, icon('warn'), h('span', null, h('b', { text: 'Not set up yet. ' }), 'The server owner does this once. Then every site can turn Search Console on here.')),
-    h('ol', { class: 'gsc-steps' }, (setup.steps || []).map((step) => h('li', { text: step }))),
-    uri ? h('div', { class: 'gsc-uri' }, h('span', { class: 'form-help', text: 'Redirect URI for this server' }), h('div', { class: 'gsc-uri-row' }, h('code', { text: uri }), copy)) : null,
-    (setup.missing || []).length ? h('div', { class: 'form-help', text: `Missing on the server: ${setup.missing.join(', ')}.` }) : null);
+    h('p', { class: 'tile-sub', text: 'Search Console is not set up yet.' }),
+    h('details', { class: 'gsc-details' },
+      h('summary', { text: 'Setup steps' }),
+      h('ol', { class: 'gsc-steps' }, (setup.steps || []).map((step) => h('li', { text: step }))),
+      uri ? h('div', { class: 'gsc-uri-row' }, h('code', { text: uri }), copy) : null));
 }
 
 async function propertyPicker(status, rerender) {
@@ -238,8 +252,7 @@ function gscSection(ctx) {
     toggle.disabled = false;
   });
 
-  announceResult();
-  paint(false);
+  announceResult().then((changed) => paint(changed));
   return tile;
 }
 
@@ -251,15 +264,18 @@ registerSearchColumn({
   key: 'gsc',
   order: 50,
   header: 'Search Console',
+  when: (report) => ready(gscOf(report)),
   cell(row) {
     const g = gscOf(S.report);
     if (!ready(g)) return null;
     const hit = (g.searches || {})[row.q];
     const tip = `${LABEL}, ${rangeText(g)}`;
     if (!hit) return h('span', { class: 'gsc-cell none', title: `${tip}. No impressions for this search.`, text: 'No data' });
+    const near = nearFor(g, row.q);
     return h('span', { class: 'gsc-cell', title: `${tip}. CTR ${pctText(hit.ctr)}, average position ${posText(hit.position)}.` },
       h('b', { text: `${fmt(hit.clicks)} clicks` }),
-      h('small', { text: `${fmt(hit.impressions)} impr.` }));
+      h('small', { text: `${fmt(hit.impressions)} impr.` }),
+      near ? h('span', { class: 'gsc-chip', text: 'Positions 8 to 20' }) : null);
   },
 });
 
@@ -297,5 +313,111 @@ registerOverviewTile({
       top.length ? h('ol', { class: 'gsc-top' }, top.map((row) => h('li', null,
         h('span', { class: 'gsc-q', text: row.q }),
         h('span', { class: 'gsc-n', text: `${fmt(row.clicks)} clicks, ${fmt(row.impressions)} impr.` })))) : null);
+  },
+});
+
+/* ------------------------------------------------------------------ Opportunities */
+
+function opps(g) {
+  return (g && g.opportunities) || { near_page_one: [], low_ctr: [], rules: {} };
+}
+
+function nearFor(g, q) {
+  const key = String(q || '').toLowerCase().trim();
+  return opps(g).near_page_one.find((row) => row.q.toLowerCase().trim() === key) || null;
+}
+
+function editorButton(q, pageUrl, label) {
+  const params = {};
+  if (q) params.q = q;
+  if (pageUrl) params.page = pageUrl;
+  return h('button', { class: 'btn gsc-edit', type: 'button', onClick: () => go('editor', params) }, icon('pencil'), label || 'Open in editor');
+}
+
+function tracked(q) {
+  const key = String(q || '').toLowerCase().trim();
+  return ((S.report && S.report.rankings) || []).some((row) => String(row.q).toLowerCase().trim() === key);
+}
+
+function trackButton(q) {
+  if (tracked(q)) return null;
+  const button = h('button', { class: 'btn gsc-track', type: 'button' }, icon('plus'), 'Track');
+  button.addEventListener('click', async () => {
+    button.disabled = true;
+    try {
+      const queries = ((S.report && S.report.rankings) || []).map((row) => row.q).concat([q]);
+      await api.post(`/api/v1/projects/${enc(S.slug)}/settings`, { queries });
+      await reloadSite();
+      toast(`Tracking "${q}". Refresh to get its Google rankings.`);
+      button.replaceWith(h('span', { class: 'label label-plain', text: 'Tracked' }));
+    } catch (err) {
+      toast(err.message);
+      button.disabled = false;
+    }
+  });
+  return button;
+}
+
+function nearRow(row, compact) {
+  return h('div', { class: 'rowcard gsc-opp' }, h('div', { class: 'body' },
+    h('div', { class: 't', text: row.q }),
+    h('div', { class: 'm' },
+      h('span', { text: `#${posText(row.position)} on average` }),
+      h('span', { text: `${fmt(row.impressions)} impressions` }),
+      h('span', { text: `${fmt(row.clicks)} clicks` }),
+      row.page ? h('span', { class: 'gsc-path', text: pathOf(row.page) }) : null),
+    compact ? null : h('div', { class: 'gsc-opp-actions' }, editorButton(row.q, row.page), trackButton(row.q))),
+    compact ? h('div', { class: 'right' }, editorButton(row.q, row.page, 'Edit')) : null);
+}
+
+function lowRow(row, compact) {
+  return h('div', { class: 'rowcard gsc-opp' }, h('div', { class: 'body' },
+    h('div', { class: 't gsc-path', text: pathOf(row.page) }),
+    h('div', { class: 'm' },
+      h('span', { text: `${pctText(row.ctr)} CTR at #${posText(row.position)}` }),
+      h('span', { text: `benchmark about ${pctText(row.benchmark_ctr)}, not Google data` }),
+      h('span', { text: `${fmt(row.impressions)} impressions` }),
+      row.q ? h('span', { text: `top search: ${row.q}` }) : null),
+    compact ? null : h('div', { class: 'gsc-opp-actions' }, editorButton(row.q, row.page, 'Improve title and description'))),
+    compact ? h('div', { class: 'right' }, editorButton(row.q, row.page, 'Edit')) : null);
+}
+
+registerOverviewTile({
+  key: 'gsc-opportunities',
+  order: 16,
+  render(R) {
+    const g = gscOf(R);
+    if (!ready(g)) return null;
+    const o = opps(g);
+    if (!o.near_page_one.length && !o.low_ctr.length) return null;
+    return h('section', { class: 'tile span-2 gsc-tile', 'data-gsc': 'opportunities' },
+      h('div', { class: 'tile-head' }, h('h2', { text: 'Search Console opportunities' }), link('gsc', 'All')),
+      h('div', { class: 'tile-k', text: `${LABEL}, ${rangeText(g)}` }),
+      o.near_page_one.length ? h('div', { class: 'gsc-group' }, h('div', { class: 'gsc-group-k', text: 'Positions 8 to 20' }), o.near_page_one.slice(0, 3).map((row) => nearRow(row, true))) : null,
+      o.low_ctr.length ? h('div', { class: 'gsc-group' }, h('div', { class: 'gsc-group-k', text: 'Seen but not clicked' }), o.low_ctr.slice(0, 2).map((row) => lowRow(row, true))) : null);
+  },
+});
+
+registerScreen('gsc', {
+  label: 'Search Console',
+  nav: false,
+  order: 95,
+  render() {
+    const g = gscOf(S.report);
+    if (!ready(g)) {
+      return [page('Search Console opportunities', 'Turn on Search Console in Settings to see these.', null,
+        h('div', { class: 'bento' }, h('section', { class: 'tile span-4' }, h('p', { class: 'tile-sub', text: (g && g.message) || 'Search Console is not ready for this site.' }), h('div', { class: 'gsc-link' }, link('settings', 'Open Settings')))))];
+    }
+    const o = opps(g);
+    const rules = o.rules || {};
+    const near = h('section', { class: 'tile span-2', 'data-gsc': 'near' },
+      h('div', { class: 'tile-head' }, h('h2', { text: 'Positions 8 to 20' }), h('span', { class: 'aside', text: String(o.near_page_one.length) })),
+      h('p', { class: 'tile-sub gsc-rule', text: rules.near_page_one || '' }),
+      o.near_page_one.length ? h('div', { class: 'form' }, o.near_page_one.map((row) => nearRow(row, false))) : h('div', { class: 'empty-note', text: 'None right now.' }));
+    const low = h('section', { class: 'tile span-2', 'data-gsc': 'low' },
+      h('div', { class: 'tile-head' }, h('h2', { text: 'Seen but not clicked' }), h('span', { class: 'aside', text: String(o.low_ctr.length) })),
+      h('p', { class: 'tile-sub gsc-rule', text: rules.low_ctr || '' }),
+      o.low_ctr.length ? h('div', { class: 'form' }, o.low_ctr.map((row) => lowRow(row, false))) : h('div', { class: 'empty-note', text: 'None right now.' }));
+    return [page('Search Console opportunities', `${LABEL}, ${rangeText(g)}`, null, h('div', { class: 'bento' }, near, low))];
   },
 });

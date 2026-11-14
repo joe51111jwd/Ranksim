@@ -82,6 +82,7 @@ function changeChip(row) {
 
 /* Puts the tooltip beside the point, inside the chart: right of it when it fits, else left, never past an edge. */
 function placeTip(wrap, tip, share) {
+  tip.hidden = false; // shown first, so its width can be measured
   const width = wrap.clientWidth || 1;
   const px = share * width;
   const tipWidth = tip.offsetWidth;

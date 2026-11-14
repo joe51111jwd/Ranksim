@@ -1100,3 +1100,24 @@ def test_reconnecting_a_different_google_account_replaces_the_old_one(tmp_path, 
     query = _connect(box)
     assert _callback(box, {"code": "good-code", "state": query["state"]}).headers["location"].endswith("?gsc=needs_property")
     assert box.client.get(f"/api/v1/gsc/projects/{slug}").json()["state"] == "needs_property"
+
+
+def test_turning_on_a_second_site_picks_its_property(tmp_path, env):
+    box = _connected_box(tmp_path)
+    second = create_project("Other", "other.example", ["a search"], root=tmp_path / "projects")
+    _post(box, f"/api/v1/gsc/projects/{second.slug}", {"enabled": False})  # the owner had it off
+    on = _post(box, f"/api/v1/gsc/projects/{second.slug}", {"enabled": True}).json()
+    assert on["property"] == "https://other.example/" and on["state"] == "ready" and "needs_connect" not in on
+
+
+def test_reconnecting_another_account_rematches_every_site(tmp_path, env):
+    box = _connected_box(tmp_path)
+    second = create_project("Other", "other.example", ["a search"], root=tmp_path / "projects")
+    _post(box, f"/api/v1/gsc/projects/{second.slug}", {"enabled": True})
+    assert gsc.load_settings(second)["property"] == "https://other.example/"
+    _post(box, "/api/v1/gsc/disconnect")
+    box.google.sites = [{"siteUrl": "https://www.dirtcrew.example/", "permissionLevel": "siteOwner"}]
+    query = _connect(box)
+    _callback(box, {"code": "good-code", "state": query["state"]})
+    assert gsc.load_settings(second)["property"] == ""  # this account cannot read it: Settings asks for a property
+    assert gsc.project_state(box.ui, second)["state"] == "needs_property"

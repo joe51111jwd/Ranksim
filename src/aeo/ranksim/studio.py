@@ -187,25 +187,31 @@ def register(app: FastAPI, ui) -> None:
     async def _sync_state(request: Request, call_next):
         cloud = ui.cloud
         path = request.url.path
-        if cloud is None or not cloud.enabled or path.startswith(NO_STATE_PREFIX) or path in OPEN_EXACT:
+        # The open paths (the shell, its assets, session and login) hold no project data: no storage check for them.
+        if cloud is None or not cloud.enabled or path.startswith(NO_STATE_PREFIX) or _is_open(path):
             return await call_next(request)
         from aeo.ranksim.cloud import CloudError
 
         # Blob operations are budgeted (cloud.py): a read checks storage only on a cold start, every few minutes, or
         # when the browser's rs_sync cookie (the newest save it has seen) is newer than this instance; a write checks
         # first so it never builds on stale files. The cookie is a hint, not a secret: a forged one costs one check.
+        # A signed-out request gets here only on a login_exempt route (a share link, a cron), before that route has
+        # checked its token, so it never forces a check and its cookie hint is ignored: anyone could send either, and
+        # Vercel Hobby blocks Blob for 30 days past its monthly cap. It still gets the routine cold-start check.
+        trusted = _signed_in(ui, request)
         writing = request.method in {"POST", "PUT", "PATCH", "DELETE"}
-        hint_text = request.cookies.get(SYNC_COOKIE, "")
+        force = writing and trusted
+        hint_text = request.cookies.get(SYNC_COOKIE, "") if trusted else ""
         hint = int(hint_text) if hint_text.isdigit() and len(hint_text) <= 20 else 0
         hinted = hasattr(cloud, "stamp")  # a stand-in cloud object (tests) may not take hints
         try:
-            await run_in_threadpool(lambda: cloud.refresh(force=writing, hint=hint) if hinted else cloud.refresh(force=writing))
+            await run_in_threadpool(lambda: cloud.refresh(force=force, hint=hint) if hinted else cloud.refresh(force=force))
         except CloudError as exc:
             if path.startswith("/api/"):
                 return _error(503, f"{exc} Nothing was changed. Try again in a moment.")
             return Response(f"{exc} Try again in a moment.", status_code=503, media_type="text/plain")
         response = await call_next(request)
-        if hinted and response.status_code == 404 and request.method == "GET" and path.startswith("/api/v1/projects/"):
+        if trusted and hinted and response.status_code == 404 and request.method == "GET" and path.startswith("/api/v1/projects/"):
             # A project made on another instance a moment ago: check storage once, then answer again.
             if await run_in_threadpool(lambda: cloud.refresh(hint=cloud.stamp + 1)):
                 response = await call_next(request)
@@ -216,7 +222,7 @@ def register(app: FastAPI, ui) -> None:
                 print(f"ranksim: {exc}", flush=True)
                 if path.startswith("/api/"):
                     return _error(503, f"{exc} The change was made on this server but may not last. Try again.")
-        if hinted and cloud.stamp > hint:
+        if trusted and hinted and cloud.stamp > hint:  # never a cookie for a signed-out visitor (a share link)
             response.set_cookie(SYNC_COOKIE, str(cloud.stamp), max_age=30 * 24 * 3600, httponly=False, samesite="lax", path="/")
         return response
 
@@ -288,4 +294,18 @@ def register(app: FastAPI, ui) -> None:
         from fastapi.exception_handlers import http_exception_handler
 
         return await http_exception_handler(request, exc)
+
+    _guard_outermost(app, serve.GuardMiddleware)
+
+
+def _guard_outermost(app: FastAPI, guard) -> None:
+    """Move serve.GuardMiddleware in front of the login and storage middleware added here.
+
+    create_app adds it first, which leaves it innermost, so the login's 401 and redirect and the storage 503 went out
+    without its security headers, and a request reached the login check and a storage check before its Host check and
+    body cap. The first entry of user_middleware is the outermost layer."""
+    stack = app.user_middleware
+    found = [entry for entry in stack if getattr(entry, "cls", None) is guard]
+    if found:
+        stack[:] = found + [entry for entry in stack if getattr(entry, "cls", None) is not guard]
 

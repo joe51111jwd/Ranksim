@@ -18,6 +18,9 @@ const BASE = (args.base || 'http://127.0.0.1:8799').replace(/\/$/, '');
 // Optional second server whose job budget is so short that analyses pause and the app has to post again.
 const PAUSED_BASE = args['paused-base'] ? args['paused-base'].replace(/\/$/, '') : '';
 const OUT = args.out || 'tests/e2e/screenshots';
+// --group main | jobs | all. pytest runs main and jobs at the same time against separate servers to keep the run short.
+const GROUP = args.group || 'all';
+const JOB_STEPS = new Set(['parallel-analysis', 'reattach-after-refresh', 'paused-resume']);
 const PASSWORD = process.env.E2E_PASSWORD || 'e2e-pass';
 const SITE = process.env.E2E_SITE || 'www.dirtcrew.example';
 const SEARCHES = JSON.parse(process.env.E2E_SEARCHES || '["dirt work software","excavation crew app","grading job costing","paving crew scheduling"]');
@@ -33,6 +36,7 @@ let phase = 'start';
 const allowed = []; // [{phase, pattern}] console errors expected in one phase only
 
 async function step(name, fn) {
+  if (GROUP !== 'all' && name !== 'login' && (GROUP === 'jobs') !== JOB_STEPS.has(name)) return;
   phase = name;
   const started = Date.now();
   try {
@@ -301,6 +305,114 @@ try {
     await audit(page, 'desktop-10-competitors');
   });
 
+  await step('discover-searches', async () => {
+    await goto(page, `/app/${encodeURIComponent(slug)}/searches`);
+    await page.waitForSelector(SEL.searchTable);
+    const headers = (await page.$$eval(SEL.searchHeader, (list) => list.map((el) => el.textContent.trim()))).join('|');
+    for (const want of ['Search', 'You', 'PREDICTED', 'Intent', 'Source', 'Best page']) expect(headers.includes(want), `Searches has a ${want} column: ${headers}`);
+    // gsc's column has when(report) false until Search Console is connected, so it must not show.
+    expect(!/Search Console|Clicks|Impr/i.test(headers), `the Search Console column is hidden while not connected: ${headers}`);
+    await page.locator(SEL.searchRow).filter({ hasText: SEARCHES[0] }).click();
+    const sheet = page.locator(SEL.searchSheet);
+    await sheet.waitFor();
+    await sheet.locator(':text("Top 10 on Google")').waitFor();
+    expect((await sheet.locator(SEL.serpRow).count()) >= 5, 'the search sheet lists the real top 10');
+    expect((await sheet.locator(SEL.serpYou).count()) === 1, 'your page is marked in the search sheet');
+    const gaps = await sheet.locator(':text("What the pages above have")').count();
+    expect(gaps >= 1, 'the search sheet shows the gaps against the pages above');
+    await audit(page, 'desktop-09b-search-sheet');
+    await page.keyboard.press('Escape');
+    await page.waitForSelector(SEL.sheet, { state: 'detached' });
+    const found = page.locator(SEL.foundNotTracked);
+    if (await found.count()) {
+      const before = await page.locator(SEL.searchRow).count();
+      const add = found.locator('button:has-text("Add")').first();
+      await add.click();
+      await page.waitForFunction((sel) => /Added/.test(document.querySelector(sel).textContent), SEL.toast);
+      await page.waitForFunction(([sel, n]) => document.querySelectorAll(sel).length > n, [SEL.searchRow, before]);
+    }
+  });
+
+  await step('discover-competitors', async () => {
+    await goto(page, `/app/${encodeURIComponent(slug)}/competitors`);
+    await page.waitForSelector(SEL.competitorCard);
+    const card = page.locator(SEL.competitorCard).first();
+    const button = card.locator('button.track');
+    const before = (await button.innerText()).trim();
+    await button.click();
+    await page.waitForFunction(([sel, was]) => { const b = document.querySelector(sel); return b && !b.disabled && b.textContent.trim() !== was; }, [SEL.trackToggle, before], { timeout: 20000 });
+    await page.locator(SEL.trackToggle).first().click();
+    await page.waitForFunction(([sel, was]) => { const b = document.querySelector(sel); return b && !b.disabled && b.textContent.trim() === was; }, [SEL.trackToggle, before], { timeout: 20000 });
+    await audit(page, 'desktop-10b-competitors');
+    await page.locator(SEL.competitorCard).first().locator('button.body').click();
+    await page.waitForSelector(SEL.sheet);
+    await page.keyboard.press('Escape');
+    await page.waitForSelector(SEL.sheet, { state: 'detached' });
+  });
+
+  await step('audit-issues', async () => {
+    await goto(page, `/app/${encodeURIComponent(slug)}/issues`);
+    await page.waitForSelector(SEL.issueRow);
+    const all = await page.locator(SEL.issueRow).count();
+    await page.locator(SEL.issueFilter).filter({ hasText: 'High' }).click();
+    await page.waitForSelector(`${SEL.issueFilter}[aria-pressed="true"]:has-text("High")`);
+    expect((await page.locator(SEL.issueRow).count()) <= all, 'the High filter narrows the list');
+    await page.locator(SEL.issueFilter).filter({ hasText: 'All' }).click();
+    await page.locator(SEL.issueGroup).filter({ hasText: 'By search' }).click();
+    await page.waitForSelector(`${SEL.issueGroup}[aria-pressed="true"]:has-text("By search")`);
+    await audit(page, 'desktop-07b-issues-by-search');
+    await page.locator(SEL.issueGroup).filter({ hasText: 'By page' }).click();
+    const withFix = page.locator(SEL.issueRow).filter({ has: page.locator('.issue-has-fix') }).first();
+    await withFix.click();
+    await page.waitForSelector(SEL.sheet);
+    await page.locator('.sheet button:has-text("Copy")').first().click();
+    await page.waitForFunction((sel) => /Copied|Copy did not work/.test(document.querySelector(sel).textContent), SEL.toast);
+    await page.keyboard.press('Escape');
+    await page.waitForSelector(SEL.sheet, { state: 'detached' });
+    // Fix in editor focuses elements in the page body (head tags such as <title> have nothing to point at).
+    await page.locator(SEL.issueRow).filter({ has: page.locator('.issue-tag', { hasText: '<h1>' }) }).first().click();
+    await page.waitForSelector(SEL.sheet);
+    await page.click(SEL.fixInEditor);
+    await page.waitForURL(/\/editor/);
+    await page.waitForSelector(SEL.commentsPanel, { timeout: SLOW });
+    await page.waitForSelector(`${SEL.commentsPanel} [aria-expanded="true"]`, { timeout: SLOW });
+    const frame = page.frameLocator(SEL.editorFrame);
+    await frame.locator('[data-rs-annotations="active"]').first().waitFor({ timeout: SLOW });
+    await audit(page, 'desktop-11b-fix-in-editor');
+  });
+
+  await step('audit-apply', async () => {
+    const pageUrl = `https://${SITE}/dirt-work-software/`;
+    await goto(page, `/app/${encodeURIComponent(slug)}/editor?page=${encodeURIComponent(pageUrl)}&q=${encodeURIComponent(SEARCHES[0])}`);
+    await page.waitForSelector(SEL.commentsPanel, { timeout: SLOW });
+    const frame = page.frameLocator(SEL.editorFrame);
+    await frame.locator('h1').first().waitFor();
+    const heads = page.locator(`${SEL.commentsPanel} .annot-head`);
+    let applied = null;
+    for (let i = 0; i < await heads.count() && !applied; i += 1) {
+      const head = heads.nth(i);
+      if ((await head.getAttribute('aria-expanded')) !== 'true') await head.click();
+      const item = page.locator(`${SEL.commentsPanel} li`).nth(i);
+      const tag = await item.locator('.annot-tag').first().textContent().catch(() => '');
+      const apply = item.locator('button:has-text("Apply suggestion")');
+      if (await apply.count() && /h1/i.test(tag || '')) applied = { apply, tag };
+    }
+    if (!applied) {
+      const apply = page.locator(SEL.applySuggestion).first();
+      if (await apply.count()) applied = { apply, tag: 'other' };
+    }
+    expect(applied, 'a comment offers Apply suggestion');
+    const before = await page.evaluate(async (url) => (await import('/studio/js/editor/editor.js')).draftFor(url).text, pageUrl);
+    const h1Before = await frame.locator('h1').first().innerText();
+    await applied.apply.click();
+    await page.waitForFunction((url) => import('/studio/js/editor/editor.js').then((m) => m.draftFor(url).touched), pageUrl);
+    const after = await page.evaluate(async (url) => (await import('/studio/js/editor/editor.js')).draftFor(url).text, pageUrl);
+    expect(after !== before, 'Apply suggestion changed the draft');
+    if (applied.tag !== 'other') expect((await frame.locator('h1').first().innerText()) !== h1Before, 'the H1 changed');
+    expect(!/data-rs/.test(after), 'the saved HTML has no data-rs marks');
+    await audit(page, 'desktop-11c-applied');
+  });
+
   await step('editor-test', async () => {
     const pageUrl = `https://${SITE}/dirt-work-software/`;
     await goto(page, `/app/${encodeURIComponent(slug)}/editor?page=${encodeURIComponent(pageUrl)}&q=${encodeURIComponent(SEARCHES[0])}`);
@@ -319,6 +431,79 @@ try {
     expect(/predict/i.test(body), 'the result says it is a prediction');
     await checkPredictTiles(page);
     await audit(page, 'desktop-11-editor-result');
+  });
+
+  await step('track', async () => {
+    await goto(page, `/app/${encodeURIComponent(slug)}`);
+    const tile = page.locator(SEL.rankChanges);
+    await tile.waitFor();
+    const text = await tile.innerText();
+    expect(/Up|Down|New|Lost|Changes show|Positions show/.test(text), `Rank changes tile has content: ${text.slice(0, 120)}`);
+    await goto(page, `/app/${encodeURIComponent(slug)}/searches`);
+    await page.waitForSelector(SEL.searchRow);
+    expect(/Since last visit|Trend/.test(await page.innerText('main')), 'the Searches list has the rank history column');
+    expect((await page.locator('.history-cell').count()) >= 1, 'a sparkline cell per checked search');
+    await goto(page, `/app/${encodeURIComponent(slug)}/track-history`);
+    await page.waitForSelector(SEL.historyRow);
+    await audit(page, 'desktop-14-history');
+    await page.locator(SEL.historyRow).first().click();
+    await page.waitForSelector(SEL.sheet);
+    await audit(page, 'desktop-15-history-sheet');
+    await page.keyboard.press('Escape');
+    await page.waitForSelector(SEL.sheet, { state: 'detached' });
+    await goto(page, `/app/${encodeURIComponent(slug)}/settings`);
+    await page.waitForSelector(SEL.schedule);
+    const off = page.locator(`${SEL.schedule}[aria-pressed="false"]`).first();
+    const label = (await off.innerText()).trim();
+    await off.click();
+    await page.waitForFunction(([sel, want]) => [...document.querySelectorAll(sel)].some((b) => b.getAttribute('aria-pressed') === 'true' && b.textContent.trim() === want), [SEL.schedule, label]);
+    await audit(page, 'desktop-16-settings-tracking');
+  });
+
+  await step('publish', async () => {
+    page.on('dialog', (dialog) => dialog.accept());
+    const wp = 'https://www.dirtcrew.example/wp-about/';
+    await goto(page, `/app/${encodeURIComponent(slug)}/editor?page=${encodeURIComponent(wp)}&q=${encodeURIComponent(SEARCHES[0])}`);
+    const heading = page.frameLocator(SEL.editorFrame).locator('h1').first();
+    await heading.waitFor({ timeout: SLOW });
+    await heading.click();
+    await page.keyboard.press('End');
+    await page.keyboard.type(' and our crews');
+    await page.waitForTimeout(500);
+    await page.locator(SEL.publishOpen).first().click();
+    await page.waitForSelector(SEL.publishSheet);
+    await page.waitForSelector(SEL.proofCode, { timeout: SLOW });
+    await audit(page, 'desktop-17-publish-sheet');
+    const tag = (await page.innerText(SEL.proofCode)).trim();
+    expect(/ranksim/i.test(tag), `a proof tag: ${tag}`);
+    // The owner adds the tag to their home page (the fake live web), then checks.
+    const html = `<!doctype html><html><head><title>DirtCrew</title>${tag}</head><body><h1>DirtCrew</h1></body></html>`;
+    await page.evaluate(async ([html]) => {
+      const csrf = document.getElementById('csrf').value;
+      for (const url of ['https://dirtcrew.example/', 'https://www.dirtcrew.example/']) {
+        await fetch('/__e2e/web', { method: 'POST', headers: { 'content-type': 'application/json', 'x-ranksim-csrf': csrf }, body: JSON.stringify({ url, html }) });
+      }
+    }, [html]);
+    await page.click(SEL.proofCheck);
+    await page.waitForSelector(`${SEL.publishSheet} :text("Proven")`, { timeout: 20000 });
+    await page.click(SEL.platform('wordpress'));
+    await page.fill('.sheet input[name="username"]', 'e2e');
+    await page.fill('.sheet input[name="app_password"]', 'abcd efgh ijkl mnop');
+    await page.locator('.sheet button:text-is("Check")').last().click();
+    await page.waitForSelector(`${SEL.connectSave}:not([disabled])`, { timeout: 20000 });
+    await page.click(SEL.connectSave);
+    await page.waitForSelector(`${SEL.publishGo}:not([disabled])`, { timeout: SLOW });
+    await audit(page, 'desktop-18-publish-ready');
+    await page.click(SEL.publishGo);
+    await page.waitForSelector(SEL.rollBack, { timeout: SLOW });
+    const sheetText = await page.innerText(SEL.publishSheet);
+    expect(/live|confirmed|published/i.test(sheetText), `the live check reports: ${sheetText.slice(0, 200)}`);
+    await audit(page, 'desktop-19-published');
+    await page.click(SEL.rollBack);
+    await page.click('.sheet button:text-is("Roll back for real?")');
+    await page.locator(SEL.publishSheet).filter({ hasText: /rolled back|restored/i }).waitFor({ timeout: SLOW });
+    await audit(page, 'desktop-20-rolled-back');
+    await page.keyboard.press('Escape');
   });
 
   await step('offline', async () => {
@@ -459,6 +644,25 @@ try {
     await mobile.waitForSelector(SEL.verdict, { timeout: SLOW });
     await checkPredictTiles(mobile);
     await audit(mobile, 'phone-editor-result');
+  });
+
+  await step('phone-publish', async () => {
+    const wp = 'https://www.dirtcrew.example/wp-about/';
+    await goto(mobile, `/app/${encodeURIComponent(slug)}/editor?page=${encodeURIComponent(wp)}`);
+    const heading = mobile.frameLocator(SEL.editorFrame).locator('h1').first();
+    await heading.waitFor({ timeout: SLOW });
+    await heading.click();
+    await mobile.keyboard.press('End');
+    await mobile.keyboard.type(' today');
+    await mobile.waitForTimeout(500);
+    await mobile.locator(SEL.publishOpen).first().click();
+    await mobile.waitForSelector(SEL.publishSheet);
+    await mobile.locator(SEL.publishSheet).filter({ hasText: 'Proven' }).waitFor({ timeout: SLOW });
+    await mobile.waitForSelector(`${SEL.publishGo}:not([disabled])`, { timeout: SLOW });
+    const wide = await mobile.$$eval('.sheet .tile, .sheet button, .sheet code', (list) => list.filter((el) => el.getBoundingClientRect().right > window.innerWidth + 1).map((el) => el.className || el.tagName));
+    expect(!wide.length, `the publish sheet fits 390px: ${wide.join(', ')}`);
+    await audit(mobile, 'phone-publish-sheet');
+    await mobile.keyboard.press('Escape');
   });
 
   await step('sign-out', async () => {

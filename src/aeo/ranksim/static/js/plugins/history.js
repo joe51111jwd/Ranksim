@@ -458,9 +458,46 @@ registerScreen('track-history', {
     }
     if (!rows.length) list.append(h('div', { class: 'empty-note', text: 'No searches yet.' }));
     const sub = H.real === false ? 'Demo data, not Google results. Pick a search to see it over time.' : H.checks ? `${plural(H.checks, 'Google check')} since ${day(H.first_at)}. Pick a search to see it over time.` : 'Positions show after the first Google check.';
-    return page('Rank history', sub, null, h('div', { class: 'tile' }, list));
+    return page('Rank history', sub, null, weekView(H), h('div', { class: 'tile' }, h('div', { class: 'tile-head' }, h('h2', { text: 'Every search' })), list));
   },
 });
+
+/* ------------------------------------------------------------------ since last week */
+
+/* Monday morning view: what changed for this client since last week. Every number is a pair of real dated checks
+   (each search's newest check against its check a week earlier), worked out on the server (tracking.weekly_summary). */
+function weekView(H) {
+  const W = H && H.week;
+  if (!W || H.real === false) return null;
+  const head = h('div', { class: 'tile-head' }, h('h2', { text: 'Since last week' }), h('span', { class: 'aside', text: W.ready ? `${day(W.from)} to ${day(W.to)}` : '' }));
+  if (!W.ready) return h('section', { class: 'tile history-week' }, head, h('p', { class: 'tile-sub', text: W.reason || 'Needs two Google checks at least a week apart.' }));
+  const stat = (cls, value, label) => h('div', { class: `history-stat ${cls}` }, h('b', { text: String(value) }), h('span', { text: label }));
+  const row = (search, right) => h('button', { class: 'history-week-row', type: 'button', onClick: () => openHistory(search) }, h('span', { class: 'history-q', text: search }), right);
+  const pos = (value) => (value ? `#${value}` : 'not in top 10');
+  const block = (title, items, empty) => h('div', { class: 'history-week-block' },
+    h('div', { class: 'tile-k', text: title }),
+    items.length ? h('div', { class: 'history-week-rows' }, items) : h('div', { class: 'history-none', text: empty }));
+  const gained = W.gained.map((item) => row(item.search, h('span', { class: 'history-week-val' }, changeChip({ change: 'new' }), `now #${item.to}`)));
+  const lost = W.lost.map((item) => row(item.search, h('span', { class: 'history-week-val' }, changeChip({ change: 'lost' }), `was #${item.from}`)));
+  const moves = W.moves.map((item) => row(item.search, h('span', { class: 'history-week-val' }, changeChip({ change: item.delta > 0 ? 'up' : 'down', delta: item.delta }), `#${item.from} to #${item.to}`)));
+  const passed = W.passed.map((item) => row(item.search, h('span', { class: 'history-week-val history-week-pass' },
+    h('b', { text: item.domain }), ` ${pos(item.their_from)} to ${pos(item.their_to)}, you ${pos(item.our_from)} to ${pos(item.our_to)}`)));
+  const more = W.moves_total > W.moves.length ? h('div', { class: 'history-none', text: `${W.moves_total - W.moves.length} smaller moves not shown.` }) : null;
+  const skipped = W.skipped ? ` ${plural(W.skipped, 'search', 'searches')} had no check a week earlier or none this week, so they are left out.` : '';
+  return h('section', { class: 'tile white history-week' },
+    head,
+    h('div', { class: 'history-stats' },
+      stat('history-new', W.gained.length, 'Onto page one'),
+      stat('history-lost', W.lost.length, 'Off page one'),
+      stat('history-up', W.up, 'Moved up'),
+      stat('history-down', W.down, 'Moved down')),
+    h('div', { class: 'history-week-grid' },
+      block('Onto page one', gained, 'None this week.'),
+      block('Off page one', lost, 'None this week.'),
+      h('div', { class: 'history-week-block' }, block('Biggest moves', moves, 'No position changes.'), more),
+      block('Competitors who moved past you', passed, 'No tracked competitor passed you.')),
+    h('p', { class: 'history-note', text: `Each of ${plural(W.compared, 'search', 'searches')} compared with its own Google check a week earlier.${skipped}` }));
+}
 
 /* ------------------------------------------------------------------ per-search sheet */
 

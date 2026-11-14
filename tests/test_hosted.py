@@ -225,7 +225,7 @@ class FakeBlob:
     def put_blob(self, name, body, *, access, content_type=None, allow_overwrite=False, **_):
         assert access == "private"
         if name in self.items and not allow_overwrite:
-            raise self.BlobError("exists")
+            raise self.BlobError("Vercel Blob: This blob already exists, use `allowOverwrite: true` if you want to overwrite it.")
         self._n += 1
         self.items[name], self.etags[name] = bytes(body), f"etag-{self._n}"
         self.calls.append(f"put {name}")
@@ -276,15 +276,25 @@ def _instance(folder):
 
 
 def _manifest_of(fake):
-    return json.loads(fake.items[POINTER]) if POINTER in fake.items else {}
+    """The manifest inside the newest save of the chain."""
+    import io
+    import tarfile
+
+    saves = sorted(name for name in fake.items if name.startswith(SAVES_PREFIX))
+    if not saves:
+        return {}
+    with tarfile.open(fileobj=io.BytesIO(fake.items[saves[-1]]), mode="r:gz") as archive:
+        return json.loads(archive.extractfile("manifest.json").read())
 
 
 def _versions(fake, slug=None):
-    """The save object holding slug's newest version (as a one-item list), or every save object."""
+    """The save holding slug's newest version (as a one-item list), or every save in the chain."""
+    from aeo.ranksim.cloud import chain_name
+
     if slug is None:
         return sorted(name for name in fake.items if name.startswith(SAVES_PREFIX))
-    name = (_manifest_of(fake).get("projects") or {}).get(slug)
-    return [name] if name and name in fake.items else []
+    seq = (_manifest_of(fake).get("projects") or {}).get(slug)
+    return [chain_name(seq)] if seq and chain_name(seq) in fake.items else []
 
 
 def _members(fake, name):
@@ -314,8 +324,9 @@ def test_state_saves_and_a_second_instance_picks_it_up(tmp_path, fake_blob):
     with sqlite3.connect(two_dir / "rank.db") as conn:
         assert conn.execute("select v from t").fetchall() == [("first",)]
     fake_blob.calls.clear()
-    assert two.refresh(force=True) is False and fake_blob.calls == [f"head {POINTER}"]  # unchanged: one cheap call
-    assert two.refresh() is False and fake_blob.calls == [f"head {POINTER}"]  # throttled: no call at all
+    assert two.refresh(force=True) is False and len(fake_blob.calls) == 1  # unchanged: one look for the next save
+    assert fake_blob.calls[0].startswith(f"get {SAVES_PREFIX}")
+    assert two.refresh() is False and len(fake_blob.calls) == 1  # throttled: no call at all
 
     with sqlite3.connect(two_dir / "rank.db") as conn:
         conn.execute("insert into t values ('second')")
@@ -344,7 +355,7 @@ def test_a_save_with_nothing_changed_uploads_nothing(tmp_path, fake_blob):
     one.save()
     puts = _uploads(fake_blob)
     members = _members(fake_blob, puts[0])
-    assert len(puts) == 1 and all(name.startswith("p/other/") for name in members)  # only the changed project
+    assert len(puts) == 1 and all(name.startswith("p/other/") for name in members if name != "manifest.json")  # only the changed project
 
 
 def test_concurrent_saves_on_two_projects_never_clobber(tmp_path, fake_blob):
@@ -579,7 +590,7 @@ def test_workspace_plugin_data_is_its_own_object(tmp_path, fake_blob):
     fake_blob.calls.clear()
     a.save()
     puts = _uploads(fake_blob)
-    assert len(puts) == 1 and all(name.startswith("p/_plugins/") for name in _members(fake_blob, puts[0]))
+    assert len(puts) == 1 and all(name.startswith("p/_plugins/") for name in _members(fake_blob, puts[0]) if name != "manifest.json")
 
 
 def test_login_limit_is_per_client_and_says_when_to_retry(hosted, monkeypatch):

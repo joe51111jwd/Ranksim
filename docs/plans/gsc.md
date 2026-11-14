@@ -202,6 +202,21 @@ phone width (390 px, no horizontal scroll), disconnect. No console errors.
 - **`RANKSIM_PUBLIC_URL`** (optional) pins the redirect URI's base, for example `https://ranksim.vercel.app`.
   `GOOGLE_OAUTH_REDIRECT_URI` still overrides the whole URI. With neither, the request origin is used.
 
+## Search Console as a free rank source
+
+Without a search data key, new sites have no Google positions. When GSC is on:
+- `report.gsc.positions` holds `{q: {position, clicks, impressions, ctr, page}}` for every tracked search whose ranking
+  row is not checked (no Google results), with `positions_label` "Search Console average position, <range>" and a
+  note. Ranking rows are never changed; the two numbers are never mixed.
+- UI: the Searches column shows "GSC avg #N" for those rows (title says it is not a Google top 10 position); an
+  Overview tile (`gsc-positions`, order 14) lists them with their pages; the client report gets a "Google Search
+  Console" section with totals and a "Search Console average position" table (FLAGGED shared files:
+  `plugins/share.py`, one key plus a helper that calls `gsc.client_section`, and `static/share/share.js`, one block).
+- `after_pull` reads and stores up to 15 of the site's own Search Console pages that the site read did not store
+  (best page per tracked search, then most clicked), with the app's crawler, so Issues covers them.
+- Audit check `gsc-title-search`: for those searches, when the best page's title does not use the search's words,
+  a medium issue on the title, quoting the Search Console average position and date range.
+
 ## Known gaps
 
 - One Google account per Ranksim. A client whose property lives under a different Google account must add James's

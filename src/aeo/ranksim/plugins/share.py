@@ -787,18 +787,66 @@ def _tracking_history(project):
         return None
 
 
+def _tracking_week(report: dict) -> dict | None:
+    """Rank tracking's own week over week summary (report["history"]["week"], tracking.weekly_summary), whitelisted.
+    None when tracking is absent or sent nothing usable."""
+    history = report.get("history") if isinstance(report.get("history"), dict) else None
+    week = history.get("week") if history else None
+    if not isinstance(week, dict):
+        return None
+
+    def item(raw):
+        if not isinstance(raw, dict):
+            return None
+        q = _text(raw.get("search"), 200)
+        from_at, to_at = _parse_time(raw.get("from_at")), _parse_time(raw.get("to_at"))
+        if not q or from_at is None or to_at is None:
+            return None  # undated: never shown
+        return {"q": q, "from": _int(raw.get("from")), "to": _int(raw.get("to")), "from_date": _iso(from_at)[:10], "to_date": _iso(to_at)[:10]}
+
+    def items(key):
+        return [found for found in (item(raw) for raw in week.get(key) or [] if isinstance(week.get(key), list)) if found]
+
+    gained, lost, moved = items("gained"), items("lost"), items("moves")
+    passed = []
+    for raw in week.get("passed") or [] if isinstance(week.get("passed"), list) else []:
+        if not isinstance(raw, dict):
+            continue
+        domain = _domain(raw.get("domain"))
+        q = _text(raw.get("search"), 200)
+        if domain and q and _int(raw.get("their_to")):
+            passed.append({"domain": domain, "q": q, "their_to": _int(raw.get("their_to")), "our_to": _int(raw.get("our_to"))})
+    return {
+        "ready": bool(week.get("ready")),
+        "moves": gained + moved + lost,
+        "counts": {
+            "compared": _int(week.get("compared")) or 0,
+            "gained": len(gained),
+            "lost": len(lost),
+            "up": _int(week.get("up")) or sum(1 for move in moved if (move["from"] or 0) > (move["to"] or 0)),
+            "down": _int(week.get("down")) or sum(1 for move in moved if (move["from"] or 0) < (move["to"] or 0)),
+        },
+        "passed": passed[:8],
+    }
+
+
 def weekly_summary(project, report: dict, issues: list[dict], changes: list[dict], now: datetime | None = None) -> dict:
     """What changed in the last week and what is next, for the client. Every item comes from stored data."""
     now = now or _now()
     since = now - timedelta(days=WEEK_DAYS)
-    history = _history_observations(_tracking_history(project))
-    try:
-        observations = history or _observations(project)
-    except Exception:  # noqa: BLE001
-        observations = {}
-    searches = [str(row.get("q") or "") for row in report.get("rankings") or [] if isinstance(row, dict)]
-    moves = _moves(observations, searches, now)
-    tracked = any(len(points) > 1 for points in observations.values())
+    week = _tracking_week(report)
+    counts, passed = None, []
+    if week is not None and week["ready"]:
+        moves, tracked, counts, passed = week["moves"][:10], True, week["counts"], week["passed"]
+    else:
+        history = _history_observations(_tracking_history(project))
+        try:
+            observations = history or _observations(project)
+        except Exception:  # noqa: BLE001
+            observations = {}
+        searches = [str(row.get("q") or "") for row in report.get("rankings") or [] if isinstance(row, dict)]
+        moves = _moves(observations, searches, now)
+        tracked = any(len(points) > 1 for points in observations.values())
     recent = [row for row in changes if (_parse_time(row.get("at")) or now) >= since]
     done = [{"date": row["date"], "label": row["label"], "summary": row["summary"]} for row in recent if row["kind"] in {"issue", "publish", "note"}]
     checks = sum(1 for row in recent if row["kind"] in {"google", "analysis"})
@@ -812,6 +860,8 @@ def weekly_summary(project, report: dict, issues: list[dict], changes: list[dict
         "moves_note": "" if moves else (
             "No position changed this week." if tracked else "Position changes show here once Google has been checked twice, a week apart."
         ),
+        "counts": counts,
+        "passed": passed,
         "done": done[:10],
         "checks": checks,
         "next": [
@@ -826,9 +876,32 @@ def _search_console(report: dict):
     try:
         from aeo.ranksim.plugins import gsc
 
-        return gsc.client_section(report)
+        section = gsc.client_section(report)
     except Exception:  # noqa: BLE001 - the plugin may be absent; it never breaks the client report
         return None
+    if not isinstance(section, dict):
+        return None
+    # Re-whitelisted here too: only these plain fields ever reach a share link, whatever the plugin returns.
+    totals = section.get("totals") if isinstance(section.get("totals"), dict) else {}
+    positions = []
+    for row in section.get("positions") or [] if isinstance(section.get("positions"), list) else []:
+        if isinstance(row, dict) and _text(row.get("q"), 200):
+            page = _text(row.get("page"), 300)
+            positions.append({
+                "q": _text(row.get("q"), 200),
+                "position": _num(row.get("position")),
+                "impressions": _int(row.get("impressions")) or 0,
+                "clicks": _int(row.get("clicks")) or 0,
+                "page": page if page.startswith("/") and not page.startswith("//") else "",
+            })
+    return {
+        "label": _text(section.get("label"), 80),
+        "range": _text(section.get("range"), 80),
+        "totals": {key: _num(totals.get(key)) for key in ("clicks", "impressions", "ctr", "position") if _num(totals.get(key)) is not None},
+        "positions": positions[:50],
+        "positions_label": _text(section.get("positions_label"), 120),
+        "note": _text(section.get("note"), 300),
+    }
 
 
 def client_report(ui, project, *, preview: bool = False) -> dict:
@@ -994,7 +1067,19 @@ def weekly_update(data: dict, report_url: str = "") -> dict:
         for move in weekly.get("moves") or []
     ]
     note = (weekly.get("moves_note") or "No position changed this week.").replace("show here once", "will be in this update once")
+    counts = weekly.get("counts")
+    if counts and counts.get("compared"):
+        moves.insert(0, (
+            f"Of {counts['compared']} searches checked a week apart: {counts['gained']} new on page one, {counts['lost']} dropped off, "
+            f"{counts['up']} moved up, {counts['down']} moved down ({source} positions)."
+        ))
     sections.append(("Position changes in Google", moves, note))
+    passed = [
+        f'{item["domain"]} moved ahead of you for "{item["q"]}" (they are #{item["their_to"]}, you are {_place(item.get("our_to"))})'
+        for item in weekly.get("passed") or []
+    ]
+    if passed:
+        sections.append(("Competitors who moved ahead", passed, ""))
     done = [f"{item['summary']} ({_day(item.get('date'))})" for item in weekly.get("done") or []]
     sections.append(("Done this week", done, "Nothing new to report this week."))
     upcoming = [f"{item['title']}. {item['status_label']}." + (f" {item['plan']}" if item.get("plan") else "") for item in weekly.get("next") or []]

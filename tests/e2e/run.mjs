@@ -196,6 +196,58 @@ try {
     await page.waitForSelector(SEL.sheet, { state: 'detached' });
   });
 
+  await step('gsc-not-set-up', async () => {
+    const tile = page.locator(SEL.gscTile);
+    await tile.waitFor();
+    expect(/not set up yet/i.test(await tile.innerText()), 'the Overview tile says Search Console is not set up');
+    await goto(page, `/app/${encodeURIComponent(slug)}/settings`);
+    const section = page.locator(SEL.gscSection);
+    await section.waitFor();
+    await section.filter({ hasText: 'Not set up yet' }).waitFor();
+    expect((await page.locator(SEL.gscSection).count()) === 1, 'one Search Console section: the plugin replaced the placeholder');
+    await audit(page, 'desktop-06c-settings-gsc');
+  });
+
+  await step('client-share-link', async () => {
+    await page.waitForSelector(SEL.shareSection);
+    await page.fill(SEL.shareLabel, 'E2E client');
+    await page.click(SEL.shareCreate);
+    await page.waitForSelector(SEL.shareUrl);
+    const url = (await page.innerText(SEL.shareUrl)).trim();
+    expect(/\/r\//.test(url), `a share URL: ${url}`);
+    const sharePath = new URL(url, BASE).pathname;
+    const guest = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, isMobile: true, hasTouch: true });
+    const reader = await guest.newPage();
+    watch(reader, 'share-reader');
+    await reader.goto(BASE + sharePath, { waitUntil: 'networkidle' });
+    const text = await reader.innerText('body');
+    expect(/DirtCrew|dirtcrew/i.test(text), 'the signed-out phone sees the client report');
+    expect(!(await reader.$(SEL.password)), 'no login on a share link');
+    await audit(reader, 'phone-share-report');
+    page.once('dialog', (dialog) => dialog.accept());
+    await page.click(SEL.shareOff);
+    await page.waitForFunction(() => /Turned off/.test(document.querySelector('.share-row').innerText));
+    allowed.push({ phase: 'client-share-link', pattern: /status of 410|status of 404/ });
+    const gone = await reader.goto(BASE + sharePath, { waitUntil: 'networkidle' });
+    const after = await reader.innerText('body');
+    expect(gone.status() >= 400 || /expired or was turned off/.test(after), `a turned off link stops working (status ${gone.status()})`);
+    expect(!/dirt work software/i.test(after), 'no report data after turning the link off');
+    await guest.close();
+    await goto(page, `/app/${encodeURIComponent(slug)}`);
+  });
+
+  await step('skeleton', async () => {
+    let release;
+    const held = new Promise((resolve) => { release = resolve; });
+    await page.route('**/api/v1/projects/*/report', async (route) => { await held; await route.continue(); });
+    await page.goto(`${BASE}/app/${encodeURIComponent(slug)}/issues`, { waitUntil: 'domcontentloaded' });
+    await page.waitForSelector(SEL.skeleton('issues'));
+    await audit(page, 'desktop-06d-skeleton-issues');
+    release();
+    await page.waitForSelector(SEL.issueRow);
+    await page.unroute('**/api/v1/projects/*/report');
+  });
+
   await step('issues', async () => {
     await page.click(SEL.navLink('Issues'));
     await page.waitForURL(/\/issues/);
@@ -302,6 +354,10 @@ try {
       await goto(mobile, name === 'home' ? '/' : `/app/${encodeURIComponent(slug)}${path}`);
       await mobile.waitForSelector(name === 'home' ? SEL.homeInput : 'main h1, main h2');
       await audit(mobile, `phone-${name}`);
+      if (name !== 'home') {
+        const nav = await mobile.$eval(SEL.nav, (el) => ({ sw: el.scrollWidth, cw: el.clientWidth }));
+        expect(nav.sw <= nav.cw + 1, `phone nav fits without sideways scrolling (${nav.sw} > ${nav.cw})`);
+      }
     });
   }
 

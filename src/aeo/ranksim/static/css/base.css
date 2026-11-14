@@ -391,3 +391,16 @@ ol.serp { list-style: none; margin: 0; padding: 0; }
 @media (prefers-reduced-motion: reduce) {
   .skeleton .sk { animation: none; }
 }
+.sk-row { height: 56px; border-radius: var(--r-card); background: var(--card); box-shadow: var(--shadow); }
+.skeleton .sk-row { animation: sk-pulse 1.4s ease-in-out infinite; }
+
+/* phone: the sections wrap onto their own row under the brand and actions, so nothing scrolls sideways */
+@media (max-width: 720px) {
+  .bar-inner { flex-wrap: wrap; height: auto; min-height: 58px; padding: 8px 14px; row-gap: 8px; }
+  .bar-inner > .brand { order: 0; }
+  .bar-inner > .bar-right { order: 1; }
+  .bar .nav-seg { order: 2; flex: 1 1 100%; margin-left: 0; display: flex; flex-wrap: wrap; justify-content: center; overflow: visible; max-width: none; }
+  .bar .nav-seg a { flex: 1 0 auto; justify-content: center; padding: 6px 8px; font-size: 13px; }
+  .bar-inner > span:empty { display: none; }
+}
+@media (prefers-reduced-motion: reduce) { .skeleton .sk-row { animation: none; } }

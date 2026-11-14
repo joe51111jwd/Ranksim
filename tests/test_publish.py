@@ -1550,7 +1550,7 @@ def test_pull_request_marks_issues_only_once_merged_and_live(app_env):
     checked = client.post(f"/api/v1/projects/acme/publish/history/{entry['id']}/verify", headers=H).json()
     assert checked["fixes_marked"] == "done" and share.issue_plans(project)["meta-short-about"]["status"] == "done"
     again = client.post(f"/api/v1/projects/acme/publish/history/{entry['id']}/verify", headers=H).json()
-    assert sum(1 for row in share.changelog(project) if row["summary"] == "Fixed: Short description") == 1 and again["fixes_marked"] == "done"
+    assert sum(1 for row in share.changelog(project) if row["summary"] == "Fixed: " + share.client_issue_words({"id": "meta-short-about", "title": "Short description"})[0]) == 1 and again["fixes_marked"] == "done"
 
 
 def test_fix_sync_never_breaks_a_publish_without_share(app_env, monkeypatch):

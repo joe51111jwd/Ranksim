@@ -116,8 +116,9 @@ production token) right after the deploy.
   limit is 500 MB uncompressed. The only new dependency since the live build is `cryptography`.
 - `httpx` is pinned below 0.29 and `vercel-blob` below 0.7: the crawler's SSRF guard hooks httpcore 1.x internals and
   the storage code is tested against the vercel-blob 0.6 API. Re-test before raising either bound.
-- `/tmp` (512 MB): with a 70 MB rank database and 30 MB of projects the storage code peaks at about 246 MB (a
-  full snapshot made or merged) and stays near 175 MB otherwise (`tests/test_disk.py`). Leftover temp files from a
-  killed instance are removed at start-up; a full disk is retried after cleanup, then the local copy is reloaded.
+- `/tmp` (512 MB): the database is kept once plus a compact base (about half its size); no sync or save writes a
+  second full copy. With 30 MB of projects: about 135 MB at rest and at peak with a 70 MB database, 208 MB with 120 MB
+  (`tests/test_disk.py`). Leftover temp files from a killed instance are removed at start-up; a full disk is retried
+  after cleanup, then the local copy is reloaded.
 - The function keeps `maxDuration` 300. Long analyses pause at 240 s and continue in the next request.
 - `vercel.json` keeps the daily cron `17 9 * * *` (Hobby allows one run a day).

@@ -1,6 +1,6 @@
 """Disk use of cloud storage on a serverless /tmp (Vercel: 512 MB, shared by everything the instance writes).
 
-Measured with a 70 MB rank database and 30 MB of project files: a cold sync, a catch-up of one delta, a save, and a
+Measured with a 70 MB rank database (RANKSIM_DISK_TEST_DB_MB=120 for a bigger run) and 30 MB of project files: a cold sync, a catch-up of one delta, a save, and a
 full snapshot merged into an instance with unsaved rows. Peak use is the sum of file sizes under the instance's
 working folder and the system temp folder, sampled continuously and right before every rename and delete (the
 moments a temp file is at its largest).
@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import errno
 import os
+import random
 import shutil
 import sqlite3
 import tempfile
@@ -24,11 +25,12 @@ from aeo.ranksim.cloud import CloudState
 from aeo.ranksim.objects import MemoryStore, StoreError
 
 MB = 1024 * 1024
-DB_MB = 70
+DB_MB = int(os.environ.get("RANKSIM_DISK_TEST_DB_MB") or 70)  # 120 for a manual run at production-plus size
 PROJECT_MB = 30
-# Steady state is the working db, its base copy and the projects (170 MB). The budget allows one more full database
-# copy in flight plus slack, and stays far below Vercel's 512 MB.
-BUDGET = 2 * DB_MB * MB + PROJECT_MB * MB + 100 * MB
+# At rest: the working db, the compact base (about half the db's size) and the projects. Every sync and save stays
+# within that plus a little: no step holds a second full copy of the database on disk. With a 120 MB db the budget is
+# 247 MB (measured 208 MB); Vercel's /tmp is 512 MB.
+BUDGET = int(1.6 * DB_MB * MB) + PROJECT_MB * MB + 25 * MB
 
 
 def _sizes(roots) -> int:
@@ -88,8 +90,21 @@ class Peak:
         self.monkeypatch.undo()
 
 
+WORDS = [os.urandom(4).hex()[: 3 + n % 6] for n in range(2000)]
+WEIGHTS = [1 / (rank + 1) for rank in range(len(WORDS))]  # word frequencies follow Zipf's law, as in real text
+TAGS = ["<p>", "</p>", "<li>", "</li>", '<a href="/x">', "</a>", "<h2>", "</h2>", "<div class=\"c\">", "</div>"]
+
+
 def _text(size: int) -> str:
-    return os.urandom(size // 2).hex()  # compresses about 2:1, like stored pages
+    """Page-like text: words from a large vocabulary inside markup. Compresses about 3.5:1, like the live database
+    (66 MB packs to 19 MB)."""
+    rng, parts, total = random.Random(size ^ len(WORDS) ^ int.from_bytes(os.urandom(4), "big")), [], 0
+    while total < size:
+        words = rng.choices(WORDS, WEIGHTS, k=64)
+        words[rng.randrange(64)] = rng.choice(TAGS)
+        parts.extend(words)
+        total += sum(len(word) + 1 for word in words)
+    return " ".join(parts)[:size]
 
 
 def _make_db(path: Path, megabytes: int) -> None:
@@ -190,6 +205,8 @@ def test_peak_disk_use_stays_bounded_with_a_70_mb_database(tmp_path, systmp, mon
     peaks["snapshot merge"] = meter.peak
     assert _rows(b.db_file, "rs_keywords") == 552
 
+    peaks["at rest"] = _sizes([b_root])
+    print(f"base copy {(b_root / 'ranksim' / '.cloud' / 'base.rows').stat().st_size / MB:.0f} MB")
     report = ", ".join(f"{name} {size / MB:.0f} MB" for name, size in peaks.items())
     print(f"peak disk use: {report}")
     for name, size in peaks.items():
@@ -204,7 +221,7 @@ def test_peak_disk_use_stays_bounded_with_a_70_mb_database(tmp_path, systmp, mon
 
 def _leftovers(root: Path) -> list[str]:
     """Files under a working folder that are neither data nor the bookkeeping that is meant to stay."""
-    keep = {"rank.db", "rank.db-wal", "rank.db-shm", ".cloud/state.json", ".cloud/base.db"}
+    keep = {"rank.db", "rank.db-wal", "rank.db-shm", ".cloud/state.json", ".cloud/base.rows"}
     found = []
     for path in root.rglob("*"):
         if path.is_dir():
@@ -255,7 +272,7 @@ def test_a_failed_sync_leaves_no_temp_files(tmp_path, systmp, monkeypatch, where
         monkeypatch.setattr(cloud, "_merge_files", lambda *a, **k: (_ for _ in ()).throw(KeyError("gone")))
     else:
         monkeypatch.setattr(cloud, "merge_sqlite", lambda *a, **k: (_ for _ in ()).throw(boom))
-        monkeypatch.setattr(cloud, "_copy_db", lambda *a, **k: (_ for _ in ()).throw(boom))
+        monkeypatch.setattr(cloud, "_base_build", lambda *a, **k: (_ for _ in ()).throw(boom))
     with pytest.raises(cloud.CloudError):
         b.refresh(force=True)
     assert _leftovers(tmp_path / "b" / "ranksim") == []
@@ -341,7 +358,7 @@ def test_a_disk_still_full_wipes_the_local_copy_and_loads_it_again_once(tmp_path
     monkeypatch.setattr(cloud, "merge_sqlite", real)
     a.save()
     monkeypatch.setattr(cloud, "merge_sqlite", lambda *a, **k: (_ for _ in ()).throw(sqlite3.OperationalError("database or disk is full")))
-    monkeypatch.setattr(cloud, "_copy_db", lambda *a, **k: (_ for _ in ()).throw(OSError(errno.ENOSPC, "full")))
+    monkeypatch.setattr(cloud, "_base_build", lambda *a, **k: (_ for _ in ()).throw(OSError(errno.ENOSPC, "full")))
     with pytest.raises(cloud.CloudError):  # a disk that stays full: one wipe and reload, then a plain error
         b.refresh(force=True)
     assert _leftovers(tmp_path / "b" / "ranksim") == []
@@ -353,7 +370,7 @@ def test_a_full_disk_during_a_save_is_retried_after_removing_temp_files(tmp_path
     conn.execute("INSERT INTO rs_keywords VALUES ('later', 'demo', '2026-11-14')")
     conn.commit()
     conn.close()
-    real, calls = cloud.make_delta, []
+    real, calls = cloud.make_base_delta, []
 
     def make_delta(*args, **kwargs):
         calls.append(1)
@@ -361,7 +378,7 @@ def test_a_full_disk_during_a_save_is_retried_after_removing_temp_files(tmp_path
             raise OSError(errno.ENOSPC, "No space left on device")
         return real(*args, **kwargs)
 
-    monkeypatch.setattr(cloud, "make_delta", make_delta)
+    monkeypatch.setattr(cloud, "make_base_delta", make_delta)
     assert a.save()
     assert len(calls) == 2
     assert _leftovers(tmp_path / "a" / "ranksim") == []
@@ -403,3 +420,59 @@ def test_one_sync_at_a_time_per_instance(tmp_path, systmp):
     assert errors == []
     assert gets.count(cloud.chain_name(1)) == 1
     assert _leftovers(tmp_path / "b" / "ranksim") == []
+
+
+def test_a_delta_against_the_compact_base_matches_one_against_a_full_copy(tmp_path):
+    """make_base_delta (working db against the compact base) produces the same minus and plus rows as make_delta
+    (against a full copy), for keyed rows, append-only rows, grouped Google results and a column the base lacks."""
+    rng = random.Random(7)
+
+    def build(path, pages, logs, serp):
+        conn = sqlite3.connect(str(path))
+        conn.execute("CREATE TABLE rs_pages (url TEXT PRIMARY KEY, html TEXT, fetched_at TEXT)")
+        conn.execute("CREATE TABLE rs_log (id INTEGER PRIMARY KEY, what TEXT, n INTEGER)")
+        conn.execute("CREATE TABLE rs_serp (id INTEGER PRIMARY KEY, query TEXT, position INTEGER, url TEXT, fetched_at TEXT)")
+        conn.executemany("INSERT INTO rs_pages VALUES (?, ?, ?)", pages)
+        conn.executemany("INSERT INTO rs_log VALUES (?, ?, ?)", logs)
+        conn.executemany("INSERT INTO rs_serp VALUES (?, ?, ?, ?, ?)", serp)
+        conn.commit()
+        conn.close()
+
+    for trial in range(5):
+        pages = [(f"u{n}", f"html {rng.random()}", "2026-11-01") for n in range(60)]
+        logs = [(n, f"w{n}", rng.randrange(5)) for n in range(1, 40)]
+        serp = [(n, f"q{n % 7}", n % 10, f"u{n}", "2026-11-01") for n in range(1, 50)]
+        base, new = tmp_path / f"base{trial}.db", tmp_path / f"new{trial}.db"
+        build(base, pages, logs, serp)
+        pages2 = [p for p in pages if rng.random() > 0.1]
+        pages2 = [(u, h if rng.random() > 0.2 else h + " changed", f) for u, h, f in pages2] + [(f"n{trial}{k}", "new", "2026-11-14") for k in range(5)]
+        logs2 = [l for l in logs if rng.random() > 0.1] + [(100 + k, "added", k) for k in range(4)]
+        serp2 = [s for s in serp if s[1] != "q3"] + [(200 + k, "q3", k, f"x{k}", "2026-11-14") for k in range(3)]
+        build(new, pages2, logs2, serp2)
+        if trial == 4:  # the working db gained a column the base does not have
+            conn = sqlite3.connect(str(new))
+            conn.execute("ALTER TABLE rs_log ADD COLUMN extra TEXT")
+            conn.commit()
+            conn.close()
+        compact = tmp_path / f"base{trial}.rows"
+        cloud._base_build(base, compact)
+        results = []
+        for maker, ancestor, tag in ((cloud.make_delta, base, "full"), (cloud.make_base_delta, compact, "compact")):
+            minus, plus = tmp_path / f"m-{tag}-{trial}.db", tmp_path / f"p-{tag}-{trial}.db"
+            count = maker(new, ancestor, minus, plus)
+            rows = {}
+            for label, path in (("minus", minus), ("plus", plus)):
+                conn = sqlite3.connect(str(path))
+                for (table,) in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall():
+                    rows[(label, table)] = sorted(conn.execute(f'SELECT * FROM "{table}"').fetchall(), key=repr)
+                conn.close()
+            results.append((count, rows))
+        assert results[0] == results[1], f"trial {trial}"
+        assert results[0][0] > 0
+
+        # applying the delta to the compact base gives the compact base of the new database
+        minus, plus = tmp_path / f"m-compact-{trial}.db", tmp_path / f"p-compact-{trial}.db"
+        cloud._base_apply(compact, minus, plus)
+        again = tmp_path / f"again-m{trial}.db", tmp_path / f"again-p{trial}.db"
+        if trial < 4:
+            assert cloud.make_base_delta(new, compact, *again) == 0

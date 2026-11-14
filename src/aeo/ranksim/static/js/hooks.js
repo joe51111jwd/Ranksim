@@ -115,11 +115,13 @@
      Optional when(report): the column shows only when it returns true. A false or throwing when() hides the column
      (use it for data that may not exist yet, for example Search Console before it is connected).
 
-   registerScreenNotice({ key, order, screen, render(ctx) })
+   registerScreenNotice({ key, order, screens, render(ctx) })
      Adds a short notice at the top of a screen, under its heading (for example "2 searches moved up since your last
-     visit" on Searches). `screen` is a screen key ('searches', 'overview', a plugin screen...), or '*' for every
-     screen. render(ctx) returns a Node (use <div class="callout info">), an array, or null for nothing.
-     ctx = { screen, report, project, slug }. Notices show on every screen built with page() from core.js.
+     visit" on Searches). `screens` is a list of screen keys (['searches', 'overview'], a plugin screen...), or
+     ['*'] for every screen; `screen: 'searches'` (one key) works too. render(ctx) returns a Node (use
+     <div class="callout info">), an array, or null for nothing. ctx = { screen, report, project, slug }.
+     Notices show on every screen built with page() from core.js. When a screen has a notice, the built-in
+     "Rankings need search data" callout (noSearchData) steps aside, so the two never stack.
 
    ---------------------------------------------------------------- events
 
@@ -280,12 +282,13 @@ export function registerSearchColumn(spec) {
 }
 
 export function registerScreenNotice(spec) {
-  return NOTICES.add({ screen: '*', ...spec });
+  const screens = Array.isArray(spec.screens) ? spec.screens.map(String) : [spec.screen != null ? String(spec.screen) : '*'];
+  return NOTICES.add({ ...spec, screens });
 }
 
 export const screens = () => SCREENS.list();
 /* The notices for one screen key, in order: those registered for that screen and those for every screen ('*'). */
-export const screenNotices = (key) => NOTICES.list().filter((entry) => entry.screen === '*' || entry.screen === key);
+export const screenNotices = (key) => NOTICES.list().filter((entry) => entry.screens.includes('*') || entry.screens.includes(key));
 export const screen = (key) => SCREENS.get(key);
 export const overviewTiles = () => TILES.list();
 export const editorPanels = () => PANELS.list();

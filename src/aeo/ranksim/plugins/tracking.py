@@ -857,9 +857,53 @@ def _save_objects(ui, slugs) -> str:
     return ""
 
 
+class SiteBusy(RuntimeError):
+    """Another pull or analysis holds this site's job lock (on any instance)."""
+
+
 def _default_run_pull(ui, project) -> dict:
-    """The same pull a person starts in the Studio, Google on, AI engines off. Saves to cloud storage itself."""
-    return _studio_run_pull()(ui, project, True, _PullEvents(ui))
+    """The same pull a person starts in the Studio, Google on, AI engines off, run as a job under infra's per-site
+    lock (api.sites: kind "pull", key "site:<domain>"). So it never runs beside a Studio pull or an analysis of the
+    same site on any instance, it pauses before the time limit like any job (saving its checkpoint), and a paused
+    job is continued here or from the app with the same params. Raises SiteBusy when the site is busy."""
+    from aeo.ranksim.api import sites
+
+    def work(ctx) -> dict:
+        events = _JobEvents(ui, sites._Events(ctx))
+        return {"report": sites._run_pull(ui, ui.project(project.slug), True, events, ctx=ctx)}
+
+    def error_text(exc: BaseException) -> str:
+        return _scrub(ui, f"{type(exc).__name__}: {str(exc)[:300]}")
+
+    reg = sites.registry(ui)
+    key = sites._site_key(project.domain)
+    record = reg.start("pull", key, f"Scheduled re-check of {project.name}", work, params={"slug": project.slug, "google": True}, error_text=error_text, background=False)
+    if record.get("attached"):
+        if record.get("kind") == "pull" and (record.get("status") == "paused" or record.get("stalled")):
+            resumed = reg.resume(record["id"], work, error_text=error_text, background=False)
+            if resumed is None or resumed.get("attached"):
+                raise SiteBusy("a pull is already running")
+            record = resumed
+        else:
+            raise SiteBusy("a pull or analysis is already running")
+    status = record.get("status")
+    if status == "done":
+        return dict((record.get("result") or {}).get("report") or {})
+    if status == "paused":
+        return {"paused": True, "job": record.get("id")}
+    raise RuntimeError(record.get("error") or f"the re-check job ended as {status}")
+
+
+class _JobEvents:
+    """The job's event sink plus _PullEvents: the counter object is saved right after the Google step."""
+
+    def __init__(self, ui, inner) -> None:
+        self.inner = inner
+        self.saver = _PullEvents(ui)
+
+    def put(self, event) -> None:
+        self.inner.put(event)
+        self.saver.put(event)
 
 
 def recheck(ui, *, now: datetime | None = None, run_pull=None, monotonic=time.monotonic, limit_seconds: float | None = None) -> dict:
@@ -882,7 +926,12 @@ def recheck(ui, *, now: datetime | None = None, run_pull=None, monotonic=time.mo
         return result
     cloud = getattr(ui, "cloud", None)
     if cloud is not None and getattr(cloud, "enabled", False):
-        cloud.refresh(force=True)
+        try:
+            cloud.refresh(force=True)
+        except Exception as exc:  # noqa: BLE001 - pulling on stale local data could pay twice: stop and say so
+            result["storage_error"] = type(exc).__name__
+            result["note"] = "Storage could not be read, so nothing was pulled. The next run tries again."
+            return result
     due, skipped = due_projects(ui.root, now=now)
     result["skipped"] = skipped
     touched = False
@@ -936,14 +985,24 @@ def recheck(ui, *, now: datetime | None = None, run_pull=None, monotonic=time.mo
                 result.setdefault("storage_errors", []).append(stored)
             try:
                 summary = run_pull(ui, project)
-                outcome = {"slug": item.slug, "ok": True, "reason": item.reason, "summary": _short_summary(summary)}
-                state.update({"last_result": "ok", "last_error": "", "last_ok_at": _iso(now)})
+                if isinstance(summary, dict) and summary.get("paused"):
+                    outcome = {"slug": item.slug, "ok": True, "paused": True, "reason": item.reason, "summary": {"job": summary.get("job")}}
+                    state.update({"last_result": "paused", "last_error": ""})
+                else:
+                    outcome = {"slug": item.slug, "ok": True, "reason": item.reason, "summary": _short_summary(summary)}
+                    state.update({"last_result": "ok", "last_error": "", "last_ok_at": _iso(now)})
+            except SiteBusy as exc:
+                # not an attempt: the other job is doing the work. Clear the marker so the next run tries again.
+                state.pop("last_attempt_at", None)
+                outcome = {"slug": item.slug, "ok": True, "busy": True, "reason": str(exc)}
+                state.update({"last_deferred_at": _iso(now), "last_deferred": str(exc)})
             except Exception as exc:  # noqa: BLE001 - one project failing must not stop the others
                 message = _scrub(ui, f"{type(exc).__name__}: {str(exc)[:300]}")
                 outcome = {"slug": item.slug, "ok": False, "reason": item.reason, "error": message}
                 state.update({"last_result": "error", "last_error": message})
-            state.pop("last_deferred", None)
-            state.pop("last_deferred_at", None)
+            if not outcome.get("busy"):
+                state.pop("last_deferred", None)
+                state.pop("last_deferred_at", None)
             save_state(project, state)
         except OSError as exc:
             outcome = {"slug": item.slug, "ok": False, "reason": item.reason, "error": f"state not saved ({type(exc).__name__})"}
@@ -951,7 +1010,10 @@ def recheck(ui, *, now: datetime | None = None, run_pull=None, monotonic=time.mo
             if lock is not None:
                 lock.release()
         outcome["seconds"] = round(monotonic() - began, 1)
-        result["ran"].append(outcome)
+        if outcome.get("busy"):
+            result["deferred"].append({"slug": item.slug, "reason": outcome["reason"]})
+        else:
+            result["ran"].append(outcome)
     result["used"] = budget.used()
     result["cap"] = budget.cap
     if touched:

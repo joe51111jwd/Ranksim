@@ -1021,3 +1021,55 @@ def test_cron_route_accepts_a_vercel_schedules_path_call(tmp_path, monkeypatch):
     }
     assert client.get(tracking.CRON_PATH, headers=headers).status_code == 200
     assert client.get(tracking.CRON_PATH, headers={**headers, "authorization": ""}).status_code == 401
+
+
+def _app_ui(tmp_path, **keys):
+    from aeo.ranksim.serve import UiState
+
+    return UiState(settings=_settings(tmp_path, **keys), database=f"sqlite:///{tmp_path / 'rank.db'}", projects_root=tmp_path / "projects", csrf_token="test-csrf",
+                   pull_options={"serp_provider": FakeGoogle(), "fetcher": FakeCrawler(), "today": TODAY, "engines": []})
+
+
+def test_cron_pull_runs_as_a_site_job_and_defers_when_the_site_is_busy(tmp_path):
+    from aeo.ranksim.api import sites
+
+    ui = _app_ui(tmp_path, serper_api_key="fake-serper")
+    tracking.install_budget(ui)
+    project = _project(ui.root, slug="dirt-crew")
+    reg = sites.registry(ui)
+    release = threading.Event()
+    started = threading.Event()
+
+    def other(ctx):  # a Studio pull of the same site, still running
+        started.set()
+        release.wait(10)
+        return {}
+
+    holder = reg.start("pull", sites._site_key(project.domain), "Studio pull", other, params={"slug": "dirt-crew", "google": True})
+    started.wait(5)
+    try:
+        result = tracking.recheck(ui, now=NOW, limit_seconds=600)
+    finally:
+        release.set()
+    assert result["ran"] == [] and result["deferred"][0]["slug"] == "dirt-crew" and "already running" in result["deferred"][0]["reason"]
+    assert "last_attempt_at" not in tracking.load_state(project)  # not an attempt: the next run tries again
+    for _ in range(50):
+        if not reg.active(sites._site_key(project.domain)):
+            break
+        threading.Event().wait(0.1)
+    assert holder["id"]
+    result = tracking.recheck(ui, now=NOW, limit_seconds=600)
+    assert result["ran"][0]["ok"] and result["ran"][0]["summary"].get("searches_with_results") == len(SEARCHES)
+    assert proj.latest_google(project).kind == "api"
+
+
+def test_recheck_stops_when_storage_cannot_be_read(tmp_path):
+    ui = _ui(tmp_path, serper_api_key="fake-serper")
+
+    def broken(force=False):
+        raise RuntimeError("storage down")
+
+    ui.cloud = SimpleNamespace(enabled=True, refresh=broken)
+    _project(ui.root, slug="p", searches=["one"])
+    result = tracking.recheck(ui, now=NOW, run_pull=lambda *_: pytest.fail("must not pull"), limit_seconds=600)
+    assert result["storage_error"] == "RuntimeError" and result["ran"] == [] and "nothing was pulled" in result["note"]

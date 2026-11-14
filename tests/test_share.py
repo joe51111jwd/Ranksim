@@ -767,3 +767,164 @@ def test_weekly_runs_with_the_real_tracking_plugin(env):
         assert isinstance(search, str) and all(point[0].tzinfo is not None for point in points)
     weekly = env["client"].get(_link(env)["path"] + "/data").json()["weekly"]
     assert isinstance(weekly["moves"], list) and weekly["moves_note"] or weekly["moves"]
+
+
+# ---------------------------------------------------------------------------
+# weekly update email (owner only)
+# ---------------------------------------------------------------------------
+
+
+def _weekly_data(**over) -> dict:
+    data = {
+        "name": "Acme Fencing",
+        "site": "acme.example",
+        "agency": {"name": "Camarota SEO", "logo": False},
+        "report_date": "2026-11-14",
+        "google_date": "Nov 13, 2026",
+        "source": "Google",
+        "search_data": True,
+        "data": {"demo": False},
+        "kpis": {"top10": 4, "checked": 6},
+        "weekly": {
+            "since": "2026-11-07",
+            "moves": [{"q": "vinyl fence cost", "from": 7, "to": 3, "from_date": "2026-11-06", "to_date": "2026-11-13"},
+                      {"q": "gate repair", "from": None, "to": 9, "from_date": "2026-11-06", "to_date": "2026-11-13"}],
+            "moves_note": "",
+            "done": [{"date": "2026-11-12", "label": "Site update", "summary": "Published changes to /pricing <script>alert(1)</script>"}],
+            "checks": 2,
+            "next": [{"title": "No page for \"gate repair\"", "severity": "high", "status": "doing", "status_label": "In progress", "plan": "Writing it now"}],
+        },
+    }
+    data.update(over)
+    return data
+
+
+def test_weekly_update_text_and_html():
+    update = share.weekly_update(_weekly_data(), "https://ranksim.example/r/abc.def")
+    text, html = update["text"], update["html"]
+    assert update["subject"] == "Acme Fencing: weekly search update, Nov 14, 2026"
+    assert text.startswith("Hi Acme Fencing team,")
+    assert '"vinyl fence cost": #7 on Nov 6, 2026, now #3 on Nov 13, 2026 (up 4, Google positions)' in text
+    assert '"gate repair": not on page one on Nov 6, 2026, now #9 on Nov 13, 2026 (new on page one, Google positions)' in text
+    assert "On page one of Google for 4 of 6 searches we track (Google checked Nov 13, 2026)." in text
+    assert "In progress. Writing it now" in text and "Full report: https://ranksim.example/r/abc.def" in text
+    assert text.rstrip().endswith("Camarota SEO")
+    assert "<script>" not in html and "&lt;script&gt;" in html and 'href="https://ranksim.example/r/abc.def"' in html
+    for blob in (text, html, update["subject"]):
+        assert not any(dash in blob for dash in DASHES)
+        assert "PREDICTED" not in blob and "estimate" not in blob.lower()  # an email never carries a model estimate
+
+
+def test_weekly_update_empty_week_and_demo():
+    data = _weekly_data(data={"demo": True}, source="Demo", google_date="")
+    data["weekly"].update(moves=[], moves_note="Position changes show here once Google has been checked twice, a week apart.", done=[], next=[])
+    text = share.weekly_update(data)["text"]
+    assert "will be in this update once Google has been checked twice" in text
+    assert "Nothing new to report this week." in text and "No open fixes right now." in text
+    assert "demo positions, not Google results" in text and "Demo check date not recorded" in text
+    assert "Full report" not in text and "Your SEO team" not in text
+
+
+def test_weekly_update_route_is_owner_only_and_links_the_newest_live_link(tmp_path):
+    settings = make_settings(tmp_path, **FAKE_KEYS)
+    app = create_app(settings=settings, database=settings.ranksim_database_url, projects_root=tmp_path / "projects",
+                     public_demo=False, access_password="owner-pass", access_secret="test-secret")
+    owner = TestClient(app)
+    csrf = _csrf(owner)
+    headers = {"x-ranksim-csrf": csrf}
+    owner.post("/api/v1/login", json={"password": "owner-pass"}, headers=headers)
+    owner.post("/api/v1/demo", json={}, headers=headers)
+    path = f"/api/v1/projects/{ws.DEMO_SLUG}/weekly-update"
+    first = owner.get(path).json()
+    assert first["has_link"] is False and "Full report" not in first["text"]
+    link = owner.post(f"/api/v1/projects/{ws.DEMO_SLUG}/share", json={"label": "SECRET-LABEL"}, headers=headers).json()
+    update = owner.get(path).json()
+    assert update["has_link"] and f"http://testserver{link['path']}" in update["text"] and "SECRET-LABEL" not in update["text"]
+    owner.post(f"/api/v1/projects/{ws.DEMO_SLUG}/share/{link['id']}/revoke", headers=headers)
+    assert owner.get(path).json()["has_link"] is False
+    assert TestClient(app).get(path).status_code == 401
+    assert owner.get("/api/v1/projects/nope/weekly-update").status_code == 404
+    # the share page itself never asks for it: the button exists only in the owner preview
+    js = (share.SHARE_STATIC / "share.js").read_text(encoding="utf-8")
+    assert "d.preview && preview ? weeklyCopyButton" in js
+    stranger = TestClient(app)
+    for suffix in ("/weekly-update", "/weekly-update/x"):
+        response = stranger.get(link["path"].replace(link["token"], link["token"]) + suffix)
+        assert response.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# adversarial: everything merged since (tracking, gsc, publish, predict) stays off /r/
+# ---------------------------------------------------------------------------
+
+
+def test_owner_only_report_data_from_every_plugin_never_reaches_a_share_link(env, monkeypatch):
+    client = env["client"]
+    real = share._project_report_fn()
+    marker = "OWNERONLY"
+
+    def poisoned(ui, slug):
+        report = json.loads(json.dumps(real(ui, slug)))
+        # plugin namespaces: Search Console, rank tracking, publish, anything new
+        report["gsc"] = {"connected": True, "property": f"sc-domain:{marker}-property", "token": f"{marker}-oauth-token",
+                         "queries": [{"q": f"{marker} query", "clicks": 999, "impressions": 12345, "ctr": 0.08, "position": 4.2}]}
+        report["history"] = {"searches": [{"search": "vinyl fence installation cost", "position": 5, "previous": 8, "change": "up", "delta": 3,
+                                           "spark": [8, 5], "competitors": {f"{marker}-rival.example": [1, 2]}}], "cost": f"{marker} $4.20"}
+        report["publish"] = {"connections": [{"kind": "wordpress", "secret": f"{marker}-app-password"}], "history": [{"id": f"{marker}-entry"}]}
+        report["predict"] = {"model": f"{marker}-lambdamart", "pairwise": 0.991, "features": {"bm25": 1.0}}
+        report["engine"] = {"ready": True, "path": f"/srv/{marker}/engine"}
+        report["pages"] = [{"url": f"https://x.example/{marker}-draft", "status": "fetched", "html": f"<html>{marker}</html>"}]
+        report["name"] = "Poisoned Report Name"  # allowed through: proves this report is the one served
+        report["kpis"]["pairwise"] = 0.99
+        report["data"]["long"] = f"{marker} provider label"
+        for row in report["rankings"]:
+            row["gsc_clicks"] = 77
+            row["note"] = f"{marker} internal note"
+            if row.get("predicted"):
+                row["predicted"].update({"features": {marker: 1}, "why": f"{marker} explanation", "score": 0.42})
+            for item in row.get("top") or []:
+                item["snippet"] = f"{marker} snippet"
+                item["html"] = f"<p>{marker}</p>"
+        for issue in report["issues"]:
+            issue["element"] = {"selector": f"#{marker}", "text": f"{marker} text"}
+            issue["suggestion"] = f"{marker} suggestion"
+            issue["evidence"] = [f"{marker} evidence"]
+            issue["kind"] = f"{marker}-kind"
+        for row in report["share"]:
+            row["platform"] = f"{marker}-platform"
+        report["competitors"] = list(report["competitors"]) + [f"{marker}<script>.example"]
+        return report
+
+    monkeypatch.setattr(share, "_project_report_fn", lambda: poisoned)
+    share._state(env["ui"])["cache"].clear()
+    link = _link(env)
+    bodies = [client.get(link["path"] + suffix) for suffix in ("", "/data", "/rankings.csv", "/issues.csv", "/logo")]
+    for response in bodies:
+        assert marker not in response.text and marker.lower() not in response.text.lower()
+        assert "0.991" not in response.text and "pairwise" not in response.text
+    data = bodies[1].json()
+    assert data["name"] == "Poisoned Report Name"
+    assert data["kpis"] == {key: data["kpis"][key] for key in ("searches", "checked", "top10", "top3", "average", "issues", "high")}
+    assert all(set(row["predicted"]) == {"position", "of", "label"} for row in data["rankings"] if row["predicted"])
+    # the owner preview of the same data is held to the same whitelist
+    preview = client.get(f"/api/v1/projects/{env['demo']}/client-report").text
+    assert marker not in preview
+    # and the weekly email built from it
+    assert marker not in json.dumps(client.get(f"/api/v1/projects/{env['demo']}/weekly-update").json())
+
+
+def test_publish_history_and_tracking_files_on_disk_never_reach_a_share_link(env):
+    client = env["client"]
+    project = env["ui"].project(env["demo"])
+    root = Path(project.dir) / "plugins"
+    for feature, name, body in (
+        ("publish", "state.json", {"connections": [{"sealed": "v1.OWNERONLY-SEALED"}]}),
+        ("tracking", "usage.json", {"spent": "OWNERONLY-COST"}),
+        ("gsc", "token.json", {"refresh_token": "OWNERONLY-REFRESH"}),
+    ):
+        (root / feature).mkdir(parents=True, exist_ok=True)
+        (root / feature / name).write_text(json.dumps(body))
+    link = _link(env)
+    for suffix in ("/data", "/rankings.csv", "/issues.csv", "/../plugins/publish/state.json", "/plugins/gsc/token.json"):
+        response = client.get(link["path"] + suffix)
+        assert "OWNERONLY" not in response.text, suffix

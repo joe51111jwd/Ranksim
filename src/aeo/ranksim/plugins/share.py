@@ -938,6 +938,84 @@ def client_report(ui, project, *, preview: bool = False) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# weekly update email (owner only): plain text and simple HTML to paste into Gmail
+# ---------------------------------------------------------------------------
+
+
+def _day(iso) -> str:
+    moment = _parse_time(iso)
+    return f"{moment.strftime('%b')} {moment.day}, {moment.year}" if moment else ""
+
+
+def _place(position) -> str:
+    return f"#{position}" if position else "not on page one"
+
+
+def _move_words(move: dict) -> str:
+    before, after = move.get("from"), move.get("to")
+    if before and after:
+        steps = abs(before - after)
+        return f"up {steps}" if after < before else f"down {steps}"
+    return "new on page one" if after else "dropped off page one"
+
+
+def weekly_update(data: dict, report_url: str = "") -> dict:
+    """The client's weekly update from the client report payload (already whitelisted), as subject, text and html.
+    Every position names its source and date. Predictions are left out: an email is no place for an estimate."""
+    from html import escape
+
+    weekly = data.get("weekly") or {}
+    source = data.get("source") or "Google"
+    name = data.get("name") or data.get("site") or "your site"
+    site = data.get("site") or ""
+    agency = (data.get("agency") or {}).get("name") or ""
+    report_day = _day(data.get("report_date"))
+    since_day = _day(weekly.get("since"))
+    checked = f"{source} checked {data['google_date']}" if data.get("google_date") else f"{source} check date not recorded"
+    kpis = data.get("kpis") or {}
+    sections: list[tuple[str, list[str], str]] = []
+
+    moves = [
+        f'"{move["q"]}": {_place(move.get("from"))} on {_day(move.get("from_date"))}, now {_place(move.get("to"))} on {_day(move.get("to_date"))} ({_move_words(move)}, {source} positions)'
+        for move in weekly.get("moves") or []
+    ]
+    note = (weekly.get("moves_note") or "No position changed this week.").replace("show here once", "will be in this update once")
+    sections.append(("Position changes in Google", moves, note))
+    done = [f"{item['summary']} ({_day(item.get('date'))})" for item in weekly.get("done") or []]
+    sections.append(("Done this week", done, "Nothing new to report this week."))
+    upcoming = [f"{item['title']}. {item['status_label']}." + (f" {item['plan']}" if item.get("plan") else "") for item in weekly.get("next") or []]
+    sections.append(("Next", upcoming, "No open fixes right now."))
+
+    standing = (
+        f"On page one of Google for {kpis.get('top10') or 0} of {kpis.get('checked') or 0} searches we track ({checked})."
+        if data.get("search_data") else "We have not checked your Google positions yet."
+    )
+    if data.get("data", {}).get("demo"):
+        standing += " These are demo positions, not Google results."
+    subject = f"{name}: weekly search update, {report_day}"
+    intro = f"Here is your weekly search update for {site or name}, {since_day} to {report_day}."
+
+    text = [f"Hi {name} team,", "", intro, "", standing]
+    for title, items, empty in sections:
+        text += ["", f"{title}:"] + ([f"- {item}" for item in items] or [empty])
+    if report_url:
+        text += ["", f"Full report: {report_url}"]
+    text += ["", "Thanks,", agency or "Your SEO team"]
+
+    def para(value: str) -> str:
+        return f'<p style="margin:0 0 12px">{escape(value)}</p>'
+
+    html = [para(f"Hi {name} team,"), para(intro), para(standing)]
+    for title, items, empty in sections:
+        html.append(f'<p style="margin:16px 0 6px"><strong>{escape(title)}</strong></p>')
+        html.append("<ul style=\"margin:0 0 12px;padding-left:20px\">" + "".join(f"<li>{escape(item)}</li>" for item in items) + "</ul>" if items else para(empty))
+    if report_url:
+        html.append(f'<p style="margin:16px 0 12px">Full report: <a href="{escape(report_url, quote=True)}">{escape(report_url)}</a></p>')
+    html.append(para("Thanks,") + para(agency or "Your SEO team"))
+    return {"subject": subject, "text": "\n".join(text), "html": '<div style="font-family:Arial,sans-serif;font-size:14px;line-height:1.5">' + "".join(html) + "</div>"}
+
+
+# ---------------------------------------------------------------------------
 # CSV
 # ---------------------------------------------------------------------------
 
@@ -1273,6 +1351,18 @@ def register(app, ui) -> None:
             return error(404, "No such export.")
         data = await run_in_threadpool(client_report, ui, project)
         return csv_response(rankings_csv(data) if what == "rankings" else issues_csv(data), _filename(data, what), False)
+
+    @app.get("/api/v1/projects/{slug}/weekly-update")
+    async def api_weekly_update(slug: str, request: Request) -> JSONResponse:
+        """Owner only: the weekly update to paste into an email. It links the newest active share link, if any."""
+        project = owner_project(slug)
+        if project is None:
+            return error(404, "No such project.")
+        data = await run_in_threadpool(client_report, ui, project)
+        active = [link for link in list_links(ui.root, project) if link["status"] == "active"] if not ui.public_demo else []
+        base = str(request.base_url).rstrip("/")
+        url = f"{base}{active[0]['path']}" if active and re.match(r"^https?://[A-Za-z0-9.:\[\]-]+$", base) else ""
+        return JSONResponse({**weekly_update(data, url), "has_link": bool(url)})
 
     @app.get("/api/v1/projects/{slug}/changelog")
     def api_changelog(slug: str) -> JSONResponse:

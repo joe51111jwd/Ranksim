@@ -156,7 +156,13 @@ class PublishStore:
         return self.folder / "history"
 
     def new_history_id(self, now: float) -> str:
-        return time.strftime("%Y%m%d%H%M%S", time.gmtime(now)) + "-" + secrets.token_hex(3)
+        """Sortable: time, then a sequence number, so two publishes in the same second keep their order."""
+        with self.lock:
+            seq = self.load().get("seq", 0) + 1
+            data = self.load()
+            data["seq"] = seq
+            self.save(data)
+        return time.strftime("%Y%m%d%H%M%S", time.gmtime(now)) + f"-{seq:06d}-" + secrets.token_hex(2)
 
     def put_history(self, entry: dict) -> None:
         with self.lock:
@@ -192,6 +198,6 @@ def public_connection(connection: dict) -> dict:
 
 def public_history(entry: dict) -> dict:
     """History for the browser: drops the stored previous content (it can be large) but keeps what changed."""
-    view = {k: v for k, v in entry.items() if k not in {"previous", "before_html", "after_html"}}
-    view["can_rollback"] = bool(entry.get("can_rollback")) and not entry.get("rolled_back_at")
+    view = {k: v for k, v in entry.items() if k not in {"previous", "payload", "expected", "regions", "rolling_back"}}
+    view["can_rollback"] = bool(entry.get("can_rollback")) and not entry.get("rolled_back_at") and entry.get("status") != "applying"
     return view

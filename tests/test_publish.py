@@ -415,9 +415,11 @@ def test_webhook_publish_signs_verifies_live_and_rolls_back(tmp_path):
 def test_webhook_refuses_private_targets_and_short_secrets(tmp_path):
     with pytest.raises(ConnectorError):
         CONNECTORS["webhook"].clean_secret({"signing_secret": "short"})
-    hook = CONNECTORS["webhook"]({"url": "http://127.0.0.1:9/x"}, {"signing_secret": "k" * 20}, Router().client(), allow_private=False)
-    with pytest.raises(ConnectorError):
+    router = Router()
+    hook = CONNECTORS["webhook"]({"url": "https://10.0.0.5/x"}, {"signing_secret": "k" * 20}, router.client(), allow_private=False)
+    with pytest.raises(ConnectorError, match="cannot be used"):
         hook.check()
+    assert router.calls == []
 
 
 def test_signature_format():
@@ -535,7 +537,8 @@ def test_wordpress_rank_math_full_publish_and_rollback(tmp_path):
     pub.rollback(entry["id"])
     restore = router.bodies("POST", r"/wp/v2/posts/42")[-1]
     assert restore == {"title": "Old heading", "content": "<p>Old body text.</p>"}
-    assert router.bodies("POST", r"updateMeta")[-1]["meta"] == {"rank_math_title": "Old title | Acme", "rank_math_description": "Old description."}
+    # Rank Math did not expose stored values, so rollback clears the fields and Rank Math's template applies again
+    assert router.bodies("POST", r"updateMeta")[-1]["meta"] == {"rank_math_title": "", "rank_math_description": ""}
 
 
 def test_wordpress_without_seo_plugin_uses_title_suffix_and_excerpt(tmp_path):
@@ -550,9 +553,15 @@ def test_wordpress_without_seo_plugin_uses_title_suffix_and_excerpt(tmp_path):
     rows = {r["field"]: r for r in plan["rows"]}
     assert rows["title"]["apply"] and "theme uses" in rows["title"]["note"]
     assert rows["description"]["apply"] and "excerpt" in rows["description"]["note"]
-    entry = pub.publish(url, page(h1="Old heading", title="Better heading | Acme", desc="Fresh."), conn["id"])
+    assert plan["warnings"][0]["code"] == "title_changes_heading"  # same WordPress title feeds the h1
+    with pytest.raises(PublishError) as err:
+        pub.publish(url, page(h1="Old heading", title="Better heading | Acme", desc="Fresh."), conn["id"])
+    assert err.value.extra["confirm"] == ["title_changes_heading"]
+    entry = pub.publish(url, page(h1="Old heading", title="Better heading | Acme", desc="Fresh."), conn["id"], confirm=["title_changes_heading"])
     assert router.bodies("POST", r"/wp/v2/posts/42")[-1] == {"title": "Better heading", "excerpt": "Fresh."}
-    assert entry["verify"]["status"] in {"partial", "pending"}  # the theme may not print the excerpt as the description
+    # the theme in this mock does not print the excerpt as the description: said plainly, not hidden
+    assert entry["verify"]["status"] == "partial"
+    assert entry["verify"]["fields"] == {"title": True, "description": False}
 
 
 def test_wordpress_yoast_meta_only_when_exposed(tmp_path):
@@ -629,10 +638,15 @@ def test_wordpress_unknown_page_and_bad_credentials(tmp_path):
     assert pub_bad.store.connections() == []
 
 
-def test_wordpress_refuses_private_site_address(tmp_path):
-    wp = CONNECTORS["wordpress"]({"base_url": "http://10.0.0.5", "username": "a"}, {"app_password": "x"}, Router().client(), allow_private=False)
-    with pytest.raises(ConnectorError):
+def test_wordpress_refuses_private_site_address_and_plain_http(tmp_path):
+    router = Router()
+    wp = CONNECTORS["wordpress"]({"base_url": "https://10.0.0.5", "username": "a"}, {"app_password": "x"}, router.client(), allow_private=False)
+    with pytest.raises(ConnectorError, match="cannot be used"):
         wp.check()
+    plain = CONNECTORS["wordpress"]({"base_url": "http://acme.com", "username": "a"}, {"app_password": "x"}, router.client(), allow_private=False)
+    with pytest.raises(ConnectorError, match="must use https"):
+        plain.check()
+    assert router.calls == []  # the password never left
 
 
 # ---------------------------------------------------------------------------
@@ -745,9 +759,11 @@ def shop_router(web: Web):
             return {"data": {"shop": {"name": "Acme Store"}}}
         if "pages(first" in q:
             return {"data": {"pages": {"nodes": [state["page"]] if v["q"] == "handle:about" else []}}}
-        if "blogs(first" in q:
-            arts = [state["article"]] if v["a"] == "handle:post" else []
-            return {"data": {"blogs": {"nodes": [{"id": "gid://shopify/Blog/1", "handle": "news", "articles": {"nodes": arts}}]}}}
+        if "articles(first" in q:
+            assert "blogs" not in q  # Blog.articles takes no query argument
+            other_blog = {**state["article"], "id": "gid://shopify/Article/99", "blog": {"handle": "other"}}
+            arts = [other_blog, {**state["article"], "blog": {"handle": "news"}}] if v["a"] == "handle:post" else []
+            return {"data": {"articles": {"nodes": arts}}}
         if "pageUpdate" in q or "articleUpdate" in q:
             kind = "page" if "pageUpdate" in q else "article"
             fields = v["page" if kind == "page" else "article"]
@@ -797,8 +813,9 @@ def test_shopify_article_and_unsupported_paths(tmp_path):
     pub = make_publisher(tmp_path, web, router)
     owned(pub, web)
     conn = pub.add_connection(kind="shopify", site="acme.com", label="", settings={"shop": "acme-store.myshopify.com"}, secret={"access_token": "shpat_test"})
-    pub.publish(url, page(region="rte", h1="Article heading"), conn["id"])
+    entry = pub.publish(url, page(region="rte", h1="Article heading"), conn["id"])
     assert state["article"]["title"] == "Article heading"
+    assert entry["remote"]["id"] == "gid://shopify/Article/7"  # the article in blog "news", not the one in "other"
     web.pages["https://acme.com/products/shoe"] = page()
     with pytest.raises(PublishError) as err:
         pub.plan("https://acme.com/products/shoe", page(h1="x"), conn["id"])
@@ -945,7 +962,7 @@ class FakeUI:
         self.csrf = "csrf-token"
         self.preview_fetch = web
         self.settings = types.SimpleNamespace(crawl_allow_private=True)
-        self.publish_overrides = {"http_factory": router.client, "sleep": lambda s: None, "verify_waits": (0.0,)}
+        self.publish_overrides = {"http_factory": router.client, "sleep": lambda s: None, "verify_waits": (0.0,), "proof_fetch": web}
         self._project = FakeProject(root)
 
     def project(self, slug):
@@ -1064,3 +1081,192 @@ def test_after_pull_rechecks_and_never_raises(tmp_path):
     plugin.after_pull(project=project, report={}, ui=ui)
     assert not pub.store.ownership("acme.com")["verified"]
     plugin.after_pull(project=object(), report={}, ui=ui)  # broken input is logged, not raised
+
+
+# ---------------------------------------------------------------------------
+# Hardening found in review
+# ---------------------------------------------------------------------------
+
+
+def test_pinning_dials_the_checked_address(monkeypatch):
+    from aeo.ranksim.publishing.connectors import base
+
+    answers = iter([[(2, 1, 6, "", ("93.184.216.34", 443))]])
+    monkeypatch.setattr(base.socket, "getaddrinfo", lambda *a, **k: next(answers))
+    router = Router()
+    router.on("POST", r"93\.184\.216\.34", lambda r, m: httpx.Response(200))
+    hook = CONNECTORS["webhook"]({"url": "https://hooks.acme.test/x"}, {"signing_secret": "k" * 20}, router.client(), allow_private=False)
+    monkeypatch.setattr(base, "assert_safe_url", lambda url, **k: url)  # the first check passed
+    hook.check()
+    request = router.calls[0]
+    assert request.url.host == "93.184.216.34" and request.headers["host"] == "hooks.acme.test"
+    assert request.extensions["sni_hostname"] == "hooks.acme.test"
+
+
+def test_pinning_refuses_a_name_that_now_points_inside(monkeypatch):
+    from aeo.ranksim.publishing.connectors import base
+
+    monkeypatch.setattr(base, "assert_safe_url", lambda url, **k: url)
+    monkeypatch.setattr(base.socket, "getaddrinfo", lambda *a, **k: [(2, 1, 6, "", ("169.254.169.254", 443))])
+    router = Router()
+    hook = CONNECTORS["webhook"]({"url": "https://rebind.acme.test/x"}, {"signing_secret": "k" * 20}, router.client(), allow_private=False)
+    with pytest.raises(ConnectorError, match="private address"):
+        hook.check()
+    assert router.calls == []
+
+
+def test_proof_after_redirect_to_another_host_does_not_count(tmp_path):
+    pub = make_publisher(tmp_path, Web(), Router())
+    token = pub.start_ownership("acme.com")["token"]
+    elsewhere = page(extra=f'<meta name="ranksim-verification" content="{token}">')
+
+    def fetch(url):
+        return elsewhere, "", "https://free-pages.example/acme"
+
+    pub.proof_fetch = fetch
+    result = pub.verify_ownership("acme.com")
+    assert not result["verified"]
+    assert "another site" in result["last_check"]["detail"]
+    pub.proof_fetch = lambda url: (elsewhere, "", "https://www.acme.com/")  # apex to www is fine
+    assert pub.verify_ownership("acme.com", ["meta"])["verified"]
+
+
+def test_meta_tag_in_body_does_not_count(tmp_path):
+    web = Web()
+    pub = make_publisher(tmp_path, web, Router())
+    token = pub.start_ownership("acme.com")["token"]
+    web.pages["https://acme.com/"] = page(body=f'<p>comment</p><meta name="ranksim-verification" content="{token}">')
+    assert not pub.verify_ownership("acme.com", ["meta"])["verified"]
+
+
+def test_stale_recheck_tries_other_methods_before_revoking(tmp_path):
+    web, clock, router = Web(), Clock(), Router()
+    pub = make_publisher(tmp_path, web, router, clock)
+    token = owned(pub, web)["token"]
+    web.pages["https://acme.com/.well-known/ranksim-verification.txt"] = token
+    web.pages["https://acme.com/"] = page()  # meta removed, file still there
+    clock.t += own.STALE_AFTER + 1
+    record = pub.require_ownership("https://acme.com/x")
+    assert record["verified"] and record["method"] == "file"
+
+
+def test_verified_parent_domain_wins_over_unverified_subdomain_record(tmp_path):
+    router = Router()
+    pub = make_publisher(tmp_path, Web(), router)
+    token = pub.start_ownership("acme.com")["token"]
+    router.on("GET", r"cloudflare-dns", lambda r, m: dns_answer(f'"ranksim-verification={token}"'))
+    pub.verify_ownership("acme.com", ["dns"])
+    pub.start_ownership("blog.acme.com")  # started, never verified
+    assert pub.ownership_for("https://blog.acme.com/post")["domain"] == "acme.com"
+    assert pub.require_ownership("https://blog.acme.com/post")["verified"]
+
+
+def test_rollback_needs_ownership_still_proven(tmp_path):
+    web, router, clock = Web(), Router(), Clock()
+    pub = make_publisher(tmp_path, web, router, clock)
+    owned(pub, web)
+    url = "https://acme.com/about"
+    web.pages[url] = page()
+    conn = add_webhook(pub, router)
+    entry = pub.publish(url, page(h1="New"), conn["id"])
+    web.pages["https://acme.com/"] = page()  # proof removed
+    clock.t += own.STALE_AFTER + 1
+    hooks = lambda: [c for c in router.calls if "hooks" in str(c.url)]  # noqa: E731
+    sent = len(hooks())
+    with pytest.raises(PublishError) as err:
+        pub.rollback(entry["id"])
+    assert err.value.status == 403 and len(hooks()) == sent
+
+
+def test_rollback_order_and_reconnected_connection(tmp_path):
+    web, router = Web(), Router()
+    pub = make_publisher(tmp_path, web, router)
+    owned(pub, web)
+    url = "https://acme.com/about"
+    web.pages[url] = page()
+    conn = add_webhook(pub, router)
+    first = pub.publish(url, page(h1="One"), conn["id"])
+    second = pub.publish(url, page(h1="Two"), conn["id"])
+    assert first["id"] < second["id"]
+    with pytest.raises(PublishError) as err:
+        pub.rollback(first["id"])
+    assert err.value.status == 409 and err.value.extra["newer"] == second["id"]
+    pub.remove_connection(conn["id"])
+    with pytest.raises(PublishError):
+        pub.rollback(second["id"])
+    again = add_webhook(pub, router)
+    assert pub.rollback(second["id"], again["id"])["rolled_back_at"]
+    assert pub.rollback(first["id"], again["id"])["rolled_back_at"]
+
+
+def test_failed_apply_is_recorded_with_previous_values(tmp_path):
+    web, router = Web(), Router()
+    url = "https://acme.com/about"
+    web.pages[url] = page()
+    wp, _ = wp_router(web, url, namespaces=("wp/v2", "rankmath/v1"))
+    wp.routes = [r for r in wp.routes if "updateMeta" not in r[1].pattern]
+    wp.on("POST", r"updateMeta", lambda r, m: httpx.Response(500, json={"message": "boom"}))
+    pub = make_publisher(tmp_path, web, wp)
+    owned(pub, web)
+    conn = wp_connect(pub)
+    with pytest.raises(PublishError) as err:
+        pub.publish(url, page(h1="New heading", title="New SEO"), conn["id"])
+    assert err.value.status == 502 and "boom" in str(err.value)
+    stored = pub.store.history_entry(err.value.extra["history_id"])
+    assert stored["status"] == "failed" and stored["previous"]["title"] == "Old heading"  # the post title did change
+    assert pub.history()[0]["can_rollback"]
+
+
+def test_unexpected_platform_answer_is_a_clean_error(tmp_path):
+    web = Web()
+    url = "https://acme.com/about"
+    web.pages[url] = page()
+    router, _ = wp_router(web, url)
+    router.routes.insert(0, ("GET", re.compile(r"/wp/v2/posts\?"), lambda r, m: [5, "junk"]))
+    pub = make_publisher(tmp_path, web, router)
+    owned(pub, web)
+    conn = wp_connect(pub)
+    with pytest.raises(PublishError):
+        pub.plan(url, page(h1="x", body="<p>new</p>"), conn["id"])
+
+
+def test_public_history_never_carries_page_payload(tmp_path):
+    web, router = Web(), Router()
+    pub = make_publisher(tmp_path, web, router)
+    owned(pub, web)
+    url = "https://acme.com/about"
+    web.pages[url] = page()
+    entry = pub.publish(url, page(h1="New"), add_webhook(pub, router)["id"])
+    for view in (entry, pub.history()[0]):
+        assert not {"payload", "previous", "expected"} & set(view)
+
+
+def test_webhook_whole_page_warns_when_head_scripts_are_lost(tmp_path):
+    web, router = Web(), Router()
+    pub = make_publisher(tmp_path, web, router)
+    owned(pub, web)
+    url = "https://acme.com/about"
+    web.pages[url] = page(extra="<script src=/a.js></script>")
+    conn = add_webhook(pub, router)
+    with pytest.raises(PublishError) as err:
+        pub.publish(url, page(h1="New"), conn["id"])
+    assert err.value.extra["confirm"] == ["embeds_removed"]
+
+
+def test_live_check_ignores_entity_and_quote_differences():
+    from aeo.ranksim.publishing.service import comparable
+
+    assert comparable("Tom\u2019s  \u201cbest\u201d") == comparable("Tom's \"best\"") == comparable("Tom&#39;s &quot;best&quot;")
+
+
+def test_title_suffix_needs_a_word_boundary():
+    from aeo.ranksim.publishing.connectors.base import strip_suffix_title
+
+    assert strip_suffix_title("Old | Acme", "Old", "New | Acme") == "New"
+    assert strip_suffix_title("Olden times", "Old", "New times") is None
+
+
+def test_routes_answer_400_for_a_bad_site(app_env):
+    client, web, router, ui = app_env
+    assert client.post("/api/v1/projects/acme/publish/ownership/reset", json={"site": "not a site"}, headers=H).status_code == 400
+    assert client.get("/api/v1/projects/acme/publish/status", params={"url": "https://localhost/x"}).status_code == 400

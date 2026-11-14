@@ -17,7 +17,7 @@ import secrets
 import time
 
 from ..htmlparts import parts
-from .base import Connector, ConnectorError, Prepared
+from .base import Connector, ConnectorError, Prepared, document_embed_warning
 
 
 def signature(secret: str, timestamp: int, body: bytes) -> str:
@@ -66,7 +66,7 @@ class Webhook(Connector):
             "X-Ranksim-Delivery": delivery,
             "X-Ranksim-Signature": signature(self.secret["signing_secret"], now, body),
         }
-        response = self.request("POST", target, content=body, headers=headers, expect=None)
+        response = self.request("POST", target, content=body, headers=headers, expect=None, pin=True)
         if not 200 <= response.status_code < 300:
             raise ConnectorError(f"The webhook answered {response.status_code}.")
         return {"delivery": delivery, "status_code": response.status_code}
@@ -84,7 +84,7 @@ class Webhook(Connector):
             url=url,
             target={"url": str(self.settings.get("url", ""))},
             rows=rows,
-            warnings=self.embed_warning(before, after, rows),
+            warnings=document_embed_warning(before_html, after_html),
             payload={"html": after_html, "changes": [{k: row[k] for k in ("field", "before", "after")} for row in rows]},
             previous={"html": before_html},
         )

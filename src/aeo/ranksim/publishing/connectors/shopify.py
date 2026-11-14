@@ -29,10 +29,8 @@ FIELDS = """
   seoDescription: metafield(namespace: "global", key: "description_tag") { value }
 """
 PAGE_QUERY = "query($q: String!) { pages(first: 1, query: $q) { nodes { %s } } }" % FIELDS
-ARTICLE_QUERY = (
-    "query($b: String!, $a: String!) { blogs(first: 1, query: $b) { nodes { id handle "
-    "articles(first: 1, query: $a) { nodes { %s summary } } } } }" % FIELDS
-)
+# Blog.articles takes no query argument, so articles are looked up top level and matched on their blog's handle.
+ARTICLE_QUERY = "query($a: String!) { articles(first: 25, query: $a) { nodes { %s summary blog { handle } } } }" % FIELDS
 PAGE_UPDATE = "mutation($id: ID!, $page: PageUpdateInput!) { pageUpdate(id: $id, page: $page) { page { id } userErrors { field message } } }"
 ARTICLE_UPDATE = (
     "mutation($id: ID!, $article: ArticleUpdateInput!) { articleUpdate(id: $id, article: $article) "
@@ -85,15 +83,14 @@ class Shopify(Connector):
     def locate(self, url: str) -> dict:
         segments = [unquote(s) for s in path_of(url).strip("/").split("/") if s]
         if len(segments) == 2 and segments[0] == "pages":
-            nodes = self.gql(PAGE_QUERY, {"q": f"handle:{segments[1]}"})["pages"]["nodes"]
+            nodes = ((self.gql(PAGE_QUERY, {"q": f"handle:{segments[1]}"}).get("pages") or {}).get("nodes")) or []
             if nodes and nodes[0].get("handle") == segments[1]:
                 return {"type": "page", "item": nodes[0]}
         elif len(segments) == 3 and segments[0] == "blogs":
-            blogs = self.gql(ARTICLE_QUERY, {"b": f"handle:{segments[1]}", "a": f"handle:{segments[2]}"})["blogs"]["nodes"]
-            if blogs and blogs[0].get("handle") == segments[1]:
-                articles = blogs[0]["articles"]["nodes"]
-                if articles and articles[0].get("handle") == segments[2]:
-                    return {"type": "article", "item": articles[0]}
+            articles = ((self.gql(ARTICLE_QUERY, {"a": f"handle:{segments[2]}"}).get("articles") or {}).get("nodes")) or []
+            for article in articles:
+                if article.get("handle") == segments[2] and (article.get("blog") or {}).get("handle") == segments[1]:
+                    return {"type": "article", "item": article}
         else:
             raise ConnectorError("Only Shopify pages (/pages/...) and blog posts (/blogs/...) can be published here.")
         raise ConnectorError(f"No Shopify page or blog post has the address {path_of(url)}.")

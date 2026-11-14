@@ -15,10 +15,11 @@ from __future__ import annotations
 import base64
 import html as htmllib
 import re
+import secrets
 import time
 
 from ..htmlparts import parts, same_document, squash
-from .base import Connector, ConnectorError, Prepared, path_of
+from .base import Connector, ConnectorError, Prepared, document_embed_warning, path_of
 
 API = "https://api.github.com"
 REPO = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
@@ -111,7 +112,7 @@ class GitHub(Connector):
             new_text = after_html
             for row in rows:
                 row.update(apply=True, note="Committed as part of the edited file.")
-            warnings += self.embed_warning(before, after, rows)
+            warnings += document_embed_warning(before_html, after_html)
             mode = "whole file"
         else:
             new_text = source
@@ -144,7 +145,7 @@ class GitHub(Connector):
 
     def _branch(self, slug: str) -> str:
         clean = re.sub(r"[^a-z0-9-]+", "-", slug.lower()).strip("-")[:40] or "page"
-        return f"ranksim/{clean}-{time.strftime('%Y%m%d-%H%M%S', time.gmtime())}"
+        return f"ranksim/{clean}-{time.strftime('%Y%m%d-%H%M%S', time.gmtime())}-{secrets.token_hex(3)}"
 
     def _open_pr(self, *, path: str, text: str, sha: str | None, title: str, body: str, slug: str) -> dict:
         base_sha = self.call("GET", f"/git/ref/heads/{self.base}").json()["object"]["sha"]

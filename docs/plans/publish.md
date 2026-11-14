@@ -27,7 +27,9 @@ the connector code lives outside it and `plugins/publish.py` stays a thin wiring
 - DNS: TXT `ranksim-verification=TOKEN` on the domain, via Cloudflare DoH then Google DoH (`application/dns-json`).
   Split TXT strings are joined. NXDOMAIN is a real "not found". A DNS proof covers subdomains; meta and file cover
   only that host.
-- Page fetches go through `ui.preview_fetch`, the robots-respecting, private-address-refusing Crawler.
+- Proof fetches use the same robots-respecting, private-address-refusing Crawler as `ui.preview_fetch`, but keep the final
+  URL: a proof served after a redirect to another host does not count (apex to www does). The meta tag counts only
+  inside `<head>`.
 - Re-check: before a publish or rollback when the proof is older than 24 hours, and after every pull (`after_pull`).
   A proof that is gone revokes ownership. A check that could not run (resolver down, fetch blocked) keeps a success
   younger than 7 days, never longer.
@@ -38,6 +40,9 @@ the connector code lives outside it and `plugins/publish.py` stays a thin wiring
   `ranksim.publish:<project slug>:<connection id>`, so a sealed value copied to another project or connection does not
   open. Until secretbox lands, saving a connection answers 503 "encryption is not set up"; tests use a fake module.
 - A connection is tested against the platform before it is saved. No route returns `sealed` or any secret field.
+- User-supplied hosts are resolved once, every address must be public, and the request dials that address with the
+  original Host header and TLS name (no DNS rebinding between check and connect). WordPress must use https so the
+  application password is never sent in the clear.
 - Platform hosts are fixed (api.webflow.com, api.github.com, `*.myshopify.com`). User-supplied hosts (WordPress site,
   webhook URL) must be public addresses; redirects are not followed.
 
@@ -49,7 +54,9 @@ description, main heading, body content region) and each connector says per fiel
 - WordPress (REST, application password): h1 to post title; title and description to Rank Math (`rankmath/v1/updateMeta`)
   or Yoast meta when the site exposes it; otherwise title via "post title + site suffix", description to excerpt; body to
   post content from `.entry-content` and similar, only when that region's text matches the post's rendered content.
-  Blocks and shortcodes need an explicit confirm because the body is saved as plain HTML.
+  Blocks and shortcodes need an explicit confirm because the body is saved as plain HTML. A title change made through the
+  post title also changes the heading on most themes, so it needs a confirm. Rank Math does not expose stored values
+  over REST by default, so rollback of Rank Math fields clears them (its template applies again) unless the site exposes them.
 - Webflow (Data API v2): static page SEO title and description (`PUT /pages/{id}`). Static page text cannot change through
   the API; the UI says so. Page changes stay drafts unless the owner ticks "Publish the site", which also publishes
   anything else staged. CMS items: name, SEO title and description fields when present, rich text body; the item is
@@ -75,6 +82,13 @@ Every connector refuses to publish a body that lost scripts, iframes or forms wi
 
 History entry: who, when, URL, connection, ownership method, rows (before and after per field), the platform result, the
 previous values, and the live check. The browser gets it without the stored previous content.
+
+Robustness: history is written before the platform call (a half-applied publish still has its previous values and can be
+rolled back); a rollback is refused while a newer publish of the same page is live; a rollback can use a reconnected
+connection of the same platform and site; unexpected platform answers become clean errors.
+
+Known gap outside this workstream: the shared Crawler (`aeo/crawl/fetch.py`) resolves names twice like the old connector
+code did, so it has the same DNS rebinding window. Infra owns that file.
 
 ## Routes
 

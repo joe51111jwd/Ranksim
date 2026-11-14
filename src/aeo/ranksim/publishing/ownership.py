@@ -20,6 +20,7 @@ import re
 import secrets
 import time
 from typing import Callable
+from urllib.parse import urlsplit
 
 import httpx
 from bs4 import BeautifulSoup
@@ -38,7 +39,8 @@ DOH_RESOLVERS = (
 )
 _DOMAIN = re.compile(r"^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9][a-z0-9-]{0,61}[a-z0-9]$")
 
-Fetch = Callable[[str], "tuple[str, str]"]  # url -> (body, error)
+# url -> (body, error) or (body, error, final_url). Proofs need final_url to refuse content from another host.
+Fetch = Callable[[str], tuple]
 
 
 class OwnershipError(ValueError):
@@ -96,6 +98,17 @@ def instructions(record: dict) -> dict:
     }
 
 
+def _get(fetch: Fetch, url: str, domain: str) -> tuple[str, str]:
+    """Fetch a proof URL. A redirect that ends on another host is refused: the proof must be served by the site."""
+    result = fetch(url)
+    body, error = result[0], result[1]
+    final = result[2] if len(result) > 2 and result[2] else url
+    host = (urlsplit(final).hostname or "").lower()
+    if not error and host not in {domain, "www." + domain}:
+        return "", f"redirected to another site ({host})"
+    return body, error
+
+
 # ---------------------------------------------------------------------------
 # The three checks. Each returns (found, detail, definitive). definitive=False means the check could not run.
 # ---------------------------------------------------------------------------
@@ -104,12 +117,15 @@ def instructions(record: dict) -> dict:
 def check_meta(domain: str, token: str, fetch: Fetch) -> tuple[bool, str, bool]:
     errors = []
     for host in (domain, "www." + domain):
-        html, error = fetch(f"https://{host}/")
+        html, error = _get(fetch, f"https://{host}/", domain)
+        if error.startswith("redirected"):
+            return False, f"https://{host}/ {error}, so its meta tag does not count.", True
         if error or not html:
             errors.append(error or "empty response")
             continue
         soup = BeautifulSoup(html, "lxml")
-        for meta in soup.find_all("meta"):
+        # Only the <head> counts, so a tag planted in user content on the page (a comment, a post) is not a proof.
+        for meta in soup.head.find_all("meta") if soup.head else []:
             if str(meta.get("name", "")).strip().lower() == META_NAME:
                 if secrets.compare_digest(str(meta.get("content", "")).strip(), token):
                     return True, f"Found the meta tag on https://{host}/.", True
@@ -121,7 +137,9 @@ def check_meta(domain: str, token: str, fetch: Fetch) -> tuple[bool, str, bool]:
 def check_file(domain: str, token: str, fetch: Fetch) -> tuple[bool, str, bool]:
     errors = []
     for host in (domain, "www." + domain):
-        body, error = fetch(f"https://{host}{FILE_PATH}")
+        body, error = _get(fetch, f"https://{host}{FILE_PATH}", domain)
+        if error.startswith("redirected"):
+            return False, f"https://{host}{FILE_PATH} {error}, so it does not count.", True
         if error and ("404" in error or "410" in error):
             return False, f"No file at https://{host}{FILE_PATH}.", True
         if error or not body:

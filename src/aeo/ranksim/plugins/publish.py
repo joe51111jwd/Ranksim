@@ -46,9 +46,41 @@ def _error(status: int, message: str, **extra) -> JSONResponse:
     return JSONResponse({"error": message, **extra}, status_code=status)
 
 
+def proof_fetcher(settings):
+    """Like ui.preview_fetch (robots respected, private addresses refused) but also returns the final URL, so an
+    ownership proof served after a redirect to another host is not accepted."""
+    from aeo.crawl.fetch import Crawler
+    from aeo.errors import UnsafeURL
+
+    def fetch(url: str) -> tuple[str, str, str]:
+        crawler = Crawler(
+            user_agent=settings.crawl_user_agent,
+            delay_seconds=0,
+            allow_private=settings.crawl_allow_private,
+            timeout=settings.request_timeout_seconds,
+        )
+        try:
+            fetched = crawler.fetch(url)
+        except UnsafeURL as exc:
+            return "", f"refused: {exc}", url
+        except Exception as exc:  # noqa: BLE001 - reported as a check that could not run
+            return "", f"fetch failed: {type(exc).__name__}", url
+        finally:
+            crawler.close()
+        if fetched.blocked:
+            return "", "blocked by robots.txt", fetched.final_url
+        if fetched.error or not fetched.html:
+            return "", fetched.error or "empty response", fetched.final_url
+        return fetched.html, "", fetched.final_url
+
+    return fetch
+
+
 def publisher_for(ui, project) -> Publisher:
-    # Tests set ui.publish_overrides (a mocked http_factory, no sleeping). The app never does.
+    # Tests set ui.publish_overrides (a mocked http_factory and fetcher, no sleeping). The app never does.
     kwargs = dict(getattr(ui, "publish_overrides", None) or {})
+    if "proof_fetch" not in kwargs:
+        kwargs["proof_fetch"] = proof_fetcher(ui.settings)
     return Publisher(
         PublishStore.for_project(project),
         fetch=ui.preview_fetch,
@@ -200,10 +232,14 @@ def register(app, ui) -> None:
     @app.post("/api/v1/projects/{slug}/publish/history/{entry_id}/rollback")
     async def publish_rollback(slug: str, entry_id: str, request: Request):
         common._check_header_csrf(ui, request)
+        connection_id = None
+        if "application/json" in (request.headers.get("content-type") or ""):
+            body = await common._json_body(request, 8192)
+            connection_id = text(body.get("connection_id"), 40) or None
         pub, blocked = guard(slug)
         if blocked:
             return blocked
-        return await run(pub.rollback, entry_id)
+        return await run(pub.rollback, entry_id, connection_id)
 
 
 def after_pull(*, project, report=None, ui=None, **_ignored) -> None:

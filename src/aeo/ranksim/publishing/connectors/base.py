@@ -14,16 +14,18 @@ Every outbound call goes through ``self.http`` (an httpx.Client, mocked in tests
 
 from __future__ import annotations
 
+import ipaddress
 import re
+import socket
 from dataclasses import dataclass, field
-from urllib.parse import urlsplit
+from urllib.parse import urlsplit, urlunsplit
 
 import httpx
 
-from aeo.crawl.urls import assert_safe_url, normalize_url
+from aeo.crawl.urls import _is_public_ip, assert_safe_url, normalize_url
 from aeo.errors import UnsafeURL
 
-from ..htmlparts import FIELD_LABELS, PageParts, changes as field_changes, lost_embeds, short, text_of
+from ..htmlparts import EMBED_TAGS, FIELD_LABELS, PageParts, changes as field_changes, lost_embeds, short, soup_of, text_of
 
 TIMEOUT = 20.0
 
@@ -122,7 +124,41 @@ class Connector:
         except (UnsafeURL, ValueError) as exc:
             raise ConnectorError(f"That address cannot be used: {exc}") from exc
 
-    def request(self, method: str, url: str, *, expect=(200, 201), **kwargs) -> httpx.Response:
+    def pinned(self, url: str) -> tuple[str, dict, dict]:
+        """Resolve a user-supplied host once, refuse it unless every address is public, and dial that address.
+
+        Returns (url with the IP, extra headers, httpx extensions). The Host header and TLS server name stay the
+        original name, so certificates are still checked against it. This closes the gap where a name answers a
+        public address to the check and a private one to the real connection (DNS rebinding).
+        """
+        if self.allow_private:
+            return url, {}, {}
+        parts = urlsplit(url)
+        host = parts.hostname or ""
+        try:
+            ipaddress.ip_address(host)
+            return url, {}, {}  # an IP literal was already checked by safe_url
+        except ValueError:
+            pass
+        port = parts.port or (443 if parts.scheme == "https" else 80)
+        try:
+            infos = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
+        except OSError as exc:
+            raise ConnectorError(f"{host} could not be resolved.") from exc
+        addresses = [ipaddress.ip_address(info[4][0].split("%", 1)[0]) for info in infos]
+        if not addresses or not all(_is_public_ip(a) for a in addresses):
+            raise ConnectorError(f"{host} points at a private address, so it cannot be used.")
+        ip = addresses[0]
+        shown = f"[{ip}]" if ip.version == 6 else str(ip)
+        netloc = f"{shown}:{parts.port}" if parts.port else shown
+        return urlunsplit((parts.scheme, netloc, parts.path, parts.query, "")), {"Host": parts.netloc}, {"sni_hostname": host}
+
+    def request(self, method: str, url: str, *, expect=(200, 201), pin: bool = False, **kwargs) -> httpx.Response:
+        if pin:
+            url, headers, extensions = self.pinned(url)
+            if headers:
+                kwargs["headers"] = {**(kwargs.get("headers") or {}), **headers}
+                kwargs["extensions"] = extensions
         try:
             response = self.http.request(method, url, timeout=TIMEOUT, **kwargs)
         except httpx.HTTPError as exc:
@@ -148,6 +184,26 @@ class Connector:
                 "text": f"The edited body has fewer {', '.join(lost)} elements than the live page. Publishing the body removes them.",
             }
         ]
+
+
+def document_embeds(html: str) -> dict:
+    soup = soup_of(html)
+    return {tag: len(soup.find_all(tag)) for tag in EMBED_TAGS}
+
+
+def document_embed_warning(before_html: str, after_html: str) -> list[dict]:
+    """For connectors that send the whole page: scripts, iframes or forms lost anywhere in the document."""
+    old, new = document_embeds(before_html), document_embeds(after_html)
+    lost = [tag for tag in EMBED_TAGS if old.get(tag, 0) > new.get(tag, 0)]
+    if not lost:
+        return []
+    return [
+        {
+            "code": "embeds_removed",
+            "confirm": True,
+            "text": f"The edited page has fewer {', '.join(lost)} elements than the live page. Publishing it removes them.",
+        }
+    ]
 
 
 def platform_message(response: httpx.Response) -> str:
@@ -183,11 +239,16 @@ def same_page(left: str, right: str) -> bool:
     return host(a) == host(b) and (a.path.rstrip("/") or "/") == (b.path.rstrip("/") or "/")
 
 
+SEPARATORS = " |-:\u00b7\u2013\u2014\u2022\u00bb/"
+
+
 def strip_suffix_title(old_title: str, item_title: str, new_title: str) -> str | None:
     """'Old | Site' with item 'Old' and new 'New | Site' -> 'New'. None when the suffix pattern does not hold."""
     if not item_title or not old_title.startswith(item_title):
         return None
     suffix = old_title[len(item_title):]
+    if suffix and suffix[0] not in SEPARATORS:  # 'Old' must be a whole word prefix, not 'Olden'
+        return None
     if suffix and not new_title.endswith(suffix):
         return None
     candidate = new_title[: len(new_title) - len(suffix)] if suffix else new_title

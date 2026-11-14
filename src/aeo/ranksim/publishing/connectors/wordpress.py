@@ -44,6 +44,8 @@ class WordPress(Connector):
         base = str(self.settings.get("base_url", "")).rstrip("/")
         if not base:
             raise ConnectorError("Add the WordPress site address.")
+        if not base.lower().startswith("https://") and not self.allow_private:
+            raise ConnectorError("The WordPress address must use https, so the application password is never sent in the clear.")
         return self.safe_url(base + "/").rstrip("/") + "/wp-json"
 
     @property
@@ -51,7 +53,7 @@ class WordPress(Connector):
         return httpx.BasicAuth(str(self.settings.get("username", "")), self.secret.get("app_password", ""))
 
     def call(self, method: str, path: str, **kwargs) -> httpx.Response:
-        return self.request(method, self.root + path, auth=self.auth, **kwargs)
+        return self.request(method, self.root + path, auth=self.auth, pin=True, **kwargs)
 
     def check(self) -> str:
         me = self.call("GET", "/wp/v2/users/me", params={"context": "edit"}).json()
@@ -72,8 +74,9 @@ class WordPress(Connector):
         path = path_of(url)
         if path == "/":
             try:
-                front = int(self.call("GET", "/wp/v2/settings").json().get("page_on_front") or 0)
-            except (ConnectorError, ValueError):
+                settings = self.call("GET", "/wp/v2/settings").json()
+                front = int(settings.get("page_on_front") or 0) if settings.get("show_on_front") == "page" else 0
+            except (ConnectorError, ValueError, TypeError, AttributeError):
                 front = 0
             if not front:
                 raise ConnectorError("This homepage is not a WordPress page (it lists posts), so the API cannot change it.")
@@ -115,7 +118,7 @@ class WordPress(Connector):
             elif field == "title":
                 if plugin == "rankmath":
                     payload["rankmath"][RM_TITLE] = after.title
-                    previous["rankmath"][RM_TITLE] = before.title
+                    previous["rankmath"][RM_TITLE] = rank_math_stored(meta, RM_TITLE)
                     row.update(apply=True, note="Sets the Rank Math SEO title.")
                 elif plugin == "yoast" and YOAST_TITLE in meta:
                     payload["meta"][YOAST_TITLE] = after.title
@@ -126,12 +129,20 @@ class WordPress(Connector):
                 elif "h1" not in changing and (new := strip_suffix_title(before.title, post_title_text, after.title)):
                     payload["post"]["title"] = new
                     row.update(apply=True, note="Sets the WordPress title, which this theme uses for the title tag.")
+                    if before.h1 == post_title_text:
+                        warnings.append(
+                            {
+                                "code": "title_changes_heading",
+                                "confirm": True,
+                                "text": f"This theme builds the title tag and the main heading from the same WordPress title, so the heading becomes \"{new}\" too.",
+                            }
+                        )
                 else:
                     row["note"] = "No SEO plugin here, and the title tag is not built from the WordPress title."
             elif field == "description":
                 if plugin == "rankmath":
                     payload["rankmath"][RM_DESC] = after.description
-                    previous["rankmath"][RM_DESC] = before.description
+                    previous["rankmath"][RM_DESC] = rank_math_stored(meta, RM_DESC)
                     row.update(apply=True, note="Sets the Rank Math description.")
                 elif plugin == "yoast" and YOAST_DESC in meta:
                     payload["meta"][YOAST_DESC] = after.description
@@ -139,9 +150,11 @@ class WordPress(Connector):
                     row.update(apply=True, note="Sets the Yoast description.")
                 elif plugin == "yoast":
                     row["note"] = "Yoast does not let the API change the description on this site. Change it in WordPress."
-                else:
+                elif "excerpt" in item:
                     payload["post"]["excerpt"] = after.description
                     row.update(apply=True, note="Saved as the excerpt. Your theme decides whether it is used as the description.")
+                else:
+                    row["note"] = "No SEO plugin here, and this kind of page has no excerpt, so the description is left as is."
             elif field == "body":
                 if not after.region_selector:
                     row["note"] = "The post content area was not found on the page. Set a content selector on the connection."
@@ -186,3 +199,10 @@ class WordPress(Connector):
         rankmath = {key: prev["rankmath"].get(key, "") for key in (payload.get("rankmath") or {})}
         self._write(remote["type"], remote["id"], post, meta, rankmath)
         return {"status": "live"}
+
+
+def rank_math_stored(meta: dict, key: str) -> str:
+    """The value Rank Math stored, when the site exposes it. Otherwise empty: Rank Math then uses its template,
+    which is what an unset field shows. Rollback writes this value back."""
+    value = meta.get(key) if isinstance(meta, dict) else None
+    return value if isinstance(value, str) else ""

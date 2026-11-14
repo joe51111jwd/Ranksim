@@ -886,3 +886,13 @@ def test_a_brief_is_built_only_from_the_pages_that_rank():
     assert few["note"] and few["sections"] == []
     briefs = cp.content_briefs([row, {**row, "q": "ranked", "position": 2}, {**row, "q": "unchecked", "checked": False}], docs)
     assert list(briefs) == ["excavation software"]
+
+
+def test_brief_sections_are_topics_not_products_or_taglines():
+    body = "Estimating and job costing for crews. " * 30
+    heads = ["Estimating", "AGTEK Gradework", "JobTread: Best General PM", "Tackle every excavation project with ease", "STACK", "Top 7 Estimating Tools", "Frequently asked questions"]
+    docs = {f"https://s{i}.example/": _page("", "T", "T", heads, body) for i in range(3)}
+    row = {"q": "excavation estimating software", "checked": True, "position": None, "url": None,
+           "top": [{"position": i + 1, "url": f"https://s{i}.example/", "you": False} for i in range(3)] + [{"position": 4, "url": "https://www.agtek.com/x", "you": False}]}
+    brief = cp.content_brief(row["q"], row, docs, other_brands={"jobtread", "stack"})
+    assert [item["heading"] for item in brief["sections"]] == ["Estimating"]

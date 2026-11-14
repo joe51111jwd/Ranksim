@@ -738,6 +738,24 @@ MAX_BRIEF_QUESTIONS = 6
 QUESTION_WORDS = ("how", "what", "why", "when", "where", "which", "who", "is", "are", "can", "does", "do", "should")
 
 
+def _brief_heading(label: str, brands: set[str]) -> bool:
+    """A section worth suggesting: a topic, not a product entry from a list article ("JobTread: Best PM"), a brand,
+    a tagline or the FAQ heading (the FAQ is suggested as an element)."""
+    from aeo.ranksim.discovery import _label_reason, _noise_reason, _tagline_reason
+
+    phrase = clean(label)
+    if not phrase or ":" in label or len(phrase.split()) > 8 or _names_a_brand(label, brands) or re.search(r"\d", phrase):
+        return False
+    words = label.split()
+    if len(words) == 1 and label.isupper() and len(label) > 1:
+        return False  # "STACK" is a product name
+    if re.search(r"\b(with ease|every project|every job|made easy|done right|in minutes)\b", phrase) or phrase.split()[0] in {"tackle", "take", "get", "make", "meet", "say", "stop", "start", "try"}:
+        return False
+    if re.search(r"\bfaqs?\b|frequently asked|questions", phrase):
+        return False
+    return not (_tagline_reason(phrase) or _noise_reason(phrase, "h2") or (_label_reason(phrase) and phrase not in CONTENT_LABELS))
+
+
 def _names_a_brand(text: str, brands: set[str]) -> bool:
     words = set(clean(text).split())
     squashed = clean(text).replace(" ", "")
@@ -749,7 +767,23 @@ def _cased(text: str) -> str:
     return text[:1].upper() + text[1:] if text else text
 
 
-def content_brief(search: str, row: dict, docs: dict[str, str], *, questions: list[str] | None = None, brand: str = "", is_ours=None, cache: dict | None = None) -> dict:
+def _brand_names(urls) -> set[str]:
+    """Site names as words: "insitesoftware.com" gives "insitesoftware" and "insite"."""
+    brands: set[str] = set()
+    for url in urls:
+        try:
+            tokens = host_tokens(domain_of(url))
+        except ValueError:
+            continue
+        brands |= tokens
+        for token in tokens:
+            bare = re.sub(r"(software|app|apps|hq|inc|ct)$", "", token)
+            if len(bare) >= 4:
+                brands.add(bare)
+    return brands
+
+
+def content_brief(search: str, row: dict, docs: dict[str, str], *, questions: list[str] | None = None, brand: str = "", is_ours=None, cache: dict | None = None, other_brands: set[str] | None = None) -> dict:
     """A brief for a new or better page, built only from the stored pages that rank for the search: a title and H1,
     the sections most of them share (with how many have each), questions people ask, a word range, and the page
     elements most of them have. It describes what ranks now; it is not a promise of a position."""
@@ -780,18 +814,13 @@ def content_brief(search: str, row: dict, docs: dict[str, str], *, questions: li
         return brief
     total = len(pages)
     asked: list[str] = []
-    brands = set()
-    for page in pages:
-        try:
-            brands |= host_tokens(domain_of(page["url"]))
-        except ValueError:
-            pass
+    brands = _brand_names(item["url"] for item in top) | set(other_brands or ())  # every ranking site's name
     for topic in _cluster([(page["url"], item["text"]) for page in pages for item in page["headings"]]):
         label = min(topic["texts"], key=lambda text: (-topic["texts"][text], len(text)))
         is_question = label.rstrip().endswith("?") or clean(label).split()[:1] in [[word] for word in QUESTION_WORDS]
         if is_question and len(topic["pages"]) >= 1 and not _names_a_brand(label, brands):
             asked.append(label.strip())
-        if len(topic["pages"]) >= COMMON_MIN_PAGES and len(topic["pages"]) >= math.ceil(BRIEF_SHARE * total) and not is_question:
+        if len(topic["pages"]) >= COMMON_MIN_PAGES and len(topic["pages"]) >= math.ceil(BRIEF_SHARE * total) and not is_question and _brief_heading(label, brands):
             brief["sections"].append({"heading": label, "pages": len(topic["pages"]), "of": total, "evidence": list(topic["pages"])[:6]})
     brief["sections"].sort(key=lambda item: -item["pages"])
     brief["sections"] = brief["sections"][:MAX_BRIEF_SECTIONS]
@@ -832,11 +861,12 @@ def content_brief(search: str, row: dict, docs: dict[str, str], *, questions: li
 def content_briefs(rankings: list[dict], docs: dict[str, str], *, features: dict | None = None, brand: str = "", is_ours=None, cache: dict | None = None, limit: int = 20) -> dict:
     """Briefs for the searches the site has no page for, or ranks below the top 3 for, keyed by search."""
     out = {}
+    brands = _brand_names(item["url"] for row in rankings for item in row.get("top") or [] if item.get("url") and not item.get("you"))
     for row in rankings:
         if not row.get("checked") or (row.get("position") and row["position"] <= 3):
             continue
         found = (features or {}).get(row["q"]) or {}
-        out[row["q"]] = content_brief(row["q"], row, docs, questions=found.get("paa") or [], brand=brand, is_ours=is_ours, cache=cache)
+        out[row["q"]] = content_brief(row["q"], row, docs, questions=found.get("paa") or [], brand=brand, is_ours=is_ours, cache=cache, other_brands=brands)
         if len(out) >= limit:
             break
     return out
@@ -891,7 +921,7 @@ def stored_html(database: str, urls: list[str]) -> dict[str, str]:
     return {url: found[loose_key(url)] for url in urls if loose_key(url) in found}
 
 
-SECTIONS_VERSION = 11
+SECTIONS_VERSION = 14
 
 
 def _fingerprint(project, meta, google, features, rows, pages, docs) -> str:

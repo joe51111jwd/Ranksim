@@ -133,6 +133,13 @@ function nextText(iso) {
   return `Next check ${day(iso)}`;
 }
 
+/* A row's current position in words. A search with no Google check yet is "Not checked yet", never "Not in top 10",
+   which would read as a real Google result. */
+function rowText(row) {
+  if (!row || row.checked === false || (row.checked == null && !(row.spark || row.points || []).length)) return 'Not checked yet';
+  return rankText(row.position);
+}
+
 function rankText(position) {
   return position ? `#${position}` : 'Not in top 10';
 }
@@ -476,7 +483,7 @@ registerSearchColumn({
   header: 'Since last visit',
   cell(row) {
     const item = compactRow(S.report, row.q);
-    if (!item || !item.spark || !item.spark.length) return h('span', { class: 'history-none', text: 'No checks' });
+    if (!item || !item.spark || !item.spark.length) return h('span', { class: 'history-none', text: 'Not checked yet' });
     // The Searches row is a button, so this cell stays passive. The History screen opens the full chart.
     // The chip shows the move since the owner's last visit, the same numbers as the Overview alert.
     const label = `Positions at each check: ${item.spark.map(rankText).join(', ')}`;
@@ -500,7 +507,7 @@ registerScreen('track-history', {
     for (const row of rows) {
       list.append(h('button', { class: 'history-row-btn', type: 'button', onClick: () => openHistory(row.search) },
         h('span', { class: 'history-q', text: row.search }),
-        h('span', { class: `history-p${row.position ? '' : ' none'}`, text: rankText(row.position) }),
+        h('span', { class: `history-p${row.position ? '' : ' none'}`, text: rowText(row) }),
         h('span', { class: 'history-trend' }, sparkline(row.spark || [], `Positions at each check: ${(row.spark || []).map(rankText).join(', ')}`), changeChip(row))));
     }
     if (!rows.length) list.append(h('div', { class: 'empty-note', text: 'No searches yet.' }));
@@ -641,6 +648,7 @@ function settingsBody(slug, tracking, status, reload) {
   const note = h('p', { class: 'tile-sub history-when' });
   const paintNote = (data) => {
     if (data.schedule === 'off') note.textContent = 'This site is only checked when you refresh it.';
+    else if (data.scheduled_checks_ready === false) note.textContent = 'Scheduled checks are not set up on this server yet (they need a search data key and CRON_SECRET). Refresh by hand until then.';
     else if (data.next_check_at) note.textContent = `Last check ${day(data.last_check_at)}. ${nextText(data.next_check_at)}.`;
     else note.textContent = 'The first check runs on the next scheduled run.';
     if (data.last_result === 'error' && data.last_error) note.textContent += ' The last re-check failed.';

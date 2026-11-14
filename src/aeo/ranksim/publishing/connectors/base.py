@@ -25,7 +25,7 @@ import httpx
 from aeo.crawl.urls import _is_public_ip, assert_safe_url, normalize_url
 from aeo.errors import UnsafeURL
 
-from ..htmlparts import EMBED_TAGS, FIELD_LABELS, PageParts, changes as field_changes, lost_embeds, short, soup_of, text_of
+from ..htmlparts import EMBED_TAGS, display, FIELD_LABELS, PageParts, changes as field_changes, lost_embeds, short, soup_of, text_of
 
 TIMEOUT = 20.0
 
@@ -52,7 +52,7 @@ class Prepared:
         return {
             "url": self.url,
             "target": {k: v for k, v in self.target.items() if not k.startswith("_")},
-            "rows": [{**row, "before": short(row.get("before", "")), "after": short(row.get("after", ""))} for row in self.rows],
+            "rows": [display(row) for row in self.rows],
             "warnings": self.warnings,
             "can_rollback": self.can_rollback,
             "live_after_apply": self.live_after_apply,

@@ -304,6 +304,7 @@ class ProgressEvent:
     done: int = 0
     total: int = 0
     seconds: float = 0.0
+    plain: str = ""  # the same moment in a few plain words for the app (plain_progress); message keeps the detail
 
 
 @dataclass
@@ -1387,6 +1388,86 @@ def pull(
     return report
 
 
+_PLAIN_FALLBACK = {
+    "google": "Checking Google.",
+    "crawl": "Reading pages.",
+    "train": "Updating the ranking model.",
+    "engines": "Asking the AI engines.",
+    "save": "Saving.",
+    "done": "Done.",
+}
+
+
+def _host(url: str) -> str:
+    return (domain_of(url) or url).removeprefix("www.")
+
+
+def plain_progress(step: str, message: str, done: int = 0, total: int = 0) -> str:
+    """A pull's progress message in a few plain words for the app: no flags, pull ids, env var names or metrics.
+    The full message stays in ProgressEvent.message (the CLI and the stored pull notes use it)."""
+    text = message or ""
+    if step == "google":
+        if text.startswith("Getting the REAL Google top"):
+            match = re.search(r"for (\d+) searches", text)
+            return f"Checking Google for {match.group(1)} searches." if match else _PLAIN_FALLBACK["google"]
+        match = re.match(r"^(.*): (\d+) REAL results$", text)
+        if match:
+            return f"Checked Google for \"{match.group(1)}\" ({done} of {total})." if total else f"Checked Google for \"{match.group(1)}\"."
+        if "monthly search cap reached" in text:
+            return "The monthly search limit is reached, so the results from the last check are used."
+        if text.startswith("Google step") or "not run" in text:
+            return "Google was not asked this time, so the results from the last check are used."
+        fresh = re.search(r"for (\d+) of (\d+) searches", text)
+        reused = re.search(r"(\d+) searches reused", text)
+        if fresh:
+            pulled, of = int(fresh.group(1)), int(fresh.group(2))
+            parts = []
+            if pulled:
+                parts.append(f"Google checked {pulled} of {of} searches")
+            if reused:
+                count = int(reused.group(1))
+                if not pulled and count == of:
+                    parts.append(f"all {count} searches were checked in the last few hours, so those results were reused at no cost")
+                else:
+                    parts.append(f"{count} {'search was' if count == 1 else 'searches were'} checked in the last few hours and reused at no cost")
+            failed = re.search(r"(\d+) searches (?:failed now|have no REAL results|were not pulled)", text)
+            if failed:
+                parts.append(f"{failed.group(1)} could not be checked now")
+            if not parts:
+                return "Google checked."
+            line = "; ".join(parts)
+            return line[0].upper() + line[1:] + "."
+        return _PLAIN_FALLBACK["google"]
+    if step == "crawl":
+        match = re.match(r"^(\d+) of (\d+) pages are already stored and fresh\. Fetching (\d+)\.$", text)
+        if match:
+            fresh_count, _all, fetch = match.groups()
+            return f"Reading {fetch} new or changed pages. {fresh_count} are up to date." if fetch != "0" else f"All {fresh_count} pages are up to date."
+        match = re.match(r"^(\d+) URLs: (\d+) already stored, (\d+) fetched now, (\d+) kept.*?(\d+) blocked by robots, (\d+) HTTP errors, (\d+) other errors", text)
+        if match:
+            _urls, stored, fetched, kept, robots, http, other = (int(value) for value in match.groups())
+            unread = robots + http + other
+            line = f"Pages ready: {stored + kept} up to date, {fetched} read now"
+            return line + (f", {unread} could not be read." if unread else ".")
+        match = re.match(r"^(.+?): (https?://\S+)$", text)
+        if match:
+            status, url = match.groups()
+            if status in {"fetched now", "stored"}:
+                return f"Read a page on {_host(url)} ({done} of {total})." if total else f"Read a page on {_host(url)}."
+            return f"Could not read a page on {_host(url)} ({status})."
+        return _PLAIN_FALLBACK["crawl"]
+    if step == "train":
+        if text.startswith("Reused the engine"):
+            return "Nothing new to learn, so the ranking model was kept."
+        if text.startswith("Training"):
+            return "Updating the ranking model."
+        return "Ranking model updated."
+    if step == "done":
+        match = re.search(r"finished in ([\d.]+) s", text)
+        return f"Done in {match.group(1)} s." if match else _PLAIN_FALLBACK["done"]
+    return _PLAIN_FALLBACK.get(step, text)
+
+
 def _chosen_engines(engines: Sequence[str] | str | None) -> list[str]:
     """None means all four AI engines. 'none' or an empty list skips the step."""
     from aeo.ranksim.engines import ENGINE_KEYS, engine_key
@@ -1410,7 +1491,8 @@ class _Emitter:
     def __call__(self, step: str, message: str, done: int = 0, total: int = 0) -> None:
         if self.progress is None:
             return
-        event = ProgressEvent(step, plain_dashes(message), done, total, _round(time.perf_counter() - self.started))
+        text = plain_dashes(message)
+        event = ProgressEvent(step, text, done, total, _round(time.perf_counter() - self.started), plain_progress(step, text, done, total))
         with self.lock:
             self.progress(event)
 
@@ -2093,8 +2175,11 @@ def _reusable_engine(
     project: Project, previous: GoogleSnapshot | None, snapshot: GoogleSnapshot, counts: dict[str, int], site_urls: Sequence[str] = ()
 ) -> tuple[_Engine, str] | None:
     """The previous pull's engine, when this pull added nothing it learns from: no new Google data, nothing fetched,
-    and the same pages of your own site (another project may have stored more of them in the shared database)."""
-    if previous is None or snapshot.kind != "carried" or counts.get("fetched_now", 0) or counts.get("kept_stored", 0):
+    and the same pages of your own site (another project may have stored more of them in the shared database).
+
+    "No new Google data" means the same result lists as the previous pull: a carried snapshot, or an api one whose
+    searches were all reused within the freshness window or came back from Google unchanged."""
+    if previous is None or snapshot.kind not in {"carried", "api"} or counts.get("fetched_now", 0) or counts.get("kept_stored", 0):
         return None
     if _result_lists(previous, project.searches) != _result_lists(snapshot, project.searches):
         return None

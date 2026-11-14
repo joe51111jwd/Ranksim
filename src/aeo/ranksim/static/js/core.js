@@ -437,6 +437,16 @@ document.addEventListener('keydown', (event) => {
 
 /* ------------------------------------------------------------------ page parts */
 
+/* Where this site's positions come from: 'Google', or 'Demo' for the synthetic demo. Demo positions are invented,
+   so the UI must never call them Google positions. */
+export function isDemo(report = S.report) {
+  return !!(report && report.data && report.data.kind === 'synthetic');
+}
+
+export function sourceName(report = S.report) {
+  return isDemo(report) ? 'Demo' : 'Google';
+}
+
 /* A pull label is a date when one was recorded, or a phrase such as "pull date not recorded". Show dates only. */
 export function pulledText(prefix) {
   const pulled = S.report && S.report.pulled;
@@ -495,7 +505,10 @@ export const SEVERITY = { high: 'High', medium: 'Medium', low: 'Low' };
    are marked, and every result opens in the editor (any page can be edited; publishing needs ownership).
    opts.q is the search the editor should test against (defaults to ?q= in the address). */
 export function serpList(items, opts = {}) {
-  const q = opts.q || (S.params && S.params.get('q')) || '';
+  // The search these results belong to, so the editor tests against it: given, or found by the result objects
+  // themselves (a sheet may pass row.top or a slice of it), or the q in the address.
+  const owner = S.report && items && items.length ? S.report.rankings.find((row) => (row.top || []).includes(items[0])) : null;
+  const q = opts.q || (owner && owner.q) || (S.params && S.params.get('q')) || '';
   return h('ol', { class: 'serp', 'aria-label': q ? `Top results for ${q}` : 'Top results' }, (items || []).map((item) => h('li', { class: `rowcard${item.you ? ' you' : item.competitor ? ' rival' : ''}` },
     h('span', { class: `pos${item.you ? ' you' : ''}`, text: String(item.position) }),
     h('span', { class: `fav${item.you ? ' you' : item.competitor ? ' dark' : ''}`, text: initial(item.domain), 'aria-hidden': 'true' }),

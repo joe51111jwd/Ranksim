@@ -1246,3 +1246,81 @@ def test_counter_writes_use_the_temp_name_cloud_storage_skips(tmp_path, monkeypa
     scope = cloud._Scope(tmp_path, recursive=True)
     (tmp_path / seen[0]).write_text("{half")  # as if a save ran mid-write
     assert all(not rel.split("/")[-1].startswith(".ranksim-tmp-") for rel, _path in scope.files())
+
+
+# -- pre-deploy QA fixes
+
+def test_never_checked_searches_are_marked_not_checked(tmp_path):
+    project = _project(tmp_path / "projects", searches=["checked", "never"])
+    _write_snapshot(project, "20261114T000000Z", NOW, {"checked": ["https://x.example/"]})
+    history = tracking.build_history(project, ws.WorkspaceMeta())
+    rows = {row["search"]: row for row in history["searches"]}
+    assert rows["checked"]["checked"] is True and rows["checked"]["position"] is None  # checked: really not in the top 10
+    assert rows["never"]["checked"] is False and rows["never"]["points"] == []
+    compact = {row["search"]: row for row in tracking.compact_history(history)["searches"]}
+    assert compact["never"]["checked"] is False and compact["checked"]["checked"] is True
+
+
+def test_scheduled_checks_ready_needs_a_key_and_cron_secret(tmp_path, monkeypatch):
+    project = _history_project(tmp_path)
+    ui = _ui(tmp_path, serper_api_key="fake-serper")
+    monkeypatch.delenv("CRON_SECRET", raising=False)
+    report: dict = {}
+    tracking.extend_report(report, project=project, meta=ws.WorkspaceMeta(), ui=ui)
+    assert report["history"]["scheduled_checks_ready"] is False and report["history"]["next_check_at"] is None
+    monkeypatch.setenv("CRON_SECRET", "cron-test-secret")
+    tracking.extend_report(report, project=project, meta=ws.WorkspaceMeta(), ui=ui)
+    assert report["history"]["scheduled_checks_ready"] is True and report["history"]["next_check_at"]
+    tracking.extend_report(report, project=project, meta=ws.WorkspaceMeta(), ui=_ui(tmp_path / "nokey"))
+    assert report["history"]["scheduled_checks_ready"] is False
+    tracking.save_schedule(project, "off")
+    tracking.extend_report(report, project=project, meta=ws.WorkspaceMeta(), ui=ui)
+    assert report["history"]["scheduled_checks_ready"] is False and report["history"]["next_check_at"] is None
+    ui.public_demo = True
+    assert tracking.scheduled_checks_ready(ui) is False
+
+
+def test_plain_progress_has_no_technical_text():
+    from aeo.ranksim.project import plain_progress
+
+    raw = [
+        ("google", "Getting the REAL Google top 10 for 4 searches.", 0, 4),
+        ("google", "dirt work software: 7 REAL results", 1, 4),
+        ("google", "REAL Google results pulled now from serper for 0 of 4 searches. 4 searches reused REAL results pulled within the last 6 hours (kept their own pull date, not paid for again).", 4, 4),
+        ("google", "Google step skipped (--skip-google). Using the REAL results saved in pull 20261114T102953Z: 4 of 4 searches.", 0, 0),
+        ("google", "Google step not run: needs SERPAPI_KEY, SERPER_API_KEY, or DATAFORSEO_LOGIN and DATAFORSEO_PASSWORD.", 0, 0),
+        ("crawl", "21 of 24 pages are already stored and fresh. Fetching 3.", 21, 24),
+        ("crawl", "HTTP 403: https://forbidden.example/a", 22, 24),
+        ("crawl", "24 URLs: 21 already stored, 0 fetched now, 0 kept an older stored copy after a failed refresh, 1 blocked by robots, 1 HTTP errors, 1 other errors.", 24, 24),
+        ("train", "Backtest (PREDICTED order vs REAL Google order, each search held out): pairwise 0.782 on 55 pairs, NDCG at 10 0.873, Spearman 0.574.", 4, 4),
+        ("train", "Reused the engine of pull 20261114T102953Z: no new Google results and no newly fetched pages.", 4, 4),
+        ("done", "Pull 20261114T102953Z-2 finished in 0.2 s.", 1, 1),
+        ("engines", "perplexity: not run: needs PERPLEXITY_API_KEY", 0, 0),
+    ]
+    banned = ("--", "SERPER", "SERPAPI", "DATAFORSEO", "_KEY", "NDCG", "Spearman", "pairwise", "2026", "REAL", "http")
+    for step, message, done, total in raw:
+        plain = plain_progress(step, message, done, total)
+        assert plain and not any(word in plain for word in banned), (message, plain)
+        assert "—" not in plain and "–" not in plain
+    assert plain_progress("google", raw[2][1], 4, 4) == "All 4 searches were checked in the last few hours, so those results were reused at no cost."
+
+
+def test_refresh_with_nothing_new_keeps_the_engine_and_streams_plain_lines(tmp_path):
+    import queue as queue_module
+
+    from aeo.ranksim.api import sites
+
+    ui = _app_ui(tmp_path, serper_api_key="fake-serper")
+    tracking.install_budget(ui)
+    project = _project(ui.root, slug="dirt-crew")
+    sites._run_pull(ui, project, True, queue_module.Queue())
+    events: queue_module.Queue = queue_module.Queue()
+    summary = sites._run_pull(ui, project, True, events)  # every search reused within 6 hours, nothing new fetched
+    lines = []
+    while not events.empty():
+        lines.append(events.get())
+    progress = [line for line in lines if line.get("type") == "progress"]
+    assert any(line["message"] == "Nothing new to learn, so the ranking model was kept." for line in progress)
+    assert all("detail" in line for line in progress if line["step"] in {"google", "crawl", "train", "done"})
+    assert not any("NDCG" in line["message"] or "REAL" in line["message"] for line in progress)
+    assert summary

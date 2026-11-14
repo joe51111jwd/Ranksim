@@ -182,7 +182,7 @@ function paintChanges(view, changes, error) {
   clear(tile);
   const diff = view.page.diff;
   add(tile, h('div', { class: 'tile-head' }, h('h2', { text: 'What changes' })));
-  if (diff && diff.summary) add(tile, editsList(diff));
+  if (diff && diff.summary) add(tile, h('p', { class: 'publish-summary', text: diff.summary }));
   if (error) {
     add(tile, h('p', { class: 'caveat', text: error }));
     return;
@@ -202,27 +202,49 @@ function paintChanges(view, changes, error) {
     return;
   }
   const rows = view.plan ? view.plan.rows : changes.map((c) => ({ ...c, apply: null }));
-  if (diff && diff.summary) add(tile, h('b', { class: 'publish-sub', text: 'What the site gets' }));
+  const blocks = bodyChanges(diff);
   add(tile, h('div', { class: 'publish-rows' }, rows.map((row) => h('div', { class: 'publish-row' },
     h('div', { class: 'publish-row-head' },
       h('b', { text: row.label }),
       row.apply === true ? h('span', { class: 'chip chip-green', text: 'Will publish' }) : row.apply === false ? h('span', { class: 'chip chip-gray', text: 'Not through this connection' }) : null),
-    h('div', { class: 'publish-before', text: row.before || 'Empty' }),
-    h('div', { class: 'publish-after' }, icon('arrow'), h('span', { text: row.after || 'Empty' })),
+    row.field === 'body' && blocks.length ? bodyBlocks(blocks) : [
+      h('div', { class: 'publish-before', text: row.before || 'Empty' }),
+      h('div', { class: 'publish-after' }, icon('arrow'), h('span', { text: row.after || 'Empty' })),
+      row.places ? h('p', { class: 'caveat', text: `Changed in ${row.places} places. The first ones are shown.` }) : null,
+    ],
     row.note ? h('p', { class: 'caveat', text: row.note }) : null))));
 }
 
-/* The editor's own account of the edits (ctx.diff): one sentence, then each changed block in plain words. */
+/* The body row, from the editor's own diff (ctx.diff): each changed block with its words marked, unchanged stretches
+   trimmed, so the edit is visible however long the page is. Title, description and main heading have their own rows. */
 const SHOWN_EDITS = 8;
-function editsList(diff) {
-  const changes = diff.changes || [];
+const OWN_ROWS = new Set(['title', 'description', 'h1']);
+const bodyChanges = (diff) => ((diff && diff.changes) || []).filter((c) => c.type !== 'same' && !OWN_ROWS.has(c.tag));
+
+function trimmed(text, where) {
+  const limit = 70;
+  if (text.length <= limit) return text;
+  if (where === 'first') return `...${text.slice(-limit / 2)}`;
+  if (where === 'last') return `${text.slice(0, limit / 2)}...`;
+  return `${text.slice(0, limit / 2)} ... ${text.slice(-limit / 2)}`;
+}
+
+function wordLine(words) {
+  return h('p', { class: 'publish-words' }, words.map((w, i) => {
+    if (w.op === '+') return h('ins', { text: w.text });
+    if (w.op === '-') return h('del', { text: w.text });
+    return h('span', { text: trimmed(w.text, i === 0 ? 'first' : i === words.length - 1 ? 'last' : 'middle') });
+  }));
+}
+
+function bodyBlocks(changes) {
   const line = (c) => h('li', null,
     h('b', { text: c.label || c.kind || c.type }),
-    c.type === 'changed' && c.before ? h('span', { class: 'publish-before', text: c.before }) : null,
-    c.after ? h('span', { class: 'publish-after-text', text: c.after }) : c.type === 'removed' && c.before ? h('span', { class: 'publish-before', text: c.before }) : null);
+    c.words && c.words.length ? wordLine(c.words)
+      : c.type === 'removed' ? h('p', { class: 'publish-words' }, h('del', { text: trimmed(c.before || '', 'last') }))
+        : c.after ? h('p', { class: 'publish-words' }, c.type === 'added' ? h('ins', { text: trimmed(c.after, 'last') }) : h('span', { text: trimmed(c.after, 'last') })) : null);
   return h('div', { class: 'publish-edits' },
-    h('p', { class: 'publish-summary', text: diff.summary }),
-    changes.length ? h('ul', null, changes.slice(0, SHOWN_EDITS).map(line)) : null,
+    h('ul', null, changes.slice(0, SHOWN_EDITS).map(line)),
     changes.length > SHOWN_EDITS ? h('p', { class: 'caveat', text: `And ${changes.length - SHOWN_EDITS} more.` }) : null);
 }
 

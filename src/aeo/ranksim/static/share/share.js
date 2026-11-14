@@ -79,7 +79,7 @@
     var moves = w.moves || [];
     var done = w.done || [];
     var next = w.next || [];
-    var checks = w.checks ? "We checked your positions " + (w.checks === 1 ? "once" : w.checks + " times") + " this week." : "";
+    var checks = w.checks ? "Google was checked " + (w.checks === 1 ? "once" : w.checks + " times") + " this week." : "";
     return tile("week", [
       head("This week", "Since " + fmtDate(w.since) + "."),
       h("div", { class: "week-grid" }, [
@@ -148,7 +148,11 @@
   function render(d) {
     root.textContent = "";
     var src = d.source || "Google";
-    var checked = d.google_date ? src + " checked " + d.google_date : d.search_data ? src + " check date not recorded" : "Not checked on " + src + " yet";
+    var demo = !!(d.data && d.data.demo);
+    // A demo never says Google: its sites and positions are invented.
+    var where = demo ? "the demo results" : "Google";
+    var posLabel = demo ? "Demo position" : "Your position";
+    var checked = demo ? "Invented demo data" : d.google_date ? "Google checked " + d.google_date : d.search_data ? "Google check date not recorded" : "Not checked on Google yet";
     document.title = "Search report for " + (d.site || d.name || "your site");
 
     if (d.preview) {
@@ -173,7 +177,7 @@
     root.appendChild(tile("hero dark-tile", [
       h("p", { class: "eyebrow", text: "Search report" }),
       h("h1", { text: d.site || d.name || "Your site" }),
-      h("p", { class: "lead", text: "Where your site shows up in Google, what we found, and what we are doing about it." }),
+      h("p", { class: "lead", text: "Where your site shows up in " + where + ", what we found, and what we are doing about it." }),
       h("p", { class: "dates" }, dates),
       d.data && d.data.demo ? h("p", { class: "demo", text: d.data.note }) : null,
     ]));
@@ -182,13 +186,13 @@
 
     var k = d.kpis || {};
     root.appendChild(h("section", { class: "stats", "aria-label": "Summary" }, [
-      stat("On page one of Google", (k.top10 || 0) + " of " + (k.checked || 0), "Searches where your site is in the first 10 results.", true),
+      stat(demo ? "On page one (demo)" : "On page one of Google", (k.top10 || 0) + " of " + (k.checked || 0), "Searches where your site is in the first 10 results.", true),
       stat("In the top 3", k.top3 || 0, "Searches where you are one of the first three results."),
       stat("Average position", k.average === null || k.average === undefined ? null : k.average, "Across searches where you are on page one. Lower is better."),
       stat("Searches we track", k.searches || 0, "What people type when you want them to find you."),
       stat("Things to fix", k.issues || 0, (k.high || 0) + " high priority"),
     ]));
-    root.appendChild(h("p", { class: "stats-note muted small", text: "Positions from " + (d.data && d.data.demo ? "demo data" : "Google") + ". " + checked + "." }));
+    root.appendChild(h("p", { class: "stats-note muted small", text: (demo ? "Invented demo positions, not Google results." : "Positions from Google. " + checked + ".") }));
 
     var rows = (d.rankings || []).map(function (r) {
       var pos = r.position ? "#" + r.position : r.checked ? "Not on page one" : "Not checked yet";
@@ -199,7 +203,7 @@
           r.url ? h("span", { class: "muted small", text: "Your page: " + pathOf(r.url) }) : null,
           r.date && r.date !== d.google_date ? h("span", { class: "muted small", text: "Checked " + r.date }) : null,
         ]),
-        h("td", { class: "num" + (r.position && r.position <= 3 ? " good" : ""), "data-label": "Your position", text: pos }),
+        h("td", { class: "num" + (r.position && r.position <= 3 ? " good" : ""), "data-label": posLabel, text: pos }),
         d.predictions ? h("td", { class: "num", "data-label": "Estimate (PREDICTED)" }, r.predicted ? [
           h("span", { text: "#" + r.predicted.position + " of " + r.predicted.of }),
           h("span", { class: "tag", text: "PREDICTED" }),
@@ -209,12 +213,12 @@
       ]);
     });
     root.appendChild(tile("", [
-      head("Where you show up", "Your position in Google for each search. #1 is the first result. " + checked + "." +
+      head("Where you show up", (demo ? "Demo position for each search. " : "Your position in Google for each search. ") + "#1 is the first result. " + checked + "." +
         (d.predictions ? " The estimate is Ranksim's model of where your page should land among the pages we stored. It is PREDICTED, not a Google position, and it is shown only for searches where a backtest was clearer, with the number of page pairs it is based on." : "")),
       rows.length ? h("div", { class: "table-wrap" }, [h("table", { class: "stack" }, [
         h("thead", {}, [h("tr", {}, [
           h("th", { text: "Search" }),
-          h("th", { class: "num", text: "Your position" }),
+          h("th", { class: "num", text: posLabel }),
           d.predictions ? h("th", { class: "num", text: "Estimate (PREDICTED)" }) : null,
           h("th", { text: "First result" }),
         ])]),
@@ -277,7 +281,7 @@
 
     var share = d.share || [];
     root.appendChild(tile("", [
-      head("Who else shows up", "Sites on page one of Google for your searches. " + checked + "."),
+      head("Who else shows up", "Sites on page one of " + where + " for your searches. " + checked + "."),
       d.competitors && d.competitors.length ? h("p", { class: "chips" }, [h("span", { class: "muted small", text: "Main competitors:" })].concat(d.competitors.map(function (c) { return h("span", { class: "chip", text: c }); }))) : null,
       share.length ? h("div", { class: "table-wrap" }, [h("table", { class: "stack" }, [
         h("thead", {}, [h("tr", {}, [h("th", { text: "Site" }), h("th", { class: "num", text: "Page one spots" }), h("th", { class: "num", text: "Best position" }), h("th", { class: "num", text: "Average position" })])]),
@@ -289,7 +293,7 @@
             h("td", { class: "num", "data-label": "Average position", text: String(s.average) }),
           ]);
         })),
-      ])]) : h("p", { class: "muted", text: "Not checked on Google yet." }),
+      ])]) : h("p", { class: "muted", text: demo ? "No demo results yet." : "Not checked on Google yet." }),
     ]));
 
     var changes = d.changes || [];

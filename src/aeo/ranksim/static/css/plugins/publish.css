@@ -50,3 +50,6 @@
 .publish-sub { font-size: 13px; color: var(--ink-2); font-weight: 550; margin-top: 4px; }
 .publish-steps .info svg { color: var(--ink-3); }
 .publish-can { display: grid; gap: 6px; padding: 12px 14px; border-radius: var(--r-card); background: var(--tile); font-size: 14px; }
+.publish-words { font-size: 13.5px; line-height: 1.5; color: var(--ink-2); overflow-wrap: anywhere; }
+.publish-words ins { text-decoration: none; color: var(--ink); background: var(--green-wash); border-radius: 4px; padding: 0 2px; }
+.publish-words del { color: var(--ink-3); background: var(--red-wash); border-radius: 4px; padding: 0 2px; }

@@ -86,6 +86,103 @@ CLIENT_KINDS = {
     "share": "Report",
     "note": "Note",
 }
+# What a client reads for each audit issue kind: a plain title and one plain line. The technical title, comment, fix,
+# element and suggestion stay with the owner. Titles with {search} have a variant for issues tied to no search.
+CLIENT_ISSUE_TEXT = {
+    "unreadable": ("We could not open this page", "If Google has the same trouble, the page cannot show up in search."),
+    "robots-blocked": ("This page tells Google not to visit it", "Google cannot read it, so it cannot show up in search."),
+    "noindex": ("This page asks Google to keep it out of search", "It will not show up in Google until that setting is removed."),
+    "canonical-other": ("This page points Google to a different page", "Google may show the other page instead of this one."),
+    "script-built": ("This page's text only appears after it loads in a browser", "Google may see a nearly empty page."),
+    "not-ranking": ('You have a page for "{search}", but it is not on page one', "The page needs to match what people searching for this want."),
+    "no-page": ('No page on your site is about "{search}"', "People search for this, but there is nothing on your site for them to find."),
+    "title-missing": ("This page has no title for Google", "The title is the headline people see in Google results."),
+    "h1-missing": ("This page has no main heading", "A clear main heading tells visitors and Google what the page is about."),
+    "viewport-missing": ("This page is not set up for phones", "Google ranks pages by how they work on a phone."),
+    "broken-link": ("A link on this page goes nowhere", "Broken links frustrate visitors and waste Google's time."),
+    "behind": ('Competitors cover "{search}" better', "Their pages answer more of what people want to know."),
+    "thin-vs-top": ('This page says less than the top results for "{search}"', "The pages above it cover the topic in more depth."),
+    "title-search": ('The page title does not mention "{search}"', "The title is the headline people see in Google."),
+    "title-duplicate": ("Several pages share the same title", "Google and visitors cannot tell them apart."),
+    "title-long": ("The page title is too long", "Google cuts it off in results."),
+    "meta-missing": ("This page has no summary for Google results", "Google writes its own, which may not sell the page well."),
+    "h1-search": ('The main heading does not mention "{search}"', "The heading is the first thing visitors and Google read."),
+    "no-answer": ('This page does not answer "{search}" up front', "People want the answer quickly."),
+    "thin": ("This page has very little text", "Short pages rarely rank for anything."),
+    "schema-invalid": ("Some hidden page labels have errors", "Google ignores labels it cannot read."),
+    "schema-gap": ("Top results use hidden page labels this page does not have", "These labels help Google show richer results."),
+    "meta-duplicate": ("Several pages share the same Google summary", "Each page should describe itself."),
+    "meta-long": ("The Google summary is too long", "Google cuts it off."),
+    "meta-short": ("The Google summary is very short", "A fuller summary helps people choose your result."),
+    "title-short": ("The page title is very short", "A clearer title helps people choose your result."),
+    "h1-many": ("This page has more than one main heading", "One clear main heading is easier to follow."),
+    "heading-skip": ("The page's headings are out of order", "A clean outline helps visitors and Google follow the page."),
+    "few-links": ("Few of your other pages link here", "Links from your own pages help Google find and value it."),
+    "link-generic": ('Some links say "click here" instead of where they go', "Clear link words help visitors and Google."),
+    "img-alt": ("Some images have no description", "Descriptions help visitors who cannot see images, and Google."),
+    "img-huge": ("Some images are very large files", "Large images slow the page down."),
+    "schema-missing": ("This page has no hidden page labels", "Labels help Google understand what the page is."),
+    "og-missing": ("This page has no preview for social media", "Links shared on Facebook or LinkedIn show a blank or poor preview."),
+    "twitter-missing": ("This page has no preview for X", "Links shared on X show a plain preview."),
+    "canonical-missing": ("This page does not name its main address", "Google may treat copies of the page as separate pages."),
+    "url-hygiene": ("This page's web address is hard to read", "Short, clear addresses are easier to share and understand."),
+}
+CLIENT_ISSUE_NO_SEARCH = {
+    "not-ranking": "You have a page for this, but it is not on page one",
+    "no-page": "No page on your site is about this search",
+    "behind": "Competitors cover this better",
+    "thin-vs-top": "This page says less than the top results",
+    "title-search": "The page title does not mention what people search for",
+    "h1-search": "The main heading does not mention what people search for",
+    "no-answer": "This page does not answer the question up front",
+}
+# For issue kinds added later: plain words for the technical terms in the owner's text.
+PLAIN_WORDS = [
+    (re.compile(r"\bmeta descriptions?\b", re.I), "Google summary"),
+    (re.compile(r"\b(?:viewport meta tag|viewport tag|meta viewport|viewport)\b", re.I), "phone setup"),
+    (re.compile(r"\bcanonical(?: tag| link| URL)?s?\b", re.I), "main address setting"),
+    (re.compile(r"\bog:(?:title|description|image)\b|\bOpen Graph\b", re.I), "social media preview"),
+    (re.compile(r"\bTwitter cards?\b", re.I), "X preview"),
+    (re.compile(r"\b(?:structured data|JSON-LD|schema(?: markup)?)\b", re.I), "hidden page labels"),
+    (re.compile(r"\btitle tags?\b", re.I), "page title"),
+    (re.compile(r"\bH1s?\b"), "main heading"),
+    (re.compile(r"\bH[2-6]s?\b"), "subheading"),
+    (re.compile(r"\balt text\b", re.I), "image description"),
+    (re.compile(r"\bsnippets?\b", re.I), "search result text"),
+    (re.compile(r"\bnoindex\b", re.I), "keep out of search setting"),
+    (re.compile(r"\brobots\.txt\b", re.I), "the site's crawler rules"),
+    (re.compile(r"\bSERPs?\b"), "Google results"),
+]
+
+
+def _plain(text: str) -> str:
+    for pattern, words in PLAIN_WORDS:
+        text = pattern.sub(words, text)
+    return text
+
+
+def issue_kind(issue_id: str, kind=None) -> str | None:
+    """The audit kind of an issue, from its kind field or the start of its id (ids begin with the kind)."""
+    if isinstance(kind, str) and kind in CLIENT_ISSUE_TEXT:
+        return kind
+    for known in sorted(CLIENT_ISSUE_TEXT, key=len, reverse=True):
+        if isinstance(issue_id, str) and (issue_id == known or issue_id.startswith(known + "-")):
+            return known
+    return None
+
+
+def client_issue_words(issue: dict) -> tuple[str, str, str]:
+    """(title, explanation, fix) as a client reads them."""
+    kind = issue_kind(str(issue.get("id") or ""), issue.get("kind"))
+    search = _text(issue.get("search"), 200)
+    if kind:
+        title, line = CLIENT_ISSUE_TEXT[kind]
+        if "{search}" in title:
+            title = title.format(search=search) if search else CLIENT_ISSUE_NO_SEARCH.get(kind, title.replace(' "{search}"', ""))
+        return title, line, ""
+    return _plain(_text(issue.get("title"), 200)), _plain(_text(issue.get("comment"), 600)), _plain(_text(issue.get("fix"), 400))
+
+
 STATUSES = {"open": "Not started", "planned": "Planned", "doing": "In progress", "done": "Done"}
 SEVERITIES = ("high", "medium", "low")
 CONTROL_RE = re.compile(r"[\x00-\x08\x0b-\x1f\x7f]")
@@ -630,7 +727,9 @@ def set_issue_plan(project, issue_id: str, status: str, plan: str = "", title: s
         plans[issue_id] = row
         _write_json(_plans_path(project), plans)
     if status == "done" and before != "done":
-        name = _text(title, 160) or "an issue"
+        kind = issue_kind(issue_id)
+        name = client_issue_words({"id": issue_id, "title": title})[0] if kind else _plain(_text(title, 160))
+        name = name or "an issue"
         log_change(project, "issue", f"Fixed: {name}", detail=f"Issue {issue_id}")
     return row
 
@@ -707,7 +806,7 @@ def _search_dates(project) -> dict[str, tuple[str, str]]:
     for entry in (google.searches if google is not None else []):
         if not entry.results:
             continue
-        label = _text(entry.pulled_label, 40)
+        label = _text(entry.pulled_label, 60).replace(" (date only)", "").strip()  # jargon for a client
         if not entry.pulled_at or label == PULL_DATE_NOT_RECORDED:
             label = ""
         out[entry.search] = (str(entry.pulled_at or ""), label)
@@ -848,6 +947,23 @@ def _tracking_week(report: dict) -> dict | None:
     }
 
 
+def _google_checks(project, since: datetime) -> int:
+    """Real Google checks since a date: finished pulls that asked Google now and got results. Crawls, refreshes that
+    reuse earlier results, and imports of old positions never count."""
+    try:
+        from aeo.ranksim.project import list_pulls
+
+        pulls = list_pulls(project)
+    except Exception:  # noqa: BLE001
+        return 0
+    count = 0
+    for info in pulls:
+        moment = _parse_time(info.written_at) or _parse_time(info.pull_id)
+        if info.finished and info.google_kind == "api" and (info.searches_with_results or 0) > 0 and moment and moment >= since:
+            count += 1
+    return count
+
+
 def weekly_summary(project, report: dict, issues: list[dict], changes: list[dict], now: datetime | None = None) -> dict:
     """What changed in the last week and what is next, for the client. Every item comes from stored data."""
     now = now or _now()
@@ -867,7 +983,7 @@ def weekly_summary(project, report: dict, issues: list[dict], changes: list[dict
         tracked = any(len(points) > 1 for points in observations.values())
     recent = [row for row in changes if (_parse_time(row.get("at")) or now) >= since]
     done = [{"date": row["date"], "label": row["label"], "summary": row["summary"]} for row in recent if row["kind"] in {"issue", "publish", "note"}]
-    checks = sum(1 for row in recent if row["kind"] in {"google", "analysis"})
+    checks = _google_checks(project, since)
     upcoming = sorted(
         (issue for issue in issues if issue["status"] in {"planned", "doing"} or (issue["status"] == "open" and issue["severity"] == "high")),
         key=lambda issue: (NEXT_RANK.get(issue["status"], 3), SEVERITY_RANK.get(issue["severity"], 3)),
@@ -876,7 +992,7 @@ def weekly_summary(project, report: dict, issues: list[dict], changes: list[dict
         "since": _iso(since)[:10],
         "moves": moves,
         "moves_note": "" if moves else (
-            "No position changed this week." if tracked else "Position changes show here once Google has been checked twice, a week apart."
+            "No position changed this week." if tracked else "Position changes need two Google checks at least a week apart."
         ),
         "counts": counts,
         "passed": passed,
@@ -942,6 +1058,12 @@ def _client_estimate(predicted) -> dict | None:
     return {"position": position, "of": of, "label": "PREDICTED", "pairs": pairs}
 
 
+def _demo_week(weekly: dict, demo: bool) -> dict:
+    if demo and not weekly["moves"]:
+        weekly["moves_note"] = "Demo data has no check dates, so no position changes are shown."
+    return weekly
+
+
 def client_report(ui, project, *, preview: bool = False) -> dict:
     report = owner_report(ui, project.slug)
     plans = issue_plans(project)
@@ -992,13 +1114,14 @@ def client_report(ui, project, *, preview: bool = False) -> dict:
         issue_id = _text(issue.get("id"), 120)
         plan = plans.get(issue_id) or {}
         status = plan.get("status") if plan.get("status") in STATUSES else "open"
+        title, comment, fix = client_issue_words(issue)
         issues.append(
             {
                 "id": issue_id,
                 "severity": issue.get("severity") if issue.get("severity") in SEVERITIES else "low",
-                "title": _text(issue.get("title"), 200),
-                "comment": _text(issue.get("comment"), 600),
-                "fix": _text(issue.get("fix"), 400),
+                "title": title,
+                "comment": comment,
+                "fix": fix,
                 "page": _url(issue.get("page")),
                 "search": _text(issue.get("search"), 200) or None,
                 "status": status,
@@ -1050,7 +1173,7 @@ def client_report(ui, project, *, preview: bool = False) -> dict:
         "share": share,
         "competitors": [domain for domain in (_domain(item) for item in (report.get("competitors") or [])[:20]) if domain],
         "changes": changes[:15],
-        "weekly": weekly_summary(project, report, issues, changes),
+        "weekly": _demo_week(weekly_summary(project, report, issues, changes), demo),
         "notes": [
             date_note,
             "Estimates marked PREDICTED come from Ranksim's model of the pages we stored for each search. They are shown only where a backtest was clearer, and they are not Google positions.",
@@ -1096,7 +1219,11 @@ def weekly_update(data: dict, report_url: str = "") -> dict:
     agency = (data.get("agency") or {}).get("name") or ""
     report_day = _day(data.get("report_date"))
     since_day = _day(weekly.get("since"))
-    checked = f"{source} checked {data['google_date']}" if data.get("google_date") else f"{source} check date not recorded"
+    demo = bool((data.get("data") or {}).get("demo"))
+    if demo:
+        checked = "invented demo data"
+    else:
+        checked = f"Google checked {data['google_date']}" if data.get("google_date") else "Google check date not recorded"
     kpis = data.get("kpis") or {}
     sections: list[tuple[str, list[str], str]] = []
 
@@ -1111,7 +1238,7 @@ def weekly_update(data: dict, report_url: str = "") -> dict:
             f"Of {counts['compared']} searches checked a week apart: {counts['gained']} new on page one, {counts['lost']} dropped off, "
             f"{counts['up']} moved up, {counts['down']} moved down ({source} positions)."
         ))
-    sections.append(("Position changes in Google", moves, note))
+    sections.append(("Position changes (demo data)" if demo else "Position changes in Google", moves, note))
     passed = [
         f'{item["domain"]} moved ahead of you for "{item["q"]}" (they are #{item["their_to"]}, you are {_place(item.get("our_to"))})'
         for item in weekly.get("passed") or []
@@ -1123,12 +1250,12 @@ def weekly_update(data: dict, report_url: str = "") -> dict:
     upcoming = [f"{item['title']}. {item['status_label']}." + (f" {item['plan']}" if item.get("plan") else "") for item in weekly.get("next") or []]
     sections.append(("Next", upcoming, "No open fixes right now."))
 
-    standing = (
-        f"On page one of Google for {kpis.get('top10') or 0} of {kpis.get('checked') or 0} searches we track ({checked})."
-        if data.get("search_data") else "We have not checked your Google positions yet."
-    )
-    if data.get("data", {}).get("demo"):
-        standing += " These are demo positions, not Google results."
+    if demo:
+        standing = f"On page one of the demo results for {kpis.get('top10') or 0} of {kpis.get('checked') or 0} searches. These are invented demo positions, not Google results."
+    elif data.get("search_data"):
+        standing = f"On page one of Google for {kpis.get('top10') or 0} of {kpis.get('checked') or 0} searches we track ({checked})."
+    else:
+        standing = "We have not checked your Google positions yet."
     subject = f"{name}: weekly search update, {report_day}"
     intro = f"Here is your weekly search update for {site or name}, {since_day} to {report_day}."
 
@@ -1250,12 +1377,14 @@ def build_digest(ui, base_url: str = "", now: datetime | None = None) -> dict:
         move = row["biggest_move"]
         move_text = f'"{move["q"]}" {_place(move.get("from"))} to {_place(move.get("to"))} ({_move_words(move)})' if move else "none"
         publish = f"{row['last_publish']['summary']} ({_day(row['last_publish']['date'])})" if row["last_publish"] else "none yet"
-        if row["google_date"]:
-            checked = f"{row['source']} checked {row['google_date']}"
+        if row["demo"]:
+            checked = "invented demo data"
+        elif row["google_date"]:
+            checked = f"Google checked {row['google_date']}"
         else:
-            checked = f"{row['source']} check date not recorded" if row["checked"] else "not checked on Google yet"
+            checked = "Google check date not recorded" if row["checked"] else "not checked on Google yet"
         facts = [
-            f"Page one of Google: {p1['now']} of {p1['of']} searches now ({checked}), {then}",
+            f"{'Page one (demo)' if row['demo'] else 'Page one of Google'}: {p1['now']} of {p1['of']} searches now ({checked}), {then}",
             f"Biggest move this week: {move_text}",
             f"Fixed this week: {row['fixed']}. Open high priority: {row['open_high']}",
             f"Last publish: {publish}",

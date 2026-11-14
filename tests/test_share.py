@@ -622,7 +622,7 @@ def test_weekly_summary_on_the_demo_degrades_without_dated_checks(env):
     data = env["client"].get(_link(env)["path"] + "/data").json()
     weekly = data["weekly"]
     assert weekly["moves"] == []  # demo results carry no pull date, so no week over week claim is made
-    assert "checked twice, a week apart" in weekly["moves_note"]
+    assert weekly["moves_note"] == "Demo data has no check dates, so no position changes are shown."
     assert all(item["status"] in {"planned", "doing", "open"} for item in weekly["next"])
 
 
@@ -697,7 +697,8 @@ def test_weekly_prefers_tracking_history_and_lists_what_is_next(env, monkeypatch
     ]
     weekly = share.weekly_summary(project, report, issues, changes, now=now)
     assert weekly["moves"] == [{"q": "vinyl fence installation cost", "from": 8, "to": 5, "from_date": "2026-11-06", "to_date": "2026-11-13"}]
-    assert [item["summary"] for item in weekly["done"]] == ["Published the pricing page"] and weekly["checks"] == 1
+    # a "google" change log row is not a Google check: only fresh Google pulls count (the demo has none)
+    assert [item["summary"] for item in weekly["done"]] == ["Published the pricing page"] and weekly["checks"] == 0
     assert [item["title"] for item in weekly["next"]] == ["Doing", "Planned", "High open"]
 
     # tracking that raises, or is absent, falls back to the stored pull snapshots without failing
@@ -823,7 +824,8 @@ def test_weekly_update_empty_week_and_demo():
     text = share.weekly_update(data)["text"]
     assert "will be in this update once Google has been checked twice" in text
     assert "Nothing new to report this week." in text and "No open fixes right now." in text
-    assert "demo positions, not Google results" in text and "Demo check date not recorded" in text
+    assert "invented demo positions, not Google results" in text and "check date not recorded" not in text
+    assert "Position changes (demo data):" in text and "of Google" not in text
     assert "Full report" not in text and "Your SEO team" not in text
 
 
@@ -1135,3 +1137,112 @@ def test_client_report_carries_clearer_estimates_with_their_pairs(env, monkeypat
     assert data["predictions"] is True and "0.7" not in json.dumps(data["rankings"])
     csv_text = env["client"].get(link["path"] + "/rankings.csv").text
     assert ",48," in csv_text
+
+
+
+# ---------------------------------------------------------------------------
+# pre-deploy QA: real Google check count, demo never says Google, plain issue words
+# ---------------------------------------------------------------------------
+
+
+def test_only_fresh_google_pulls_count_as_checks(monkeypatch):
+    from datetime import datetime, timezone
+    from types import SimpleNamespace
+
+    from aeo.ranksim import project as project_module
+
+    since = datetime(2026, 11, 7, tzinfo=timezone.utc)
+
+    def pull(pull_id, kind, results=5, finished=True, written=""):
+        return SimpleNamespace(pull_id=pull_id, google_kind=kind, searches_with_results=results, finished=finished, written_at=written)
+
+    pulls = [
+        pull("20261109T100000Z", "api"),  # before the week: no
+        pull("20261108T100000Z-x", "api", written="2026-11-08T10:00:00Z"),  # yes
+        pull("20261110T100000Z", "carried"),  # refresh reusing old results: no
+        pull("20261111T100000Z", "import"),  # CSV import of old positions: no
+        pull("20261112T100000Z", ""),  # crawl only: no
+        pull("20261113T100000Z", "api", results=0),  # Google asked, nothing came back: no
+        pull("20261113T110000Z", "api", finished=False),  # still being written: no
+        pull("20261113T120000Z", "api"),  # yes
+    ]
+    pulls[0] = pull("20261106T100000Z", "api")
+    monkeypatch.setattr(project_module, "list_pulls", lambda project: pulls)
+    assert share._google_checks(object(), since) == 2
+
+
+def test_refreshes_and_imports_do_not_raise_the_check_count(env):
+    project = env["ui"].project(env["demo"])
+    for index in range(3):  # the demo's pulls are imports and recrawls, never fresh Google checks
+        share.after_pull(project=project, report={"pull_id": f"20261114T0{index}0000Z", "google_kind": "carried"}, ui=env["ui"])
+    data = env["client"].get(_link(env)["path"] + "/data").json()
+    assert data["weekly"]["checks"] == 0
+
+
+def test_demo_report_never_calls_its_positions_google(env):
+    js = (share.SHARE_STATIC / "share.js").read_text(encoding="utf-8")
+    for needle in ('var where = demo ? "the demo results" : "Google"', 'var posLabel = demo ? "Demo position" : "Your position"', '"Invented demo data"'):
+        assert needle in js
+    data = env["client"].get(_link(env)["path"] + "/data").json()
+    assert data["source"] == "Demo" and data["data"]["demo"] is True
+    update = share.weekly_update(data)
+    assert update["text"].replace("not Google results", "").count("Google") == 0
+    digest = env["client"].get("/api/v1/digest").json()
+    blocks = digest["text"].split("\n\n")
+    demo_block = next(block for block in blocks if block.startswith("Northwind"))
+    assert "Page one (demo)" in demo_block and "Page one of Google" not in demo_block
+
+
+JARGON = re.compile(r"\bH[1-6]s?\b|meta description|meta tag|viewport|canonical|og:|open graph|structured data|json-ld|schema|twitter card|snippet|alt text|noindex|robots\.txt|\(date only\)", re.I)
+
+
+def test_every_audit_kind_has_plain_client_words():
+    from aeo.ranksim import audit
+
+    missing = sorted(set(audit.RULES) - set(share.CLIENT_ISSUE_TEXT))
+    assert missing == [], f"add client wording for {missing}"
+    for kind, (title, line) in share.CLIENT_ISSUE_TEXT.items():
+        assert not JARGON.search(title) and not JARGON.search(line), kind
+        assert not any(dash in title + line for dash in DASHES), kind
+    for kind, title in share.CLIENT_ISSUE_NO_SEARCH.items():
+        assert "{search}" in share.CLIENT_ISSUE_TEXT[kind][0] and not JARGON.search(title)
+
+
+def test_client_issue_words_map_kinds_and_soften_unknown_ones():
+    title, line, fix = share.client_issue_words({"id": "h1-search-https-x-example-a-vinyl-fence", "kind": "h1-search", "search": "vinyl fence", "title": "H1 lacks the search", "fix": "Edit the H1"})
+    assert title == 'The main heading does not mention "vinyl fence"' and fix == "" and "heading" in line
+    assert share.client_issue_words({"id": "h1-search-x", "title": "H1"})[0] == "The main heading does not mention what people search for"
+    assert share.client_issue_words({"id": "og-missing-x", "title": "No og:title"})[0] == "This page has no preview for social media"
+    title, comment, fix = share.client_issue_words({"id": "brand-new-kind", "kind": "brand-new-kind", "title": "Meta description and H1 clash", "comment": "The canonical tag and og:title disagree; add JSON-LD.", "fix": "Fix the viewport meta tag."})
+    assert not JARGON.search(title + comment + fix), (title, comment, fix)
+    assert share.issue_kind("meta-long-x") == "meta-long" and share.issue_kind("meta-x") is None
+
+
+def test_client_page_and_csv_carry_no_issue_jargon(env):
+    client = env["client"]
+    owner = share._project_report_fn()(env["ui"], env["demo"])
+    assert any(JARGON.search(issue["title"] + " " + issue.get("comment", "")) for issue in owner["issues"])  # the owner keeps the detail
+    link = _link(env)
+    data = client.get(link["path"] + "/data").json()
+    for issue in data["issues"]:
+        assert not JARGON.search(issue["title"] + " " + issue["comment"] + " " + issue["fix"]), issue
+    assert not JARGON.search(client.get(link["path"] + "/issues.csv").text)
+
+
+def test_resolved_issue_is_logged_in_plain_words(env):
+    project = env["ui"].project(env["other"])
+    share.set_issue_plan(project, "og-missing-https-acme-hidden-example", "done", "", title="No og:title or og:image")
+    summaries = [row["summary"] for row in share.changelog(project, public_only=True)]
+    assert "Fixed: This page has no preview for social media" in summaries
+    assert not any("og:" in summary for summary in summaries)
+
+
+def test_google_dates_drop_the_date_only_marker(env, monkeypatch):
+    from types import SimpleNamespace
+
+    from aeo.ranksim import project as project_module
+
+    entry = SimpleNamespace(search="vinyl fence installation cost", results=[1], pulled_at="2026-11-09", pulled_label="Nov 9, 2026 (date only)")
+    monkeypatch.setattr(project_module, "latest_google", lambda project: SimpleNamespace(searches=[entry]))
+    dates = share._search_dates(env["ui"].project(env["demo"]))
+    assert dates["vinyl fence installation cost"][1] == "Nov 9, 2026"

@@ -79,7 +79,7 @@ test('rankDots draws one row per search with real dots and PREDICTED rings', () 
   assert.match(svg, /PREDICTED #3 of 8/);
   assert.match(svg, /You rank in the top 10 for 2\./);
   // Best position first.
-  const labels = find(tree, (n) => n.tag === 'text' && n.attrs['text-anchor'] === 'end').map((n) => n.kids[0].text);
+  const labels = find(tree, (n) => n.tag === 'text' && n.attrs['text-anchor'] === 'end' && n.attrs.class === 'rc-text').map((n) => n.kids[0].text);
   assert.equal(labels[0], 'excavation crew app');
   // Every x stays inside the chart.
   for (const c of find(tree, (n) => n.tag === 'circle')) assert.ok(c.attrs.cx > 0 && c.attrs.cx < 600, `cx ${c.attrs.cx}`);
@@ -120,7 +120,7 @@ test('shareBars highlights you and tracked competitors and always shows you', ()
   const rects = find(tree, (n) => n.tag === 'rect');
   assert.deepEqual(rects.map((r) => r.attrs.class), ['rc-rival', 'rc-other', 'rc-you']);
   assert.match(toSvg(tree), /a\.example \(you\)/);
-  assert.match(toSvg(tree), /5 · 50%/);
+  assert.match(toSvg(tree), /5 spots, 50%/);
   const many = Array.from({ length: 12 }, (_, i) => ({ domain: `d${i}.example`, slots: 20 - i }));
   const cut = shareBars(many.concat([{ domain: 'me.example', slots: 1, you: true }]), { limit: 5 });
   const names = find(cut, (n) => n.tag === 'text' && n.attrs['text-anchor'] === 'end').map((n) => n.kids[0].text);
@@ -185,4 +185,27 @@ test('predictions: null, missing position and UNSURE are handled; UNSURE draws a
   const svg = toSvg(tree);
   assert.match(svg, /PREDICTED #6 of 8, unsure/);
   assert.match(svg, /Dashed rings are PREDICTED but unsure, for 1 search\./);
+});
+
+test('phone width stacks labels above their rows so whole searches show', () => {
+  const long = [{ q: 'all in one heavy civil software for crews', position: 4, checked: true }, { q: 'hcss alternative', position: null, checked: true }];
+  const dots = rankDots(long, { width: 358 });
+  assertAccessible(dots);
+  const labels = find(dots, (n) => n.tag === 'text' && n.attrs.class === 'rc-text');
+  assert.equal(labels[0].attrs['text-anchor'], 'start');
+  assert.equal(labels[0].kids[0].text, 'all in one heavy civil software for crews  #4', 'the whole search shows with its position');
+  for (const c of find(dots, (n) => n.tag === 'circle')) assert.ok(c.attrs.cx + c.attrs.r <= 358, `cx ${c.attrs.cx}`);
+  const bars = shareBars([{ domain: 'a-very-long-competitor-domain.example', slots: 4 }, { domain: 'me.example', slots: 1, you: true }], { width: 358 });
+  const names = find(bars, (n) => n.tag === 'text' && /rc-text/.test(n.attrs.class)).map((n) => n.kids[0].text);
+  assert.deepEqual(names, ['a-very-long-competitor-domain.example', 'me.example']);
+  for (const r of find(bars, (n) => n.tag === 'rect')) assert.ok(r.attrs.x + r.attrs.width <= 358);
+  for (const t of find(bars, (n) => n.tag === 'text' && n.attrs.class === 'rc-value')) assert.ok(t.attrs.x <= 358 - 60, 'room for the value');
+});
+
+test('demo positions say Demo, never Google', () => {
+  const tree = rankDots([{ q: 'a', position: 2, checked: true }], { width: 500, source: 'Demo' });
+  const svg = toSvg(tree);
+  assert.match(svg, /#2 in the demo data/);
+  assert.match(svg, /Demo position/);
+  assert.ok(!/Google/.test(svg), svg);
 });

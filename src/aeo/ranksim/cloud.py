@@ -79,7 +79,10 @@ LEGACY_WATCH_SECONDS = 14 * 24 * 3600
 LEGACY_CHECK_SECONDS = 1800.0
 POINTER_EVERY = 8  # the pointer is rewritten on every 8th save (an advanced op), so a cold start probes a few names
 KEEP_CHAIN = 64  # saves kept behind the newest (older ones nobody references are deleted, which is free)
-PRUNE_AFTER_SECONDS = 600  # and never one younger than this: a reader mid-download still finds it
+# A save is deleted only when it is KEEP_CHAIN behind AND was written more than PRUNE_AFTER_SECONDS ago. An instance
+# that last looked longer ago than VERIFY_AFTER_SECONDS (well under this) reads the pointer and reloads from the newest
+# manifest, so no instance can be caught between saves it has not applied and saves that are already gone.
+PRUNE_AFTER_SECONDS = 3600
 COMPACT_DELTAS = 15  # after this many database deltas the next save uploads a full snapshot
 COMPACT_RATIO = 0.5  # or when the deltas add up to half the snapshot's size (counted from COMPACT_FLOOR_BYTES up)
 COMPACT_FLOOR_BYTES = 4 * 1024 * 1024
@@ -353,9 +356,32 @@ class CloudState:
         if not meta_file.is_file():
             raise KeyError(f"{slug} missing from save {seq}")
         meta = json.loads(meta_file.read_text("utf-8"))
+        files = meta.get("files", {})
+        at = {rel: int(meta.get("at", {}).get(rel, seq)) for rel in files}  # which save holds each file's bytes
         base = self._installed.get(slug, {}).get("files", {})
-        changed = _merge_files(self._scope(slug), base, folder, meta.get("files", {}), self._hash_cache)
-        self._installed[slug] = {"seq": seq, "files": meta.get("files", {}), "deleted": bool(meta.get("deleted"))}
+        staging = self._meta_dir / f".refs-{secrets.token_hex(4)}"
+        bodies: dict[int, bytes | None] = {}
+
+        def source_of(rel: str) -> Path | None:
+            """A file this save did not pack because it was unchanged: read it from the save that holds it."""
+            holder = at.get(rel)
+            if holder is None or holder == seq:
+                return None
+            if holder not in bodies:
+                bodies[holder] = self._get_save(holder)
+            data = _member(bodies[holder], f"p/{slug}/{rel}")
+            if data is None:
+                return None
+            target = staging / rel
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(data)
+            return target
+
+        try:
+            changed = _merge_files(self._scope(slug), base, folder, files, self._hash_cache, source_of)
+        finally:
+            shutil.rmtree(staging, ignore_errors=True)
+        self._installed[slug] = {"seq": seq, "files": files, "deleted": bool(meta.get("deleted")), "at": at}
         if meta.get("deleted"):
             _remove_if_empty(self._scope(slug).path)
         return changed
@@ -478,7 +504,9 @@ class CloudState:
         fresh = self._checked is not None and self._seq and self.clock() - self._checked < 2.0
         if not fresh:
             if self._seq == 0:
-                self._cold_sync()
+                self._cold_sync()  # on an empty store this is the bootstrap, which saves everything as save 1
+                if not self._dirty():
+                    return self._version
             else:
                 self._catch_up()
         for _round in range(CAS_ROUNDS):
@@ -543,18 +571,30 @@ class CloudState:
                     # Read each file once and hash exactly the bytes that are packed: another thread may rewrite a
                     # file meanwhile, and a hash of one version stored with the bytes of another would make every
                     # instance treat the file as locally changed for ever. A file that vanished is left out.
+                    # A file unchanged since the save every reader already applied is not packed again: the
+                    # metadata says which earlier save holds its bytes ("at"), and pruning keeps those saves.
+                    before = self._installed.get(slug, {})
+                    before_files, before_at = before.get("files") or {}, before.get("at") or {}
                     packed: dict[str, str] = {}
                     contents: dict[str, bytes] = {}
+                    at: dict[str, int] = {}
                     for rel in files:
                         try:
                             data = (self._scope(slug).path / rel).read_bytes()
                         except (FileNotFoundError, IsADirectoryError):
                             continue
-                        contents[rel] = data
-                        packed[rel] = hashlib.sha256(data).hexdigest()
+                        digest = hashlib.sha256(data).hexdigest()
+                        packed[rel] = digest
+                        if before_files.get(rel) == digest and rel in before_at:
+                            at[rel] = int(before_at[rel])
+                        else:
+                            contents[rel] = data
+                            at[rel] = seq
                     files.clear()
                     files.update(packed)
                     meta["files"] = dict(packed)
+                    meta["at"] = at
+                    manifest.setdefault("refs", {})[slug] = sorted(set(at.values()))
                     _add_bytes(archive, f"p/{slug}/{VERSION_FILE}", json.dumps(meta, sort_keys=True).encode("utf-8"))
                     for rel, data in contents.items():
                         _add_bytes(archive, f"p/{slug}/{rel}", data)
@@ -569,7 +609,7 @@ class CloudState:
                 return None
             # Ours now. Record it locally exactly as a reader of this save would.
             for slug, (files, meta) in projects.items():
-                self._installed[slug] = {"seq": seq, "files": files, "deleted": meta["deleted"]}
+                self._installed[slug] = {"seq": seq, "files": files, "deleted": meta["deleted"], "at": dict(meta.get("at") or {})}
             if db_kind is not None:
                 _copy_db(snap, self._base_db)
                 self._db_clean = sig_before
@@ -597,15 +637,30 @@ class CloudState:
     def _prunable(self, manifest: dict, seq: int) -> list[int]:
         """Saves old enough to delete: more than KEEP_CHAIN behind and referenced by nobody. Deletes cost nothing,
         so no listing: every number since the last prune is deleted by name (a missing name is fine)."""
+        times = {int(k): float(v) for k, v in (manifest.get("times") or {}).items()}
+        times[seq] = time.time()  # when each save was written, for the age rule
         start = int(manifest.get("pruned") or 0) + 1
         stop = seq - KEEP_CHAIN
-        if stop < start:
-            return []
-        referenced = set((manifest.get("projects") or {}).values())
-        db = manifest.get("db") or {}
-        referenced |= set(db.get("deltas") or []) | {db.get("snapshot")} | {int(manifest.get("legacy", {}).get("seq") or 0)}
-        manifest["pruned"] = stop
-        return [n for n in range(start, stop + 1) if n not in referenced]
+        doomed: list[int] = []
+        if stop >= start:
+            referenced = set((manifest.get("projects") or {}).values())
+            for held in (manifest.get("refs") or {}).values():
+                referenced |= {int(n) for n in held}
+            db = manifest.get("db") or {}
+            referenced |= set(db.get("deltas") or []) | {db.get("snapshot")} | {int(manifest.get("legacy", {}).get("seq") or 0)}
+            cutoff = time.time() - PRUNE_AFTER_SECONDS
+            last = start - 1
+            for n in range(start, stop + 1):
+                written = times.get(n)
+                if written is not None and written > cutoff:
+                    break  # too young; so is everything after it
+                last = n
+                if n not in referenced:
+                    doomed.append(n)
+            manifest["pruned"] = last
+        floor = int(manifest.get("pruned") or 0)
+        manifest["times"] = {str(n): t for n, t in times.items() if n > floor}
+        return doomed
 
     def _local_slugs(self) -> list[str]:
         if not self.projects_dir.is_dir():
@@ -851,7 +906,7 @@ class _Unpacked:
         shutil.rmtree(self.folder, ignore_errors=True)
 
 
-def _merge_files(local: _Scope, base: dict, theirs_dir: Path, theirs: dict, cache: dict) -> bool:
+def _merge_files(local: _Scope, base: dict, theirs_dir: Path, theirs: dict, cache: dict, source_of=None) -> bool:
     """Three-way merge at file level into the local folder. Returns True when a local file changed.
 
     For each path: if theirs did not change it since base, keep local. If local did not change it since base, take
@@ -873,13 +928,30 @@ def _merge_files(local: _Scope, base: dict, theirs_dir: Path, theirs: dict, cach
         else:
             source = theirs_dir / rel
             if not source.is_file():
-                continue
+                source = source_of(rel) if source_of is not None else None  # bytes kept in an earlier save
+                if source is None or not source.is_file():
+                    raise KeyError(f"{local.path.name}/{rel} is missing from storage")
             target.parent.mkdir(parents=True, exist_ok=True)
             temp = target.with_name(f".ranksim-tmp-{secrets.token_hex(4)}")
             shutil.copyfile(source, temp)  # a fresh mtime: copy2 would keep the tar's whole-second one
             os.replace(temp, target)
         changed = True
     return changed
+
+
+def _member(body: bytes | None, name: str) -> bytes | None:
+    """One file from a save object, or None."""
+    if body is None:
+        return None
+    with tarfile.open(fileobj=io.BytesIO(body), mode="r:gz") as archive:
+        try:
+            member = archive.getmember(name)
+        except KeyError:
+            return None
+        if not member.isfile():
+            return None
+        handle = archive.extractfile(member)
+        return handle.read() if handle is not None else None
 
 
 def _remove_if_empty(folder: Path) -> None:

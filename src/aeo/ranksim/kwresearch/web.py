@@ -220,12 +220,15 @@ def _difficulty_table(rows) -> str:
     body = []
     for row in rows:
         score = "" if row.score is None else str(row.score)
+        note = ""
+        if row.navigational:
+            note = '<div class="small">' + e(row.navigational_note) + "</div>"
         body.append(
             "<tr>"
             f"<td>{e(row.keyword)}</td>"
             f'<td class="num">{e(score)}</td>'
-            f"<td class=\"num\">{e(f'{row.coverage:.2f}')}</td>"
-            f"<td>{e(row.label)}{'<div class=\"small\">' + e(row.navigational_note) + '</div>' if row.navigational else ''}</td>"
+            f'<td class="num">{e(f"{row.coverage:.2f}")}</td>'
+            f"<td>{e(row.label)}{note}</td>"
             "</tr>"
         )
     return _table("Difficulty", ("Keyword", "Score", "Coverage", "Label"), body)

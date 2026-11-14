@@ -23,6 +23,11 @@ class StoreError(RuntimeError):
     """The store could not be reached or refused the call. Missing objects raise KeyError instead."""
 
 
+class ObjectExists(StoreError):
+    """A create-only put (overwrite=False) found the name taken by different content. Writers use this as a
+    compare-and-swap: whoever creates the next name in a sequence first wins, the other one merges and tries again."""
+
+
 class ObjectStore:
     def put(self, name: str, body: bytes, *, overwrite: bool = False, content_type: str = "application/octet-stream") -> str | None:
         """Store body under name. Returns an etag when the backend has one. Without overwrite an existing name fails."""
@@ -65,7 +70,9 @@ class MemoryStore(ObjectStore):
     def put(self, name, body, *, overwrite=False, content_type="application/octet-stream"):
         with self._lock:
             if name in self.items and not overwrite:
-                raise StoreError(f"{name} exists")
+                if self.items[name] == bytes(body):
+                    return self.etags[name]  # the same write again (a retry): it already landed
+                raise ObjectExists(f"{name} exists")
             self._n += 1
             self.items[name], self.etags[name] = bytes(body), f"m{self._n}"
             return self.etags[name]
@@ -115,7 +122,9 @@ class DirStore(ObjectStore):
             try:
                 os.link(temp, path)  # fails when the name exists: create-only, like the Blob store
             except FileExistsError as exc:
-                raise StoreError(f"{name} exists") from exc
+                if path.read_bytes() == bytes(body):
+                    return f"{path.stat().st_mtime_ns}-{path.stat().st_size}"
+                raise ObjectExists(f"{name} exists") from exc
             finally:
                 temp.unlink(missing_ok=True)
         stat = path.stat()
@@ -157,11 +166,32 @@ class BlobStore(ObjectStore):
     def put(self, name, body, *, overwrite=False, content_type="application/octet-stream"):
         from vercel.blob import sync as blob
 
-        try:
-            result = _retry(blob.put_blob, name, bytes(body), access="private", content_type=content_type, allow_overwrite=overwrite)
-        except blob.BlobError as exc:
-            raise StoreError(f"put failed: {type(exc).__name__}") from exc
-        return getattr(result, "etag", None)
+        if overwrite:
+            try:
+                result = _retry(blob.put_blob, name, bytes(body), access="private", content_type=content_type, allow_overwrite=True)
+            except blob.BlobError as exc:
+                raise StoreError(f"put failed: {type(exc).__name__}") from exc
+            return getattr(result, "etag", None)
+        # Create-only. Vercel Blob refuses a put to an existing pathname unless allowOverwrite is set, but the error's
+        # type is not documented, so after any failure the name is checked: taken by other bytes means ObjectExists;
+        # taken by our own bytes means an earlier try landed; free means a real failure (tried again once).
+        for attempt in range(2):
+            try:
+                result = blob.put_blob(name, bytes(body), access="private", content_type=content_type, allow_overwrite=False)
+                return getattr(result, "etag", None)
+            except blob.BlobError as exc:
+                failure = exc
+            try:
+                if self.head(name) is not None:
+                    if self.get(name) == bytes(body):
+                        return self.head(name)
+                    raise ObjectExists(f"{name} exists") from failure
+            except KeyError:
+                pass
+            if attempt == 0:
+                time.sleep(0.5)
+        raise StoreError(f"put failed: {type(failure).__name__}") from failure
+
 
     def get(self, name):
         from vercel.blob import sync as blob
@@ -211,8 +241,14 @@ def _retry(call, *args, tries: int = 3, **kwargs):
             return call(*args, **kwargs)
         except blob.BlobNotFoundError:
             raise
-        except blob.BlobError:
-            if attempt == tries - 1:
+        except blob.BlobError as exc:
+            if attempt == tries - 1 or _exists_error(exc):
                 raise
             time.sleep(0.5 * (attempt + 1) ** 2)
     return None
+
+
+def _exists_error(exc: BaseException) -> bool:
+    """Vercel Blob refuses a put to an existing pathname unless allowOverwrite is set."""
+    text = str(exc).lower()
+    return "already exists" in text or getattr(exc, "status_code", None) == 409

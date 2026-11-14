@@ -64,7 +64,7 @@ test('loose text in streamed content is edited where the source holds it', () =>
   const out = edit('streamed', (t, byId, find) => {
     find((e) => e.tag === 'main').children.find((n) => n.type === 'text' && n.textContent.includes('Loose')).data = 'Changed ';
   });
-  assert.equal(out, '<main><h1>H</h1>Changed <template id="P:1"></template><p>after</p></main><div hidden id="S:1"><b>text</b></div>');
+  assert.equal(out, '<main><h1>H</h1><template id="P:1"></template><p>after</p></main><div hidden id="S:1">Changed <b>text</b></div>');
   assert.ok(!out.includes('Loose'));
 });
 
@@ -76,7 +76,7 @@ test('a paragraph the browser made from a stray </p> keeps its wrapper once fill
 test('misnested formatting: an edit after a copied bold is not doubled', () => {
   const out = edit('misnested', (t, byId) => { byId(3).lastChild.data = '3 more'; });
   assert.equal((out.match(/3/g) || []).length, 1, out);
-  assert.ok(out.includes('3 more'));
+  assert.ok(out.includes('</b>3 more</p>'), out); // in place of the old text, outside the bold
 });
 
 test('a pasted copy before its original leaves the original its handlers', () => {
@@ -138,4 +138,12 @@ test("a page's own data-rs and data-rsvp attributes are the page's, not the edit
   assert.ok(out.includes('<a data-rsvp="evt-1" href="/event">RSVP</a>'), out);
   assert.ok(stripRs(draft).includes('data-rsvp="evt-1"') && stripRs(draft).includes('data-rs="carousel"'));
   assert.ok(!stripRs(draft).includes('data-rs-id'));
+});
+
+test('attributes set on an <html> or <body> the page never wrote are written out where the browser implies them', () => {
+  const src = '<!doctype html>\n<title>Bare</title>\n<p>Hello</p>\n';
+  const base = '<!doctype html>\n<html data-rs-id="x1"><head data-rs-id="x2"><title data-rs-id="1">Bare</title>\n</head><body data-rs-id="x3"><p data-rs-id="2">Hello</p>\n</body></html>';
+  assert.equal(exportHtml(src, base, base), src);
+  const draft = base.replace('<html data-rs-id="x1">', '<html data-rs-id="x1" lang="en">').replace('<body data-rs-id="x3">', '<body data-rs-id="x3" class="dark">');
+  assert.equal(exportHtml(src, base, draft), '<!doctype html>\n<html lang="en"><title>Bare</title>\n<body class="dark"><p>Hello</p>\n');
 });

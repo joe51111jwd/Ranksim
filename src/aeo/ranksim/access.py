@@ -48,7 +48,7 @@ BACKOFF_GLOBAL_AFTER = 50
 BACKOFF_BASE_SECONDS = 60
 BACKOFF_MAX_SECONDS = 3600
 REVOKE_CACHE_SECONDS = 10.0
-LOCK_PUBLISH_SECONDS = 300.0
+LOCK_PUBLISH_SECONDS = 86400.0  # at most one storage write per instance per day, however long an attack lasts
 PRUNE_EVERY_SECONDS = 60.0
 
 FAIL_PREFIX = "ranksim/v2/auth/fail/"
@@ -183,6 +183,9 @@ class Access:
         left = _lockout_left(self._recent_failures(now), "", now)
         if left <= 0 or now - self._published_lock < LOCK_PUBLISH_SECONDS:
             return
+        shared_until = float((getattr(self.shared, "auth", {}) or {}).get("lock_until") or 0)
+        if shared_until >= now + left - 60:
+            return  # the lockout every instance already sees covers this one: no write
         self._published_lock = now
         try:
             self.shared.update_auth(lock_until=now + left)
@@ -245,6 +248,11 @@ class Access:
         """Newest revocation time in ms (0 when none). Lists the store at most once per REVOKE_CACHE_SECONDS; with a
         shared cloud state it reads the manifest that instance already holds (no storage call)."""
         if self.shared is not None:
+            if getattr(self.shared, "stamp", 1) == 0:
+                try:
+                    self.shared.refresh()  # a cold instance reads storage before trusting any cookie
+                except Exception:  # noqa: BLE001 - the request's own storage check reports the failure
+                    pass
             shared_ms = int((getattr(self.shared, "auth", {}) or {}).get("revoked_ms") or 0)
             return max(self._revoked_ms, shared_ms)
         if self.store is None:

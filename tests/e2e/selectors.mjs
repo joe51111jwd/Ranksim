@@ -27,6 +27,35 @@ export const SEL = {
   offline: '.offline',
   skeleton: (kind) => `main .skeleton.sk-${kind}`,
 
+  rankChanges: 'section.tile:has(h2:text-is("Rank changes"))',
+  trendCell: '.history-cell svg, .history-cell',
+  historyRow: '.history-row-btn',
+  schedule: '[aria-label="Re-check schedule"] button',
+
+  publishOpen: '.side-stack button:text-is("Publish"), button.btn-block:text-is("Publish")',
+  publishSheet: '.sheet[role=dialog]:has(h2:has-text("Publish to"))',
+  proofCode: '.publish-code code',
+  proofCheck: '.sheet button:text-is("Check")',
+  platform: (kind) => `[aria-label="Platform"] button[data-kind="${kind}"]`,
+  connectCheck: '.sheet .publish-form button:text-is("Check"), .sheet form button:text-is("Check")',
+  connectSave: '.sheet button:text-is("Save connection")',
+  publishGo: '.sheet button.btn-primary.btn-large',
+  rollBack: '.sheet button:text-is("Roll back")',
+
+  searchTable: '.stable[role=table]',
+  searchHeader: '.stable [role=columnheader]',
+  searchSheet: '.sheet[role=dialog]',
+  foundNotTracked: 'section.tile:has(h2:text-is("Found, not tracked"))',
+  competitorCard: '.rowcard.comp',
+  trackToggle: '.rowcard.comp button.track',
+  directories: 'section.tile:has(h2:text-is("Directories and review sites")), section.tile:has(h2:text-is("Other sites in the top 10"))',
+
+  issueFilter: '[aria-label="Filter by priority"] button',
+  issueGroup: '[aria-label="Group issues"] button',
+  fixInEditor: '.sheet button:has-text("Fix in editor")',
+  commentsPanel: 'section.annot-panel',
+  applySuggestion: 'section.annot-panel button:has-text("Apply suggestion")',
+
   gscSection: 'section.tile:has(h2:text-is("Google Search Console"))',
   gscTile: '[data-gsc="overview"]',
 

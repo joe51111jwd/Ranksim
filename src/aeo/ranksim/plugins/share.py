@@ -8,7 +8,7 @@ score of any kind is sent.
 
 Storage:
   <projects root>/_plugins/share/   branding.json, logo.<ext>, secret.key  (not a project: no project.json)
-  <project>/plugins/share/          links.json, changelog.jsonl, issues.json
+  <project>/plugins/share/          links.json, changelog.jsonl, issues.json, views.json (when each link was last opened)
 
 Other plugins add change log entries with ``log_change(project, kind, summary, detail=..., key=...)``.
 """
@@ -265,15 +265,16 @@ def link_status(link: dict, now: datetime | None = None) -> str:
     return "active"
 
 
-def _public_link(root, project, link: dict, now: datetime | None = None) -> dict:
+def _public_link(root, project, link: dict, now: datetime | None = None, views: dict | None = None) -> dict:
     token = token_for(root, project.slug, link["id"])
+    seen = (views if views is not None else _load_views(project)).get(link["id"]) or link.get("last_used")
     return {
         "id": link["id"],
         "label": link.get("label") or "",
         "created": link.get("created"),
         "expires": link.get("expires"),
         "revoked": link.get("revoked"),
-        "last_used": link.get("last_used"),
+        "last_used": seen,
         "status": link_status(link, now),
         "token": token,
         "path": f"{PUBLIC_PREFIX}{token}",
@@ -307,7 +308,8 @@ def create_link(root, project, *, label: str = "", expires_days=None, now: datet
 
 
 def list_links(root, project, now: datetime | None = None) -> list[dict]:
-    return [_public_link(root, project, link, now) for link in reversed(_load_links(project))]
+    views = _load_views(project)
+    return [_public_link(root, project, link, now, views) for link in reversed(_load_links(project))]
 
 
 def revoke_link(project, link_id: str, now: datetime | None = None) -> bool:
@@ -356,23 +358,39 @@ def resolve_token(ui, token: str, now: datetime | None = None):
     return None
 
 
+def _views_path(project) -> Path:
+    return project_dir(project) / "views.json"
+
+
+def _load_views(project) -> dict[str, str]:
+    data = _read_json(_views_path(project), {})
+    if not isinstance(data, dict):
+        return {}
+    return {key: value for key, value in data.items() if LINK_ID_RE.match(str(key)) and isinstance(value, str)}
+
+
 def touch_link(project, link_id: str, now: datetime | None = None) -> bool:
-    """Record when a client last opened the link, at most every ten minutes. True when it wrote."""
+    """Record when a client last opened the link, at most every ten minutes. True when it wrote.
+
+    The time goes to views.json, never to links.json. A public view writes on whichever instance served it and is not
+    saved to cloud storage then, and cloud storage merges a file both sides changed by keeping the local copy. If a
+    view rewrote links.json, a revocation saved by another instance could be dropped there (and saved back later),
+    so a turned-off link would keep working."""
     now = now or _now()
     with _lock:
-        links = _load_links(project)
-        for link in links:
-            if link["id"] == link_id:
-                last = _parse_time(link.get("last_used"))
-                if last is None or (now - last).total_seconds() >= LAST_USED_EVERY_SECONDS:
-                    link["last_used"] = _iso(now)
-                    try:
-                        _write_json(_links_path(project), links)
-                    except OSError:
-                        return False
-                    return True
-                return False
-    return False
+        link = next((row for row in _load_links(project) if row["id"] == link_id), None)
+        if link is None:
+            return False
+        views = _load_views(project)
+        last = _parse_time(views.get(link_id) or link.get("last_used"))
+        if last is not None and (now - last).total_seconds() < LAST_USED_EVERY_SECONDS:
+            return False
+        views[link_id] = _iso(now)
+        try:
+            _write_json(_views_path(project), views)
+        except OSError:
+            return False
+        return True
 
 
 # ---------------------------------------------------------------------------
@@ -1390,13 +1408,10 @@ def register(app, ui) -> None:
         return endpoint
 
     def remember_view(project, link_id: str) -> None:
-        if touch_link(project, link_id):
-            try:
-                from aeo.ranksim import plugins
-
-                plugins.save(ui)  # a GET that writes must save itself on a cloud host
-            except Exception:  # noqa: BLE001 - the last-opened time is a convenience, never a failure
-                pass
+        # Written on this instance only, never saved to cloud storage from here: this is a signed-out request, and
+        # anyone holding a link could otherwise spend Blob writes (Vercel Hobby blocks Blob for 30 days past its cap).
+        # The time goes up with this instance's next owner save; until then the list may show an older time.
+        touch_link(project, link_id)
 
     def error(status: int, message: str) -> JSONResponse:
         return JSONResponse({"error": message}, status_code=status)

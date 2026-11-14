@@ -52,6 +52,7 @@ WEIGHTS = {
     "competitor": 1.0,
 }
 SOURCE_CAP = 6.0  # one page source can't outvote everything else by repeating itself (plugin rows are not capped)
+MIN_RELEVANCE_OWN = 0.34  # a phrase from one page of the site must share a word with its home and product pages
 MIN_RELEVANCE_OUTSIDE = 0.5  # searches from Google or other sites must share words with what the site sells
 COMPETITOR_MIN_PAGES = 2  # a phrase from other sites' titles needs two pages
 
@@ -74,11 +75,37 @@ LABEL_STARTS = (
     "in this article", "key takeaways", "conclusion", "final thoughts", "summary", "next steps", "share this",
     "subscribe", "follow us", "stay ", "thanks", "hear from", "loved by", "customer stories",
 )
-LABEL_ENDS = (" us", " here", " today", " now", " below", " more")
+LABEL_ENDS = (" us", " here", " today", " now", " below", " more", " resources", " updates", " news", " insights", " stories", " events", " webinars")
+# Labels that stay labels even when they end on a product word ("guides for running a dirtwork company").
+STRONG_LABEL_STARTS = (
+    "questions", "frequently asked", "common questions", "articles", "guides", "resources", "related", "latest",
+    "why choose", "how it works", "what our", "what people", "get in touch", "ready to", "trusted by", "join ",
+    "featured", "popular", "recent", "head to head", "built for", "made for", "everything you", "talk to", "our ",
+    "meet ", "about ", "plans", "table of contents", "in this article", "key takeaways", "conclusion",
+    "final thoughts", "summary", "next steps", "share this", "subscribe", "follow us", "stay ", "thanks", "hear from",
+    "loved by", "customer stories", "product updates", "top picks", "use of ", "no charge", "refer ", "what it ",
+    "key differences", "differences between", "pros and cons",
+    "what you ", "how we ", "who we ", "what we ",
+)
+# Words that only appear in legal pages and documents.
+LEGAL = re.compile(r"\b(terms|conditions|privacy|policy|policies|agreement|agreements|clauses?|gdpr|cookies?|adequacy|sub ?processors?|disclaimer|copyright|eula|dpa|liability|indemn\w*|warranty|warranties|governing law|supplemental terms|acceptable use)\b")
+# Press, release and event phrases: they name a moment, not something people search for.
+NEWS = re.compile(r"\b(q[1-4]|release|released|releases|announces?|announcing|announcement|award|awards|nominees?|top workplaces?|workplace award|webinar|summit|conference|boot ?camp|podcast|episode|partnership|partners with|acquires|acquisition|named|wins|celebrat\w*|anniversary|usa today|press)\b")
+MARKETING = {
+    "trusted", "powering", "powered", "deliver", "delivers", "delivering", "unified", "unify", "ultimate", "innovative",
+    "revolutionary", "seamless", "seamlessly", "greatness", "aligns", "empowering", "reimagined", "smarter", "always",
+    "never", "everything", "industry first", "end to end", "game changer", "world class", "best in class", "next generation",
+}
+# Common words of other languages: a phrase with one of these is not an English search.
+FOREIGN = {
+    "und", "der", "die", "das", "fur", "mit", "y", "el", "los", "las", "del", "para", "con", "et", "les", "des", "du",
+    "pour", "het", "een", "voor", "och", "dos", "em", "ou", "terminos", "privacidad", "datenschutz", "agb",
+    "rechtliches", "juridico", "mentions", "legales", "uber", "nous", "sobre", "nosotros", "contacto", "preise",
+}
 LEADING = ("the ", "a ", "an ", "our ", "your ", "welcome to ", "meet ", "introducing ")
 # Words that make a sentence a tagline, not a search.
 PRONOUNS = {"you", "your", "youre", "we", "were", "our", "us", "i", "my", "me", "yours", "ours"}
-SITE_VOICE = {"we", "our", "us", "ours", "were"}  # a question in the site's own voice ("what we do") is site copy
+SITE_VOICE = {"we", "our", "us", "ours", "were", "it", "its", "you", "your"}  # a question in the site's own voice ("what we do") is site copy
 TAGLINE_VERBS = {
     "run", "get", "build", "grow", "stop", "save", "make", "start", "take", "keep", "see", "meet", "discover", "join",
     "simplify", "streamline", "power", "transform", "unlock", "boost", "spend", "win", "never", "say", "work", "do",
@@ -90,17 +117,18 @@ HEADS = {
     "program", "programs", "crm", "erp", "service", "services", "company", "companies", "contractor", "contractors",
     "agency", "agencies", "consultant", "consultants", "provider", "providers", "alternative", "alternatives",
     "template", "templates", "calculator", "tracker", "management", "estimating", "scheduling", "dispatch",
+    "takeoff", "takeoffs",
 } | {
     "plumber", "plumbers", "plumbing", "lawyer", "lawyers", "attorney", "attorneys", "dentist", "dentists",
     "electrician", "electricians", "roofer", "roofers", "roofing", "builder", "builders", "cleaner", "cleaners",
     "cleaning", "repair", "repairs", "installation", "installer", "installers", "mechanic", "doctor", "clinic",
     "therapist", "accountant", "accountants", "realtor", "realtors", "insurance", "firm", "firms", "studio",
     "shop", "store", "supplier", "suppliers", "manufacturer", "manufacturers", "rental", "rentals", "course",
-    "courses", "school", "lessons", "kit", "kits", "products", "equipment",
+    "courses", "school", "lessons", "kit", "kits", "products",
 }
 CONNECTORS = re.compile(r",|;|\s(?:for|with|that|to|and|or|by|from|which|so|built|designed|made|without|will|actually|in a|is|are)\s")
 # A phrase with one of these reads like a sentence, so it is cut into its product phrases even when it is short.
-SENTENCE = re.compile(r"\s(?:that|which|so|built|designed|made|without|will|actually|in a|is|are)\s")
+SENTENCE = re.compile(r"\s(?:that|which|so|built|designed|made|without|will|actually|in a|is|are|by)\s")
 STOP = {
     "a", "an", "the", "and", "or", "for", "with", "to", "of", "in", "on", "at", "by", "from", "is", "are", "be", "it",
     "its", "this", "that", "as", "your", "you", "our", "we", "us", "how", "what", "why", "when", "who", "which",
@@ -115,7 +143,7 @@ YEAR = re.compile(r"\b(19|20)\d\d\b")
 NAVIGATIONAL = ("login", "log in", "sign in", "signin", "my account", "account login", "customer service number",
                 "phone number", "customer support", "contact number", "headquarters", "careers", "jobs at")
 TRANSACTIONAL = ("buy", "price", "prices", "pricing", "cost", "costs", "quote", "quotes", "demo", "free trial",
-                 "near me", "hire", "order", "coupon", "discount", "for sale", "download", "subscription",
+                 "near me", "hire", "order online", "order now", "coupon", "discount", "for sale", "download", "subscription",
                  "cheap", "affordable", "rates", "book online", "sign up for")
 # Strong question words always start a question; weak ones ("will writing service") only with "?" or a subject next.
 QUESTION_START = ("how", "what", "why", "when", "where", "who", "which")
@@ -186,10 +214,132 @@ def same_search(a: str, b: str) -> bool:
     core_b = [word for word in sb if word not in MODIFIERS and not YEAR.fullmatch(word)]
     if core_a and "".join(core_a) == "".join(core_b):
         return True
+    shorter, longer = sorted((core_a, core_b), key=len)
+    if shorter and len(longer) > len(shorter) + 1 and longer[len(shorter)] == "for" and "".join(longer[: len(shorter)]) == "".join(shorter):
+        return True  # "grading contractor software for machine hours" is "grading contractor software"
     set_a, set_b = set(sa), set(sb)
     if set_a & DIRECTION and set_a == set_b:
         return False  # same words, different direction
     return min(len(set_a), len(set_b)) >= 4 and _jaccard(set_a, set_b) >= 0.8
+
+
+# -- which pages say what the site sells --------------------------------------------------------------------
+
+LANGUAGES = {
+    "de", "es", "fr", "nl", "pt", "it", "ja", "ko", "zh", "ru", "pl", "sv", "da", "no", "nb", "fi", "tr", "ar", "he",
+    "cs", "hu", "ro", "el", "id", "th", "vi", "uk", "bg", "hr", "sk", "sl", "lt", "lv", "et", "ms", "hi",
+}
+# Paths that never say what a site sells: legal, utility, hiring, press, events, staging.
+SKIP_SEGMENT = re.compile(
+    r"^(?:legal|privacy(?:-policy)?|terms(?:-[a-z-]+)?|tos|eula|cookies?(?:-policy)?|gdpr|dpa|imprint|impressum|"
+    r"accessibility|security|trust|careers?|jobs|press(?:-releases?)?|news(?:room)?|media|schedule|demo|demos|"
+    r"book-a-demo|request-a-demo|referrals?|refer|signup|sign-up|register|registration|login|log-in|signin|sign-in|"
+    r"account|my-account|cart|checkout|thank-you|thanks|unsubscribe|dev|dev-[a-z0-9-]+|staging|test|tests|tag|tags|"
+    r"category|categories|author|authors|feed|search|sitemap|summit|events?|webinars?|podcasts?|partners?|"
+    r"partner-program|affiliates?|investors?|status|rechtliches|juridico|stripeit|wp-[a-z-]+|cdn-cgi|amp|print)$",
+    re.I,
+)
+CORE_SEGMENT = re.compile(
+    r"^(?:products?|features?|solutions?|industr(?:y|ies)|compare|comparisons?|vs|versus|alternatives?|platform|"
+    r"software|who-we-serve|use-cases?|integrations?|pricing|why-[a-z0-9-]+|services?|apps?|tools?)$",
+    re.I,
+)
+CORE_SLUG = re.compile(r"(?:^|-)(?:software|app|platform|alternatives?|vs|versus|compare|crm|tool|tools|system|pricing)(?:-|$)", re.I)
+BLOG_SEGMENT = re.compile(r"^(?:blog|blogs|resources?|guides?|learn|articles?|insights|library|academy|knowledge|help|support|docs|faq|case-studies|customers?|stories)$", re.I)
+
+
+def page_class(url: str) -> str:
+    """"home", "core" (product, feature, solution, industry, compare pages), "page", "blog" or "skip" (legal,
+    utility, press, events, staging and other-language pages, which never say what the site sells)."""
+    try:
+        path = unquote(urlsplit(url).path or "/")
+    except ValueError:
+        return "skip"
+    segments = [segment for segment in path.strip("/").split("/") if segment]
+    if not segments:
+        return "home"
+    first = segments[0].lower()
+    lang = re.fullmatch(r"([a-z]{2})(?:[-_][a-z]{2,4})?", first)
+    if lang and lang.group(1) in LANGUAGES:
+        return "skip"
+    if any(SKIP_SEGMENT.match(segment) for segment in segments):
+        return "skip"
+    if re.search(r"(?:^|-)(?:terms|privacy|cookie|legal|press-release|careers?)(?:-|$)", segments[-1].lower()):
+        return "skip"
+    if any(BLOG_SEGMENT.match(segment) for segment in segments[:-1]) or BLOG_SEGMENT.match(first):
+        return "blog"
+    if len(segments) > 1 and re.match(r"(?:what|how|does|do|will|can|where|when|is|are|should)-", segments[-1].lower()):
+        return "blog"  # an FAQ answer ("/heavyjob/what-is-heavyjob/") explains a product, it doesn't target a search
+    if any(CORE_SEGMENT.match(segment) for segment in segments) or CORE_SLUG.search(segments[-1]):
+        return "core"
+    return "page"
+
+
+def _core_rank(url: str) -> int:
+    """Among product pages: compare and alternative pages and "<x> software" pages first, then features and
+    solutions, then industries, then hub pages that only list the others (/compare/, /industries/)."""
+    segments = [segment.lower() for segment in urlsplit(url).path.strip("/").split("/") if segment]
+    last = segments[-1] if segments else ""
+    if len(segments) == 1 and CORE_SEGMENT.match(last):
+        return 3
+    if re.search(r"(?:^|-)(?:alternatives?|vs|versus|compare)(?:-|$)", last) or segments[0] in {"compare", "vs", "versus", "alternatives"}:
+        return 0
+    if re.search(r"(?:^|-)(?:software|app|platform|crm|tool|tools|system)(?:-|$)", last):
+        return 0
+    if segments[0] in {"industries", "industry", "who-we-serve", "use-cases", "use-case"}:
+        return 2
+    return 1
+
+
+def rank_sitemaps(locs: list[str]) -> list[str]:
+    """Child sitemaps of a sitemap index, most useful first. Legal, author, tag, press, news, media and event maps are
+    left out; product, page and solution maps come before the blog."""
+    def rank(url: str) -> int | None:
+        name = (urlsplit(url).path or "").lower().rsplit("/", 1)[-1]
+        if re.search(r"legal|author|tag|categor|press|news|media|release|event|webinar|image|video|ebook|white-paper|whitepaper|podcast|career|job", name):
+            return None
+        if re.search(r"product|solution|feature|industr|compare|alternative|service|app|homepage|home|page|main|core|landing", name):
+            return 0 if not re.search(r"homepage", name) else 1
+        if re.search(r"post|blog|article|guide|resource|case|topic|checklist|training|library|customer", name):
+            return 3
+        return 2
+
+    ranked = [(rank(url), index, url) for index, url in enumerate(locs)]
+    return [url for value, _index, url in sorted(item for item in ranked if item[0] is not None)]
+
+
+def _unique_urls(urls: list[str]) -> list[str]:
+    seen, out = set(), []
+    for url in urls:
+        key = url.rstrip("/")
+        if key not in seen:
+            seen.add(key)
+            out.append(url)
+    return out
+
+
+def rank_site_urls(urls: list[str], limit: int) -> list[str]:
+    """The site pages worth reading, best first, at most ``limit``: product, compare and industry pages, then other
+    pages, then a share of the blog. Legal, utility, press, staging and other-language pages are left out."""
+    order = {"home": 0, "core": 1, "page": 2, "blog": 3}
+    kept = [url for url in _unique_urls(urls) if page_class(url) != "skip"]
+    ranked = sorted(kept, key=lambda url: (order[page_class(url)], _core_rank(url) if page_class(url) == "core" else 0, urlsplit(url).path.strip("/").count("/"), len(url)))
+    blog_cap = max(3, limit // 3)
+    picked, blog = [], 0
+    for url in ranked:
+        if page_class(url) == "blog":
+            if blog >= blog_cap:
+                continue
+            blog += 1
+        picked.append(url)
+        if len(picked) >= limit:
+            return picked
+    for url in ranked:  # room left: more blog posts rather than nothing
+        if len(picked) >= limit:
+            break
+        if url not in picked:
+            picked.append(url)
+    return picked[: max(0, limit)]
 
 
 # -- brand ------------------------------------------------------------------------------------------
@@ -280,6 +430,11 @@ def classify_intent(phrase: str, *, brands: set[str] | None = None) -> tuple[str
     if _question(text) or phrase.strip().endswith("?"):
         return "informational", "a question"
     hit = _has(text, COMMERCIAL_WORDS)
+    if hit in {"vs", "versus"}:
+        sides = re.split(r" (?:vs|versus) ", text)
+        concepts = all(side.split() and side.split()[-1].endswith(("ing", "tion", "ment", "ity", "ness", "ance", "ence")) and not set(side.split()) & HEADS for side in sides)
+        if concepts:
+            return "informational", "compares two ideas"  # "overbilling vs underbilling"
     if hit:
         return "commercial", f'has "{hit}"'
     hit = _has(text, INFORMATIONAL)
@@ -387,6 +542,8 @@ class Discovery:
 def _label_reason(phrase: str) -> str | None:
     if phrase in GENERIC:
         return "a page label"
+    if phrase.startswith(STRONG_LABEL_STARTS) or phrase.endswith(LABEL_ENDS):
+        return "a section label"
     if phrase.split()[-1:] and phrase.split()[-1] in HEADS:
         return None  # "contact center software" names a product
     if phrase.startswith(LABEL_STARTS) or phrase.endswith(LABEL_ENDS):
@@ -400,12 +557,41 @@ GENERAL = {
     "alternative", "alternatives", "review", "reviews", "comparison", "compare", "vs", "versus", "and", "or", "for",
     "the", "a", "an", "guide", "overview", "options", "software", "app", "apps", "tool", "tools", "platform",
     "solution", "solutions", "system", "systems", "program", "service", "services", "company", "companies", "online",
+    "whats", "what", "which", "is", "are", "you", "need", "right",
 }
+# Size words: "midsized contractors" names an audience, not a search.
+AUDIENCE_SIZE = {"small", "smaller", "midsized", "mid", "medium", "large", "larger", "growing", "local", "busy", "independent"}
 
 
 def _general(phrase: str) -> bool:
     words = phrase.split()
     return bool(words) and all(word in GENERAL or YEAR.fullmatch(word) for word in words)
+
+
+def _noise_reason(phrase: str, source: str) -> str | None:
+    """Phrases that are never searches people type: legal wording, press and release names, other languages,
+    marketing lines and lists of features."""
+    words = phrase.split()
+    if not words:
+        return "empty"
+    if LEGAL.search(phrase) and words[-1] not in HEADS:  # "privacy policy" is legal, "liability insurance" is a product
+        return "legal wording"
+    if NEWS.search(phrase):
+        return "news or an event"
+    if set(words) & FOREIGN:
+        return "not English"
+    padded = f" {phrase} "
+    if any(f" {item} " in padded for item in MARKETING):
+        return "a tagline"
+    if source in OWN_SOURCES and " and " in padded and words[-1] not in HEADS:
+        return "a list of features"
+    if source in OWN_SOURCES and " or " in padded:
+        return "a choice, not a search"
+    if " in one " in padded and " all in one " not in padded:
+        return "a tagline"
+    if len(words) == 2 and words[0] in AUDIENCE_SIZE:
+        return "an audience"
+    return None
 
 
 def _question(phrase: str) -> bool:
@@ -440,9 +626,13 @@ def _cut(text: str, max_words: int) -> list[tuple[str, float]]:
     parts = CONNECTORS.split(f" {raw} ")
     joins = [match.group(0).strip() for match in CONNECTORS.finditer(f" {raw} ")]
     previous = ""
+    audience = False
     for index, chunk in enumerate(parts):
         chunk_words = clean(chunk).split()
         joiner = joins[index - 1] if index else ""
+        if audience and joiner in {"and", "or", ","}:
+            continue  # "for paving and excavation contractors": still the audience, never a search alone
+        audience = joiner == "for"
         if joiner == "for":
             if not (previous and 1 <= len(chunk_words) <= 3 and chunk_words[-1].endswith("s")):
                 previous = ""
@@ -461,6 +651,8 @@ def _cut(text: str, max_words: int) -> list[tuple[str, float]]:
 
 def _gather(text: str, source: str, weight: float, page: str | None, *, max_words: int = 6, detail: str = "") -> list[tuple[str, Sighting] | tuple[None, dict]]:
     """Phrases from one piece of text, or the reason it was left out."""
+    if re.search(r"(?:\.\.\.|…)\s*$", text or ""):
+        return [(None, {"q": clean(text), "reason": "cut off", "source": source})]  # "Embedded Software Supplemental…"
     phrase = clean(text)
     if not phrase:
         return []
@@ -470,7 +662,10 @@ def _gather(text: str, source: str, weight: float, page: str | None, *, max_word
         return []
     out: list = []
     for piece, factor in _cut(text, max_words):
-        reason = _label_reason(piece) or _tagline_reason(piece) or ("too general" if _general(piece) else None)
+        piece = " ".join(word for word in piece.split() if not YEAR.fullmatch(word))  # searchers rarely type the year
+        piece = re.sub(r"\s+(?:in|for|of|from|on|to)$", "", piece)  # "buildertrend pricing in" after the year went
+        piece = re.sub(r"^\d{1,2}\s+(?=(?:best|top)\b)", "", piece)  # "7 best joist alternatives" is "best joist alternatives"
+        reason = _label_reason(piece) or _tagline_reason(piece) or ("too general" if _general(piece) else None) or _noise_reason(piece, source)
         words = piece.split()
         if not reason and not 2 <= len(words) <= max_words:
             reason = "too long" if len(words) > max_words else "one word"
@@ -500,6 +695,45 @@ def slug_phrase(url: str) -> str | None:
     if sum(1 for word in words if word.isdigit()) and not YEAR.search(" ".join(words)):
         return None
     return " ".join(words)
+
+
+def _covers(want: list[str], text: str) -> float:
+    """Share of the search's words in a text, counting compounds ("dirtwork" in "dirt work" and the reverse)."""
+    have = set(stems(text))
+    squashed = "".join(stems(text))
+    if not want:
+        return 0.0
+    hit = sum(1 for word in want if word in have or (len(word) >= 4 and word in squashed))
+    return hit / len(want)
+
+
+def best_page(search: str, pages) -> str | None:
+    """The site page that best targets a search: its title and H1 cover the search's words, its address says the
+    same thing, and nothing else. Legal and utility pages never count."""
+    want = [word for word in stems(search) if word not in STOP or word in {"vs", "best", "top"}]
+    want = [word for word in want if word not in {"best", "top", "vs"}] or want
+    if len(clean(search).split()) < 2 or not want:
+        return None
+    best, best_score = None, 0.0
+    for page in pages or []:
+        if getattr(page, "status", "fetched") != "fetched":
+            continue
+        url = _attr(page, "url")
+        kind = page_class(url)
+        if kind == "skip":
+            continue
+        heading = f"{_attr(page, 'title')} {_attr(page, 'h1')}"
+        slug = slug_phrase(url) or ""
+        cover = _covers(want, heading)
+        slug_cover = _covers(want, slug)
+        slug_words = [word for word in stems(slug) if word not in STOP]
+        precision = sum(1 for word in slug_words if word in want) / len(slug_words) if slug_words else 0.0
+        if cover < 0.6 and slug_cover < 0.8:
+            continue
+        score = cover + 0.6 * slug_cover + 0.3 * precision + (0.1 if kind in {"core", "home"} else 0.0)
+        if score > best_score:
+            best, best_score = url, score
+    return best
 
 
 def _attr(page, name: str) -> str:
@@ -591,7 +825,7 @@ def discover(
                 continue
             raw.setdefault(phrase, Found(q=phrase)).sightings.append(item)
 
-    readable = [page for page in pages if getattr(page, "status", "fetched") == "fetched"]
+    readable = [page for page in pages if getattr(page, "status", "fetched") == "fetched" and page_class(_attr(page, "url")) != "skip"]
     for page in readable:
         page = SitePage(url=_attr(page, "url"), status="fetched", title=_attr(page, "title"), meta=_attr(page, "meta"), h1=_attr(page, "h1"), h2s=[text for text in (getattr(page, "h2s", None) or []) if isinstance(text, str)])
         parts = [part for part in SPLIT.split(page.title or "") if part.strip()]
@@ -646,7 +880,8 @@ def discover(
             continue
         raw.setdefault(phrase, Found(q=phrase)).sightings.append(Sighting(source=source, weight=weight, detail=detail))
 
-    vocab = _vocabulary(readable)
+    core = [page for page in readable if page_class(_attr(page, "url")) in {"home", "core"}]
+    vocab = _vocabulary(core if len(core) >= 2 else readable)  # what the site sells: its home and product pages
     brands = _serp_brands(google, vocab) | set(own_brand.words)
     # Near duplicates pool their evidence before any threshold: two "drain cleaning tip(s)" H2s count together.
     groups: list[Found] = []
@@ -671,6 +906,13 @@ def discover(
             found.evidence += BUYING_BONUS if found.intent in {"commercial", "transactional"} else 0.0
         if found.evidence < MIN_SCORE:
             dropped.append({"q": phrase, "reason": "not enough signal", "source": found.sources[0]})
+            continue
+        if set(page_sources) == {"slug"} and len(by_source) == 1 and len(phrase.split()) < 3:
+            dropped.append({"q": phrase, "reason": "only in a page address", "source": "slug"})
+            continue
+        own_labels = [name for name in page_sources if name in OWN_SOURCES]
+        if own_labels and len(by_source) == len(own_labels) and len({item.page for item in found.sightings}) == 1 and found.relevance < MIN_RELEVANCE_OWN:
+            dropped.append({"q": phrase, "reason": "not what the site sells", "source": found.sources[0]})
             continue
         if not found.own and found.relevance < MIN_RELEVANCE_OUTSIDE and not any(source not in WEIGHTS for source in by_source):
             dropped.append({"q": phrase, "reason": "off topic", "source": found.sources[0]})

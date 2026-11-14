@@ -251,7 +251,7 @@ def test_competitors_are_businesses_and_directories_are_their_own_group():
     assert kinds["reddit.com"] == "forum" and kinds["youtube.com"] == "video"
     assert kinds["smartcrewhq.example"] == "you"
     assert kinds["mitti.example"] == "competitor" and kinds["getonecrew.example"] == "competitor"
-    assert kinds["help.hcss.example"] == "competitor"
+    assert kinds["help.hcss.example"] == "help"  # a help article ranks by name, not as a rival page
     assert kinds["dirtnews.example"] == "publisher"
     assert all(row["reason"] for row in rows)
     picked = cp.pick_competitors(_google(), SC)
@@ -307,7 +307,7 @@ def test_profiles_show_what_each_competitor_ranks_with():
     assert mitti["best_pages"][0]["url"].startswith("https://mitti.example/") and "searches" in mitti["best_pages"][0]
     assert mitti["pages_stored"] == 2 and mitti["pages_ranking"] == 3
     assert [row["domain"] for row in profiles["directories"]] == ["g2.com", "capterra.com"]
-    assert {row["domain"] for row in profiles["platforms"]} == {"reddit.com", "youtube.com"}
+    assert {row["domain"] for row in profiles["platforms"]} == {"reddit.com", "youtube.com", "help.hcss.example"}
     assert not any(row["domain"] == SC for group in profiles.values() for row in group)
     # without stored pages the profile still has rankings and title patterns, and says nothing about words
     bare = cp.competitor_profiles(_google(), SC, {})
@@ -457,12 +457,13 @@ def test_classification_handles_country_sites_names_and_subdomains():
     kind, reason = cp.classify_domain("play.google.com")
     assert kind == "marketplace" and "play.google.com" in reason
     rows = {row["domain"]: row for row in cp.classify_domains(_google(), SC)}
-    assert "hcss.example" in rows or "help.hcss.example" in rows  # one host alone keeps its name
+    assert rows["help.hcss.example"]["kind"] == "help"
     two = GoogleSnapshot("p", "", "import", [
-        SearchResults("a", [_result(1, "https://hcss.example/x", "HCSS"), _result(2, "https://help.hcss.example/y", "Help")], "import", "csv", None),
+        SearchResults("a", [_result(1, "https://hcss.example/x", "HCSS"), _result(2, "https://app.hcss.example/y", "App"), _result(3, "https://help.hcss.example/z", "Help")], "import", "csv", None),
     ])
     merged = {row["domain"]: row for row in cp.classify_domains(two, SC)}
-    assert list(merged) == ["hcss.example"] and merged["hcss.example"]["hosts"] == ["hcss.example", "help.hcss.example"]
+    assert merged["hcss.example"]["hosts"] == ["app.hcss.example", "hcss.example"] and merged["help.hcss.example"]["kind"] == "help"
+    assert cp.classify_domain("www.glassdoor.com") == ("platform", "a job site")
 
 
 def test_list_articles_that_mention_pricing_are_still_publishers():
@@ -734,7 +735,105 @@ def test_pages_that_sell_nothing_like_yours_are_other_sites():
         f"{SC_HOME}excavation-software/": _vendor_page("SmartCrew"),
     }
     rows = {row["domain"]: row for row in cp.classify_domains(google, SC, profiles={url: cp.page_profile(url, html) for url, html in docs.items()})}
-    assert rows["mitti.example"]["kind"] == "competitor" and rows["mitti.example"]["hosts"] == ["help.mitti.example", "mitti.example"]
+    assert rows["mitti.example"]["kind"] == "competitor" and rows["help.mitti.example"]["kind"] == "help"
     assert rows["essays.example"]["kind"] == "other" and "sells software" in rows["essays.example"]["reason"]
     assert rows["dirtworksoftware.example"]["kind"] == "competitor"  # the name says software
     assert rows["lists.example"]["kind"] == "publisher"
+
+
+def test_best_page_prefers_the_page_that_targets_the_search():
+    from aeo.ranksim.site import SitePage
+
+    pages = [
+        SitePage(url=f"{SC_HOME}best-construction-management-software-for-small-business/", status="fetched", title="Best Construction Management Software for Small Excavation Businesses", h1="Excavation and construction software compared"),
+        SitePage(url=f"{SC_HOME}best-excavation-software/", status="fetched", title="Best Excavation Software (2026)", h1="Best excavation software"),
+        SitePage(url=f"{SC_HOME}all-in-one-dirt-work-software/", status="fetched", title="All-in-One Dirtwork Software | SmartCrew", h1="All in one dirtwork software"),
+        SitePage(url=f"{SC_HOME}legal/terms/", status="fetched", title="Excavation software terms", h1="Terms"),
+    ]
+    assert dn.best_page("excavation software", pages) == f"{SC_HOME}best-excavation-software/"
+    assert dn.best_page("all in one dirt work software", pages) == f"{SC_HOME}all-in-one-dirt-work-software/"
+    assert dn.best_page("hcss alternative", pages) is None
+    assert dn.best_page("software", pages) is None
+
+
+# -- shapes from live runs on SmartCrew, Mitti, OneCrew and HCSS (discovery review, Nov 14) -----------------------
+
+
+def test_the_page_sample_reads_product_and_compare_pages_first():
+    base = "https://www.example.com"
+    urls = [f"{base}/legal/new-sccs", f"{base}/legal/privacy-policy", f"{base}/de", f"{base}/es/legal", f"{base}/pt-BR/juridico",
+            f"{base}/schedule/demo-lg", f"{base}/schedule/demo-md", f"{base}/referrals/signup", f"{base}/summit/register",
+            f"{base}/dev-tc/home", f"{base}/news/q3-2025-release", f"{base}/careers"]
+    urls += [f"{base}/blog/post-{i}" for i in range(30)]
+    urls += [f"{base}/compare/hcss-alternative/", f"{base}/compare/b2w-alternative/", f"{base}/vs/hcss-vs-busybusy/",
+             f"{base}/industries/paving", f"{base}/features/dispatch", f"{base}/excavation-software/", f"{base}/about/"]
+    picked = dn.rank_site_urls(urls, 12)
+    assert len(picked) == 12
+    assert {f"{base}/compare/hcss-alternative/", f"{base}/compare/b2w-alternative/", f"{base}/vs/hcss-vs-busybusy/", f"{base}/excavation-software/"} <= set(picked)
+    assert not any("/legal" in url or "/schedule/" in url or "/dev-tc/" in url or "/de" == url[len(base):] or "/news/" in url for url in picked)
+    assert sum(1 for url in picked if "/blog/" in url) <= 12 - 7  # every product, compare and plain page comes before the blog
+    assert dn.page_class(f"{base}/") == "home" and dn.page_class(f"{base}/es/legal") == "skip"
+
+
+def _phrases(titles, brand="Acme", host="acme.com", h2s=None, urls=None):
+    pages = [autopilot.SitePage(url=(urls[i] if urls else f"https://{host}/p{i}-software/"), status="fetched", title=t, h2s=(h2s or {}).get(i, [])) for i, t in enumerate(titles)]
+    pages.append(autopilot.SitePage(url=f"https://{host}/", status="fetched", title=f"Dirt work software for paving and excavation contractors | {brand}", h1="Dirt work software"))
+    return dn.discover(pages, brand, host=host)
+
+
+def test_legal_press_and_marketing_lines_are_not_searches():
+    found = _phrases([
+        "Service Specific Terms and Conditions | Acme", "Embedded Software Supplemental Terms | Acme", "Master Partner Agreement | Acme",
+        "Q3 2025 Release | Acme", "USA Today Top Workplace | Acme", "Always On Support, Always Human | Acme",
+        "Software Trusted by Top Paving Contractors | Acme", "First End to End Platform | Acme", "Refer a Contractor | Acme",
+        "Product Updates | Acme", "Top Picks for 2026 | Acme", "Paving and Construction Contractor Resources | Acme",
+        "AGB und Datenschutz | Acme", "Embedded Software Supplemental… | Acme",
+        "Paving Estimating Software | Acme", "Excavation Software for Contractors 2026 | Acme",
+    ])
+    queries = set(found.queries)
+    assert "paving estimating software" in queries
+    assert "excavation software for contractors" not in queries or "excavation software" not in queries  # year gone, merged
+    assert not any("2026" in q or "2025" in q for q in queries)
+    for junk in ("service specific terms and conditions", "embedded software supplemental terms", "master partner agreement",
+                 "q3 release", "usa today top workplace", "always on support always human", "software trusted by top paving contractors",
+                 "first end to end platform", "refer a contractor", "product updates", "top picks for", "paving and construction contractor resources",
+                 "agb und datenschutz", "embedded software supplemental"):
+        assert junk not in queries, junk
+    reasons = {item["q"]: item["reason"] for item in found.dropped}
+    assert reasons.get("service specific terms and conditions") == "legal wording"
+    assert reasons.get("embedded software supplemental") == "cut off"
+
+
+def test_slug_only_and_utility_page_phrases_are_dropped():
+    urls = ["https://acme.com/schedule/demo-lg", "https://acme.com/schedule/demo-md", "https://acme.com/demo-sm", "https://acme.com/legal/privacy-portal"]
+    found = _phrases(["", "", "", "Privacy Portal | Acme"], urls=urls)
+    assert not {"demo lg", "demo md", "demo sm", "privacy portal"} & set(found.queries)
+
+
+def test_own_pages_are_scored_against_what_the_site_sells():
+    urls = ["https://acme.com/blog/heat-stress", "https://acme.com/blog/asc-boot", "https://acme.com/compare/hcss-alternative/"]
+    found = _phrases(["Heat Stress Awareness | Acme", "Consulting Connect | Acme", "HCSS Alternative for Dirt Work | Acme"], urls=urls)
+    assert "hcss alternative for dirt work" in found.queries or "hcss alternative" in " ".join(found.queries)
+    assert "heat stress awareness" not in found.queries and "consulting connect" not in found.queries
+
+
+def test_intent_fixes_from_live_sites():
+    assert dn.classify_intent("potential change order")[0] != "transactional"
+    assert dn.classify_intent("overbilling vs underbilling")[0] == "informational"
+    assert dn.classify_intent("hcss vs busybusy")[0] == "commercial"
+    assert dn.same_search("grading contractor software", "grading contractor software for machine hours")
+    assert dn.same_search("hcss vs busybusy 2026", "hcss vs busybusy")
+
+
+def test_more_shapes_from_live_sites():
+    found = _phrases([
+        "Software Alternatives by Crew Size | Acme", "Dirt Crews or Home Service | Acme", "Leads to Crew in One App | Acme",
+        "Midsized Contractors | Acme", "7 Best Joist Alternatives for Contractors (2026) | Acme", "Buildertrend Pricing in 2026 | Acme",
+        "What's the Best Tool? | Acme", "Key Differences for Contractors | Acme", "Procore Pricing | Acme",
+    ])
+    queries = set(found.queries)
+    assert {"procore pricing", "buildertrend pricing"} <= queries
+    assert any(q.startswith("best joist alternatives") for q in queries)
+    for junk in ("software alternatives by crew size", "dirt crews or home service", "leads to crew in one app", "midsized contractors",
+                 "whats the best tool", "key differences for contractors", "buildertrend pricing in"):
+        assert junk not in queries, junk

@@ -88,7 +88,8 @@
      diff()        what changed against the page as loaded, block by block in plain words:
                    { changes: [{ type: 'changed' | 'added' | 'removed' | 'moved', kind, label, before, after,
                    words? }], counts: { changed, added, removed, moved }, total, summary }. summary is one sentence such
-                   as "1 change and 2 additions." or "No changes yet.". label reads like "Main heading
+                   as "3 parts of the page changed: 1 edited
+                   and 2 added." or "No changes yet.". label reads like "Main heading
                    changed"; words is a word diff [{ op: '=' | '+' | '-', text }] for changed blocks.
      undo(), redo()  step through the draft's history (visual, HTML, inserted blocks, title and description share one
                    history). Return true when something changed. canUndo, canRedo: booleans.
@@ -111,6 +112,8 @@
    registerSearchColumn({ key, order, header, cell(row) })
      Adds a column to the Searches list. `header` is its title; cell(row) returns text or a Node for one ranking row
      ({ q, position, checked, url, top, predicted, ... } from the report). Columns appear after the position.
+     Optional when(report): the column shows only when it returns true. A false or throwing when() hides the column
+     (use it for data that may not exist yet, for example Search Console before it is connected).
 
    ---------------------------------------------------------------- events
 
@@ -141,7 +144,7 @@
      screens/issues.js  issueRow(issue, compact) -> Node
      Importers: app.js (draftFor, normalize, paintFrame, paintSide, renderEditor, publishButton), screens/overview.js
      (issueRow), editor/test.js (ED, draftFor, editorCtx, getCompare, renderEditor, syncFromFrame, facts,
-     publishButton), editor/editor.js (renderResult, runTest), editor/publish.js (ED, draftFor, syncFromFrame).
+     publishButton), editor/editor.js (renderResult, runTest), editor/publish.js (ED, draftFor, syncFromFrame, editorCtx).
      tests/test_studio_modules.py checks this list against the imports.
 */
 

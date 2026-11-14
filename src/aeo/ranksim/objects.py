@@ -12,6 +12,8 @@ Names are plain strings with "/" separators, like "ranksim/v2/jobs/<id>/00000001
 
 from __future__ import annotations
 
+import contextlib
+import io
 import os
 import secrets
 import threading
@@ -43,6 +45,23 @@ class ObjectStore:
     def list(self, prefix: str) -> list[str]:
         """Every name under prefix, sorted."""
         raise NotImplementedError
+
+    @contextlib.contextmanager
+    def open(self, name: str):
+        """name's bytes as a readable binary stream, read once front to back (KeyError when name does not exist).
+        Same cost as get. Backends that can stream do, so the object is neither held whole nor written to disk."""
+        yield io.BytesIO(self.get(name))
+
+    def fetch(self, name: str, path: Path) -> None:
+        """Write name's bytes to the file path (KeyError when name does not exist). Same cost as get. Backends that
+        can stream do, so a large object never sits in memory whole; a failed fetch leaves no file behind."""
+        try:
+            data = self.get(name)
+            with open(path, "wb") as handle:
+                handle.write(data)
+        except BaseException:
+            Path(path).unlink(missing_ok=True)
+            raise
 
     def delete(self, names: list[str]) -> None:
         raise NotImplementedError
@@ -193,6 +212,54 @@ class BlobStore(ObjectStore):
         raise StoreError(f"put failed: {type(failure).__name__}") from failure
 
 
+    @contextlib.contextmanager
+    def open(self, name):
+        from vercel.blob import sync as blob
+
+        stream = getattr(blob, "stream_blob", None)
+        if stream is None:
+            with super().open(name) as handle:
+                yield handle
+            return
+        with contextlib.ExitStack() as stack:
+            try:
+                download = _retry(lambda: stack.enter_context(stream(name, access="private")))
+            except blob.BlobNotFoundError as exc:
+                raise KeyError(name) from exc
+            except blob.BlobError as exc:
+                raise StoreError(f"get failed: {type(exc).__name__}") from exc
+            yield io.BufferedReader(_ChunkReader(iter(download), blob.BlobError), 1 << 20)
+
+    def fetch(self, name, path):
+        from vercel.blob import sync as blob
+
+        stream = getattr(blob, "stream_blob", None)
+        if stream is None:
+            return super().fetch(name, path)
+
+        def once():
+            with stream(name, access="private") as download, open(path, "wb") as handle:
+                for chunk in download:
+                    handle.write(chunk)
+
+        try:
+            _retry(once)
+        except blob.BlobNotFoundError as exc:
+            Path(path).unlink(missing_ok=True)
+            raise KeyError(name) from exc
+        except blob.BlobError as exc:
+            Path(path).unlink(missing_ok=True)
+            raise StoreError(f"get failed: {type(exc).__name__}") from exc
+        except OSError:
+            Path(path).unlink(missing_ok=True)
+            raise
+        except Exception as exc:  # noqa: BLE001 - a dropped stream from the HTTP layer
+            Path(path).unlink(missing_ok=True)
+            raise StoreError(f"get failed: {type(exc).__name__}") from exc
+        except BaseException:
+            Path(path).unlink(missing_ok=True)
+            raise
+
     def get(self, name):
         from vercel.blob import sync as blob
 
@@ -230,6 +297,33 @@ class BlobStore(ObjectStore):
             _retry(blob.delete_blob, list(names))
         except blob.BlobError as exc:
             raise StoreError(f"delete failed: {type(exc).__name__}") from exc
+
+
+class _ChunkReader(io.RawIOBase):
+    """A streamed download's chunks as a readable file. A dropped stream surfaces as StoreError."""
+
+    def __init__(self, chunks, failure) -> None:
+        self._chunks, self._failure, self._left = chunks, failure, b""
+
+    def readable(self) -> bool:
+        return True
+
+    def readinto(self, buffer) -> int:
+        while not self._left:
+            try:
+                self._left = next(self._chunks)
+            except StopIteration:
+                return 0
+            except self._failure as exc:
+                raise StoreError(f"get failed: {type(exc).__name__}") from exc
+            except OSError:
+                raise
+            except Exception as exc:  # noqa: BLE001 - the HTTP layer's own errors
+                raise StoreError(f"get failed: {type(exc).__name__}") from exc
+        size = min(len(buffer), len(self._left))
+        buffer[:size] = self._left[:size]
+        self._left = self._left[size:]
+        return size
 
 
 def _retry(call, *args, tries: int = 3, **kwargs):

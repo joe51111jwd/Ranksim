@@ -45,7 +45,7 @@ def env(tmp_path, monkeypatch):
     from aeo.ranksim.plugins import share
 
     fake = FakeBlob()
-    for name in ("put_blob", "head_blob", "query_blobs", "get_blob", "delete_blob", "BlobError", "BlobNotFoundError"):
+    for name in ("put_blob", "head_blob", "query_blobs", "get_blob", "stream_blob", "delete_blob", "BlobError", "BlobNotFoundError"):
         monkeypatch.setattr(sync, name, getattr(fake, name))
     monkeypatch.setattr(share, "_project_report_fn", lambda: (lambda ui, slug: {"issues": ISSUES, "kpis": {}, "rankings": []}))
     web, router = Web(), Router()

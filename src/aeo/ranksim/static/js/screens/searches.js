@@ -2,8 +2,9 @@
    the best page) and searches Ranksim found but does not track yet. A row opens a sheet with the real top 10 and the
    content gaps for that search. Extra columns come from registerSearchColumn. */
 
-import { S, api, h, icon, clear, main, pathOf, go, enc, plural, page, footer, noSearchData, serpList, openSheet, closeSheet, toast, reloadSite } from '../core.js';
+import { S, api, h, icon, clear, main, pathOf, go, enc, esc, looseKey, plural, page, footer, noSearchData, serpList, openSheet, closeSheet, toast, reloadSite } from '../core.js';
 import { registerScreen, searchColumns, renderEntry } from '../hooks.js';
+import { draftFor, normalize } from '../editor/editor.js';
 
 export const SOURCE_LABEL = {
   added: 'Added', title: 'Title', h1: 'Heading', h2: 'Subheading', slug: 'Page address', related: 'Related search',
@@ -160,6 +161,8 @@ export function openSearch(row) {
     if (best.url) body.append(h('p', { class: 'reason', text: best.fromGsc ? `Best page: ${pathOf(best.url)} (from Search Console)` : `Best page: ${pathOf(best.url)}` }));
     if (row.top && row.top.length) body.append(h('div', { class: 'tile' }, h('div', { class: 'tile-head' }, h('h2', { text: 'Top 10 on Google' })), serpList(row.top)));
     else body.append(h('div', { class: 'empty-note', text: 'No Google results for this search yet.' }));
+    const brief = R.briefs && R.briefs[row.q];
+    if (brief && !brief.note && (brief.sections.length || brief.questions.length)) body.append(briefTile(brief, row));
     if (gap) body.append(gapTile(gap));
     if (item && item.sources && item.sources.length) body.append(sourcesTile(item));
     body.append(h('div', { class: 'form-actions' }, h('button', { class: 'btn btn-primary btn-large', type: 'button', onClick: () => openInEditor(row) }, icon('pencil'), row.url ? 'Open in editor' : 'Write a page for it')));
@@ -172,6 +175,58 @@ function sourcesTile(item) {
     h('div', { class: 'rows' }, item.sources.map((source) => h('div', { class: 'srcline' },
       h('span', { class: 'chip chip-gray', text: sourceLabel(source.source) }),
       h('span', { class: 'one-line', text: (source.detail || []).join(', ') })))));
+}
+
+/* The HTML a brief starts a new page with: title, H1, the sections the pages that rank share, questions, and a
+   table when most of them have one. Every line is a prompt to replace. */
+export function briefHtml(brief) {
+  const parts = [`<h1>${esc(brief.h1)}</h1>`, `<p>${esc(`Answer "${brief.q}" in the first two sentences.`)}</p>`];
+  for (const section of brief.sections) {
+    parts.push(`<h2>${esc(section.heading)}</h2>`, `<p>${esc(`Write this section. ${section.pages} of the ${section.of} pages that rank cover it.`)}</p>`);
+  }
+  if (brief.elements.some((item) => item.element === 'table')) {
+    parts.push('<h2>Comparison</h2>', '<table><thead><tr><th>Option</th><th>Best for</th><th>Price</th></tr></thead><tbody><tr><td>Option one</td><td>Who it suits</td><td>From</td></tr><tr><td>Option two</td><td>Who it suits</td><td>From</td></tr></tbody></table>');
+  }
+  if (brief.questions.length) {
+    parts.push('<h2>Frequently asked questions</h2>');
+    for (const question of brief.questions) parts.push(`<h3>${esc(question)}</h3>`, '<p>Answer in two or three sentences.</p>');
+  }
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>${esc(brief.title)}</title><meta name="description" content="${esc(`${brief.h1}. Replace this with a 140 to 160 character summary.`)}"></head><body><main>${parts.join('')}</main></body></html>`;
+}
+
+function slugOf(text) {
+  return String(text || 'new-page').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60) || 'new-page';
+}
+
+/* Opens the editor on a new page filled from the brief, the way the editor's own "Start a new page" does. */
+export function startFromBrief(brief) {
+  const R = S.report;
+  const taken = new Set((R.pages || []).map((item) => looseKey(item.url)));
+  let url = `https://${R.site}/${slugOf(brief.q)}/`;
+  if (taken.has(looseKey(url))) url = `https://${R.site}/new-${slugOf(brief.q)}/`;
+  const draft = draftFor(url);
+  if (!draft.touched) Object.assign(draft, { text: normalize(briefHtml(brief)), url, base: null, loaded: '', touched: true, failed: '' });
+  closeSheet(true);
+  go('editor', { page: url, q: brief.q });
+}
+
+/* The brief tile in the search sheet. */
+function briefTile(brief, row) {
+  const tile = h('div', { class: 'tile' },
+    h('div', { class: 'tile-head' }, h('h2', { text: row.url ? 'Brief for a better page' : 'Brief for a new page' }), h('span', { class: 'aside', text: plural(brief.based_on.length, 'page') })),
+    h('p', { class: 'reason gap-bottom', text: `Built from the ${plural(brief.based_on.length, 'page')} that rank for this search. A starting point, not a guarantee.` }));
+  const facts = [['Title', brief.title], ['H1', brief.h1]];
+  if (brief.words) facts.push(['Length', `${brief.words.low} to ${brief.words.high} words`]);
+  if (brief.elements.length) facts.push(['Has', brief.elements.map((item) => `${item.label} (${item.pages} of ${item.of})`).join(', ')]);
+  tile.append(h('dl', { class: 'facts' }, facts.map(([k, v]) => [h('dt', { text: k }), h('dd', { text: v })])));
+  if (brief.sections.length) {
+    tile.append(h('div', { class: 'tile-k', text: 'Sections' }), h('div', { class: 'rows gap-bottom' }, brief.sections.map((section) => h('div', { class: 'srcline' },
+      h('span', { class: 'one-line', text: section.heading }), h('span', { class: 'count', text: `${section.pages} of ${section.of}` })))));
+  }
+  if (brief.questions.length) tile.append(h('div', { class: 'tile-k', text: 'Questions people ask' }), h('div', { class: 'rows gap-bottom' }, brief.questions.map((question) => h('div', { class: 'srcline', text: question }))));
+  if (brief.terms.length) tile.append(h('div', { class: 'chips gap-bottom' }, brief.terms.map((term) => h('span', { class: 'chip chip-gray', text: term.term }))));
+  if (!S.publicDemo) tile.append(h('button', { class: 'btn btn-dark', type: 'button', onClick: () => startFromBrief(brief) }, icon('plus'), 'Start a new page from this brief'));
+  return tile;
 }
 
 /* Friendly names for structured data types. */

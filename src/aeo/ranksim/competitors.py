@@ -733,8 +733,15 @@ def gap_for(search: str, page_url: str | None, page_html: str | None, above: lis
 
 
 MAX_BRIEF_SECTIONS = 8
+BRIEF_SHARE = 0.25  # a brief lists sections a quarter of the ranking pages share (gaps need 40%)
 MAX_BRIEF_QUESTIONS = 6
 QUESTION_WORDS = ("how", "what", "why", "when", "where", "which", "who", "is", "are", "can", "does", "do", "should")
+
+
+def _names_a_brand(text: str, brands: set[str]) -> bool:
+    words = set(clean(text).split())
+    squashed = clean(text).replace(" ", "")
+    return any(brand in words or (len(brand) >= 6 and brand in squashed) for brand in brands)
 
 
 def _cased(text: str) -> str:
@@ -773,12 +780,18 @@ def content_brief(search: str, row: dict, docs: dict[str, str], *, questions: li
         return brief
     total = len(pages)
     asked: list[str] = []
+    brands = set()
+    for page in pages:
+        try:
+            brands |= host_tokens(domain_of(page["url"]))
+        except ValueError:
+            pass
     for topic in _cluster([(page["url"], item["text"]) for page in pages for item in page["headings"]]):
         label = min(topic["texts"], key=lambda text: (-topic["texts"][text], len(text)))
         is_question = label.rstrip().endswith("?") or clean(label).split()[:1] in [[word] for word in QUESTION_WORDS]
-        if is_question and len(topic["pages"]) >= 1:
+        if is_question and len(topic["pages"]) >= 1 and not _names_a_brand(label, brands):
             asked.append(label.strip())
-        if _common(len(topic["pages"]), total) and not is_question:
+        if len(topic["pages"]) >= COMMON_MIN_PAGES and len(topic["pages"]) >= math.ceil(BRIEF_SHARE * total) and not is_question:
             brief["sections"].append({"heading": label, "pages": len(topic["pages"]), "of": total, "evidence": list(topic["pages"])[:6]})
     brief["sections"].sort(key=lambda item: -item["pages"])
     brief["sections"] = brief["sections"][:MAX_BRIEF_SECTIONS]
@@ -878,7 +891,7 @@ def stored_html(database: str, urls: list[str]) -> dict[str, str]:
     return {url: found[loose_key(url)] for url in urls if loose_key(url) in found}
 
 
-SECTIONS_VERSION = 10
+SECTIONS_VERSION = 11
 
 
 def _fingerprint(project, meta, google, features, rows, pages, docs) -> str:

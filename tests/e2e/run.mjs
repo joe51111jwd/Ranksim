@@ -441,7 +441,7 @@ try {
     expect(/Up|Down|New|Lost|Changes show|Positions show/.test(text), `Rank changes tile has content: ${text.slice(0, 120)}`);
     await goto(page, `/app/${encodeURIComponent(slug)}/searches`);
     await page.waitForSelector(SEL.searchRow);
-    expect(/Trend/.test(await page.innerText('main')), 'the Searches list has the Trend column');
+    expect(/Since last visit|Trend/.test(await page.innerText('main')), 'the Searches list has the rank history column');
     expect((await page.locator('.history-cell').count()) >= 1, 'a sparkline cell per checked search');
     await goto(page, `/app/${encodeURIComponent(slug)}/track-history`);
     await page.waitForSelector(SEL.historyRow);

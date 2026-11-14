@@ -115,6 +115,12 @@ def csp_for(path: str) -> str:
         return LEGACY_CSP
     if path in {"/", "/app", "/start", "/edit"} or path.startswith("/app/"):
         return STUDIO_CSP
+    if not path.startswith(("/api/", "/studio/", "/static/")):
+        from aeo.ranksim import plugins
+
+        custom = plugins.csp_for(path)  # a plugin page, for example a public share link
+        if custom:
+            return custom
     return STRICT_CSP
 STEP_LABELS = {
     "google": "Google top 10 (REAL)",

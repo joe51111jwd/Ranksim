@@ -56,6 +56,12 @@ settings_schema() -> dict
     Optional. Describes plugin settings shown in Settings. GET /api/v1/plugins lists every loaded plugin with its
     schema (JSON).
 
+csp(path: str) -> str | None
+    Optional. The Content-Security-Policy for a path this plugin serves (for example a public share page under
+    /r/), or None to leave the path alone. Consulted only for paths outside the Studio pages, the classic pages that
+    have their own policy, /api/, /studio/ and /static/, so a plugin cannot loosen those. Answer only for paths
+    your plugin serves. The first plugin (load order) that returns a string wins.
+
 On the public demo (ui.public_demo) a plugin must not call a provider or save anything: start write routes with
 api.common._not_public(ui), and skip paid calls in the other hooks.
 
@@ -67,6 +73,11 @@ Helpers for plugins and the core:
                                               changes when it raises, removes a key or leaves data that is not JSON
     json_error(value) -> str | None           None when value encodes as the API sends JSON, else the reason
     data_dir(project, feature) -> Path        project.dir / "plugins" / feature, created
+    workspace_dir(ui, feature) -> Path        <projects root> / "_plugins" / feature, created: data that belongs
+                                              to the whole workspace (one Google connection, a usage counter,
+                                              branding), not to one project. Cloud storage keeps it like project
+                                              data. Never put workspace data anywhere else under the projects root.
+    csp_for(path) -> str | None               the first plugin csp(path) answer (serve.csp_for uses it)
     save(ui) -> bool                          save the data folder to cloud storage now (see below)
 
 When plugin data is saved on a cloud host (Vercel). Each instance has its own disk. Cloud storage keeps one copy of
@@ -101,7 +112,7 @@ import threading
 from pathlib import Path
 from types import ModuleType
 
-HOOKS = ("register", "extend_report", "discovery_sources", "audit_checks", "after_pull", "settings_schema")
+HOOKS = ("register", "extend_report", "discovery_sources", "audit_checks", "after_pull", "settings_schema", "csp")
 WRITE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
 FEATURE_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
 
@@ -301,6 +312,26 @@ def data_dir(project, feature: str) -> Path:
     folder = Path(project.dir) / "plugins" / feature
     folder.mkdir(parents=True, exist_ok=True)
     return folder
+
+
+def workspace_dir(ui, feature: str) -> Path:
+    """<projects root> / "_plugins" / feature, created. For workspace-wide plugin data (module docstring)."""
+    if not isinstance(feature, str) or not FEATURE_RE.match(feature):
+        raise ValueError("A plugin data folder name is lowercase letters, digits, - and _.")
+    root = getattr(ui, "root", None)
+    if root is None:
+        raise ValueError("This app has no projects folder.")
+    folder = Path(root) / "_plugins" / feature
+    folder.mkdir(parents=True, exist_ok=True)
+    return folder
+
+
+def csp_for(path: str) -> str | None:
+    """The first plugin csp(path) answer that is a non-empty string, else None. A hook that raises is skipped."""
+    for answer in call_all("csp", path):
+        if isinstance(answer, str) and answer.strip():
+            return answer
+    return None
 
 
 def register_all(app, ui) -> None:

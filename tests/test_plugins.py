@@ -267,7 +267,7 @@ def test_a_broken_plugin_never_breaks_startup_or_a_request(plugin_dir, tmp_path,
     assert [row["name"] for row in listed["plugins"]] == ["alpha", "broken"]
     alpha, broken = listed["plugins"]
     assert alpha["schema"] == {"fields": [{"key": "enabled", "type": "bool", "label": "Use alpha"}]}
-    assert set(alpha["hooks"]) == set(plugins.HOOKS) and broken["schema"] is None
+    assert set(alpha["hooks"]) == set(plugins.HOOKS) - {"csp"} and broken["schema"] is None  # alpha has every hook but csp
     assert [row["name"] for row in listed["failed"]] == ["zz_import"]
     assert "ImportError" in listed["failed"][0]["error"] and "abc123secret" not in json.dumps(listed)
 
@@ -719,3 +719,47 @@ def test_a_body_over_the_limit_gets_a_plain_message(plugin_dir, tmp_path):
     assert _post(client, "/api/v1/demo", {}, token).status_code == 200
     draft = _post(client, f"/api/v1/projects/{ws.DEMO_SLUG}/test", {"q": "x", "draft": "y" * (5 * 1024 * 1024)}, token)
     assert (draft.status_code, draft.json()) == (413, {"error": "The draft is over 2 MB. Nothing was run."})
+
+
+CSP_PLUGIN = '''
+from fastapi.responses import HTMLResponse
+
+SHARE_CSP = "default-src 'none'; script-src 'self'; style-src 'self'; frame-ancestors 'none'"
+
+
+def csp(path):
+    if path.startswith("/r/") or path == "/":
+        return SHARE_CSP  # a plugin must never change a core page: "/" is ignored below
+    return None
+
+
+def register(app, ui):
+    def shared(token: str):
+        return HTMLResponse("shared")
+
+    shared.login_exempt = True
+    app.add_api_route("/r/{token}", shared, methods=["GET"])
+'''
+
+
+def test_a_plugin_sets_the_policy_of_its_own_pages_only(plugin_dir, tmp_path):
+    from aeo.ranksim import serve
+
+    _write(plugin_dir, "share_like", CSP_PLUGIN)
+    app, client, token = _app(tmp_path, google=False, password=PASSWORD)
+    page = client.get("/r/abc")
+    assert page.status_code == 200 and page.headers["content-security-policy"].startswith("default-src 'none'")
+    assert client.get("/").headers["content-security-policy"] == serve.STUDIO_CSP  # core pages keep theirs
+    for path in ("/api/v1/session", "/studio/js/app.js"):
+        assert serve.csp_for(path) == serve.STRICT_CSP
+
+
+def test_workspace_dir_is_under_the_projects_root(tmp_path):
+    ui = SimpleNamespace(root=tmp_path / "projects")
+    folder = plugins.workspace_dir(ui, "gsc")
+    assert folder == tmp_path / "projects" / "_plugins" / "gsc" and folder.is_dir()
+    with pytest.raises(ValueError):
+        plugins.workspace_dir(ui, "../escape")
+    from aeo.ranksim.project import list_projects
+
+    assert list_projects(root=tmp_path / "projects") == []  # the workspace folder is never listed as a project

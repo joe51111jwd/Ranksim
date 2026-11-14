@@ -980,9 +980,20 @@ def app_env(tmp_path, monkeypatch):
 
     web, router = Web(), Router()
     ui = FakeUI(tmp_path, web, router)
+    # the issues in the project's current report (fix ids are checked against it)
+    monkeypatch.setattr(plugin, "known_issues", lambda ui, slug: dict(KNOWN_ISSUES))
     app = FastAPI()
     plugin.register(app, ui)
     return TestClient(app), web, router, ui
+
+
+KNOWN_ISSUES = {
+    "meta-missing-about": "No meta description",
+    "h1-weak-about": "Weak heading",
+    "meta-short-about": "Short description",
+    "h1-weak": "Weak heading",
+    "a-b": "x",
+}
 
 
 H = {"x-ranksim-csrf": "csrf-token"}
@@ -1662,3 +1673,20 @@ def test_checkpoint_saves_the_claims(tmp_path):
     entry = pub.publish(url, page(h1="New"), add_webhook(pub, router)["id"])
     pub.rollback(entry["id"])
     assert len(saves) == 2  # the 'applying' entry and the rollback claim
+
+
+def test_fix_ids_are_checked_against_the_current_report(app_env, monkeypatch):
+    from aeo.ranksim.plugins import publish as plugin
+
+    client, web, router, ui = app_env
+    url = "https://acme.com/about"
+    web.pages[url] = page()
+    router.on("POST", r"hooks", lambda r, m: httpx.Response(200))
+    _owned_routes(client, web)
+    conn = client.post("/api/v1/projects/acme/publish/connections", json={"kind": "webhook", "site": "acme.com", "settings": {"url": "https://hooks.acme.test/x"}, "secret": {"signing_secret": "k" * 20}}, headers=H).json()
+    fixes = [{"id": "h1-weak-about", "title": "Anything the browser says"}, {"id": "made-up-issue", "title": "Forged"}]
+    entry = client.post("/api/v1/projects/acme/publish", json={"url": url, "html": page(h1="New"), "connection_id": conn["id"], "fixes": fixes}, headers=H).json()
+    assert entry["fixes"] == [{"id": "h1-weak-about", "title": "Weak heading"}]  # the report's title, the unknown id dropped
+    monkeypatch.setattr(plugin, "known_issues", lambda ui, slug: None)  # no report: nothing is recorded
+    again = client.post("/api/v1/projects/acme/publish", json={"url": url, "html": page(h1="Newer"), "connection_id": conn["id"], "fixes": fixes}, headers=H).json()
+    assert again["status"] == "live" and again["fixes"] == []

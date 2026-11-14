@@ -19,6 +19,8 @@ for extra in (ROOT, ROOT / "src", ROOT / "tests"):
     if str(extra) not in sys.path:
         sys.path.insert(0, str(extra))
 
+from fastapi import Request  # module level: the route below resolves its annotation from these globals
+
 PASSWORD = "e2e-pass"
 SLOW = float(os.environ.get("E2E_SLOW_SECONDS", "1.2"))
 PROVIDER_ENV = (
@@ -165,7 +167,6 @@ def build_app(data: Path):
         preview_fetch=preview_fetch,
     )
     import httpx
-    from fastapi import Request
 
     handler = wordpress(web)
     app.state.ui.publish_overrides = {

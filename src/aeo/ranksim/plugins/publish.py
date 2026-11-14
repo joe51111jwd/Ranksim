@@ -80,6 +80,7 @@ def publisher_for(ui, project):
     kwargs = dict(getattr(ui, "publish_overrides", None) or {})
     if "proof_fetch" not in kwargs:
         kwargs["proof_fetch"] = proof_fetcher(ui.settings)
+    kwargs.setdefault("checkpoint", lambda: save_quietly(ui))
     return Publisher(
         PublishStore.for_project(project),
         fetch=ui.preview_fetch,
@@ -234,9 +235,7 @@ def register(app, ui) -> None:
                 options=options,
                 fixes=body.get("fixes") if isinstance(body.get("fixes"), list) else None,
             )
-            project = ui.project(slug)
-            log_change(project, entry, rollback=False)
-            return sync_fixes(pub, project, entry)
+            return after_change(ui, slug, pub, entry)
 
         return await run(publish_and_log)
 
@@ -253,7 +252,7 @@ def register(app, ui) -> None:
         pub, blocked = guard(slug)
         if blocked:
             return blocked
-        return await run(lambda: sync_fixes(pub, ui.project(slug), pub.verify_live(entry_id)))
+        return await run(lambda: after_change(ui, slug, pub, pub.verify_live(entry_id)))
 
     @app.post("/api/v1/projects/{slug}/publish/history/{entry_id}/rollback")
     async def publish_rollback(slug: str, entry_id: str, request: Request):
@@ -266,54 +265,151 @@ def register(app, ui) -> None:
         if blocked:
             return blocked
         def rollback_and_log():
-            entry = pub.rollback(entry_id, connection_id)
-            project = ui.project(slug)
-            log_change(project, entry, rollback=True)
-            return sync_fixes(pub, project, entry)
+            return after_change(ui, slug, pub, pub.rollback(entry_id, connection_id))
 
         return await run(rollback_and_log)
 
 
-def sync_fixes(pub, project, entry: dict) -> dict:
-    """Issues fixed by this publish, in the client report: Done once the change is live on the platform, back to Not
-    started when it is rolled back. Uses the share plugin's issue status when that plugin is present.
-    A pull request or a Webflow draft is not live: its issues turn Done when a later live check finds it live."""
-    fixes = entry.get("fixes") or []
-    if not fixes:
+def after_change(ui, slug: str, pub, entry: dict) -> dict:
+    """After a publish, a Check again or a rollback: bring the change log and the issue list in line with what is
+    really live. Reads the newest saved copy first (another instance may have changed issues or the log while the
+    platform call ran). A project deleted meanwhile just skips this."""
+    from aeo.ranksim.publishing.store import public_history
+
+    refresh_quietly(ui)
+    try:
+        project = ui.project(slug)
+    except LookupError:
         return entry
-    if entry.get("rolled_back_at"):
-        want = "open"
-    elif entry.get("status") == "live":
-        want = "done"
-    else:
+    full = pub.store.history_entry(entry["id"])
+    if not full:
         return entry
-    if entry.get("fixes_marked") == want:
-        return entry
+    log_change(project, full)
+    sync_fixes(pub, project, full)
+    return public_history(pub.store.history_entry(entry["id"]) or full)
+
+
+def refresh_quietly(ui) -> None:
+    cloud = getattr(ui, "cloud", None)
+    if cloud is None or not getattr(cloud, "enabled", False):
+        return
+    try:
+        cloud.refresh(force=True)
+    except Exception:  # noqa: BLE001 - work on the local copy rather than fail the answer
+        log.exception("publish: refreshing from cloud storage failed")
+
+
+def _share():
     try:
         from aeo.ranksim.plugins import share
     except ImportError:
-        return entry
-    plans = {}
+        return None
+    return share
+
+
+def sync_fixes(pub, project, entry: dict) -> None:
+    """Issues fixed by this publish, in the client report (the share plugin's issue status).
+
+    Done when the change is live and the live check confirms every field (a pull request waits for its merge, a cache
+    for Check again). Only issues that were not already Done are marked, and their earlier status is kept. A
+    finished rollback sets exactly those issues back to that earlier status, unless someone changed them since, and
+    logs "Reopened". Idempotent: the entry records what it marked."""
+    fixes = entry.get("fixes") or []
+    share = _share()
+    if not fixes or share is None:
+        return
+    rolled = bool(entry.get("rolled_back_at"))
+    confirmed = (entry.get("verify") or {}).get("status") == "confirmed"
+    if rolled:
+        if entry.get("fixes_marked") != "done":
+            return
+        want = "open"
+    elif entry.get("status") == "live" and confirmed and not entry.get("rollback_pending"):
+        if entry.get("fixes_marked") == "done":
+            return
+        want = "done"
+    else:
+        return
     try:
         plans = share.issue_plans(project)
     except Exception:  # noqa: BLE001
         log.exception("publish: reading issue status failed")
-    marked = []
+        return
+    marked, prior = [], dict(entry.get("fixes_prior") or {})
+    path = urlsplit(entry.get("url") or "").path or "/"
     for fix in fixes:
         current = plans.get(fix["id"]) or {}
-        if want == "open" and current.get("status") != "done":
-            continue  # someone changed it since; leave their status alone
-        note = current.get("plan") or ""
         try:
-            share.set_issue_plan(project, fix["id"], want, plan=note, title=fix.get("title") or "")
-            marked.append(fix["id"])
+            if want == "done":
+                if current.get("status") == "done":
+                    continue  # already done before this publish: not ours to reopen later
+                prior[fix["id"]] = current.get("status") or "open"
+                share.set_issue_plan(project, fix["id"], "done", plan=current.get("plan") or "", title=fix.get("title") or "")
+                marked.append(fix["id"])
+            else:
+                if fix["id"] not in (entry.get("fixes_marked_ids") or []) or current.get("status") != "done":
+                    continue  # not marked by this publish, or changed by someone since
+                share.set_issue_plan(project, fix["id"], prior.get(fix["id"]) or "open", plan=current.get("plan") or "", title=fix.get("title") or "")
+                share.log_change(project, "issue", f"Reopened: {fix.get('title') or fix['id']}", detail=f"The change to {path} was rolled back.", key=f"reopen:{entry['id']}:{fix['id']}")
+                marked.append(fix["id"])
         except Exception:  # noqa: BLE001 - the issue list never breaks a publish
-            log.exception("publish: marking issue %s failed", fix["id"])
-    full = pub.store.history_entry(entry["id"]) or {}
-    if full:
-        full.update(fixes_marked=want, fixes_marked_ids=marked)
-        pub.store.put_history(full)
-    return {**entry, "fixes_marked": want, "fixes_marked_ids": marked}
+            log.exception("publish: updating issue %s failed", fix["id"])
+    with pub.store.lock:
+        fresh = pub.store.history_entry(entry["id"]) or entry
+        fresh["fixes_marked"] = want
+        fresh["fixes_prior"] = prior
+        if want == "done":
+            fresh["fixes_marked_ids"] = marked
+        else:
+            fresh["fixes_reopened_ids"] = marked
+        pub.store.put_history(fresh)
+
+
+def log_change(project, entry: dict, *, rollback: bool | None = None) -> None:
+    """The client change log line for where this entry stands. Only what really went live is public: a pull request,
+    a saved draft, a closed pull request or a pending revert are owner-only notes. Keyed, so repeats add nothing.
+
+    rollback=True or False is the earlier call form (one line for a publish or a rollback, as the caller says),
+    kept for callers written against it."""
+    share = _share()
+    if share is None:
+        return
+    path = urlsplit(entry.get("url") or "").path or "/"
+    fields = ", ".join(row["label"].lower() for row in entry.get("rows") or [] if row.get("apply"))
+    platform = (entry.get("connection") or {}).get("kind", "")
+    if rollback is not None:
+        detail = f"{platform}, live check: {(entry.get('verify') or {}).get('status') or entry.get('status') or ''}".strip(", ")
+        if rollback:
+            summary, key = f"Rolled back the published change to {path}.", f"publish-rollback:{entry['id']}"
+        else:
+            summary = f"Published changes to {path}: {fields}." if fields else f"Published changes to {path}."
+            key = f"publish:{entry['id']}"
+        try:
+            share.log_change(project, "publish", summary, detail=detail, key=key)
+        except Exception:  # noqa: BLE001
+            log.exception("publish: change log entry failed")
+        return
+    rollback = entry.get("rollback") or {}
+    lines = []
+    if entry.get("status") == "live":
+        lines.append((True, f"Published changes to {path}: {fields}." if fields else f"Published changes to {path}.", f"publish:{entry['id']}",
+                      f"{platform}, live check: {(entry.get('verify') or {}).get('status', '')}"))
+    elif entry.get("status") == "pull_request":
+        lines.append((False, f"Opened a pull request for {path}.", f"publish-pr:{entry['id']}", platform))
+    elif entry.get("status") == "saved":
+        lines.append((False, f"Saved changes to {path} as a draft.", f"publish-saved:{entry['id']}", platform))
+    if entry.get("rollback_pending"):
+        lines.append((False, f"Opened a pull request to undo the change to {path}.", f"publish-revert-pr:{entry['id']}", rollback.get("note", "")))
+    if entry.get("rolled_back_at"):
+        if rollback.get("status") == "closed":
+            lines.append((False, f"Closed the pull request for {path}. Nothing went live.", f"publish-closed:{entry['id']}", platform))
+        elif entry.get("status") == "live":
+            lines.append((True, f"Rolled back the published change to {path}.", f"publish-rollback:{entry['id']}", f"{platform}, {rollback.get('status', '')}".strip(", ")))
+    for public, summary, key, detail in lines:
+        try:
+            share.log_change(project, "publish", summary, detail=detail, public=public, key=key)
+        except Exception:  # noqa: BLE001 - the change log never breaks a publish
+            log.exception("publish: change log entry failed")
 
 
 def save_quietly(ui) -> None:
@@ -323,28 +419,6 @@ def save_quietly(ui) -> None:
         plugins.save(ui)
     except Exception:  # noqa: BLE001 - CloudError; the answer still goes out
         log.exception("publish: saving to cloud storage failed")
-
-
-def log_change(project, entry: dict, *, rollback: bool) -> None:
-    """Record a publish or rollback in the client change log (the share plugin), when that plugin is present."""
-    try:
-        from aeo.ranksim.plugins import share
-    except ImportError:
-        return
-    path = urlsplit(entry.get("url") or "").path or "/"
-    fields = ", ".join(row["label"].lower() for row in entry.get("rows") or [] if row.get("apply"))
-    platform = (entry.get("connection") or {}).get("kind", "")
-    if rollback:
-        summary = f"Rolled back the published change to {path}."
-        key = f"publish-rollback:{entry['id']}"
-    else:
-        summary = f"Published changes to {path}: {fields}." if fields else f"Published changes to {path}."
-        key = f"publish:{entry['id']}"
-    status = (entry.get("verify") or {}).get("status") or entry.get("status") or ""
-    try:
-        share.log_change(project, "publish", summary, detail=f"{platform}, live check: {status}".strip(", "), key=key)
-    except Exception:  # noqa: BLE001 - the change log never breaks a publish
-        log.exception("publish: change log entry failed")
 
 
 def after_pull(*, project, report=None, ui=None, **_ignored) -> None:

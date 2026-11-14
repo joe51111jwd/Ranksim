@@ -245,5 +245,10 @@ def public_connection(connection: dict) -> dict:
 def public_history(entry: dict) -> dict:
     """History for the browser: drops the stored previous content (it can be large) but keeps what changed."""
     view = {k: v for k, v in entry.items() if k not in {"previous", "payload", "expected", "regions", "rolling_back"}}
-    view["can_rollback"] = bool(entry.get("can_rollback")) and not entry.get("rolled_back_at") and entry.get("status") != "applying"
+    view["can_rollback"] = (
+        bool(entry.get("can_rollback"))
+        and not entry.get("rolled_back_at")
+        and not entry.get("rollback_pending")
+        and entry.get("status") != "applying"
+    )
     return view

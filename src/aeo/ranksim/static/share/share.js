@@ -92,6 +92,14 @@
               moveChip(m),
             ]);
           })) : h("p", { class: "muted", text: w.moves_note }),
+          w.counts && w.counts.compared ? h("p", { class: "muted small", text: "Of " + w.counts.compared + " searches checked a week apart: " + w.counts.gained + " new on page one, " + w.counts.lost + " dropped off, " + w.counts.up + " moved up, " + w.counts.down + " moved down." }) : null,
+          (w.passed || []).length ? h("h3", { class: "week-sub", text: "Competitors who moved ahead" }) : null,
+          (w.passed || []).length ? h("ul", { class: "week-list" }, w.passed.map(function (p) {
+            return h("li", {}, [
+              h("span", { class: "week-q", text: p.domain }),
+              h("span", { class: "week-meta", text: "Moved ahead of you for \"" + p.q + "\". They are #" + p.their_to + ", you are " + place(p.our_to) + "." }),
+            ]);
+          })) : null,
         ]),
         h("div", { class: "week-col" }, [
           h("h3", { text: "Done" }),
@@ -192,13 +200,17 @@
           r.date && r.date !== d.google_date ? h("span", { class: "muted small", text: "Checked " + r.date }) : null,
         ]),
         h("td", { class: "num" + (r.position && r.position <= 3 ? " good" : ""), "data-label": "Your position", text: pos }),
-        d.predictions ? h("td", { class: "num", "data-label": "Estimate (PREDICTED)" }, r.predicted ? [h("span", { text: "#" + r.predicted.position + " of " + r.predicted.of }), h("span", { class: "tag", text: "PREDICTED" })] : ["No estimate"]) : null,
+        d.predictions ? h("td", { class: "num", "data-label": "Estimate (PREDICTED)" }, r.predicted ? [
+          h("span", { text: "#" + r.predicted.position + " of " + r.predicted.of }),
+          h("span", { class: "tag", text: "PREDICTED" }),
+          h("span", { class: "muted small est-basis", text: "based on " + r.predicted.pairs + " page pairs" }),
+        ] : ["Not shown"]) : null,
         h("td", { class: "muted", "data-label": "First result", text: leader ? leader.domain : "" }),
       ]);
     });
     root.appendChild(tile("", [
       head("Where you show up", "Your position in Google for each search. #1 is the first result. " + checked + "." +
-        (d.predictions ? " The estimate is Ranksim's model of where your page should land among the pages we stored. It is PREDICTED, not a Google position." : "")),
+        (d.predictions ? " The estimate is Ranksim's model of where your page should land among the pages we stored. It is PREDICTED, not a Google position, and it is shown only for searches where a backtest was clearer, with the number of page pairs it is based on." : "")),
       rows.length ? h("div", { class: "table-wrap" }, [h("table", { class: "stack" }, [
         h("thead", {}, [h("tr", {}, [
           h("th", { text: "Search" }),
@@ -233,9 +245,14 @@
     }
 
     var issues = d.issues || [];
+    // Clients read the important items in full. Low priority items nobody has planned yet are listed briefly at the end.
+    var main = issues.filter(function (i) { return i.severity !== "low" || i.status !== "open" || i.plan; });
+    var minor = issues.filter(function (i) { return main.indexOf(i) < 0; });
     root.appendChild(tile("", [
-      head("What we found and what we are doing", issues.length ? issues.length + " things to fix on the site, most important first." : "Nothing to fix right now."),
-      h("ul", { class: "issues" }, issues.map(function (i) {
+      head("What we found and what we are doing", issues.length
+        ? issues.length + " things to fix on the site, most important first." + (minor.length ? " " + minor.length + " smaller fixes are listed at the end." : "")
+        : "Nothing to fix right now."),
+      h("ul", { class: "issues" }, main.map(function (i) {
         var plain = i.fix && !/editor|test it|ranksim/i.test(i.fix) ? i.fix : "";
         return h("li", { class: "issue" }, [
           h("div", { class: "issue-top" }, [
@@ -249,6 +266,13 @@
           i.page || i.search ? h("p", { class: "muted small", text: [i.page ? "Page: " + pathOf(i.page) : "", i.search ? "Search: " + i.search : ""].filter(Boolean).join("   ") }) : null,
         ]);
       })),
+      minor.length ? h("div", { class: "minor" }, [
+        h("h3", { text: "Smaller fixes (" + minor.length + ")" }),
+        h("p", { class: "muted small", text: "Low priority technical items. We will handle these after the ones above." }),
+        h("ul", { class: "minor-list" }, minor.map(function (i) {
+          return h("li", {}, [h("span", { text: i.title }), i.page ? h("span", { class: "muted small", text: " " + pathOf(i.page) }) : null]);
+        })),
+      ]) : null,
     ]));
 
     var share = d.share || [];

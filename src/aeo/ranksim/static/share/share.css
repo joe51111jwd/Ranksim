@@ -154,7 +154,7 @@ tr.you td { background: var(--blue-wash); }
 }
 
 /* Phones: tables become one card per row, each value with its label. No sideways scrolling. */
-@media screen and (max-width: 640px) {
+@media (max-width: 640px) {
   table.stack, table.stack tbody, table.stack tr, table.stack td { display: block; width: 100%; }
   table.stack thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
   table.stack tr { padding: 12px 14px; border-bottom: 1px solid var(--line); }
@@ -163,8 +163,44 @@ tr.you td { background: var(--blue-wash); }
   table.stack td { justify-content: flex-end; align-items: baseline; gap: 8px; }
   table.stack td::before { content: attr(data-label); color: var(--ink-2); font-size: 12px; flex: none; margin-right: auto; font-weight: 400; }
   table.stack td.q .muted { font-weight: 400; }
-  table.stack td.q { display: grid; gap: 2px; min-width: 0; font-weight: 550; }
+  table.stack td.q { display: grid; gap: 2px; min-width: 0; font-weight: 550; justify-content: start; justify-items: start; text-align: left; }
+  table.stack td.num > span { white-space: nowrap; }
   table.stack td.q::before { content: none; }
   table.stack td.num { font-variant-numeric: tabular-nums; }
   .table-wrap { overflow-x: visible; }
+}
+.week-sub { margin-top: 8px; }
+
+/* Smaller fixes: a compact list after the main issue cards. */
+.minor { background: var(--card); border-radius: var(--r-card); padding: 16px; display: grid; gap: 8px; }
+.minor h3 { font-size: 15px; font-weight: 600; }
+.minor-list { margin: 0; padding-left: 18px; display: grid; gap: 4px; font-size: 14px; overflow-wrap: anywhere; }
+@media print {
+  /* Grids do not split across printed pages, so printed tiles are plain blocks and the week uses columns. */
+  .tile { display: block; }
+  .tile > * + * { margin-top: 8pt; }
+  .week-grid { display: block; columns: 3; column-gap: 12pt; }
+  .week-col { display: block; break-inside: avoid-column; margin-bottom: 10pt; }
+  .week-col > * + * { margin-top: 6pt; }
+  .week-list { display: block; }
+  .week-list li { margin-bottom: 6pt; }
+  .minor { border: 1px solid var(--line); }
+  .minor-list li { break-inside: avoid; }
+  .hero, .stats { break-inside: avoid; }
+}
+
+@media print and (max-width: 640px) {
+  body { font-size: 9pt; }
+  .page { gap: 6pt; }
+  .tile { padding: 8pt; border-radius: 8pt; }
+  .issue, .stat, .minor { padding: 7pt; }
+  .stat-value { font-size: 15pt; }
+  .hero h1 { font-size: 18pt; }
+  .week-grid { columns: 1; }
+  .stats { grid-template-columns: repeat(2, 1fr); }
+}
+.est-basis { display: block; }
+@media (max-width: 640px) {
+  table.stack td { flex-wrap: wrap; }
+  table.stack td .est-basis { flex-basis: 100%; text-align: right; }
 }

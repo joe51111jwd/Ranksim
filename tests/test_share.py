@@ -333,7 +333,7 @@ def test_nothing_private_leaks_into_the_client_report(env, monkeypatch):
         "preview", "agency", "name", "site", "report_date", "google_date", "source", "data", "search_data", "predictions",
         "kpis", "rankings", "issues", "share", "competitors", "changes", "notes", "weekly",
     }
-    assert set(data["weekly"]) == {"since", "moves", "moves_note", "done", "checks", "next"}
+    assert set(data["weekly"]) == {"since", "moves", "moves_note", "counts", "passed", "done", "checks", "next"}
     weekly_blob = json.dumps(data["weekly"])
     assert "INTERNAL-NOTE-ONLY-OWNER" not in weekly_blob and "OWNER-DETAIL-XYZ" not in weekly_blob
     summaries = [row["summary"] for row in data["changes"]]
@@ -357,10 +357,10 @@ def test_the_client_report_labels_every_number(env):
     # the demo is labeled as demo, never as Google data, and an unrecorded date is not shown as a date
     assert data["source"] == "Demo" and data["data"]["demo"] is True
     assert data["google_date"] == "" and "not recorded" in data["notes"][0] and "Google results" not in data["notes"][0]
-    assert data["predictions"] is True
+    assert data["predictions"] is False  # demo estimates carry no CLEARER backtest, so a client sees none
     assert all(row["predicted"] is None or row["predicted"]["label"] == "PREDICTED" for row in data["rankings"])
     js = (share.SHARE_STATIC / "share.js").read_text(encoding="utf-8")
-    for label in ("PREDICTED", ' checked "', "Report made ", "Your position", "check date not recorded", "This week", "Position changes"):
+    for label in ("PREDICTED", ' checked "', "Report made ", "Your position", "check date not recorded", "This week", "Position changes", '"based on "', '" page pairs"'):
         assert label in js
 
 
@@ -482,7 +482,7 @@ def test_csv_exports(env):
     assert rankings.status_code == 200 and rankings.headers["content-type"].startswith("text/csv")
     assert rankings.headers["content-disposition"].startswith("attachment;") and "rankings" in rankings.headers["content-disposition"]
     lines = rankings.text.lstrip("﻿").splitlines()
-    assert lines[0] == "Search,Demo position,Demo data date,Page,PREDICTED position,PREDICTED of,Demo #1"
+    assert lines[0] == "Search,Demo position,Demo data date,Page,PREDICTED position,PREDICTED of,PREDICTED based on page pairs,Demo #1"
     assert len(lines) == 1 + len(data["rankings"])
     assert any(line.startswith("vinyl fence installation cost,5,") for line in lines)
     issues = client.get(link["path"] + "/issues.csv").text.lstrip("﻿")
@@ -1020,3 +1020,112 @@ def test_digest_html_is_escaped(env):
     share.log_change(project, "publish", "<img src=x onerror=alert(1)> published", key="publish:xss")
     data = env["client"].get("/api/v1/digest").json()
     assert "<img" not in data["html"] and "<img" not in data["updates_html"] and "&lt;img" in data["updates_html"]
+
+
+# ---------------------------------------------------------------------------
+# rank tracking's own week summary (report["history"]["week"])
+# ---------------------------------------------------------------------------
+
+TRACK_WEEK = {  # the shape tracking.weekly_summary returns
+    "ready": True, "days": 7, "compared": 5, "skipped": 1,
+    "gained": [{"search": "gate repair", "from": None, "to": 9, "from_at": "2026-11-06T09:00:00Z", "to_at": "2026-11-13T09:00:00Z"}],
+    "lost": [{"search": "fence paint", "from": 8, "to": None, "from_at": "2026-11-06T09:00:00Z", "to_at": "2026-11-13T09:00:00Z"}],
+    "moves": [
+        {"search": "vinyl fence cost", "from": 7, "to": 3, "from_at": "2026-11-06T09:00:00Z", "to_at": "2026-11-13T09:00:00Z", "delta": 4},
+        {"search": "undated move", "from": 5, "to": 4, "from_at": None, "to_at": "2026-11-13T09:00:00Z", "delta": 1},
+    ],
+    "moves_total": 2, "up": 1, "down": 0,
+    "passed": [
+        {"domain": "rival.example", "search": "fence paint", "their_from": 12, "their_to": 6, "our_from": 8, "our_to": None},
+        {"domain": "<b>bad</b>", "search": "x", "their_to": 1},
+    ],
+    "from": "2026-11-06T09:00:00Z", "to": "2026-11-13T09:00:00Z",
+    "cost": "OWNERONLY-COST",
+}
+
+
+def test_weekly_uses_tracking_week_when_ready(env):
+    project = env["ui"].project(env["demo"])
+    report = {"rankings": [], "history": {"week": TRACK_WEEK, "competitors": ["OWNERONLY-LIST"]}}
+    weekly = share.weekly_summary(project, report, [], [])
+    assert [move["q"] for move in weekly["moves"]] == ["gate repair", "vinyl fence cost", "fence paint"]  # undated dropped
+    assert weekly["moves"][0] == {"q": "gate repair", "from": None, "to": 9, "from_date": "2026-11-06", "to_date": "2026-11-13"}
+    assert weekly["counts"] == {"compared": 5, "gained": 1, "lost": 1, "up": 1, "down": 0}
+    assert weekly["passed"] == [{"domain": "rival.example", "q": "fence paint", "their_to": 6, "our_to": None}]
+    assert "OWNERONLY" not in json.dumps(weekly)
+    text = share.weekly_update(_weekly_data(weekly={**_weekly_data()["weekly"], **weekly}))["text"]
+    assert "Of 5 searches checked a week apart: 1 new on page one, 1 dropped off, 1 moved up, 0 moved down (Google positions)." in text
+    assert 'rival.example moved ahead of you for "fence paint" (they are #6, you are not on page one)' in text
+    assert '"gate repair": not on page one on Nov 6, 2026, now #9 on Nov 13, 2026 (new on page one, Google positions)' in text
+
+
+def test_weekly_falls_back_when_tracking_week_is_absent_or_not_ready(env):
+    project = env["ui"].project(env["demo"])
+    for history in (None, {}, {"week": "junk"}, {"week": {**TRACK_WEEK, "ready": False, "compared": 0}}):
+        report = {"rankings": [{"q": "vinyl fence installation cost"}]}
+        if history is not None:
+            report["history"] = history
+        weekly = share.weekly_summary(project, report, [], [])
+        assert weekly["counts"] is None and weekly["passed"] == [] and isinstance(weekly["moves"], list)
+
+
+def test_search_console_section_is_rewhitelisted(env, monkeypatch):
+    gsc = pytest.importorskip("aeo.ranksim.plugins.gsc")
+    noisy = {
+        "label": "Search Console", "range": "Oct 16 to Nov 12, 2026", "totals": {"clicks": 12, "impressions": 900, "ctr": 0.013, "position": 18.2, "token": "OWNERONLY-T"},
+        "positions": [{"q": "gate repair", "position": 14.3, "impressions": 80, "clicks": 2, "page": "/gates/", "property": "OWNERONLY-P"},
+                      {"q": "x", "position": 1, "page": "//evil.example/OWNERONLY"}],
+        "positions_label": "Average position in Search Console", "note": "Not Google top 10 positions.",
+        "refresh_token": "OWNERONLY-R", "property": "sc-domain:OWNERONLY",
+    }
+    monkeypatch.setattr(gsc, "client_section", lambda report: noisy)
+    section = share._search_console({})
+    assert set(section) == {"label", "range", "totals", "positions", "positions_label", "note"}
+    assert section["totals"] == {"clicks": 12, "impressions": 900, "ctr": 0.013, "position": 18.2}
+    assert section["positions"][0] == {"q": "gate repair", "position": 14.3, "impressions": 80, "clicks": 2, "page": "/gates/"}
+    assert section["positions"][1]["page"] == ""
+    assert "OWNERONLY" not in json.dumps(section)
+    monkeypatch.setattr(gsc, "client_section", lambda report: None)
+    assert share._search_console({}) is None
+
+
+
+def test_client_sees_an_estimate_only_when_predict_marks_it_clearer():
+    base = {"position": 3, "of": 9}
+    cases = [
+        (None, None),
+        (dict(base), None),  # before predict adds confidence: hidden
+        ({**base, "confidence": None}, None),  # predict sets null for pages that already rank
+        ({**base, "confidence": {"label": "UNSURE", "backtest_pairs": 120}}, None),
+        ({**base, "confidence": {"label": "CLEARER", "backtest_pairs": 0}}, None),
+        ({**base, "confidence": {"label": "CLEARER"}}, None),
+        ({**base, "confidence": "CLEARER"}, None),  # a label with no pair count is not enough
+        ({"position": None, "of": 9, "confidence": {"label": "CLEARER", "backtest_pairs": 40}}, None),
+        ({**base, "confidence": {"label": "clearer", "backtest_pairs": 40}}, None),
+        ({**base, "confidence": {"label": "CLEARER", "backtest_pairs": 42, "backtest_pairwise": 0.71, "text": "OWNERONLY"}},
+         {"position": 3, "of": 9, "label": "PREDICTED", "pairs": 42}),
+        ({**base, "confidence": "CLEARER", "backtest_pairs": 31}, {"position": 3, "of": 9, "label": "PREDICTED", "pairs": 31}),
+    ]
+    for predicted, expected in cases:
+        assert share._client_estimate(predicted) == expected, predicted
+
+
+def test_client_report_carries_clearer_estimates_with_their_pairs(env, monkeypatch):
+    real = share._project_report_fn()
+
+    def with_confidence(ui, slug):
+        report = json.loads(json.dumps(real(ui, slug)))
+        for index, row in enumerate(report["rankings"]):
+            if row.get("predicted"):
+                row["predicted"]["confidence"] = {"label": "CLEARER" if index == 0 else "UNSURE", "backtest_pairs": 48, "backtest_pairwise": 0.7}
+        return report
+
+    monkeypatch.setattr(share, "_project_report_fn", lambda: with_confidence)
+    share._state(env["ui"])["cache"].clear()
+    link = _link(env)
+    data = env["client"].get(link["path"] + "/data").json()
+    shown = [row for row in data["rankings"] if row["predicted"]]
+    assert len(shown) == 1 and shown[0]["predicted"] == {"position": shown[0]["predicted"]["position"], "of": shown[0]["predicted"]["of"], "label": "PREDICTED", "pairs": 48}
+    assert data["predictions"] is True and "0.7" not in json.dumps(data["rankings"])
+    csv_text = env["client"].get(link["path"] + "/rankings.csv").text
+    assert ",48," in csv_text

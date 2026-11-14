@@ -7,7 +7,7 @@
 
 import { S, h, icon, clear, main, plural, pct, bar, ring, link, go, page, footer, pulledText, noSearchData, openSheet, closeSheet, serpList, pathOf } from '../core.js';
 import { registerOverviewTile, registerScreen, overviewTiles, renderAll } from '../hooks.js';
-import { fit, rankDots, positionColumns, shareBars, predictedVsReal, opportunities } from '../charts.js';
+import { fit, rankDots, positionColumns, shareBars, opportunities } from '../charts.js';
 import { issueRow } from './issues.js';
 
 export function renderOverview() {
@@ -150,18 +150,9 @@ registerOverviewTile({
   },
 });
 
-registerOverviewTile({
-  key: 'predicted',
-  order: 65,
-  render(R) {
-    const both = R.rankings.filter((row) => row.position && row.predicted && row.predicted.position != null);
-    if (!both.length) return null;
-    return h('section', { class: 'tile white' },
-      h('div', { class: 'tile-k', text: 'PREDICTED versus real' }),
-      chart((width) => predictedVsReal(R.rankings, { width: Math.min(width, 280), height: 220 }), 'chart-scatter'),
-      h('p', { class: 'tile-sub', text: 'On the line means the model agrees with Google.' }));
-  },
-});
+// The 'predicted' tile (PREDICTED versus real) was removed: it compared the model with the same Google snapshot it
+// was trained on, which reads as accuracy. docs/MISSION.md forbids presenting a same-snapshot score as accuracy.
+// Order 65 stays free.
 
 registerOverviewTile({
   key: 'priority',

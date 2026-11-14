@@ -32,6 +32,7 @@ import json
 import logging
 import re
 import threading
+import unicodedata
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from functools import cached_property
@@ -129,6 +130,32 @@ WIDTH_HINT = re.compile(r"(?:[-_@](\d{4,5})w(?![a-z])|[?&](?:w|width)=(\d{4,5})(
 # -- text helpers ---------------------------------------------------------------------------------
 
 
+INLINE = {"a", "abbr", "b", "bdi", "bdo", "cite", "code", "data", "dfn", "em", "i", "kbd", "mark", "q", "s", "samp", "small", "span", "strong", "sub", "sup", "time", "u", "var", "wbr", "font"}
+BANNER = re.compile(r"banner|announce|promo|alert|notice|cookie|consent|topbar|top-bar|marquee|ticker", re.I)
+
+
+def _streamed(tag) -> bool:
+    ident = tag.get("id") if isinstance(tag, Tag) else None
+    return tag.name == "div" and isinstance(ident, str) and ident.startswith("S:")
+
+
+def text_of(tag) -> str:
+    """An element's text as a reader sees it: inline parts joined without a space ("QR Code Form" + "s" reads
+    "QR Code Forms"), blocks and line breaks with one."""
+    if tag is None:
+        return ""
+    parts: list[str] = []
+    for node in tag.descendants:
+        if isinstance(node, (Comment, CData, Declaration, Doctype, ProcessingInstruction)):
+            continue
+        if isinstance(node, NavigableString):
+            if not any(parent.name in {"script", "style", "template"} for parent in node.parents if isinstance(parent, Tag)):
+                parts.append(str(node))
+        elif isinstance(node, Tag) and (node.name == "br" or node.name not in INLINE):
+            parts.append(" ")
+    return squash("".join(parts))
+
+
 def words_in(text: str) -> list[str]:
     return WORD.findall(text or "")
 
@@ -161,45 +188,122 @@ def squash(text: str) -> str:
 
 
 def short(text: str, limit: int) -> str:
+    """For quoting in a comment: the text cut at a word boundary with "..." when it is longer than limit."""
     text = squash(text)
     if len(text) <= limit:
         return text
-    cut = text[: limit - 3].rsplit(" ", 1)[0].rstrip(" ,;:.")
-    return cut + "..."
+    head = text[: limit - 3]
+    cut = head if text[limit - 3 : limit - 2] == " " else head.rsplit(" ", 1)[0]
+    return cut.rstrip(" ,;:.|") + "..."
+
+
+def fold(text: str) -> str:
+    """Lower case, accents removed (Términos -> terminos), digits 1 to 3 as words."""
+    plain = unicodedata.normalize("NFKD", text or "")
+    plain = "".join(ch for ch in plain if not unicodedata.combining(ch)).lower()
+    return re.sub(r"(?<![\w.])([123])(?![\w.])", lambda m: {"1": "one", "2": "two", "3": "three"}[m.group(1)], plain)
+
+
+def compact(text: str) -> str:
+    """Folded text with every space, hyphen and other non-word character removed: "dirt-work" and "dirtwork" meet."""
+    return re.sub(r"[\W_]+", "", fold(text))
 
 
 def tokens(text: str) -> set[str]:
-    return {word.lower() for word in words_in(text) if len(word) > 1 and word.lower() not in STOP}
+    return {word for word in words_in(fold(text)) if len(word) > 1 and word not in STOP}
+
+
+def _variants(words: set[str]) -> set[str]:
+    return words | {word[:-1] for word in words if word.endswith("s")} | {word + "s" for word in words}
+
+
+def _present(word: str, have: set[str], flat: str) -> bool:
+    return word in have or (len(word) >= 4 and word in flat)
 
 
 def covers(search: str, text: str, share: float = 0.75) -> bool:
     want = tokens(search)
     if not want:
         return True
-    have = tokens(text) | {word[:-1] for word in tokens(text) if word.endswith("s")}
-    have |= {word + "s" for word in tokens(text)}
-    return len(want & have) / len(want) >= share
+    if compact(search) and compact(search) in compact(text):
+        return True
+    have = _variants(tokens(text))
+    flat = compact(text)
+    return sum(1 for word in want if _present(word, have, flat)) / len(want) >= share
 
 
 def missing_words(search: str, text: str) -> list[str]:
-    have = tokens(text)
-    have |= {word[:-1] for word in have if word.endswith("s")} | {word + "s" for word in have}
-    return [word for word in dict.fromkeys(word.lower() for word in words_in(search)) if word not in STOP and len(word) > 1 and word not in have]
+    have = _variants(tokens(text))
+    flat = compact(text)
+    return [word for word in dict.fromkeys(words_in(fold(search))) if word not in STOP and len(word) > 1 and not _present(word, have, flat)]
+
+
+def missing_text(search: str, text: str) -> str:
+    """How a comment names what is missing: the words, or the whole search when most of it is missing."""
+    gap = missing_words(search, text)
+    total = [word for word in dict.fromkeys(words_in(fold(search))) if word not in STOP and len(word) > 1]
+    if len(gap) > max(1, len(total) // 2):
+        return f'the search "{search}"'
+    return ", ".join(f'"{word}"' for word in gap)
 
 
 def cased(phrase: str, text: str) -> str:
-    """The phrase in sentence case, keeping a word's casing from the page when the page only ever writes it cased
-    (HCSS, QuickBooks). Never adds words."""
+    """The phrase in sentence case, keeping a word's casing and accents from the page when the page writes it that
+    way (HCSS, QuickBooks, Términos). Never adds words."""
+    seen: dict[str, Counter] = defaultdict(Counter)
+    for word in words_in(text or ""):
+        seen[fold(word)][word] += 1
     out = []
     for word in phrase.split():
-        found = Counter(re.findall(r"(?<![\w])" + re.escape(word) + r"(?![\w])", text or "", flags=re.I))
-        if found and word.lower() not in found and not all(item[:1].isupper() and item[1:].islower() for item in found):
-            out.append(found.most_common(1)[0][0])
+        found = seen.get(fold(word))
+        if found:
+            lower = [item for item in found if item == item.lower()]
+            if lower:
+                out.append(Counter({item: found[item] for item in lower}).most_common(1)[0][0])
+            elif all(item[:1].isupper() and item[1:].islower() for item in found):
+                out.append(found.most_common(1)[0][0].lower())
+            else:
+                out.append(found.most_common(1)[0][0])
         else:
             out.append(word.lower())
-    if out and out[0].islower():
+    if out and out[0][:1].islower():
         out[0] = out[0][:1].upper() + out[0][1:]
     return " ".join(out)
+
+
+# Rough widths of Arial at Google's title size (20px), in pixels. Google cuts titles near 600 pixels.
+NARROW = set("iljtfrI.,;:'!|()[] ")
+WIDE = set("mwMW@%")
+TITLE_PIXELS = 600
+
+
+def pixels(text: str) -> int:
+    width = 0.0
+    for ch in text or "":
+        if ch in NARROW:
+            width += 5.6
+        elif ch in WIDE:
+            width += 16.7
+        elif ch.isupper():
+            width += 13.3
+        elif ch.isdigit():
+            width += 11.1
+        else:
+            width += 10.6
+    return int(width)
+
+
+def clean_cut(text: str, limit: int) -> str | None:
+    """Text cut to limit at a sentence or clause end, never with "...". None when no clean cut keeps half of it."""
+    text = squash(text)
+    if len(text) <= limit:
+        return text
+    head = text[:limit]
+    for mark in (". ", "! ", "? ", "; ", ", ", " | ", ": "):
+        at = head.rfind(mark)
+        if at >= limit // 2:
+            return head[:at].rstrip(" ,;:|") + ("." if mark.strip() in {".", "!", "?"} else "")
+    return None
 
 
 def trim_sentences(text: str, limit: int = META_TARGET) -> str:
@@ -212,7 +316,7 @@ def trim_sentences(text: str, limit: int = META_TARGET) -> str:
         if len(candidate) > limit:
             break
         kept = candidate
-    return kept if len(kept) >= 50 else short(text, limit)
+    return kept if len(kept) >= 50 else (clean_cut(text, limit) or "")
 
 
 def path_of(url: str) -> str:
@@ -221,11 +325,12 @@ def path_of(url: str) -> str:
 
 
 def url_key(url: str) -> str:
-    """One spelling per page: no scheme, no www, no fragment, no trailing slash, lower-case host."""
+    """One spelling per page: no scheme, no www, no query, no fragment, no trailing slash, lower-case host.
+    /?try=home and / are the same page, and so are www.example.com and example.com."""
     parts = _split((url or "").strip())
     host = (parts.hostname or "").lower().removeprefix("www.")
     path = parts.path.rstrip("/") or ""
-    return f"{host}{path}" + (f"?{parts.query}" if parts.query else "")
+    return f"{host}{path}"
 
 
 def host_of(url: str) -> str:
@@ -357,7 +462,7 @@ class PageDoc:
 
     @property
     def h1(self) -> str:
-        return squash(self.h1s[0].get_text(" ")) if self.h1s else ""
+        return text_of(self.h1s[0]) if self.h1s else ""
 
     @cached_property
     def main(self) -> Tag:
@@ -391,7 +496,7 @@ class PageDoc:
 
     def is_hidden(self, tag: Tag) -> bool:
         if tag.has_attr("hidden"):
-            return True
+            return not _streamed(tag)  # React streaming parks real content in <div hidden id="S:n"> until a script swaps it in
         style = (tag.get("style") or "").replace(" ", "").lower()
         if "display:none" in style or "visibility:hidden" in style or "clip:rect(0" in style:
             return True
@@ -470,7 +575,7 @@ class PageDoc:
             href = tag["href"].strip()
             if not href or href.startswith(("#", "mailto:", "tel:", "javascript:", "sms:", "data:")) or self._in_skipped(tag):
                 continue
-            label = squash(tag.get_text(" ")) or squash(tag.get("aria-label", "")) or squash(" ".join(img.get("alt", "") for img in tag.find_all("img")))
+            label = text_of(tag) or squash(tag.get("aria-label", "")) or squash(" ".join(img.get("alt", "") for img in tag.find_all("img")))
             joined = safe_join(self.url, href).split("#", 1)[0]
             if joined:
                 out.append((tag, joined, label))
@@ -536,16 +641,40 @@ class PageDoc:
             return self.facts.tables
         return len(self.body_tags("table"))
 
-    def paragraphs(self, *, min_words: int = 8) -> list[str]:
+    def paragraphs(self, *, min_words: int = 8, main_only: bool = False) -> list[str]:
         out = []
         for tag in self.body_tags("p"):
             if self._in_skipped(tag) or self.inside(tag, "nav", "footer", "header", "form", "aside"):
                 continue
-            text = squash(tag.get_text(" "))
+            if main_only and (self.main is not self.body and self.main not in tag.parents):
+                continue
+            if any(BANNER.search(" ".join(parent.get("class") or []) + " " + str(parent.get("id") or "")) for parent in [tag, *tag.parents] if isinstance(parent, Tag)):
+                continue
+            text = text_of(tag)
             lower = text.lower()
-            if len(words_in(text)) >= min_words and not any(bad in lower for bad in ("cookie", "©", "copyright", "all rights reserved")):
+            if len(words_in(text)) >= min_words and not any(bad in lower for bad in ("cookie", "\u00a9", "copyright", "all rights reserved")):
                 out.append(text)
         return out
+
+    @cached_property
+    def content_words(self) -> int:
+        """Words in the main content: no nav, header, footer, aside, form, script or hidden block."""
+        count = 0
+        roots = [self.main] + [tag for tag in self.body_tags("div") if _streamed(tag) and self.main not in tag.parents and tag is not self.main]
+        stack = [(root, False) for root in roots]
+        while stack:
+            node, hidden = stack.pop()
+            for child in node.children:
+                if isinstance(child, (Comment, CData, Declaration, Doctype, ProcessingInstruction)):
+                    continue
+                if isinstance(child, NavigableString):
+                    if not hidden:
+                        count += len(words_in(str(child)))
+                    continue
+                if not isinstance(child, Tag) or child.name in SKIP_TAGS or child.name in {"nav", "header", "footer", "aside", "form"}:
+                    continue
+                stack.append((child, hidden or self.is_hidden(child)))
+        return count
 
     def og(self, prop: str) -> Tag | None:
         return self._meta(property=prop) or self._meta(name=prop)
@@ -698,7 +827,7 @@ def element_of(tag: Tag | None, doc: PageDoc, *, attr: str | None = None) -> dic
     elif tag.name in {"main", "body", "article", "head"}:
         text = ""
     else:
-        text = tag.get_text(" ")
+        text = text_of(tag)
     doc._index  # noqa: B018 - counts ids once for selector_for
     selector = selector_for(tag, doc.soup)
     if not selector:
@@ -745,7 +874,7 @@ class AuditContext:
         # SitePages read fine but whose HTML is not at hand: only their stored facts can be checked
         self.facts_only: list[SitePage] = [page for page in given if isinstance(page, SitePage) and page.status == "fetched" and not (html.get(page.url) or "").strip()]
         facts_urls = {page.url for page in self.facts_only}
-        self.parsed = [page for page in self.parsed if page.url not in facts_urls]
+        self.parsed = _dedupe([page for page in self.parsed if page.url not in facts_urls])
         self.pages = [page if isinstance(page, SitePage) else site_page(page) for page in given]
         parsed_docs: dict[str, PageDoc] = {}
         site_docs: dict[str, SitePage] = {}
@@ -764,6 +893,7 @@ class AuditContext:
         self.own_by_url = {page.url: page for page in self.readable}
         self._by_key = {url_key(page.url): page for page in self.parsed}
         self._facts_by_key = {url_key(page.url): page for page in self.facts_only}
+        self._site_by_key = {url_key(page.url): page for page in self.pages}
         self._docs_by_key = {url_key(url): doc for url, doc in parsed_docs.items()}
         if not self.brand:
             self.brand = guess_brand(self.parsed, getattr(self.project, "name", "") or "")
@@ -782,9 +912,36 @@ class AuditContext:
         return page.status == "blocked" or (self.robots is not None and not self.robots.can_fetch("Googlebot", page.url))
 
     @cached_property
+    def aliases(self) -> dict[str, PageDoc | None]:
+        """Pages whose canonical names another page that shows the same content (or one we did not read): an alias
+        or a copy. Their canonical is right, and every content issue belongs to the page it names. url_key -> the
+        canonical page (None when it was not read)."""
+        out: dict[str, PageDoc | None] = {}
+        for page in self.parsed:
+            if not page.ok or not page.canonical or url_key(page.canonical) == url_key(page.url):
+                continue
+            target = self._by_key.get(url_key(page.canonical))
+            if target is None or not target.ok or same_content(page, target):
+                out[url_key(page.url)] = target
+        return out
+
+    def is_alias(self, page: PageDoc) -> bool:
+        return url_key(page.url) in self.aliases
+
+    @cached_property
     def ok_docs(self) -> list[PageDoc]:
-        """Own pages Google can fetch and read. A page robots.txt blocks gets one issue and nothing else."""
-        return [page for page in self.parsed if page.ok and not self.blocked(page)]
+        """Own pages Google can fetch and read, aliases left out. A page robots.txt blocks gets one issue and
+        nothing else; an alias of another page gets none (its canonical page carries them)."""
+        return [page for page in self.parsed if page.ok and not self.blocked(page) and not self.is_alias(page)]
+
+    @cached_property
+    def content_docs(self) -> list[PageDoc]:
+        """ok_docs without legal, account and form pages: the pages title, description, heading and URL advice is for."""
+        return [page for page in self.ok_docs if not self.utility(page)]
+
+    def utility(self, page: PageDoc) -> bool:
+        """Legal, account, form and other utility pages: no content, link or search advice for them."""
+        return bool(UTILITY_PATH.search(_split(page.url).path or "/"))
 
     def indexed(self, page: PageDoc) -> bool:
         """False for a page that asks not to be indexed or names another page as the original."""
@@ -794,6 +951,13 @@ class AuditContext:
 
     def page(self, url: str | None) -> PageDoc | None:
         return self._by_key.get(url_key(url)) if url else None
+
+    def ranking_page(self, url: str | None) -> PageDoc | None:
+        """The page a ranking row is about, with an alias swapped for the page it names."""
+        page = self.page(url)
+        if page is not None and self.is_alias(page) and self.aliases[url_key(page.url)] is not None:
+            return self.aliases[url_key(page.url)]
+        return page
 
     def doc(self, url: str) -> PageDoc | None:
         return self._docs_by_key.get(url_key(url))
@@ -810,17 +974,39 @@ class AuditContext:
         out: dict[str, list[dict]] = defaultdict(list)
         for row in self.rankings:
             if row.get("url"):
-                out[url_key(row["url"])].append(row)
+                page = self.ranking_page(row["url"])  # a ranking on an alias counts for the page it names
+                out[url_key(page.url if page is not None else row["url"])].append(row)
         return out
 
     def searches_for(self, page: PageDoc) -> list[dict]:
-        """The ranking rows this page answers: the searches it ranks for, or the ones it is the best page for."""
-        rows = self.searches_by_page.get(url_key(page.url), [])
-        return sorted(rows, key=lambda row: (row.get("position") or 99))
+        """The searches this page answers, only those with real Google data: the ones it ranks for, or, when it
+        ranks for none, the ones the report picked it as the best page for."""
+        rows = [row for row in self.searches_by_page.get(url_key(page.url), []) if row.get("checked")]
+        ranked = [row for row in rows if row.get("position")]
+        return sorted(ranked or rows, key=lambda row: (row.get("position") or 99))
+
+    def settled(self, page: PageDoc) -> bool:
+        """True when the page already ranks in the top 3 for a tracked search: never push another search on it."""
+        return any((row.get("position") or 99) <= 3 for row in self.searches_for(page))
 
     def target(self, page: PageDoc) -> str | None:
+        """The search to name in the page's title and H1: one with Google data, and only for a page that is not
+        already in the top 3 for its search."""
+        if self.settled(page):
+            return None
         rows = self.searches_for(page)
         return rows[0]["q"] if rows else None
+
+    def comparable_words(self, doc: PageDoc, rivals: list[PageDoc]) -> int:
+        """Word counts that can be compared: when the top pages are counted from their stored facts, our page is
+        counted the same way (its stored facts), never one way for us and another for them."""
+        if doc.facts is not None and doc.facts.status == "fetched":
+            return doc.facts.words
+        if any(rival.facts is not None for rival in rivals):
+            facts = self._site_by_key.get(url_key(doc.url))
+            if facts is not None and facts.status == "fetched":
+                return facts.words
+        return doc.words
 
     def top_docs(self, row: dict, count: int = 3) -> list[PageDoc]:
         out = []
@@ -843,11 +1029,41 @@ class AuditContext:
             if url_key(known) == key:
                 return value
         page = self.page(url)
-        if page is not None and page.html is not None:
-            if page.http_status is not None:
-                return page.http_status
-            return page.status
+        if page is not None and page.http_status is not None:
+            return page.http_status  # only a real HTTP answer: our own timeout is never a broken link
         return None
+
+
+LANGUAGE_CODE = re.compile(r"[a-z]{2}(-[A-Za-z]{2,4})?")
+NOT_A_PAGE = re.compile(r"content.type\W+(image|video|audio|font|application/(pdf|zip|octet|json|xml))", re.I)
+NOT_A_PAGE_URL = re.compile(r"\.(png|jpe?g|gif|webp|avif|svg|ico|pdf|zip|mp4|mov|webm|mp3|woff2?|ttf|css|js|json|xml)$", re.I)
+SLOW_FETCH = re.compile(r"time ?out|timed out|took too long|read timeout|deadline", re.I)
+UTILITY_PATH = re.compile(
+    r"/(legal|privacy|terms|tos|cookies?|policy|policies|gdpr|imprint|impressum|disclaimer|accessibility|security|"
+    r"rechtliches|datenschutz\w*|nutzungsbedingungen|agb|juridi\w*|aviso-legal|mentions-legales|privacidad|privacite|"
+    r"terminos\w*|condiciones|voorwaarden|privacybeleid|"
+    r"login|log-in|signin|sign-in|signup|sign-up|register|account|cart|checkout|unsubscribe|thank-you|thanks|"
+    r"search|404|careers|jobs|press|newsroom|referrals?|schedule|book-a-demo|summit|sitemap|dev-[a-z0-9-]*|staging)(/|$|[-_])",
+    re.I,
+)
+
+
+def same_content(one: PageDoc, two: PageDoc) -> bool:
+    """True when two pages show the same text (an alias serving its canonical page's HTML)."""
+    if (one.html or "") == (two.html or ""):
+        return True
+    a, b = set(words_in(fold(one.text))), set(words_in(fold(two.text)))
+    return bool(a) and bool(b) and len(a & b) / len(a | b) >= 0.9
+
+
+def _dedupe(pages: list[PageDoc]) -> list[PageDoc]:
+    """One PageDoc per url_key (www and bare hosts, / and /?try=home), keeping a readable one first."""
+    kept: dict[str, PageDoc] = {}
+    for page in pages:
+        key = url_key(page.url)
+        if key not in kept or (page.ok and not kept[key].ok):
+            kept[key] = page
+    return list(kept.values())
 
 
 def page_doc(page: SitePage, html: str) -> PageDoc:
@@ -868,7 +1084,7 @@ def site_page(doc: PageDoc) -> SitePage:
         meta=doc.meta,
         h1=doc.h1,
         h1_count=len(doc.h1s),
-        h2s=[squash(tag.get_text(" ")) for tag in doc.headings if tag.name == "h2"][:12],
+        h2s=[text_of(tag) for tag in doc.headings if tag.name == "h2"][:12],
         words=doc.words,
         tables=doc.tables,
         has_faq=doc.has_faq,
@@ -911,10 +1127,28 @@ def guess_brand(pages: list[PageDoc], fallback: str = "") -> str:
     return fallback
 
 
+def _is_brand(part: str, brand: str) -> bool:
+    if not brand:
+        return False
+    a, b = compact(part), compact(brand)
+    return bool(a) and bool(b) and (a == b or a.startswith(b) or b.startswith(a))
+
+
 def core_title(title: str, brand: str) -> str:
+    """The title without its brand part ("Mitti (by SafetyCulture)" counts as the brand "Mitti")."""
     parts = [part.strip() for part in SPLIT.split(title or "") if part.strip()]
-    kept = [part for part in parts if not brand or part.lower() != brand.lower()]
+    kept = [part for part in parts if not _is_brand(part, brand)]
     return " | ".join(kept) if kept else squash(title)
+
+
+def visible_title(title: str) -> str:
+    """Roughly what Google shows of a title: the words that fit in TITLE_PIXELS."""
+    out = []
+    for word in squash(title).split(" "):
+        if pixels(" ".join(out + [word])) > TITLE_PIXELS - 20:
+            break
+        out.append(word)
+    return " ".join(out).rstrip(" ,;:|-")
 
 
 def compose_title(lead: str, rest: str, brand: str, limit: int = TITLE_MAX) -> str | None:
@@ -924,13 +1158,13 @@ def compose_title(lead: str, rest: str, brand: str, limit: int = TITLE_MAX) -> s
     options = []
     if rest and not covers(rest, lead, 0.9):
         options += [f"{lead} | {rest} | {brand}" if brand else "", f"{lead} | {rest}"]
-    if brand and brand.lower() not in lead.lower():
+    if brand and compact(brand) not in compact(lead):
         options.append(f"{lead} | {brand}")
     options.append(lead)
     for option in options:
-        if option and len(option) <= limit:
+        if option and len(option) <= limit and pixels(option) <= TITLE_PIXELS:
             return option
-    return short(lead, limit) if lead else None
+    return clean_cut(lead, limit) if lead else None
 
 
 # -- issues --------------------------------------------------------------------------------------
@@ -1040,11 +1274,27 @@ def _capped(items: list, page: PageDoc, noun: str) -> list:
 # -- checks: can Google read and index the page ----------------------------------------------------
 
 
+def _sitewide(issues: list[dict], kind: str, ctx: "AuditContext", title: str, comment: str, fix: str, limit: int = 5) -> list[dict]:
+    """More than limit pages with the same page-wide gap is one template fix: one issue that lists the pages."""
+    same = [issue for issue in issues if issue["kind"] == kind]
+    if len(same) <= limit:
+        return issues
+    pages = [issue["page"] for issue in same]
+    home = next((page for page in ctx.content_docs if page.is_home), None)
+    anchor = home.url if home is not None and home.url in pages else pages[0]
+    merged = make_issue(kind, title.format(count=len(pages)), comment.format(count=len(pages)), page=anchor, fix=fix, key="sitewide")
+    merged["pages"] = pages
+    merged["count"] = len(pages)
+    return [issue for issue in issues if issue["kind"] != kind] + [merged]
+
+
 @check
 def check_indexable(ctx: AuditContext) -> list[dict]:
     issues = []
     for page in ctx.parsed:
         if ctx.blocked(page):
+            if ctx.utility(page):
+                continue  # a staging, account or legal path kept out of Google on purpose
             issues.append(
                 make_issue(
                     "robots-blocked", f"robots.txt blocks {page.path}", f"Google is told not to crawl {page.path}, so it can't read the page or rank its content.",
@@ -1055,6 +1305,17 @@ def check_indexable(ctx: AuditContext) -> list[dict]:
             continue
         if page.status != "fetched" or (page.http_status is not None and page.http_status >= 400) or not (page.html or "").strip():
             reason = f"HTTP {page.http_status}" if page.http_status else (page.error or page.status or "no HTML")
+            if NOT_A_PAGE.search(reason) or NOT_A_PAGE_URL.search(_split(page.url).path or ""):
+                continue  # an image, PDF or other file the sitemap lists: not a page, nothing to say
+            if page.http_status is None and SLOW_FETCH.search(reason):
+                issues.append(
+                    make_issue(
+                        "unreadable", f"We could not read {page.path} in time", f"Our reader gave up waiting for {page.path} ({reason}). That is our limit, not proof the page is down, so nothing else was checked on it.",
+                        page=page.url, severity="low", key="slow", evidence=[reason],
+                        fix="Open the page yourself. If it is slow for visitors too, speed it up; otherwise refresh the site here later.",
+                    )
+                )
+                continue
             issues.append(
                 make_issue(
                     "unreadable", f"We couldn't read {page.path}", f"It answered with {reason}. If Google gets the same, this page can't rank.",
@@ -1078,11 +1339,22 @@ def check_indexable(ctx: AuditContext) -> list[dict]:
         if page.http_status and 300 <= page.http_status < 400:
             issues.append(make_issue("unreadable", f"{page.path} redirects", f"It answered with HTTP {page.http_status}. Link to the final address so Google doesn't have to follow the hop.", page=page.url, fix="Update links and the sitemap to the final URL.", severity="low", key="redirect"))
         canonical = page.canonical
+        if canonical and url_key(canonical) != url_key(page.url) and ctx.is_alias(page):
+            if ctx.aliases[url_key(page.url)] is None:  # it names a page we did not read: say so, never call it wrong
+                issues.append(
+                    make_issue(
+                        "canonical-other", f"{page.path} names another page as the original",
+                        f"The canonical tag names {canonical}, which we did not read. If {page.path} is a copy of it, that is right and nothing else is checked here.",
+                        page=page, el=page.canonical_el, attr="href", severity="low", key="unread",
+                        fix="Nothing to do if this page is a copy. If it is its own page, point the canonical at its own URL.",
+                    )
+                )
+            continue  # an alias of the page it names: the canonical is right, and that page carries the issues
         if canonical and url_key(canonical) != url_key(page.url):
             issues.append(
                 make_issue(
                     "canonical-other", f"{page.path} points its canonical at another page",
-                    f"The canonical tag names {canonical}. Google treats that page as the original and may never show {page.path}.",
+                    f"The canonical tag names {canonical}, which shows different content. Google treats that page as the original and may never show {page.path}.",
                     page=page, el=page.canonical_el, attr="href", suggestion=page.url,
                     fix="Point the canonical at this page's own URL unless it really is a copy.",
                 )
@@ -1095,7 +1367,11 @@ def check_indexable(ctx: AuditContext) -> list[dict]:
                     fix="Add a canonical link to the page's own URL in the head.",
                 )
             )
-    return issues
+    return _sitewide(
+        issues, "canonical-missing", ctx, "{count} pages have no canonical tag",
+        "{count} pages have no canonical tag, so Google picks the main address itself when a page is reachable at several.",
+        "Add a canonical link to each page's own URL in the site's page template.",
+    )
 
 
 @check
@@ -1149,7 +1425,7 @@ def check_titles(ctx: AuditContext) -> list[dict]:
     issues = []
     brand = ctx.brand
     by_title: dict[str, list[PageDoc]] = defaultdict(list)
-    for page in ctx.ok_docs:
+    for page in ctx.content_docs:
         title = page.title
         target = ctx.target(page)
         if title and ctx.indexed(page):
@@ -1167,13 +1443,17 @@ def check_titles(ctx: AuditContext) -> list[dict]:
             if issues[-1].get("action") == "append" and issues[-1].get("suggestion"):
                 issues[-1]["suggestion"] = f"<title>{issues[-1]['suggestion']}</title>"
             continue
-        if len(title) > TITLE_MAX:
-            lead = cased(target, page.text) if target and not covers(target, title[:TITLE_MAX]) else core_title(title, brand)
-            suggestion = compose_title(lead, "", brand) if len(lead) <= TITLE_MAX else short(lead, TITLE_MAX)
+        width = pixels(title)
+        core = core_title(title, brand)
+        if width > TITLE_PIXELS and pixels(core) > TITLE_PIXELS - 20:  # a cut that only loses the brand is fine
+            lead = cased(target, page.text) if target and not covers(target, visible_title(title)) else core
+            suggestion = compose_title(lead, "", brand)
             issues.append(
                 make_issue(
-                    "title-long", f"Title is {len(title)} characters", f"Google shows about {TITLE_MAX}, so \"{short(title, TITLE_MAX)}\" is roughly what people see for {page.path}.",
-                    page=page, el=page.title_el, suggestion=suggestion if suggestion and suggestion != title else None,
+                    "title-long", f"Title is {len(title)} characters, too wide for Google",
+                    f"Google shows about {TITLE_PIXELS} pixels of a title, so \"{visible_title(title)}...\" is roughly what people see for {page.path}.",
+                    page=page, el=page.title_el, suggestion=suggestion if suggestion and suggestion != title and pixels(suggestion) <= TITLE_PIXELS else None,
+                    severity="medium" if width > TITLE_PIXELS * 1.2 else "low",
                     fix="Move the main search to the front and cut the rest.",
                 )
             )
@@ -1186,12 +1466,11 @@ def check_titles(ctx: AuditContext) -> list[dict]:
                     page=page, el=page.title_el, suggestion=suggestion, fix="Add the main search this page should rank for.",
                 )
             )
-        if target and not covers(target, title):
-            gap = missing_words(target, title)
+        if target and not covers(target, title) and not ctx.utility(page):
             lead = cased(target, page.text)
             issues.append(
                 make_issue(
-                    "title-search", f"Title doesn't name \"{target}\"", f"{page.path} is your page for \"{target}\" but its title is missing \"{' '.join(gap)}\". The title is the strongest on-page signal.",
+                    "title-search", f"Title doesn't name \"{target}\"", f"{page.path} is your page for \"{target}\" in Google, but its title is missing {missing_text(target, title)}. The title is the strongest on-page signal.",
                     page=page, search=target, el=page.title_el, suggestion=compose_title(lead, core_title(title, brand), brand),
                     fix="Start the title with the search, then the brand.",
                 )
@@ -1203,23 +1482,41 @@ def check_titles(ctx: AuditContext) -> list[dict]:
             others = [other.path for other in group if other is not page]
             lead = page.h1 if page.h1 and page.h1.lower() != page.title.lower() else ""
             suggestion = compose_title(lead, "", ctx.brand) if lead else None
-            if suggestion and any(suggestion.lower() == compose_title(other.h1, "", ctx.brand).lower() for other in group if other is not page and other.h1):
+            if suggestion and any(suggestion.lower() == (compose_title(other.h1, "", ctx.brand) or "").lower() for other in group if other is not page and other.h1):
                 suggestion = None
             issues.append(
                 make_issue(
-                    "title-duplicate", f"{page.path} shares its title with {len(others)} other page{'s' if len(others) > 1 else ''}",
-                    f"{page.path} and {', '.join(others[:3])} all use \"{short(page.title, 50)}\". Google may show only one of them.",
+                    "title-duplicate", f"{page.path} shares its title with {plural(len(others), 'other page')}",
+                    f"{page.path} and {', '.join(others[:3])} all use \"{short(page.title, 60)}\". Google may show only one of them.",
                     page=page, el=page.title_el, suggestion=suggestion, evidence=others, fix="Give each page its own title for its own search.",
                 )
             )
     return issues
 
 
+def good_meta(text: str | None) -> str | None:
+    """A description worth pasting: 70 to 160 characters, whole sentences, no "...", no dashes from banners."""
+    text = squash(text or "")
+    if not text or "\u2013" in text or "\u2014" in text or text.endswith(("...", "\u2026")):
+        return None
+    trimmed = trim_sentences(text, META_TARGET)
+    if not trimmed or trimmed.endswith(("...", "\u2026")) or not META_MIN <= len(trimmed) <= META_MAX:
+        return None
+    return trimmed
+
+
 def _meta_from_page(page: PageDoc) -> str | None:
-    for text in page.paragraphs(min_words=10):
-        trimmed = trim_sentences(text, META_TARGET)
-        if len(trimmed) >= 60:
-            return trimmed
+    """The page's own words for a description: og:description when it differs, else a paragraph from the main
+    content (never the header, nav, footer, a banner or an announcement bar)."""
+    og = page.og("og:description")
+    if og is not None:
+        found = good_meta(og.get("content", ""))
+        if found and found.lower() != page.meta.lower():
+            return found
+    for text in page.paragraphs(min_words=10, main_only=True):
+        found = good_meta(text)
+        if found:
+            return found
     return None
 
 
@@ -1227,7 +1524,7 @@ def _meta_from_page(page: PageDoc) -> str | None:
 def check_meta(ctx: AuditContext) -> list[dict]:
     issues = []
     by_meta: dict[str, list[PageDoc]] = defaultdict(list)
-    for page in ctx.ok_docs:
+    for page in ctx.content_docs:
         meta = page.meta
         if not meta:
             suggestion = _meta_from_page(page)
@@ -1247,14 +1544,14 @@ def check_meta(ctx: AuditContext) -> list[dict]:
             issues.append(
                 make_issue(
                     "meta-long", f"Meta description is {len(meta)} characters", f"Google cuts it near {META_MAX}, so the end of the description of {page.path} won't show.",
-                    page=page, el=page.meta_el, attr="content", suggestion=trim_sentences(meta, META_TARGET), fix="Shorten it and put the point first.",
+                    page=page, el=page.meta_el, attr="content", suggestion=good_meta(clean_cut(meta, META_TARGET)), fix="Shorten it and put the point first.",
                 )
             )
         elif len(meta) < META_MIN:
             extra = _meta_from_page(page)
             suggestion = None
             if extra and not covers(extra, meta, 0.6):
-                suggestion = trim_sentences(f"{meta.rstrip('.')}. {extra}", META_TARGET)
+                suggestion = good_meta(f"{meta.rstrip('.')}. {extra}") or extra
             issues.append(
                 make_issue(
                     "meta-short", f"Meta description is only {len(meta)} characters", f"\"{meta}\" uses less than half the room Google gives the snippet for {page.path}.",
@@ -1269,7 +1566,7 @@ def check_meta(ctx: AuditContext) -> list[dict]:
             suggestion = _meta_from_page(page)
             issues.append(
                 make_issue(
-                    "meta-duplicate", f"{page.path} shares its meta description with {len(others)} other page{'s' if len(others) > 1 else ''}",
+                    "meta-duplicate", f"{page.path} shares its meta description with {plural(len(others), 'other page')}",
                     f"{page.path} and {', '.join(others[:3])} use the same description, so the snippets don't say how the pages differ.",
                     page=page, el=page.meta_el, attr="content", suggestion=suggestion if suggestion and suggestion.lower() != page.meta.lower() else None,
                     evidence=others, fix="Write a description for each page about that page.",
@@ -1292,7 +1589,7 @@ def _html_text(text: str | None) -> str:
 @check
 def check_headings(ctx: AuditContext) -> list[dict]:
     issues = []
-    for page in ctx.ok_docs:
+    for page in ctx.content_docs:
         h1s = page.h1s
         target = ctx.target(page)
         if not h1s:
@@ -1308,16 +1605,16 @@ def check_headings(ctx: AuditContext) -> list[dict]:
             for extra in h1s[1:]:
                 issues.append(
                     make_issue(
-                        "h1-many", f"{len(h1s)} H1 headings on {page.path}", f"\"{short(extra.get_text(' '), 60)}\" is a second main heading, which blurs the page's topic.",
+                        "h1-many", f"{len(h1s)} H1 headings on {page.path}", f"\"{short(text_of(extra), 60)}\" is a second main heading, which blurs the page's topic.",
                         page=page, el=extra, suggestion="h2", action="retag", fix="Keep one H1 and turn the others into H2s.",
                     )
                 )
-            if target and not covers(target, page.h1):
+            if target and not covers(target, page.h1) and not ctx.utility(page):
                 lead = cased(target, page.text)
                 suggestion = f"{lead}: {page.h1}" if len(lead) + len(page.h1) <= 70 else None
                 issues.append(
                     make_issue(
-                        "h1-search", f"H1 doesn't name \"{target}\"", f"The H1 on {page.path} says \"{short(page.h1, 70)}\" and is missing \"{' '.join(missing_words(target, page.h1))}\".",
+                        "h1-search", f"H1 doesn't name \"{target}\"", f"The H1 on {page.path} says \"{short(page.h1, 70)}\" and is missing {missing_text(target, page.h1)}.",
                         page=page, search=target, el=h1s[0], suggestion=suggestion, fix="Work the search into the main heading in plain words.",
                     )
                 )
@@ -1325,10 +1622,12 @@ def check_headings(ctx: AuditContext) -> list[dict]:
         last = 0
         for tag in page.headings:
             level = int(tag.name[1])
+            if tag.find(["p", "div", "section", "article", "ul", "ol", "table", "h1", "h2", "h3", "h4", "h5", "h6"]) is not None:
+                continue  # a heading wrapped around a whole block is broken markup, not an outline step
             if last and level > last + 1:
                 found.append(
                     make_issue(
-                        "heading-skip", f"Heading jumps from H{last} to H{level}", f"\"{short(tag.get_text(' '), 60)}\" on {page.path} skips a level, which makes the outline harder for Google to follow.",
+                        "heading-skip", f"Heading jumps from H{last} to H{level}", f"\"{short(text_of(tag), 60)}\" on {page.path} skips a level, which makes the outline harder for Google to follow.",
                         page=page, el=tag, suggestion=f"h{last + 1}", action="retag", fix=f"Make it an H{last + 1}, or add the missing level above it.",
                     )
                 )
@@ -1341,31 +1640,36 @@ def check_headings(ctx: AuditContext) -> list[dict]:
 def check_content(ctx: AuditContext) -> list[dict]:
     issues = []
     for page in ctx.ok_docs:
-        if page.words < THIN_WORDS:
+        if ctx.utility(page):
+            continue  # legal, account and form pages are short on purpose
+        words = page.content_words
+        if words < THIN_WORDS and not (page.is_home and page.words >= THIN_WORDS):
             issues.append(
                 make_issue(
-                    "thin", f"{page.path} has {page.words} words", f"Pages under {THIN_WORDS} words rarely win competitive searches. {page.path} has {page.words}.",
+                    "thin", f"{page.path} has {plural(words, 'word')} of content", f"Not counting the menu, header and footer, {page.path} has {plural(words, 'word')}. Pages under {THIN_WORDS} rarely win competitive searches.",
                     page=page, el=page.main, fix="Add the details a buyer needs: prices, steps, comparisons, questions.",
                 )
             )
         for row in ctx.searches_for(page):
-            if not row.get("checked"):
-                continue
+            if (row.get("position") or 99) <= 3:
+                continue  # already in the top 3 for it
             search = row["q"]
             rivals = ctx.top_docs(row, 3)
-            if len(rivals) >= 2:
-                mid = int(median(doc.words for doc in rivals))
-                if mid >= 200 and page.words < 0.65 * mid:
+            mine = ctx.comparable_words(page, rivals)
+            if len(rivals) >= 2 and not page.is_home:
+                mid = int(median(ctx.comparable_words(doc, rivals) for doc in rivals))
+                if mid >= 200 and mine < 0.65 * mid:
+                    names = ", ".join(host_of(doc.url) for doc in rivals)
                     issues.append(
                         make_issue(
-                            "thin-vs-top", f"{page.path} is thinner than the top 3 for \"{search}\"",
-                            f"The top 3 for \"{search}\" have a median of {mid:,} words. {page.path} has {page.words:,}.",
-                            page=page, search=search, el=page.main, evidence=[f"{doc.path}: {doc.words} words" for doc in rivals],
+                            "thin-vs-top", f"{page.path} is thinner than the top pages for \"{search}\"",
+                            f"The top pages we compared for \"{search}\" ({names}) have a median of {mid:,} words. {page.path} has {mine:,}.",
+                            page=page, search=search, el=page.main, evidence=[f"{doc.url}: {ctx.comparable_words(doc, rivals):,} words" for doc in rivals],
                             fix=f"Cover what the top pages cover. Aim for about {int(mid * 0.8):,} words of useful detail, not filler.",
                         )
                     )
             heads = [tag for tag in page.headings if tag.name in {"h1", "h2", "h3"}]
-            if not any(covers(search, tag.get_text(" "), 0.6) for tag in heads):
+            if not any(covers(search, text_of(tag), 0.6) for tag in heads):
                 lead = cased(search, page.text)
                 issues.append(
                     make_issue(
@@ -1400,10 +1704,10 @@ def check_links(ctx: AuditContext) -> list[dict]:
     for page in ctx.ok_docs:
         internal = [(tag, url, label) for tag, url, label in page.links if page.is_internal(url)]
         content = {url_key(url) for tag, url, label in internal if not page.inside(tag, "nav", "header", "footer") and url_key(url) != url_key(page.url)}
-        if len(content) < FEW_LINKS and page.words >= 80:
+        if len(content) < FEW_LINKS and page.content_words >= 80 and not ctx.utility(page):
             issues.append(
                 make_issue(
-                    "few-links", f"{page.path} links to {len(content)} of your other pages", f"Outside the menu and footer, {page.path} links to {len(content)} pages. Links in the text tell Google which pages matter and what they are about.",
+                    "few-links", f"{page.path} links to {len(content)} of your other pages", f"Outside the menu and footer, {page.path} links to {plural(len(content), 'other page')}. Links in the text tell Google which pages matter and what they are about.",
                     page=page, el=page.main, fix="Link to two or three related pages from the body text, with words that describe them.",
                 )
             )
@@ -1411,7 +1715,7 @@ def check_links(ctx: AuditContext) -> list[dict]:
         seen = set()
         for tag, url, label in internal:
             status = ctx.link_status(url)
-            bad = (isinstance(status, int) and status >= 400) or status in {"error", "missing", "not-found"}
+            bad = (isinstance(status, int) and status >= 400) or status in {"missing", "not-found"}
             if bad and (url_key(url), "broken") not in seen:
                 seen.add((url_key(url), "broken"))
                 broken.append(
@@ -1420,8 +1724,14 @@ def check_links(ctx: AuditContext) -> list[dict]:
                         page=page, el=tag, attr="href", fix="Point the link at a page that works, or remove it.", evidence=[f"{url}: {status}"], key=url,
                     )
                 )
+        said = set()
         for tag, url, label in page.links:
+            if not page.is_internal(url):
+                continue  # the words on links to other sites describe them, not you
+            if (url_key(url), label.lower()) in said:
+                continue  # the desktop and phone menus repeat the same link
             if label.lower().strip(" .!>›→") in GENERIC_ANCHORS:
+                said.add((url_key(url), label.lower()))
                 suggestion = _label_for(url, ctx, page) if page.is_internal(url) else None
                 generic.append(
                     make_issue(
@@ -1431,6 +1741,25 @@ def check_links(ctx: AuditContext) -> list[dict]:
                 )
         issues += _capped(broken, page, "links") + _capped(generic, page, "links")
     return issues
+
+
+def _decorative(tag: Tag, src: str) -> bool:
+    """A small icon (an SVG, or 48 pixels or less) beside the words of a link, button or heading: its text already
+    says it all, so alt text would only repeat it."""
+    small = src.lower().split("?", 1)[0].endswith(".svg")
+    for key in ("width", "height"):
+        try:
+            small = small or int(str(tag.get(key) or "0").rstrip("px")) <= 48 and bool(tag.get(key))
+        except ValueError:
+            pass
+    if not small:
+        return False
+    for parent in tag.parents:
+        if not isinstance(parent, Tag) or parent.name in {"body", "main", "section", "article"}:
+            break
+        if parent.name in {"a", "button", "h1", "h2", "h3", "h4", "h5", "h6", "li", "label"} or len(parent.contents) > 1:
+            return bool(text_of(parent))
+    return False
 
 
 def _image_width(tag: Tag, src: str) -> int:
@@ -1453,13 +1782,13 @@ def _image_width(tag: Tag, src: str) -> int:
 @check
 def check_images(ctx: AuditContext) -> list[dict]:
     issues = []
-    for page in ctx.ok_docs:
+    for page in ctx.content_docs:
         missing, huge = [], []
         for tag in page.images:
             src = (tag.get("src") or tag.get("data-src") or "").strip()
             if tag.get("width") in {"1", "0"} or (tag.get("role") or "") == "presentation" or (tag.get("aria-hidden") or "") == "true":
                 continue
-            if not tag.has_attr("alt"):
+            if not tag.has_attr("alt") and not _decorative(tag, src):
                 name = unquote(_split(src).path.rsplit("/", 1)[-1]) if src and not src.startswith("data:") else ""
                 stem = re.sub(r"\.[a-z0-9]{2,5}$", "", name, flags=re.I)
                 parts = [part for part in re.split(r"[-_ .]+", stem) if part and not re.fullmatch(r"\d+(x\d+)?|[0-9a-f]{6,}|img|image|photo|pic|dsc|copy|final|scaled|w\d+|\d+w|v\d+", part, flags=re.I)]
@@ -1500,7 +1829,7 @@ def _faq_jsonld(page: PageDoc) -> str | None:
     """FAQPage JSON-LD from the page's own question headings and the paragraph under each. None if fewer than 2."""
     pairs = []
     for tag in page.headings:
-        question = squash(tag.get_text(" "))
+        question = text_of(tag)
         if not question.endswith("?") or len(question) > 160:
             continue
         answer = []
@@ -1574,7 +1903,7 @@ def check_structured_data(ctx: AuditContext) -> list[dict]:
                         fix="Fix the JSON so it parses, and check it with Google's Rich Results Test.",
                     )
                 )
-        if not page.types:
+        if not page.types and not ctx.utility(page):
             issues.append(
                 make_issue(
                     "schema-missing", f"{page.path} has no structured data", "Structured data tells Google what the page is: a company, a product, an article, questions and answers.",
@@ -1582,37 +1911,44 @@ def check_structured_data(ctx: AuditContext) -> list[dict]:
                     fix="Add JSON-LD for what the page is. Only describe things the page really says.",
                 )
             )
-        gaps: dict[str, list[str]] = defaultdict(list)
-        users: dict[str, set[str]] = defaultdict(set)
+        gaps: dict[str, list[tuple[str, list[PageDoc]]]] = defaultdict(list)
         for row in ctx.searches_for(page):
-            if not row.get("checked"):
+            if (row.get("position") or 99) <= 3:
                 continue
             rivals = ctx.top_docs(row, 3)
             if len(rivals) < 2:
                 continue
             counts = Counter(kind for doc in rivals for kind in set(doc.types) & set(GAP_TYPES))
             for kind, count in counts.items():
-                if count >= 2 and kind not in page.types:
-                    gaps[kind].append(row["q"])
-                    users[kind] |= {doc.path for doc in rivals if kind in doc.types}
-        for kind, searches in gaps.items():
+                if count >= 2 and kind not in page.types and not (kind == "BreadcrumbList" and page.is_home):
+                    gaps[kind].append((row["q"], [doc for doc in rivals if kind in doc.types]))
+        for kind, seen in gaps.items():
+            search, users = seen[0]
             suggestion = _faq_jsonld(page) if kind == "FAQPage" else _org_jsonld(page, ctx.brand) if kind == "Organization" else None
+            has = sorted(set(page.types) & set(SCHEMA_TYPES))
+            compared = len(ctx.top_docs(next(row for row in ctx.rankings if row.get("q") == search), 3))
             issues.append(
                 make_issue(
                     "schema-gap", f"Top pages use {kind} schema and {page.path} doesn't",
-                    f"For \"{searches[0]}\", {len(users[kind])} of the top 3 mark up {kind}. {page.path} has {', '.join(sorted(page.types)) or 'no structured data'}.",
-                    page=page, search=searches[0], el=page.head, suggestion=suggestion, action="append" if suggestion else None, key=kind,
-                    evidence=[f"searches: {', '.join(searches)}"] + sorted(users[kind]),
+                    f"For \"{search}\", {len(users)} of the {compared} top pages we compared mark up {kind}. {page.path} has " + (f"{', '.join(has)}." if has else ("other structured data." if page.types else "no structured data.")),
+                    page=page, search=search, el=page.head, suggestion=suggestion, action="append" if suggestion else None, key=kind,
+                    evidence=[f"searches: {', '.join(q for q, _ in seen)}"] + [doc.url for doc in users],
                     fix=f"Add {kind} JSON-LD that matches what the page shows." + (" Write the questions and answers on the page first." if kind == "FAQPage" and not suggestion else ""),
                 )
             )
-    return issues
+    return _sitewide(
+        issues, "schema-missing", ctx, "{count} pages have no structured data",
+        "{count} pages have no structured data, so Google has to guess what each one is: a product, an article, a company.",
+        "Add JSON-LD for what each kind of page is in its template. Only describe things the pages really say.",
+    )
 
 
 @check
 def check_social(ctx: AuditContext) -> list[dict]:
     issues = []
     for page in ctx.ok_docs:
+        if ctx.utility(page):
+            continue
         missing = [prop for prop in ("og:title", "og:description", "og:image") if page.og(prop) is None]
         if missing:
             tags = []
@@ -1626,7 +1962,7 @@ def check_social(ctx: AuditContext) -> list[dict]:
                     tags.append(f'<meta property="og:image" content="{_html_attr(safe_join(page.url, first["src"].strip()))}">')
             issues.append(
                 make_issue(
-                    "og-missing", f"{page.path} is missing {', '.join(missing)}", "When someone shares the page, Slack, LinkedIn and Facebook build the preview from Open Graph tags. Without them the preview is blank or wrong.",
+                    "og-missing", f"{page.path} is missing {', '.join(missing)}", ("When someone shares the page, Slack, LinkedIn and Facebook build the preview from Open Graph tags. Without them the preview is blank or wrong." if len(missing) == 3 else f"Shared links build their preview from Open Graph tags, and this page has no {' or '.join(missing)}, so the preview is missing that part."),
                     page=page, el=page.head, suggestion="\n".join(tags) or None, action="append", fix=f"Add {', '.join(missing)} to the head.",
                 )
             )
@@ -1668,11 +2004,12 @@ def check_mobile(ctx: AuditContext) -> list[dict]:
 @check
 def check_urls(ctx: AuditContext) -> list[dict]:
     issues = []
-    for page in ctx.ok_docs:
+    for page in ctx.content_docs:
         parts = _split(page.url)
         path = unquote(parts.path or "/")
         problems = []
-        if any(ch.isupper() for ch in path):
+        segments = [part for part in path.split("/") if part and not LANGUAGE_CODE.fullmatch(part)]
+        if any(ch.isupper() for ch in "/".join(segments)):
             problems.append("capital letters")
         if "_" in path:
             problems.append("underscores")
@@ -1713,7 +2050,7 @@ def check_rankings(ctx: AuditContext) -> list[dict]:
         search = row["q"]
         leaders = ctx.leaders(row)
         names = ", ".join(item.get("domain") or host_of(item.get("url", "")) for item in leaders) or "other sites"
-        page = ctx.page(row.get("url"))
+        page = ctx.ranking_page(row.get("url"))
         facts = ctx._facts_by_key.get(url_key(row.get("url") or "")) if page is None else None
         if row.get("position") is None:
             if facts is not None:
@@ -1727,14 +2064,14 @@ def check_rankings(ctx: AuditContext) -> list[dict]:
                 continue
             if page is not None and page.ok:
                 rivals = ctx.top_docs(row, 3)
-                notes = _gaps(page, rivals, search)
-                detail = f" Compared with them, {'; '.join(notes)}." if notes else ""
+                notes = _gaps(ctx, page, rivals, search)
+                detail = f" Compared with the top pages we have stored, {'; '.join(notes)}." if notes else ""
                 issues.append(
                     make_issue(
                         "not-ranking", f"Not in the top 10 for \"{search}\"", f"{page.path} is about this search but isn't on the first page. {names} hold the top 3.{detail}",
                         page=page, search=search, el=page.title_el if notes and "title" in notes[-1] else page.main,
                         evidence=[f"{item.get('position')}. {item.get('url')}" for item in leaders],
-                        fix="Open it in the editor, close the gaps, and test the change before you publish.",
+                        fix="Open it in the editor, close the gaps above, and test the change before you publish." if notes else "Open it next to the top pages in the editor, add what they cover, and test the change before you publish.",
                     )
                 )
             else:
@@ -1749,7 +2086,7 @@ def check_rankings(ctx: AuditContext) -> list[dict]:
         if page is None or not page.ok or row["position"] <= 3:
             continue
         rivals = ctx.top_docs(row, 3)
-        notes = _gaps(page, rivals, search)
+        notes = _gaps(ctx, page, rivals, search)
         detail = "; ".join(notes) if notes else f"{names} are ahead of you"
         title_gap = any("title" in note for note in notes)
         issues.append(
@@ -1764,27 +2101,32 @@ def check_rankings(ctx: AuditContext) -> list[dict]:
     return issues
 
 
-def _gaps(page: PageDoc, rivals: list[PageDoc], search: str) -> list[str]:
+def _gaps(ctx: AuditContext, page: PageDoc, rivals: list[PageDoc], search: str) -> list[str]:
+    """What the top pages we compared have that this page lacks, for one search. Title and H1 words are only
+    suggested when the page is not already in the top 3 for another search."""
     notes = []
     if rivals:
-        mid = median(doc.words for doc in rivals)
-        if mid and page.words < 0.65 * mid:
-            notes.append(f"the top 3 have a median of {int(mid):,} words and yours has {page.words:,}")
+        names = ", ".join(host_of(doc.url) for doc in rivals)
+        mid = median(ctx.comparable_words(doc, rivals) for doc in rivals)
+        mine = ctx.comparable_words(page, rivals)
+        if mid and mine < 0.65 * mid and not page.is_home:
+            notes.append(f"the top pages we compared ({names}) have a median of {int(mid):,} words and yours has {mine:,}")
         tables = sum(1 for doc in rivals if doc.tables)
         if tables >= 2 and not page.tables:
-            notes.append(f"{tables} of them have a table and yours doesn't")
+            notes.append(f"{tables} of those pages have a table and yours doesn't")
         faqs = sum(1 for doc in rivals if doc.has_faq)
         if faqs >= 2 and not page.has_faq:
-            notes.append(f"{faqs} of them answer common questions in an FAQ")
+            notes.append(f"{faqs} of those pages answer common questions in an FAQ")
         kinds = Counter(kind for doc in rivals for kind in set(doc.types) & set(GAP_TYPES))
-        lacking = sorted(kind for kind, count in kinds.items() if count >= 2 and kind not in page.types and kind != "FAQPage")
+        lacking = sorted(kind for kind, count in kinds.items() if count >= 2 and kind not in page.types and kind != "FAQPage" and not (kind == "BreadcrumbList" and page.is_home))
         if lacking:
-            notes.append(f"they mark up {', '.join(lacking)} and you don't")
+            notes.append(f"the top pages mark up {', '.join(lacking)} and yours doesn't")
+    if ctx.settled(page) or ctx.utility(page):
+        return notes
     if page.h1 and not covers(search, page.h1):
-        notes.append(f"your H1 is missing \"{' '.join(missing_words(search, page.h1))}\"")
-    gap = missing_words(search, page.title)
-    if gap:
-        notes.append(f"your title is missing \"{' '.join(gap)}\"")
+        notes.append(f"your H1 is missing {missing_text(search, page.h1)}")
+    if missing_words(search, page.title):
+        notes.append(f"your title is missing {missing_text(search, page.title)}")
     return notes
 
 

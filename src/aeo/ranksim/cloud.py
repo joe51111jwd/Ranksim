@@ -533,9 +533,24 @@ class CloudState:
             with tarfile.open(fileobj=buffer, mode="w:gz", compresslevel=6) as archive:
                 _add_bytes(archive, MANIFEST_FILE, json.dumps(manifest, sort_keys=True).encode("utf-8"))
                 for slug, (files, meta) in sorted(projects.items()):
-                    _add_bytes(archive, f"p/{slug}/{VERSION_FILE}", json.dumps(meta, sort_keys=True).encode("utf-8"))
+                    # Read each file once and hash exactly the bytes that are packed: another thread may rewrite a
+                    # file meanwhile, and a hash of one version stored with the bytes of another would make every
+                    # instance treat the file as locally changed for ever. A file that vanished is left out.
+                    packed: dict[str, str] = {}
+                    contents: dict[str, bytes] = {}
                     for rel in files:
-                        archive.add(self._scope(slug).path / rel, arcname=f"p/{slug}/{rel}", recursive=False)
+                        try:
+                            data = (self._scope(slug).path / rel).read_bytes()
+                        except (FileNotFoundError, IsADirectoryError):
+                            continue
+                        contents[rel] = data
+                        packed[rel] = hashlib.sha256(data).hexdigest()
+                    files.clear()
+                    files.update(packed)
+                    meta["files"] = dict(packed)
+                    _add_bytes(archive, f"p/{slug}/{VERSION_FILE}", json.dumps(meta, sort_keys=True).encode("utf-8"))
+                    for rel, data in contents.items():
+                        _add_bytes(archive, f"p/{slug}/{rel}", data)
                 if db_kind == "full":
                     archive.add(snap, arcname="db.full", recursive=False)
                 elif db_kind == "delta":
@@ -713,8 +728,8 @@ class _Scope:
             if not item.is_file() or item.is_symlink():
                 continue
             rel = item.relative_to(self.path)
-            if set(rel.parts) & SKIP_PARTS or rel.name == VERSION_FILE or rel.name.startswith(".ranksim-tmp-"):
-                continue
+            if set(rel.parts) & SKIP_PARTS or any(part.startswith(".") for part in rel.parts) or rel.name.endswith(".tmp"):
+                continue  # dot files and folders (our own temp files, version file) and *.tmp are never saved
             yield rel.as_posix(), item
 
 
@@ -728,7 +743,7 @@ def _manifest(scope: _Scope, cache: dict) -> dict[str, str]:
             stat = path.stat()
         except FileNotFoundError:
             continue
-        key = (str(path), stat.st_size, stat.st_mtime_ns)
+        key = (str(path), stat.st_size, stat.st_mtime_ns, stat.st_ino, stat.st_ctime_ns)
         digest = cache.get(key)
         if digest is None:
             digest = _sha_file(path)
@@ -788,7 +803,7 @@ def _merge_files(local: _Scope, base: dict, theirs_dir: Path, theirs: dict, cach
                 continue
             target.parent.mkdir(parents=True, exist_ok=True)
             temp = target.with_name(f".ranksim-tmp-{secrets.token_hex(4)}")
-            shutil.copy2(source, temp)
+            shutil.copyfile(source, temp)  # a fresh mtime: copy2 would keep the tar's whole-second one
             os.replace(temp, target)
         changed = True
     return changed

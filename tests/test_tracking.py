@@ -1143,9 +1143,7 @@ def test_since_last_week_needs_checks_a_week_apart(tmp_path):
     assert view["ready"] is False and "a week apart" in view["reason"] and view["moves"] == []
 
 
-# -- regression tests for infra findings (phase C review). The concurrent-save test failed on integration f7a79e6
-# (A's own counter went back from 9 to 1) and passes since infra's storage rewrite. The resume test is expected to
-# fail until api.sites._CheckpointedSerp keeps features and fetch times and implements replayed().
+# -- regression tests for infra findings (phase C review); fixed by infra, so they run as plain tests now.
 
 INFRA_PENDING = "infra fix pending (reported to the coordinator, phase C review)"
 
@@ -1219,7 +1217,6 @@ def _resume_pull(budget, ctx):
     return rows, Inner
 
 
-@pytest.mark.xfail(reason=INFRA_PENDING, strict=False)
 def test_regression_resumed_job_pull_is_free_keeps_features_and_dates(tmp_path):
     ctx = SimpleNamespace(checkpoint={}, save_checkpoint=lambda *args: None)
     budget = tracking.Budget(tmp_path, cap=3, fresh_hours=0, instance="i1")

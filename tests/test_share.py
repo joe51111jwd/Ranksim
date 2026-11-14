@@ -333,7 +333,7 @@ def test_nothing_private_leaks_into_the_client_report(env, monkeypatch):
         "preview", "agency", "name", "site", "report_date", "google_date", "source", "data", "search_data", "predictions",
         "kpis", "rankings", "issues", "share", "competitors", "changes", "notes", "weekly",
     }
-    assert set(data["weekly"]) == {"since", "moves", "moves_note", "done", "checks", "next"}
+    assert set(data["weekly"]) == {"since", "moves", "moves_note", "counts", "passed", "done", "checks", "next"}
     weekly_blob = json.dumps(data["weekly"])
     assert "INTERNAL-NOTE-ONLY-OWNER" not in weekly_blob and "OWNER-DETAIL-XYZ" not in weekly_blob
     summaries = [row["summary"] for row in data["changes"]]
@@ -1020,3 +1020,70 @@ def test_digest_html_is_escaped(env):
     share.log_change(project, "publish", "<img src=x onerror=alert(1)> published", key="publish:xss")
     data = env["client"].get("/api/v1/digest").json()
     assert "<img" not in data["html"] and "<img" not in data["updates_html"] and "&lt;img" in data["updates_html"]
+
+
+# ---------------------------------------------------------------------------
+# rank tracking's own week summary (report["history"]["week"])
+# ---------------------------------------------------------------------------
+
+TRACK_WEEK = {  # the shape tracking.weekly_summary returns
+    "ready": True, "days": 7, "compared": 5, "skipped": 1,
+    "gained": [{"search": "gate repair", "from": None, "to": 9, "from_at": "2026-11-06T09:00:00Z", "to_at": "2026-11-13T09:00:00Z"}],
+    "lost": [{"search": "fence paint", "from": 8, "to": None, "from_at": "2026-11-06T09:00:00Z", "to_at": "2026-11-13T09:00:00Z"}],
+    "moves": [
+        {"search": "vinyl fence cost", "from": 7, "to": 3, "from_at": "2026-11-06T09:00:00Z", "to_at": "2026-11-13T09:00:00Z", "delta": 4},
+        {"search": "undated move", "from": 5, "to": 4, "from_at": None, "to_at": "2026-11-13T09:00:00Z", "delta": 1},
+    ],
+    "moves_total": 2, "up": 1, "down": 0,
+    "passed": [
+        {"domain": "rival.example", "search": "fence paint", "their_from": 12, "their_to": 6, "our_from": 8, "our_to": None},
+        {"domain": "<b>bad</b>", "search": "x", "their_to": 1},
+    ],
+    "from": "2026-11-06T09:00:00Z", "to": "2026-11-13T09:00:00Z",
+    "cost": "OWNERONLY-COST",
+}
+
+
+def test_weekly_uses_tracking_week_when_ready(env):
+    project = env["ui"].project(env["demo"])
+    report = {"rankings": [], "history": {"week": TRACK_WEEK, "competitors": ["OWNERONLY-LIST"]}}
+    weekly = share.weekly_summary(project, report, [], [])
+    assert [move["q"] for move in weekly["moves"]] == ["gate repair", "vinyl fence cost", "fence paint"]  # undated dropped
+    assert weekly["moves"][0] == {"q": "gate repair", "from": None, "to": 9, "from_date": "2026-11-06", "to_date": "2026-11-13"}
+    assert weekly["counts"] == {"compared": 5, "gained": 1, "lost": 1, "up": 1, "down": 0}
+    assert weekly["passed"] == [{"domain": "rival.example", "q": "fence paint", "their_to": 6, "our_to": None}]
+    assert "OWNERONLY" not in json.dumps(weekly)
+    text = share.weekly_update(_weekly_data(weekly={**_weekly_data()["weekly"], **weekly}))["text"]
+    assert "Of 5 searches checked a week apart: 1 new on page one, 1 dropped off, 1 moved up, 0 moved down (Google positions)." in text
+    assert 'rival.example moved ahead of you for "fence paint" (they are #6, you are not on page one)' in text
+    assert '"gate repair": not on page one on Nov 6, 2026, now #9 on Nov 13, 2026 (new on page one, Google positions)' in text
+
+
+def test_weekly_falls_back_when_tracking_week_is_absent_or_not_ready(env):
+    project = env["ui"].project(env["demo"])
+    for history in (None, {}, {"week": "junk"}, {"week": {**TRACK_WEEK, "ready": False, "compared": 0}}):
+        report = {"rankings": [{"q": "vinyl fence installation cost"}]}
+        if history is not None:
+            report["history"] = history
+        weekly = share.weekly_summary(project, report, [], [])
+        assert weekly["counts"] is None and weekly["passed"] == [] and isinstance(weekly["moves"], list)
+
+
+def test_search_console_section_is_rewhitelisted(env, monkeypatch):
+    gsc = pytest.importorskip("aeo.ranksim.plugins.gsc")
+    noisy = {
+        "label": "Search Console", "range": "Oct 16 to Nov 12, 2026", "totals": {"clicks": 12, "impressions": 900, "ctr": 0.013, "position": 18.2, "token": "OWNERONLY-T"},
+        "positions": [{"q": "gate repair", "position": 14.3, "impressions": 80, "clicks": 2, "page": "/gates/", "property": "OWNERONLY-P"},
+                      {"q": "x", "position": 1, "page": "//evil.example/OWNERONLY"}],
+        "positions_label": "Average position in Search Console", "note": "Not Google top 10 positions.",
+        "refresh_token": "OWNERONLY-R", "property": "sc-domain:OWNERONLY",
+    }
+    monkeypatch.setattr(gsc, "client_section", lambda report: noisy)
+    section = share._search_console({})
+    assert set(section) == {"label", "range", "totals", "positions", "positions_label", "note"}
+    assert section["totals"] == {"clicks": 12, "impressions": 900, "ctr": 0.013, "position": 18.2}
+    assert section["positions"][0] == {"q": "gate repair", "position": 14.3, "impressions": 80, "clicks": 2, "page": "/gates/"}
+    assert section["positions"][1]["page"] == ""
+    assert "OWNERONLY" not in json.dumps(section)
+    monkeypatch.setattr(gsc, "client_section", lambda report: None)
+    assert share._search_console({}) is None

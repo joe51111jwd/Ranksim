@@ -674,3 +674,107 @@ def test_an_old_instance_saving_during_the_rollout_is_merged_once(tmp_path, fake
     clock[0] += REFRESH_EVERY_SECONDS + 1
     assert new.refresh() is False  # the same old save again: nothing to import, nothing uploaded
     assert not [call for call in fake_blob.calls if call.startswith("put")]
+
+
+def test_a_save_landing_mid_save_never_reverts_or_deletes_our_files(tmp_path):
+    """Track's finding 1: B finishes a whole save while A is uploading. A's newer edit and B's new file both stay,
+    and nothing A has is deleted."""
+    from aeo.ranksim.objects import MemoryStore
+
+    store = MemoryStore()
+    a = CloudState(data_dir=tmp_path / "a", db_file=tmp_path / "a" / "rank.db", enabled=True, store=store)
+    b = CloudState(data_dir=tmp_path / "b", db_file=tmp_path / "b" / "rank.db", enabled=True, store=store)
+    demo_a = tmp_path / "a" / "projects" / "demo"
+    demo_a.mkdir(parents=True)
+    (demo_a / "count.json").write_text("1")
+    (demo_a / "keep.json").write_text("keep")
+    a.save()
+    b.refresh(force=True)
+    (tmp_path / "b" / "projects" / "demo" / "from-b.json").write_text("b")
+    (demo_a / "count.json").write_text("9")
+    real_put, fired = store.put, []
+
+    def put(name, body, **kwargs):
+        if not fired and name.startswith(SAVES_PREFIX):
+            fired.append(name)
+            b.save()  # B takes the number A is about to create
+        return real_put(name, body, **kwargs)
+
+    store.put = put
+    try:
+        a.save()
+    finally:
+        store.put = real_put
+    for cloud, folder in ((a, tmp_path / "a"), (b, tmp_path / "b")):
+        cloud.refresh(force=True)
+        demo = folder / "projects" / "demo"
+        assert (demo / "count.json").read_text() == "9" and (demo / "keep.json").read_text() == "keep"
+        assert (demo / "from-b.json").read_text() == "b"
+    assert a.save() is None and b.save() is None  # both settled: nothing left to upload
+
+
+def test_a_file_rewritten_during_a_save_is_stored_with_its_own_hash(tmp_path, monkeypatch):
+    """Track's finding 2: the hash stored is the hash of the bytes stored, so nobody sees a phantom local change."""
+    from aeo.ranksim.objects import MemoryStore
+
+    store = MemoryStore()
+    a = CloudState(data_dir=tmp_path / "a", db_file=tmp_path / "a" / "rank.db", enabled=True, store=store)
+    demo = tmp_path / "a" / "projects" / "demo"
+    demo.mkdir(parents=True)
+    (demo / "state.json").write_text("old")
+    (demo / ".hidden.json").write_text("never saved")
+    (demo / "half-written.tmp").write_text("never saved")
+    a.save()
+    (demo / "state.json").write_text("v2")
+    real = CloudState._projects_changed
+
+    def changed_then_rewritten(self):
+        found = real(self)  # hashes "v2"
+        (demo / "state.json").write_text("v3, written by another thread")
+        return found
+
+    monkeypatch.setattr(CloudState, "_projects_changed", changed_then_rewritten)
+    a.save()
+    monkeypatch.setattr(CloudState, "_projects_changed", real)
+    b = CloudState(data_dir=tmp_path / "b", db_file=tmp_path / "b" / "rank.db", enabled=True, store=store)
+    b.refresh(force=True)
+    got = tmp_path / "b" / "projects" / "demo"
+    assert (got / "state.json").read_text() == "v3, written by another thread"
+    assert not (got / ".hidden.json").exists() and not (got / "half-written.tmp").exists()
+    assert b.save() is None and a.save() is None  # no phantom change on either side
+
+
+def test_jobs_and_the_classic_project_lock_see_each_other(hosted):
+    """Track's finding 6: a Studio pull refuses while a classic pull, import or search edit holds the project, and
+    the classic lock is held while a Studio pull runs."""
+    import threading
+
+    client, token, app = hosted["client"], hosted["token"], hosted["app"]
+    _sign_in(hosted)
+    slug = _post(client, "/api/v1/projects", {"name": "Lock Crew", "site": SITE, "queries": SEARCHES}, token).json()["slug"]
+    lock = app.state.ui.jobs.project_lock(slug)
+    assert lock.acquire(blocking=False)
+    try:
+        lines = _stream(_post(client, f"/api/v1/projects/{slug}/pull", {"google": True}, token))
+        assert lines[-1]["type"] == "error" and "busy" in lines[-1]["error"]
+    finally:
+        lock.release()
+    gate, seen = threading.Event(), {}
+    crawler = app.state.ui.pull_options["fetcher"]
+
+    def slow(urls):
+        seen["held"] = lock.locked()
+        gate.wait(10)
+        return crawler(urls)
+
+    app.state.ui.pull_options["fetcher"] = slow
+    runner = threading.Thread(target=lambda: _post(client, f"/api/v1/projects/{slug}/pull", {"google": True}, token))
+    runner.start()
+    for _ in range(200):
+        if "held" in seen:
+            break
+        time.sleep(0.02)
+    assert seen.get("held") is True  # the classic pull, CSV import and search edits wait for it
+    gate.set()
+    runner.join(30)
+    assert not lock.locked()

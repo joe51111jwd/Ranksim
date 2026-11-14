@@ -271,7 +271,7 @@ export function predictedVsReal(rows, { width = 300, height = 260 } = {}) {
       el('circle', { class: close ? 'rc-you' : 'rc-rival', cx: r1(x(pair.real)), cy: r1(y(pair.pred)), r: 5 })));
   }
   const total = pad.top + side + pad.bottom;
-  const desc = `${plural(pairs.length, 'search', 'searches')} with both. PREDICTED within one place of real for ${agree}.`;
+  const desc = `${plural(pairs.length, 'search', 'searches')} with both a Google position and a PREDICTED one. Same Google snapshot the model learned from, so this is not accuracy.`;
   return frame(width, total, title, desc, kids, 'rc-scatter');
 }
 

@@ -13,6 +13,7 @@ from fastapi import HTTPException, Request
 from fastapi.responses import JSONResponse
 
 CSRF_EXPIRED = "This page has expired. Reload it and try again."
+TOO_LARGE = "That request is too large. Nothing was changed."
 
 
 def _serve():
@@ -110,12 +111,14 @@ def _check_header_csrf(ui, request: Request) -> None:
         raise HTTPException(status_code=403, detail=CSRF_EXPIRED)
 
 
-async def _json_body(request: Request, limit: int) -> dict:
+async def _json_body(request: Request, limit: int, *, too_large: str = TOO_LARGE) -> dict:
+    """The request's JSON object. 415 when it is not JSON, 413 with `too_large` when it is over `limit` bytes, 400
+    when it is not an object."""
     if "application/json" not in (request.headers.get("content-type") or ""):
         raise HTTPException(status_code=415, detail="Send JSON.")
     raw = await request.body()
     if len(raw) > limit:
-        raise HTTPException(status_code=413, detail="The draft is over 2 MB. Nothing was run.")
+        raise HTTPException(status_code=413, detail=too_large)
     try:
         data = json.loads(raw or b"{}")
     except ValueError:

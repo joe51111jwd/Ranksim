@@ -14,6 +14,8 @@ from starlette.concurrency import run_in_threadpool
 from aeo.ranksim import workspace as ws
 from aeo.ranksim.api.common import _check_header_csrf, _engine_error, _error, _json_body, _not_public, _serve, _text
 
+DRAFT_TOO_LARGE = "The draft is over 2 MB. Nothing was run."
+
 
 def compare(ui, slug: str, query: str) -> dict:
     project = ui.project(slug)
@@ -96,7 +98,7 @@ def register(app: FastAPI, ui) -> None:
     @app.post("/api/v1/projects/{slug}/test")
     async def api_test(slug: str, request: Request) -> JSONResponse:
         _check_header_csrf(ui, request)
-        body = await _json_body(request, 2 * MAX_DRAFT_BYTES + 64 * 1024)
+        body = await _json_body(request, 2 * MAX_DRAFT_BYTES + 64 * 1024, too_large=DRAFT_TOO_LARGE)
         try:
             project = ui.project(slug)
         except LookupError:
@@ -110,7 +112,7 @@ def register(app: FastAPI, ui) -> None:
         if query not in project.searches:
             return _error(400, "Pick a query from this project.")
         if len(draft.encode("utf-8")) > MAX_DRAFT_BYTES or len(original_text.encode("utf-8")) > MAX_DRAFT_BYTES:
-            return _error(413, "The draft is over 2 MB. Nothing was run.")
+            return _error(413, DRAFT_TOO_LARGE)
         if not draft.strip():
             return _error(400, "Write or paste a draft first. Nothing was run.")
         from aeo.ranksim.project import ProjectError

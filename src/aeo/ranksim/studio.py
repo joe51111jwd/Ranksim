@@ -10,6 +10,7 @@ On a public host (public_demo) the API serves only the synthetic demo, never sav
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request
@@ -22,7 +23,6 @@ from aeo.ranksim.api import editor, projects, session, sites
 # The JSON API moved to aeo.ranksim.api. These names are re-exported so older imports keep working.
 from aeo.ranksim.api.common import (  # noqa: F401
     _check_header_csrf,
-    _error,
     _join,
     _json_body,
     _not_public,
@@ -51,6 +51,9 @@ VERSIONED = ("studio.css", "studio.js")
 SCREENS = {"studio", "rankings", "data", "overview", "issues", "searches", "competitors", "editor", "settings"}
 MAX_CSV_BYTES = 5 * 1024 * 1024
 DATE_RE = r"^\d{4}-\d{2}-\d{2}$"
+# /app/<slug>/<key> serves the shell for any key of this shape, so a screen a frontend plugin registers survives a
+# reload or a pasted link. The client router decides what an unknown key shows.
+SCREEN_KEY = re.compile(r"[a-z0-9][a-z0-9_-]{0,39}")
 # Paths that answer without a login: the app shell (it holds no data), its assets, and the login itself.
 OPEN_EXACT = {"/", "/app", "/start", "/edit", "/healthz", "/favicon.ico", "/api/v1/session", "/api/v1/login", "/api/v1/logout"}
 OPEN_PREFIX = ("/studio/", "/app/")
@@ -84,6 +87,11 @@ def _asset_version() -> str:
     for name in VERSIONED:
         digest.update((STATIC / name).read_bytes())
     return digest.hexdigest()[:10]
+
+
+def _error(status: int, message: str) -> JSONResponse:
+    """The middleware's JSON error. Routes and plugins use api.common._error, which answers the same."""
+    return JSONResponse({"error": message}, status_code=status)
 
 
 def _is_open(path: str) -> bool:
@@ -131,7 +139,8 @@ def register(app: FastAPI, ui) -> None:
 
     @app.middleware("http")
     async def _require_login(request: Request, call_next):
-        if ui.access.enabled and not _is_open(request.url.path) and not _signed_in(ui, request):
+        # A plugin route marked endpoint.login_exempt checks its own token (a share link, a cron secret).
+        if ui.access.enabled and not _is_open(request.url.path) and not _signed_in(ui, request) and not plugins.is_login_exempt(app, request.scope):
             if request.url.path.startswith("/api/"):
                 return JSONResponse({"error": "Sign in first.", "login": True}, status_code=401)
             return RedirectResponse("/", status_code=303)
@@ -161,7 +170,7 @@ def register(app: FastAPI, ui) -> None:
 
     @app.get("/app/{slug}/{screen}", response_class=HTMLResponse)
     def studio_screen(slug: str, screen: str) -> Response:
-        if screen not in SCREENS:
+        if not SCREEN_KEY.fullmatch(screen):  # every built-in name in SCREENS has this shape too
             return serve._not_found(ui)
         return shell_response()
 

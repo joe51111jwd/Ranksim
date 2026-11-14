@@ -9,6 +9,7 @@ sorts: high before medium before low, searches before page details, then by titl
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import re
 from collections import defaultdict
@@ -61,8 +62,30 @@ def _issue(severity: str, kind: str, title: str, comment: str, *, page: str | No
     return {"id": _issue_id(kind, page, search), "severity": severity, "kind": kind, "title": title, "comment": comment, "page": page, "search": search, "fix": fix}
 
 
-def _issue_id(kind: str, page: str | None, search: str | None) -> str:
-    return re.sub(r"[^a-z0-9]+", "-", f"{kind}-{page or ''}-{search or ''}".lower()).strip("-")[:120]
+def _issue_id(kind: str, page: str | None, search: str | None, selector: str | None = None) -> str:
+    """kind-page-search[-selector] in lowercase letters, digits and dashes. Over 120 characters it is cut to 111 and
+    ends in a short hash of the whole, so two long ids that share a start still differ."""
+    parts = [kind, page or "", search or ""] + ([selector] if selector else [])
+    full = re.sub(r"[^a-z0-9]+", "-", "-".join(parts).lower()).strip("-")
+    if len(full) <= 120:
+        return full
+    return f"{full[:111].rstrip('-')}-{hashlib.sha1(full.encode()).hexdigest()[:8]}"
+
+
+def _unique_ids(issues: list[dict]) -> None:
+    """Give every issue a different id, in list order: a repeated id gets -2, -3 and so on (never an id in use)."""
+    taken = {issue["id"] for issue in issues}
+    seen: set[str] = set()
+    for issue in issues:
+        base = issue["id"]
+        if base not in seen:
+            seen.add(base)
+            continue
+        number = 2
+        while f"{base}-{number}" in taken or f"{base}-{number}" in seen:
+            number += 1
+        issue["id"] = f"{base}-{number}"
+        seen.add(issue["id"])
 
 
 def _short(text: str, limit: int) -> str:
@@ -219,6 +242,7 @@ def audit(project, pages: list[SitePage], rankings: list[dict], docs: dict[str, 
         issues.extend(run(ctx))
     issues.extend(_plugin_issues(ctx))
     issues.sort(key=lambda issue: (SEVERITY_ORDER[issue["severity"]], issue["kind"] not in RANKING_KINDS, issue["title"]))
+    _unique_ids(issues)
     return issues
 
 
@@ -241,6 +265,10 @@ def _plugin_issues(ctx: AuditContext) -> list[dict]:
             if issue is None:
                 log.warning("ranksim plugins: %s returned an issue without a severity (high, medium, low), kind and title; skipped.", label)
                 continue
+            problem = plugins.json_error(issue)
+            if problem is not None:
+                log.warning("ranksim plugins: %s returned an issue that is not JSON (%s); skipped.", label, problem)
+                continue
             issues.append(issue)
     return issues
 
@@ -253,6 +281,8 @@ def _plugin_issue(item) -> dict | None:
     issue = dict(item)
     for key, default in (("comment", ""), ("fix", ""), ("page", None), ("search", None)):
         issue.setdefault(key, default)
-    if not issue.get("id"):
-        issue["id"] = _issue_id(issue["kind"], issue["page"], issue["search"])
+    if not issue.get("id") or not isinstance(issue["id"], str):
+        element = issue.get("element")
+        selector = element.get("selector") if isinstance(element, dict) else None
+        issue["id"] = _issue_id(issue["kind"], issue["page"], issue["search"], selector if isinstance(selector, str) else None)
     return issue

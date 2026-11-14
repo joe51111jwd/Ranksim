@@ -80,19 +80,32 @@ of these functions. All are optional. A plugin that raises is logged and skipped
 | Hook | Signature | Called |
 | --- | --- | --- |
 | `register` | `register(app, ui) -> None` | once, after core routes. Add FastAPI routes here. |
-| `extend_report` | `extend_report(report: dict, *, project, meta, database, ctx, ui) -> None` | end of `build_report`. Add keys under your own namespace, e.g. `report["gsc"] = {...}`. |
+| `extend_report` | `extend_report(report: dict, *, project, meta, database, ctx, ui) -> None` | end of `build_report`, one plugin at a time. Add keys under your own namespace, e.g. `report["gsc"] = {...}`. Values must be JSON (no dates, sets, NaN). A plugin that raises, removes a key or adds something that is not JSON has its changes undone. Runs on every report GET: keep it read-only. |
 | `discovery_sources` | `discovery_sources(*, project, pages, ui) -> list[dict]` | during analysis. Return `{"q": str, "weight": float, "source": str}` rows that discovery merges into the search list. |
-| `audit_checks` | `audit_checks() -> list[callable]` | by `audit.audit`. Each check is `check(ctx) -> list[issue dict]` (issue shape in 4.4). |
+| `audit_checks` | `audit_checks() -> list[callable]` | by `audit.audit`. Each check is `check(ctx) -> list[issue dict]` (issue shape in 4.4). Issues that are not JSON are dropped. |
 | `after_pull` | `after_pull(*, project, report, ui) -> None` | after every pull or analysis finished. |
 | `settings_schema` | `settings_schema() -> dict` | optional, describes plugin settings shown in Settings. |
 
 Helpers available to plugins: `plugins.call_all(name, **kwargs) -> list`, `plugins.collect(name, **kwargs)`
-(flattens lists). Routes use the shared helpers in `api/common.py` (CSRF header check, JSON body limits,
-`_not_public` for the anonymous demo, `_error`). Every write route needs the `x-ranksim-csrf` header.
-Every route except the shell, assets, session and login requires the signed-in owner (middleware does it).
+(flattens lists), `plugins.data_dir(project, feature)`, `plugins.save(ui)`, `plugins.json_error(value)`. Routes use
+the shared helpers in `api/common.py` (CSRF header check, JSON body limits, `_not_public` for the anonymous demo,
+`_error`). Every write route needs the `x-ranksim-csrf` header.
+Every route except the shell, assets, session and login requires the signed-in owner (middleware does it), with one
+opt-out for a plugin route that outside callers must reach and that proves itself another way (a read-only share
+link with a signed token, a Vercel cron GET with `Authorization: Bearer <CRON_SECRET>`): set
+`endpoint.login_exempt = True` on its function. That route MUST check its token itself (`secrets.compare_digest`)
+and answer 401 or 404 without it. A write route of that kind also sets `endpoint.csrf_exempt = True`, since an
+outside caller never has the CSRF header. Only the route the router picks counts, so an exempt route never opens a
+core route on the same path. The full rules are in the `aeo.ranksim.plugins` docstring.
 
-Per-project plugin data: store it under the project folder, `project.dir / "plugins" / "<feature>" /`.
-Cloud storage mirrors the projects folder, so it persists on Vercel automatically.
+Per-project plugin data: store it under the project folder, `plugins.data_dir(project, "<feature>")`, which is
+`project.dir / "plugins" / "<feature>" /`. On Vercel each instance has its own disk and cloud storage keeps one copy
+of the data folder, so a write lasts only once it is saved. It is saved automatically after a POST, PUT, PATCH or
+DELETE route that answers below 400 and whose path does not end in `/pull`, `/fetch`, `/login` or `/logout` (a
+streamed answer is saved when it starts, not when it ends), and after `after_pull` in the Studio pull and the
+analysis. Everywhere else (a GET route such as a cron, `extend_report`, a background thread, a write made while a
+stream runs) call `plugins.save(ui)` once after the writes. It does nothing without cloud storage and raises
+`CloudError` when the upload fails.
 
 ### 4.3 Frontend layout after P0
 
@@ -116,7 +129,9 @@ src/aeo/ranksim/static/
 
 Frontend hooks (`js/hooks.js`), all optional:
 
-- `registerScreen(key, {label, nav, order, render})` adds a screen at `/app/<slug>/<key>`.
+- `registerScreen(key, {label, nav, order, render})` adds a screen at `/app/<slug>/<key>`. The key is lowercase
+  letters, digits, `-` and `_`, at most 40 characters: the server serves the shell for any key of that shape, so a
+  reload or a pasted link works.
 - `registerOverviewTile({order, render(report)})` adds a tile to the Overview bento.
 - `registerEditorPanel({order, render(ctx)})` adds a tile to the editor side column.
 - `registerEditorTool({order, render(ctx)})` adds a toolbar control in the editor.
@@ -132,6 +147,8 @@ Issue (audit):
 `{id, severity: "high"|"medium"|"low", kind, title, comment, fix, page, search?, element?: {selector, text, attr?}, suggestion?: string, evidence?: [str]}`
 `element.selector` is a CSS selector for the exact element in the page HTML, so the editor can pin the
 comment on it and "Fix in editor" can jump there. `suggestion` is ready-to-paste replacement text.
+An issue without an `id` gets one from its kind, page, search and `element.selector`, and `audit()` makes every id
+in the list unique (a repeat gets `-2`, `-3` and so on).
 
 Report (`GET /api/v1/projects/{slug}/report`): keep every existing key. Add new data under a namespaced key.
 

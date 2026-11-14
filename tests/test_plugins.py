@@ -6,13 +6,14 @@ nothing is left in the real folder. Fakes for the crawler and Google; no network
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import math
 import re
 import sys
 import textwrap
-from types import SimpleNamespace
+from types import ModuleType, SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
@@ -131,15 +132,44 @@ def settings_schema():
 '''
 
 
+@contextlib.contextmanager
+def isolated_plugin_folder(folder):
+    """Stand `folder` in for src/aeo/ranksim/plugins, then put everything back exactly as it was.
+
+    The real plugin modules are hidden (from sys.modules and the package) while the block runs and restored after, the
+    same objects, so a test file that imported its plugin at the top and monkeypatches it still patches the copy the
+    app uses. The modules imported from `folder` are dropped afterwards.
+    """
+    prefix = plugins.__name__ + "."
+
+    def ours(value) -> bool:
+        return isinstance(value, ModuleType) and value.__name__.startswith(prefix)
+
+    with pytest.MonkeyPatch.context() as patch:
+        for key in [key for key in sys.modules if key.startswith(prefix)]:
+            patch.delitem(sys.modules, key)
+        for name in [name for name, value in vars(plugins).items() if ours(value)]:
+            patch.delattr(plugins, name)
+        patch.setattr(plugins, "_modules", None)
+        patch.setattr(plugins, "_failed", [])
+        patch.setattr(plugins, "_scrub", None)
+        patch.setattr(plugins, "__path__", [str(folder)])
+        try:
+            yield folder
+        finally:
+            for key in [key for key in sys.modules if key.startswith(prefix)]:
+                del sys.modules[key]
+            for name in [name for name, value in vars(plugins).items() if ours(value)]:
+                delattr(plugins, name)
+
+
 @pytest.fixture()
-def plugin_dir(tmp_path, monkeypatch):
+def plugin_dir(tmp_path):
     """An empty plugins folder in place of the real one. Write modules into it before the app is created."""
     folder = tmp_path / "plugin_folder"
     folder.mkdir()
-    plugins.reset()
-    monkeypatch.setattr(plugins, "__path__", [str(folder)])
-    yield folder
-    plugins.reset()
+    with isolated_plugin_folder(folder):
+        yield folder
 
 
 def _write(folder, name: str, source: str) -> None:
@@ -162,12 +192,34 @@ def _lines(response) -> list[dict]:
     return [json.loads(line) for line in response.text.splitlines() if line.strip()]
 
 
-def _app(tmp_path, *, google: bool = True, password: str | None = None):
+class CountingCloud:
+    """Cloud storage that only counts saves."""
+
+    enabled = True
+
+    def __init__(self) -> None:
+        self.saves = 0
+        self.on_change: list = []
+
+    def refresh(self, *, force: bool = False) -> bool:
+        return False
+
+    def save(self) -> str:
+        self.saves += 1
+        return f"v{self.saves}"
+
+    def describe(self) -> dict:
+        return {"enabled": True, "version": None, "error": ""}
+
+
+def _app(tmp_path, *, google: bool = True, password: str | None = None, cloud=None):
     settings = make_settings(tmp_path, serpapi_key="sk-test-plugins") if google else make_settings(tmp_path)
     options = {"fetcher": FakeCrawler(_site_pages()), "today": TODAY, "workers": 4}
     if google:
         options["serp_provider"] = FakeGoogle()
     login = {"access_password": password, "access_secret": "test-secret"} if password else {}
+    if cloud is not None:
+        login["cloud"] = cloud
     app = create_app(
         settings=settings, database=settings.ranksim_database_url, projects_root=tmp_path / "projects", public_demo=False, pull_options=options, **login
     )
@@ -371,7 +423,7 @@ def _fixture_pages():
     return [page_facts(url, html) for url, html in _site_pages().items() if url.startswith(f"https://{SITE}/") and not url.endswith(".xml")]
 
 
-def test_discovery_merges_weighted_rows_by_clear_rules():
+def test_discovery_merges_weighted_rows_by_clear_rules(plugin_dir):
     pages = _fixture_pages()
     brand = discovery.brand_of(pages, SITE)
     base = discovery.discover_searches(pages, brand, host=SITE)
@@ -408,3 +460,262 @@ def test_data_dir_is_inside_the_project_folder(tmp_path):
     for bad in ("", "../escape", "a/b", "GSC", ".hidden", "x" * 80, None):
         with pytest.raises(ValueError):
             plugins.data_dir(project, bad)
+
+
+# -- the fixture keeps real plugin modules ------------------------------------------------------------
+
+
+def test_the_plugin_folder_fixture_keeps_real_plugin_modules(tmp_path):
+    """A test file that imports its plugin at the top and monkeypatches it must still patch the copy the app uses,
+    even after a test that swaps in a temporary plugin folder (or calls plugins.reset()) ran before it."""
+    name = f"{plugins.__name__}.zz_real"
+    real = ModuleType(name)
+    real.__file__ = str(plugins.HOME / "zz_real.py")  # as if it lived in the real folder
+    real.fetch = lambda: "real network call"
+    real.extend_report = lambda report, **kwargs: report.update(zz_real=real.fetch())
+    stray = ModuleType(f"{plugins.__name__}.zz_stray")
+    stray.__file__ = str(tmp_path / "elsewhere" / "zz_stray.py")
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setitem(sys.modules, name, real)
+        patch.setitem(sys.modules, stray.__name__, stray)
+        patch.setattr(plugins, "zz_real", real, raising=False)
+        patch.setattr(plugins, "_modules", [real])
+        patch.setattr(plugins, "_failed", [])
+        patch.setattr(real, "fetch", lambda: "fake")  # what that test file does
+
+        folder = tmp_path / "plugin_folder"
+        folder.mkdir()
+        _write(folder, "zz_real", "def fetch():\n    return 'temporary copy'\n")
+        with isolated_plugin_folder(folder):
+            [loaded] = plugins.load()
+            assert loaded is not real and loaded.fetch() == "temporary copy" and plugins.zz_real is loaded
+            plugins.reset()
+            assert name not in sys.modules  # a temporary module is dropped, so it is imported fresh
+        assert sys.modules[name] is real and plugins.zz_real is real and plugins.load() == [real]
+        report: dict = {}
+        plugins.extend("extend_report", report)
+        assert report == {"zz_real": "fake"}  # the patch is still the one the app calls
+
+        plugins.reset()  # outside the fixture too: the real module stays, the stray one goes
+        assert sys.modules[name] is real and stray.__name__ not in sys.modules
+        assert real not in plugins.load()  # the real folder (no zz_real.py on disk) was listed again
+
+
+# -- a plugin's report data and issues are always JSON -------------------------------------------------
+
+UNSAFE = {
+    "a_ok": 'def extend_report(report, **kwargs):\n    report["a_ok"] = {"n": 1, "names": ["x"]}\n',
+    "b_date": "from datetime import date\n\n\ndef extend_report(report, **kwargs):\n    report['when'] = {'last_check': date(2026, 11, 14)}\n",
+    "c_nan": "def extend_report(report, **kwargs):\n    report['c_nan'] = {'score': float('nan')}\n",
+    "d_remove": "def extend_report(report, **kwargs):\n    report['d_remove'] = 1\n    del report['share']\n",
+    "e_partial": "def extend_report(report, **kwargs):\n    report['e_partial'] = 1\n    raise RuntimeError('half done')\n",
+    "f_inplace": "def extend_report(report, **kwargs):\n    report['kpis']['f_inplace'] = {1, 2}\n",
+    "g_text": "def extend_report(report, **kwargs):\n    report['g_text'] = 'lone \\ud800 surrogate'\n",
+    "z_last": (
+        "def extend_report(report, **kwargs):\n"
+        "    report['z_last'] = sorted(key for key in report if len(key) > 2 and key[1] == '_')\n"
+        "\n\ndef audit_checks():\n"
+        "    def check(ctx):\n"
+        "        from datetime import date\n"
+        "        return [\n"
+        "            {'severity': 'low', 'kind': 'z-date', 'title': 'Has a date', 'evidence': [date(2026, 11, 14)]},\n"
+        "            {'severity': 'low', 'kind': 'z-fine', 'title': 'Plain', 'evidence': ['ok']},\n"
+        "        ]\n"
+        "\n    return [check]\n"
+    ),
+}
+
+
+def test_a_plugin_that_adds_something_not_json_never_breaks_the_report(plugin_dir, tmp_path, caplog):
+    for name, source in UNSAFE.items():
+        _write(plugin_dir, name, source)
+    caplog.set_level(logging.WARNING, logger="aeo.ranksim.plugins")
+    app, client, token = _app(tmp_path, google=False)
+    assert _post(client, "/api/v1/demo", {}, token).status_code == 200
+    response = client.get(f"/api/v1/projects/{ws.DEMO_SLUG}/report")
+    assert response.status_code == 200, response.text[:200]
+    report = response.json()
+    assert report["a_ok"] == {"n": 1, "names": ["x"]}
+    assert report["z_last"] == ["a_ok"]  # the later plugin saw a clean report: every bad change was undone first
+    assert not {"when", "c_nan", "d_remove", "e_partial", "g_text"} & set(report)
+    assert "share" in report and "f_inplace" not in report["kpis"]
+    kinds = [issue["kind"] for issue in report["issues"]]
+    assert "z-fine" in kinds and "z-date" not in kinds and report["kpis"]["issues"] == len(report["issues"])
+    for label in ("b_date.extend_report", "c_nan.extend_report", "d_remove.extend_report", "e_partial.extend_report", "f_inplace.extend_report", "g_text.extend_report"):
+        assert label in caplog.text, label
+    assert "removed share" in caplog.text and "not JSON" in caplog.text
+
+
+def test_extend_and_json_error():
+    assert plugins.json_error({"a": [1, 2.5, None, True, "x"], "b": {"c": "d"}}) is None
+    for bad in ({"a": math.nan}, {"a": math.inf}, {"a": {1, 2}}, {("a", "b"): 1}, {"a": object()}, {"a": "\ud800"}):
+        assert plugins.json_error(bad), bad
+    loop: dict = {}
+    loop["self"] = loop
+    assert plugins.json_error(loop)
+
+
+# -- routes that answer without the login ----------------------------------------------------------------
+
+OPEN_ROUTES = '''
+import secrets
+
+from fastapi import Request
+from fastapi.responses import HTMLResponse, JSONResponse
+
+from aeo.ranksim import plugins
+
+
+def register(app, ui):
+    def share_page(token: str):
+        if not secrets.compare_digest(token, "good-token"):
+            return HTMLResponse("No such link.", status_code=404)
+        return HTMLResponse("shared")
+
+    share_page.login_exempt = True
+    app.get("/share/{token}")(share_page)
+
+    def cron(slug: str, request: Request):
+        if not secrets.compare_digest(request.headers.get("authorization", ""), "Bearer cron-secret"):
+            return JSONResponse({"error": "No."}, status_code=401)
+        project = ui.project(slug)
+        (plugins.data_dir(project, "gamma") / "history.json").write_text("[]")
+        return JSONResponse({"saved": plugins.save(ui)})
+
+    cron.login_exempt = True
+    app.get("/api/v1/projects/{slug}/gamma/cron")(cron)
+
+    async def hook():
+        return JSONResponse({"hooked": True})
+
+    hook.login_exempt = True  # but not csrf_exempt: the backstop still wants the header
+    app.post("/api/v1/gamma/hook")(hook)
+
+    async def webhook():
+        return JSONResponse({"webhook": True})
+
+    webhook.login_exempt = True
+    webhook.csrf_exempt = True
+    app.post("/api/v1/gamma/webhook")(webhook)
+
+    def shadow(slug: str):
+        return JSONResponse({"leaked": True})
+
+    shadow.login_exempt = True
+    app.get("/api/v1/projects/{slug}/report")(shadow)  # a core route already answers this path
+
+    @app.get("/api/v1/gamma/private")
+    def private():
+        return {"private": True}
+
+    @app.get("/api/v1/gamma/write-on-get")
+    def write_on_get():
+        return {"saved": plugins.save(ui)}
+'''
+
+
+def test_a_login_exempt_plugin_route_answers_signed_out_and_opens_nothing_else(plugin_dir, tmp_path, caplog):
+    _write(plugin_dir, "gamma", OPEN_ROUTES)
+    caplog.set_level(logging.INFO, logger="aeo.ranksim.plugins")
+    cloud = CountingCloud()
+    app, client, token = _app(tmp_path, google=False, password=PASSWORD, cloud=cloud)
+    assert "gamma added GET /share/{token} without the login" in caplog.text
+    assert "/api/v1/gamma/private without the login" not in caplog.text
+
+    assert client.get("/share/good-token").text == "shared"
+    assert client.get("/share/bad-token").status_code == 404  # the route's own check
+    assert client.post("/share/good-token", follow_redirects=False).status_code == 303  # only the exempt method
+    assert client.get("/api/v1/gamma/private").status_code == 401
+    assert client.get("/api/v1/plugins").status_code == 401
+    assert client.get(f"/api/v1/projects/{ws.DEMO_SLUG}/report").json() == {"error": "Sign in first.", "login": True}
+    assert (client.post("/api/v1/gamma/hook").status_code, client.post("/api/v1/gamma/hook").json()) == (403, EXPIRED)
+    assert client.post("/api/v1/gamma/webhook").json() == {"webhook": True}
+    assert client.get(f"/api/v1/projects/{ws.DEMO_SLUG}/gamma/cron").json() == {"error": "No."}
+
+    assert _post(client, "/api/v1/login", {"password": PASSWORD}, token).status_code == 200
+    assert _post(client, "/api/v1/demo", {}, token).status_code == 200
+    assert "leaked" not in client.get(f"/api/v1/projects/{ws.DEMO_SLUG}/report").json()  # the core route still wins
+    client.cookies.clear()
+    before = cloud.saves
+    cron = client.get(f"/api/v1/projects/{ws.DEMO_SLUG}/gamma/cron", headers={"authorization": "Bearer cron-secret"})
+    assert cron.json() == {"saved": True} and cloud.saves == before + 1  # a GET that writes saves itself
+
+
+def test_save_saves_only_with_cloud_storage(plugin_dir, tmp_path):
+    _write(plugin_dir, "gamma", OPEN_ROUTES)
+    app, client, token = _app(tmp_path, google=False)
+    assert client.get("/api/v1/gamma/write-on-get").json() == {"saved": False}  # local: nothing to save to
+    ui = SimpleNamespace(cloud=CountingCloud(), public_demo=True)
+    assert plugins.save(ui) is False and ui.cloud.saves == 0  # the public demo never saves
+    ui.public_demo = False
+    assert plugins.save(ui) is True and ui.cloud.saves == 1
+    ui.cloud.enabled = False
+    assert plugins.save(ui) is False and ui.cloud.saves == 1
+
+
+def test_a_plugin_screen_key_serves_the_shell(plugin_dir, tmp_path):
+    app, client, token = _app(tmp_path, google=False, password=PASSWORD)
+    shell = client.get("/").text
+    for key in ("history", "gsc", "share", "content_gaps", "a" * 40):
+        page = client.get(f"/app/{ws.DEMO_SLUG}/{key}")
+        assert page.status_code == 200 and page.text == shell, key
+    for key in ("a" * 41, "History", "-x", "a.b", "a%20b"):
+        assert client.get(f"/app/{ws.DEMO_SLUG}/{key}").status_code == 404, key
+
+
+# -- issue ids ------------------------------------------------------------------------------------------
+
+
+def test_plugin_issue_ids_tell_elements_apart_and_every_id_is_unique(plugin_dir, tmp_path):
+    _write(
+        plugin_dir,
+        "delta",
+        """
+        def audit_checks():
+            def check(ctx):
+                page = ctx.readable[0].url
+                img = {"severity": "low", "kind": "img-alt", "title": "Image has no alt text", "page": page}
+                return [
+                    {**img, "element": {"selector": "img:nth-of-type(1)", "text": ""}},
+                    {**img, "element": {"selector": "img:nth-of-type(2)", "text": ""}},
+                    {**img, "element": {"selector": "img:nth-of-type(2)", "text": ""}},
+                    {"severity": "low", "kind": "x", "title": "Explicit", "id": "same"},
+                    {"severity": "low", "kind": "x", "title": "Explicit too", "id": "same"},
+                    {"severity": "low", "kind": "x", "title": "Taken", "id": "same-2"},
+                ]
+
+            return [check]
+        """,
+    )
+    app, client, token = _app(tmp_path, google=False)
+    assert _post(client, "/api/v1/demo", {}, token).status_code == 200
+    issues = client.get(f"/api/v1/projects/{ws.DEMO_SLUG}/report").json()["issues"]
+    ids = [issue["id"] for issue in issues]
+    assert len(ids) == len(set(ids))
+    images = [issue["id"] for issue in issues if issue["kind"] == "img-alt"]
+    assert images[0].endswith("img-nth-of-type-1") and images[1].endswith("img-nth-of-type-2") and images[2] == images[1] + "-2"
+    assert sorted(issue["id"] for issue in issues if issue["kind"] == "x") == ["same", "same-2", "same-3"]
+
+
+def test_long_issue_ids_end_in_a_hash():
+    from aeo.ranksim.audit import _issue_id
+
+    one = _issue_id("img-alt", "https://x.example/" + "a" * 150, None, "img:nth-of-type(1)")
+    two = _issue_id("img-alt", "https://x.example/" + "a" * 150, None, "img:nth-of-type(2)")
+    assert one != two and len(one) <= 120 and len(two) <= 120 and re.fullmatch(r"[a-z0-9-]+", one)
+    assert _issue_id("thin", "https://x.example/a", "b c") == "thin-https-x-example-a-b-c"  # short ids are unchanged
+
+
+# -- JSON body limits ---------------------------------------------------------------------------------
+
+
+def test_a_body_over_the_limit_gets_a_plain_message(plugin_dir, tmp_path):
+    _write(plugin_dir, "alpha", RECORDER)
+    app, client, token = _app(tmp_path, google=False)
+    big = {"x": "y" * 9000}
+    for path in ("/api/v1/sites", "/api/v1/alpha/echo"):
+        refused = _post(client, path, big, token)
+        assert (refused.status_code, refused.json()) == (413, {"error": "That request is too large. Nothing was changed."}), path
+    assert _post(client, "/api/v1/demo", {}, token).status_code == 200
+    draft = _post(client, f"/api/v1/projects/{ws.DEMO_SLUG}/test", {"q": "x", "draft": "y" * (5 * 1024 * 1024)}, token)
+    assert (draft.status_code, draft.json()) == (413, {"error": "The draft is over 2 MB. Nothing was run."})

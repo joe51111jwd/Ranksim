@@ -224,8 +224,10 @@ def build_report(project, meta, database: str, *, ctx=None, google_ready: bool =
     """Rankings, competitors and issues for one project, from what is stored. Positions are Google's; predicted
     positions, when an engine is built, are the model's order among the stored candidates.
 
-    Every plugin's extend_report(report, project=, meta=, database=, ctx=, ui=) runs last and adds keys under its
-    own name. ui is the app state when the report is built for the API, else None.
+    Every plugin's extend_report(report, project=, meta=, database=, ctx=, ui=) runs last, one at a time, and adds
+    keys under its own name. A plugin that raises, removes a key or adds something that is not JSON has its changes
+    undone (plugins.extend), so the report always encodes. ui is the app state when the report is built for the
+    API, else None.
     """
     from aeo.ranksim import plugins
     from aeo.ranksim.audit import audit
@@ -307,7 +309,7 @@ def build_report(project, meta, database: str, *, ctx=None, google_ready: bool =
             for page in own_pages
         ],
     }
-    plugins.call_all("extend_report", report, project=project, meta=meta, database=database, ctx=ctx, ui=ui)
+    plugins.extend("extend_report", report, project=project, meta=meta, database=database, ctx=ctx, ui=ui)
     return report
 
 

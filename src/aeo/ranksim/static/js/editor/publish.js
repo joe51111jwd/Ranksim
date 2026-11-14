@@ -5,7 +5,7 @@
    Server routes: /api/v1/publish/platforms and /api/v1/projects/{slug}/publish/... (plugins/publish.py). Secrets go
    to the server once and never come back. */
 
-import { S, h, api, enc, hostOf, pathOf, toast, openSheet, clear, icon } from '../core.js';
+import { S, h, api, enc, hostOf, pathOf, toast, openSheet, clear, icon, put } from '../core.js';
 import { ED, draftFor, syncFromFrame, editorCtx } from './editor.js';
 
 const METHOD_NAMES = { meta: 'meta tag', file: 'file', dns: 'DNS record' };
@@ -57,6 +57,8 @@ function editedPage(draft) {
   };
 }
 
+/* Element.append writes null as the text "null"; put() skips it. */
+const add = (el, ...kids) => put(el, kids);
 const when = (seconds) => (seconds ? new Date(seconds * 1000).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' }) : '');
 const base = () => `/api/v1/projects/${enc(S.slug)}/publish`;
 
@@ -85,20 +87,20 @@ export function openPublish(draft) {
   const domain = hostOf(url);
   openSheet((sheet, closeBtn) => {
     sheet.classList.add('publish-sheet');
-    sheet.append(h('div', { class: 'sheet-head' }, h('div', null, h('h2', { text: `Publish to ${domain}` }), h('div', { class: 'sub', text: url })), closeBtn));
+    add(sheet, h('div', { class: 'sheet-head' }, h('div', null, h('h2', { text: `Publish to ${domain}` }), h('div', { class: 'sub', text: url })), closeBtn));
     const body = h('div', { class: 'sheet-body' });
-    sheet.append(body);
+    add(sheet, body);
     const view = { url, domain, page, body, status: null, platforms: null, connection: null, plan: null, confirm: new Set(), options: {} };
     view.changes = h('section', { class: 'tile white publish-changes' });
     view.owner = h('section', { class: 'tile publish-owner' });
     view.connect = h('section', { class: 'tile publish-connect' });
     view.history = h('section', { class: 'tile publish-history' });
-    body.append(view.changes, view.owner, view.connect, view.history, takeAway(view));
+    add(body, view.changes, view.owner, view.connect, view.history, takeAway(view));
     if (S.publicDemo || !S.slug) {
       view.changes.remove();
       view.connect.remove();
       view.history.remove();
-      view.owner.append(
+      add(view.owner, 
         h('span', { class: 'label label-medium', text: 'Needs ownership' }),
         h('p', { class: 'reason', text: S.publicDemo ? 'The demo cannot publish. Take the edited page with you below.' : `Add ${domain} as a site to prove you own it and publish from here.` }));
       return;
@@ -110,7 +112,7 @@ export function openPublish(draft) {
 /* ------------------------------------------------------------------ loading */
 
 async function load(view) {
-  view.owner.append(h('p', { class: 'caveat', text: 'Checking ownership...' }));
+  add(view.owner, h('p', { class: 'caveat', text: 'Checking ownership...' }));
   paintChanges(view, null);
   try {
     const [status, platforms] = await Promise.all([api.get(`${base()}/status?url=${enc(view.url)}`), view.platforms ? null : api.get('/api/v1/publish/platforms')]);
@@ -118,7 +120,7 @@ async function load(view) {
     if (platforms) view.platforms = platforms.platforms;
   } catch (err) {
     clear(view.owner);
-    view.owner.append(h('span', { class: 'label label-high', text: 'Could not load' }), h('p', { class: 'reason', text: err.message }));
+    add(view.owner, h('span', { class: 'label label-high', text: 'Could not load' }), h('p', { class: 'reason', text: err.message }));
     return;
   }
   if (!view.status.ownership) {
@@ -154,21 +156,21 @@ async function plan(view) {
 function paintChanges(view, changes, error) {
   const tile = view.changes;
   clear(tile);
-  tile.append(h('div', { class: 'tile-head' }, h('h2', { text: 'What changes' }), view.page.diff && view.page.diff.summary ? h('span', { class: 'aside', text: view.page.diff.summary }) : null));
+  add(tile, h('div', { class: 'tile-head' }, h('h2', { text: 'What changes' }), view.page.diff && view.page.diff.summary ? h('span', { class: 'aside', text: view.page.diff.summary }) : null));
   if (error) {
-    tile.append(h('p', { class: 'caveat', text: error }));
+    add(tile, h('p', { class: 'caveat', text: error }));
     return;
   }
   if (!changes) {
-    tile.append(h('p', { class: 'caveat', text: 'Comparing with the live page...' }));
+    add(tile, h('p', { class: 'caveat', text: 'Comparing with the live page...' }));
     return;
   }
   if (!changes.length) {
-    tile.append(h('p', { class: 'caveat', text: 'Nothing differs from the live page yet. Edit the page first.' }));
+    add(tile, h('p', { class: 'caveat', text: 'The live page already matches this page. Edit it to publish a change.' }));
     return;
   }
   const rows = view.plan ? view.plan.rows : changes.map((c) => ({ ...c, apply: null }));
-  tile.append(h('div', { class: 'publish-rows' }, rows.map((row) => h('div', { class: 'publish-row' },
+  add(tile, h('div', { class: 'publish-rows' }, rows.map((row) => h('div', { class: 'publish-row' },
     h('div', { class: 'publish-row-head' },
       h('b', { text: row.label }),
       row.apply === true ? h('span', { class: 'chip chip-green', text: 'Will publish' }) : row.apply === false ? h('span', { class: 'chip chip-gray', text: 'Not through this connection' }) : null),
@@ -185,13 +187,13 @@ function paintOwner(view) {
   const record = view.status.ownership;
   if (view.status.owned) {
     tile.classList.add('white');
-    tile.append(
+    add(tile, 
       h('div', { class: 'tile-head' }, h('h2', { text: 'Ownership' }), h('span', { class: 'label label-ok', text: 'Proven' })),
       h('p', { class: 'caveat', text: `Proven with the ${METHOD_NAMES[record.method] || record.method} on ${when(record.verified_at)}. Checked again before publishing.` }));
     return;
   }
   tile.classList.remove('white');
-  tile.append(
+  add(tile, 
     h('div', { class: 'tile-head' }, h('h2', { text: `Prove you own ${record ? record.domain : view.domain}` }), h('span', { class: 'label label-medium', text: 'Needs ownership' })),
     h('p', { class: 'caveat', text: 'Anyone can edit and test this page. Publishing it needs one of these on your site. Add one, then Check.' }));
   if (!record) return;
@@ -202,7 +204,7 @@ function paintOwner(view) {
     for (const b of seg.children) b.setAttribute('aria-pressed', String(b.dataset.method === method));
     clear(detail);
     const step = record.instructions[method];
-    detail.append(
+    add(detail, 
       h('p', { class: 'publish-step', text: step.steps }),
       h('div', { class: 'publish-code' }, h('code', { text: step.value }), h('button', { class: 'btn btn-plain', type: 'button', onClick: () => copyText(step.value, 'Copied.') }, 'Copy')));
   };
@@ -229,7 +231,7 @@ function paintOwner(view) {
     }
   });
   const last = record.last_check;
-  tile.append(seg, detail, h('div', { class: 'form-actions' }, check),
+  add(tile, seg, detail, h('div', { class: 'form-actions' }, check),
     last && !last.ok ? h('p', { class: 'caveat publish-miss', text: `Last check, ${when(last.at)}: ${last.detail}` }) : null);
 }
 
@@ -245,7 +247,7 @@ function paintConnect(view) {
   tile.hidden = false;
   tile.classList.add('white');
   const connections = view.status.connections || [];
-  tile.append(h('div', { class: 'tile-head' }, h('h2', { text: 'Where it is hosted' }),
+  add(tile, h('div', { class: 'tile-head' }, h('h2', { text: 'Where it is hosted' }),
     connections.length ? h('button', { class: 'btn btn-plain', type: 'button', onClick: () => paintForm(view) }, 'Add a connection') : null));
   if (!connections.length) {
     paintForm(view);
@@ -253,10 +255,10 @@ function paintConnect(view) {
   }
   const seg = h('div', { class: 'seg seg-sm publish-conns', role: 'group', 'aria-label': 'Connection' },
     connections.map((c) => h('button', { type: 'button', 'aria-pressed': String(c.id === view.connection), onClick: () => { view.connection = c.id; view.confirm.clear(); plan(view); } }, c.label)));
-  tile.append(seg);
+  add(tile, seg);
   const current = connections.find((c) => c.id === view.connection);
   const platform = (view.platforms || []).find((p) => current && p.kind === current.kind);
-  if (platform && platform.limits.length) tile.append(h('ul', { class: 'publish-limits' }, platform.limits.map((text) => h('li', { text }))));
+  if (platform && platform.limits.length) add(tile, h('ul', { class: 'publish-limits' }, platform.limits.map((text) => h('li', { text }))));
   if (!view.plan) return;
   for (const warning of view.plan.warnings || []) {
     const key = warning.option || warning.code;
@@ -267,7 +269,7 @@ function paintConnect(view) {
       else view.confirm.delete(key);
       publishBtn.disabled = !ready();
     });
-    tile.append(h('label', { class: 'publish-warn' }, box, h('span', { text: warning.text })));
+    add(tile, h('label', { class: 'publish-warn' }, box, h('span', { text: warning.text })));
   }
   const applying = view.plan.rows.filter((r) => r.apply).length;
   const ready = () => applying > 0 && (view.plan.warnings || []).every((w) => !w.confirm || view.confirm.has(w.code));
@@ -285,16 +287,16 @@ function paintConnect(view) {
       toast(err.message);
     }
   });
-  tile.append(publishBtn, view.plan.live_after_apply ? null : h('p', { class: 'caveat', text: current && current.kind === 'github' ? 'This opens a pull request. It goes live when you merge it.' : 'This saves the change on the platform.' }));
+  add(tile, publishBtn, view.plan.live_after_apply ? null : h('p', { class: 'caveat', text: current && current.kind === 'github' ? 'This opens a pull request. It goes live when you merge it.' : 'This saves the change on the platform.' }));
 }
 
 function paintForm(view) {
   const tile = view.connect;
   clear(tile);
-  tile.append(h('div', { class: 'tile-head' }, h('h2', { text: 'Connect where it is hosted' }),
+  add(tile, h('div', { class: 'tile-head' }, h('h2', { text: 'Connect where it is hosted' }),
     (view.status.connections || []).length ? h('button', { class: 'btn btn-plain', type: 'button', onClick: () => paintConnect(view) }, 'Cancel') : null));
   if (view.status.encryption_ready === false) {
-    tile.append(h('p', { class: 'caveat', text: 'Saving a connection needs the server encryption key, which is not set up yet. The owner of this Ranksim sets it.' }));
+    add(tile, h('p', { class: 'caveat', text: 'Saving a connection needs the server encryption key, which is not set up yet. The owner of this Ranksim sets it.' }));
   }
   const platforms = view.platforms || [];
   let kind = view.kind || (platforms[0] && platforms[0].kind);
@@ -305,8 +307,8 @@ function paintForm(view) {
     clear(form);
     const platform = platforms.find((p) => p.kind === kind);
     if (!platform) return;
-    form.append(h('p', { class: 'caveat', text: platform.summary }));
-    if (platform.limits.length) form.append(h('ul', { class: 'publish-limits' }, platform.limits.map((text) => h('li', { text }))));
+    add(form, h('p', { class: 'caveat', text: platform.summary }));
+    if (platform.limits.length) add(form, h('ul', { class: 'publish-limits' }, platform.limits.map((text) => h('li', { text }))));
     const field = (key, secret) => {
       const [label, help] = FIELD_HELP[key] || [key, ''];
       const required = secret || (REQUIRED[kind] || []).includes(key);
@@ -316,10 +318,10 @@ function paintForm(view) {
       if (key === 'base_url' || key === 'url') input.value = key === 'base_url' ? `https://${view.domain}` : '';
       return h('label', { class: 'publish-field' }, h('span', { text: required ? label : `${label} (optional)` }), input);
     };
-    for (const key of platform.settings) form.append(field(key, false));
-    for (const key of platform.secrets) form.append(field(key, true));
+    for (const key of platform.settings) add(form, field(key, false));
+    for (const key of platform.secrets) add(form, field(key, true));
     const save = h('button', { class: 'btn btn-dark', type: 'submit' }, 'Connect');
-    form.append(h('p', { class: 'caveat', text: 'Ranksim tests the connection, then stores the credentials encrypted. They are never shown again.' }), h('div', { class: 'form-actions' }, save));
+    add(form, h('p', { class: 'caveat', text: 'Ranksim tests the connection, then stores the credentials encrypted. They are never shown again.' }), h('div', { class: 'form-actions' }, save));
     form.onsubmit = async (event) => {
       event.preventDefault();
       const data = new FormData(form);
@@ -342,7 +344,7 @@ function paintForm(view) {
   };
   for (const p of platforms) seg.append(h('button', { type: 'button', dataset: { kind: p.kind }, onClick: () => { kind = p.kind; view.kind = kind; paint(); } }, p.label));
   paint();
-  tile.append(seg, form);
+  add(tile, seg, form);
 }
 
 /* ------------------------------------------------------------------ history */
@@ -356,7 +358,7 @@ function paintHistory(view) {
     return;
   }
   tile.hidden = false;
-  tile.append(h('div', { class: 'tile-head' }, h('h2', { text: 'History' }), h('span', { class: 'aside', text: `${entries.length}` })));
+  add(tile, h('div', { class: 'tile-head' }, h('h2', { text: 'History' }), h('span', { class: 'aside', text: `${entries.length}` })));
   const list = h('div', { class: 'rows' });
   entries.forEach((entry, index) => {
     const [cls, text] = VERIFY_TEXT[(entry.verify && entry.verify.status) || entry.status] || ['label-low', entry.status];
@@ -405,7 +407,7 @@ function paintHistory(view) {
       entry.note ? h('p', { class: 'caveat', text: entry.note }) : null,
       actions)));
   });
-  tile.append(list);
+  add(tile, list);
 }
 
 /* ------------------------------------------------------------------ take it with you */

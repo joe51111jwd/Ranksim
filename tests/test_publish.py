@@ -1270,3 +1270,56 @@ def test_routes_answer_400_for_a_bad_site(app_env):
     client, web, router, ui = app_env
     assert client.post("/api/v1/projects/acme/publish/ownership/reset", json={"site": "not a site"}, headers=H).status_code == 400
     assert client.get("/api/v1/projects/acme/publish/status", params={"url": "https://localhost/x"}).status_code == 400
+
+
+# ---------------------------------------------------------------------------
+# Encryption not available
+# ---------------------------------------------------------------------------
+
+
+def test_missing_secretbox_answers_503_and_saves_nothing(tmp_path, monkeypatch):
+    from aeo.ranksim.publishing.store import encryption_ready
+
+    monkeypatch.setitem(sys.modules, "aeo.ranksim.secretbox", None)  # import fails
+    import aeo.ranksim as pkg
+
+    monkeypatch.delattr(pkg, "secretbox", raising=False)
+    assert encryption_ready() is False
+    router = Router()
+    router.on("POST", r"hooks", lambda r, m: httpx.Response(200))
+    pub = make_publisher(tmp_path, Web(), router)
+    with pytest.raises(PublishError) as err:
+        pub.add_connection(kind="webhook", site="acme.com", label="", settings={"url": "https://hooks.acme.test/x"}, secret={"signing_secret": "k" * 20})
+    assert err.value.status == 503 and "encryption" in str(err.value)
+    assert pub.store.connections() == []
+
+
+def test_secretbox_without_key_answers_503(tmp_path, box):
+    from aeo.ranksim.publishing.store import encryption_ready
+
+    box.configured = lambda: False
+
+    def refuse(plaintext, *, purpose):
+        raise RuntimeError("RANKSIM_SECRET is not set")
+
+    box.seal = refuse
+    assert encryption_ready() is False
+    router = Router()
+    router.on("POST", r"hooks", lambda r, m: httpx.Response(200))
+    pub = make_publisher(tmp_path, Web(), router)
+    with pytest.raises(PublishError) as err:
+        pub.add_connection(kind="webhook", site="acme.com", label="", settings={"url": "https://hooks.acme.test/x"}, secret={"signing_secret": "k" * 20})
+    assert err.value.status == 503 and "k" * 20 not in str(err.value)
+
+
+def test_status_route_reports_encryption_state(app_env, box):
+    client, web, router, ui = app_env
+    box.configured = lambda: True
+    assert client.get("/api/v1/projects/acme/publish/status", params={"url": "https://acme.com/"}).json()["encryption_ready"] is True
+    box.configured = lambda: False
+    assert client.get("/api/v1/projects/acme/publish/status", params={"url": "https://acme.com/"}).json()["encryption_ready"] is False
+
+
+def test_store_lives_in_the_plugin_data_dir(tmp_path):
+    store = PublishStore.for_project(FakeProject(tmp_path))
+    assert store.folder == tmp_path / "acme" / "plugins" / "publish" and store.folder.is_dir()

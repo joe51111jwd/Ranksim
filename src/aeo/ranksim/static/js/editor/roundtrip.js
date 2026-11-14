@@ -679,9 +679,17 @@ function decodeText(node) {
   return text;
 }
 
+/* Attributes a live document hides from scripts (a browser blanks nonce once the element is connected), so the
+   draft can never be trusted about them: they always come from the source as written. */
+const UNSEEN = new Set(['nonce']);
+
 function attrMap(el) {
   const map = new Map();
-  for (const a of el.attrs || []) if (!isRsAttr(a.name) && !map.has(a.name)) map.set(a.name, a.value);
+  for (const a of el.attrs || []) {
+    if (isRsAttr(a.name) || UNSEEN.has(a.name) || map.has(a.name)) continue;
+    if (a.name === 'style' && !a.value.trim()) continue; // an empty style a browser leaves behind means nothing
+    map.set(a.name, a.value);
+  }
   return map;
 }
 

@@ -147,3 +147,12 @@ test('attributes set on an <html> or <body> the page never wrote are written out
   const draft = base.replace('<html data-rs-id="x1">', '<html data-rs-id="x1" lang="en">').replace('<body data-rs-id="x3">', '<body data-rs-id="x3" class="dark">');
   assert.equal(exportHtml(src, base, draft), '<!doctype html>\n<html lang="en"><title>Bare</title>\n<body class="dark"><p>Hello</p>\n');
 });
+
+test('a nonce the live preview blanks is kept as the source wrote it', () => {
+  const src = '<!doctype html><html><head><script type="application/ld+json" nonce="abc123">{"@type":"Organization"}</script></head><body><p>Hi</p></body></html>';
+  const base = liteBase(src);
+  const draft = base.replace('nonce="abc123"', 'nonce=""').replace('>Hi<', '>Hello<');
+  const out = exportHtml(src, base, draft);
+  assert.ok(out.includes('<script type="application/ld+json" nonce="abc123">'), out);
+  assert.ok(out.includes('<p>Hello</p>'));
+});

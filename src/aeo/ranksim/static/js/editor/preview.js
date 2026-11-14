@@ -125,6 +125,52 @@ export const HIDDEN_CSS = `[data-rs-reveal]{position:static!important;clip:auto!
 [data-rs-reveal] summary{cursor:pointer;color:#555550;margin:24px 0 8px}
 html:has([data-rs-reveal]),body:has([data-rs-reveal]){background:#fff!important;height:auto!important;overflow:auto!important}`;
 
+/* Content a site fades in with its scripts (a class such as opacity-0, data-aos, a framework's appear animation) stays
+   invisible when scripts never run. Show every laid out content block (a sentence or more of text, or a sizable
+   picture) that computes to opacity 0 or visibility hidden. Fixed layers (drawers, modals) and anything in a navigation,
+   a header, a menu or a dialog (dropdowns, mega menus) stay as they are. The marker attribute is preview only: the
+   draft never keeps it. Returns how many elements were shown. */
+export const FADED_CSS = '[data-rs-shown]{opacity:1!important;visibility:visible!important}[data-rs-shown-move]{transform:none!important}';
+
+export function revealFaded(doc) {
+  const win = doc.defaultView;
+  if (!win || !doc.body) return 0;
+  let shown = 0;
+  const all = doc.body.getElementsByTagName('*');
+  for (let k = 0; k < all.length && shown < 2000; k += 1) {
+    const el = all[k];
+    if (el.hasAttribute('data-rs') || /^(SCRIPT|STYLE|TEMPLATE|NOSCRIPT|LINK|META|BR|OPTION)$/.test(el.tagName)) continue;
+    const cs = win.getComputedStyle(el);
+    if (cs.display === 'none' || cs.position === 'fixed') continue; // fixed layers: drawers, modals, cookie banners
+    const faded = cs.opacity === '0' || cs.visibility === 'hidden';
+    if (!faded) continue;
+    if (el.closest('nav,header,[role="navigation"],[role="menu"],[role="dialog"],[role="tooltip"],[aria-modal="true"]')) continue;
+    // content blocks only: a sentence or more of text, or a sizable picture. Small hidden bits (a "Copied" label, a
+    // tooltip, a second state of a button) stay hidden, as they are on the live page.
+    const box = el.getBoundingClientRect();
+    if (box.width < 120 || box.height < 12) continue;
+    const words = (el.textContent || '').trim().length;
+    const picture = Array.from(el.querySelectorAll('img,picture,video')).some((m) => { const r = m.getBoundingClientRect(); return r.width >= 150 && r.height >= 80; });
+    if (words < 60 && !picture) continue;
+    el.setAttribute('data-rs-shown', '');
+    if (cs.transform && cs.transform !== 'none' && cs.opacity === '0') el.setAttribute('data-rs-shown-move', ''); // slide-in start offsets
+    shown += 1;
+  }
+  if (shown && !doc.querySelector('style[data-rs-shown-style]')) {
+    const style = doc.createElement('style');
+    style.setAttribute('data-rs', '1');
+    style.setAttribute('data-rs-shown-style', '');
+    style.textContent = FADED_CSS;
+    (doc.head || doc.documentElement).append(style);
+  }
+  return shown;
+}
+
+/* How much text a reader sees in the preview. A page that shows almost none is built entirely by scripts. */
+export function visibleTextLength(doc) {
+  return doc && doc.body ? (doc.body.innerText || '').trim().length : 0;
+}
+
 export function revealHidden(doc) {
   const win = doc.defaultView;
   if (!win || !doc.body) return false;

@@ -10,11 +10,13 @@
    page's own elements is data-rs-annotations, so none of it reaches the saved, tested or published HTML. */
 
 import { on, registerEditorPanel } from '../hooks.js';
-import { S, h, icon, looseKey, plural, debounce, toast } from '../core.js';
+import { S, h, icon, looseKey, plural, debounce, toast, openSheet, closeSheet, pathOf } from '../core.js';
 
 const STATE = { active: null, applied: new Map(), focused: '', wired: new WeakSet(), ctx: null };
 const HEAD_ONLY = /^(head\b|title\b|meta\b|link\b)/;
 const FOCUS_KEY = 'rs-audit-focus'; // set by the Issues screen's Fix in editor, read once here
+const FIX_KEY = 'rs-audit-fix'; // set by the Issues screen's Fix top issues, read once here
+const TOP_FIXES = 10;
 
 /* Applied suggestions are remembered per page draft: a reset or reloaded draft forgets them. */
 const appliedKey = (ctx, issue) => `${looseKey(ctx.page)}|${issue.id}`;
@@ -141,6 +143,114 @@ async function copy(text) {
   }
 }
 
+/* ------------------------------------------------------------------ fix the top issues in one go */
+
+/* The suggestions that can be applied to this page now, most valuable first (score), at most TOP_FIXES. */
+/* Changes that can hide or redirect a page are never part of a batch: they stay one at a time, in the panel. */
+const NOT_IN_BATCH = new Set(['canonical-other', 'noindex', 'robots-blocked']);
+
+/* The suggestions that can be applied to this page now, most valuable first (score), at most TOP_FIXES. When two
+   issues would change the same thing (the title for its length and for its search), only the higher score stays. */
+export function topFixes(ctx, limit = TOP_FIXES) {
+  const seen = new Set();
+  return issuesFor(ctx)
+    .filter((issue) => canApply(issue) && !isApplied(ctx, issue) && !NOT_IN_BATCH.has(issue.kind))
+    .sort((a, b) => (b.score || 0) - (a.score || 0))
+    .filter((issue) => {
+      const target = ['text', 'attr', 'retag'].includes(issue.action) ? `${issue.element.selector}|${issue.element.attr || ''}|${issue.action}` : `${issue.id}`;
+      if (seen.has(target)) return false;
+      seen.add(target);
+      return true;
+    })
+    .slice(0, limit);
+}
+
+function readDoc(ctx) {
+  const live = ctx.doc();
+  if (live) return live;
+  const html = ctx.getHtml();
+  return html ? new DOMParser().parseFromString(html, 'text/html') : null;
+}
+
+/* What one suggestion changes: the element as it is now and as it would be. */
+export function changeOf(doc, issue) {
+  const el = resolve(doc, issue);
+  if (!el) return null;
+  const tag = el.tagName.toLowerCase();
+  const text = (value) => String(value == null ? '' : value).replace(/\s+/g, ' ').trim();
+  if (issue.action === 'text') return { before: text(el.textContent), after: issue.suggestion, where: `<${tag}> text` };
+  if (issue.action === 'attr') return { before: el.hasAttribute(issue.element.attr) ? text(el.getAttribute(issue.element.attr)) : '', after: issue.suggestion, where: `<${tag}> ${issue.element.attr}` };
+  if (issue.action === 'retag') return { before: `<${tag}> ${text(el.textContent).slice(0, 80)}`, after: `<${issue.suggestion}> ${text(el.textContent).slice(0, 80)}`, where: 'Heading level' };
+  const place = { append: 'at the end of', prepend: 'at the start of', after: 'after', replace: 'in place of' }[issue.action] || 'in';
+  return { before: '', after: issue.suggestion, where: `New, ${place} <${tag}>` };
+}
+
+/* The review sheet: every proposed change with a checkbox, then Apply and Test. */
+export function openReview(ctx, list) {
+  const doc = readDoc(ctx);
+  const rows = list.map((issue) => ({ issue, change: doc ? changeOf(doc, issue) : null })).filter((row) => row.change);
+  if (!rows.length) {
+    toast('No suggestions to apply on this page.');
+    return;
+  }
+  const picked = new Set(rows.map((row) => row.issue.id));
+  openSheet((sheet, closeBtn) => {
+    const count = h('span');
+    const applyBtn = h('button', { class: 'btn btn-primary btn-large', type: 'button' });
+    const paint = () => {
+      count.textContent = `${picked.size} of ${rows.length} selected`;
+      applyBtn.textContent = picked.size ? `Apply ${plural(picked.size, 'change')} and test` : 'Pick a change';
+      applyBtn.disabled = !picked.size;
+    };
+    sheet.append(h('div', { class: 'sheet-head' }, h('div', null, h('h2', { text: 'Fix the top issues' }), h('div', { class: 'sub', text: pathOf(ctx.url || ctx.page) })), closeBtn));
+    const body = h('div', { class: 'sheet-body' });
+    body.append(h('p', { class: 'tile-sub', text: 'Check each change. Nothing is published: the draft changes, then Test changes shows where it would land. PREDICTED.' }));
+    const listEl = h('ol', { class: 'fix-list' });
+    rows.forEach(({ issue, change }) => {
+      const box = h('input', { type: 'checkbox', checked: true, 'aria-label': `Apply: ${issue.title}` });
+      box.addEventListener('change', () => {
+        if (box.checked) picked.add(issue.id);
+        else picked.delete(issue.id);
+        paint();
+      });
+      listEl.append(h('li', { class: 'fix-row', dataset: { issue: issue.id } },
+        h('label', { class: 'fix-head' }, box, h('span', { class: `annot-num ${issue.severity}`, text: String(issuesFor(ctx).indexOf(issue) + 1) }), h('span', { class: 'fix-title', text: issue.title })),
+        h('div', { class: 'fix-where', text: change.where }),
+        change.before ? h('div', { class: 'fix-before' }, h('span', { class: 'fix-k', text: 'Now' }), h('span', { text: change.before })) : null,
+        h('div', { class: 'fix-after' }, h('span', { class: 'fix-k', text: change.before ? 'After' : 'Adds' }), h('span', { text: change.after }))));
+    });
+    body.append(listEl);
+    applyBtn.addEventListener('click', () => {
+      const chosen = rows.filter((row) => picked.has(row.issue.id)).map((row) => row.issue);
+      const result = applyMany(ctx, chosen);
+      closeSheet();
+      toast(result.missed ? `Applied ${plural(result.applied, 'change')}. ${plural(result.missed, 'element')} moved, so ${result.missed === 1 ? 'it was' : 'they were'} skipped.` : `Applied ${plural(result.applied, 'change')}. Testing now.`);
+      if (result.applied) ctx.test();
+    });
+    body.append(h('div', { class: 'form-actions fix-actions' }, count, applyBtn));
+    sheet.append(body);
+    paint();
+  });
+}
+
+/* Applies several suggestions, text and attribute changes first so a retag never moves an element another
+   change still needs. Returns { applied, missed }. */
+export function applyMany(ctx, issues) {
+  const order = { text: 0, attr: 0, retag: 1, prepend: 2, append: 2, after: 2, replace: 3 };
+  const sorted = issues.slice().sort((a, b) => (order[a.action] ?? 4) - (order[b.action] ?? 4));
+  let applied = 0;
+  let missed = 0;
+  for (const issue of sorted) {
+    if (applySuggestion(ctx, issue)) {
+      STATE.applied.set(appliedKey(ctx, issue), ctx.draft);
+      applied += 1;
+    } else missed += 1;
+  }
+  ctx.repaint();
+  drawPins(ctx);
+  return { applied, missed };
+}
+
 /* ------------------------------------------------------------------ pins in the preview */
 
 function clearPins(doc) {
@@ -263,8 +373,10 @@ registerEditorPanel({
     if (!ctx.report || !ctx.draft || !ctx.draft.text) return null;
     const list = issuesFor(ctx);
     const high = list.filter((issue) => issue.severity === 'high').length;
+    const fixable = topFixes(ctx);
     return h('section', { class: 'tile annot-panel' },
       h('div', { class: 'tile-head' }, h('h2', { text: 'Comments' }), h('span', { class: 'aside', text: list.length ? (high ? `${plural(list.length, 'issue')}, ${high} high` : plural(list.length, 'issue')) : '' })),
+      fixable.length > 1 ? h('button', { class: 'btn btn-block annot-fix-all', type: 'button', onClick: () => openReview(ctx, fixable) }, icon('check'), `Fix the top ${fixable.length}`) : null,
       list.length
         ? h('ol', { class: 'annot-list' }, list.map((issue, index) => item(ctx, issue, index)))
         : h('p', { class: 'tile-sub', text: 'No issues on this page.' }));
@@ -288,10 +400,28 @@ function pendingFocus(ctx) {
   return STATE.focused === location.href ? null : { focus, token: false };
 }
 
+/* True once after the Issues screen's Fix top issues opened this page (the token is used up). */
+function takeFixToken(ctx) {
+  let token = null;
+  try {
+    token = JSON.parse(sessionStorage.getItem(FIX_KEY) || 'null');
+    if (token && looseKey(token.page || '') === looseKey(ctx.page) && Date.now() - (token.at || 0) < 120000) sessionStorage.removeItem(FIX_KEY);
+    else token = null;
+  } catch (_err) {
+    token = null;
+  }
+  return !!token;
+}
+
 on('editor-ready', (ctx) => {
   if (!ctx) return;
   STATE.ctx = ctx;
   wire(ctx);
+  if (ctx.doc() && takeFixToken(ctx)) {
+    drawPins(ctx);
+    openReview(ctx, topFixes(ctx));
+    return;
+  }
   const want = ctx.doc() ? pendingFocus(ctx) : null;
   if (want) {
     const match = issuesFor(ctx).find((issue) => issue.element && issue.element.selector === want.focus);

@@ -20,6 +20,36 @@ export function editorParams(issue, url) {
   return params;
 }
 
+/* Whether the editor's Apply suggestion can make this change (mirrors canApply in plugins/annotations.js). */
+export function applicable(issue) {
+  if (!issue.suggestion || !issue.element || !issue.element.selector || !issue.action || issue.action === 'copy') return false;
+  if (/<script/i.test(issue.suggestion) || /^script/.test(issue.element.tag || '')) return false;
+  if (issue.action === 'attr' && !issue.element.attr) return false;
+  return issue.action !== 'retag' || /^h[1-6]$/.test(issue.suggestion);
+}
+
+/* Opens the editor on a page with the review of its top suggestions (the annotations plugin reads the token). */
+export function fixTopIssues(url) {
+  try {
+    sessionStorage.setItem('rs-audit-fix', JSON.stringify({ page: url, at: Date.now() }));
+  } catch (_err) {
+    toast('Open the page in the editor and use Fix the top issues there.');
+  }
+  closeSheet(true);
+  go('editor', { page: url });
+}
+
+function fixButton(all, url) {
+  const targets = new Set();
+  for (const issue of all) {
+    if (!applicable(issue) || !onPage(issue, url) || ['canonical-other', 'noindex', 'robots-blocked'].includes(issue.kind)) continue;
+    targets.add(['text', 'attr', 'retag'].includes(issue.action) ? `${issue.element.selector}|${issue.element.attr || ''}|${issue.action}` : issue.id);
+  }
+  const count = targets.size;
+  if (count < 2) return null;
+  return h('button', { class: 'btn btn-plain fix-top', type: 'button', onClick: () => fixTopIssues(url) }, icon('check'), `Fix the top ${Math.min(count, 10)}`);
+}
+
 /* Opens the editor on the issue's element. The token tells the annotations plugin this is a fresh click, so the
    element is selected again even when the same address was opened before. */
 export function fixInEditor(issue, url) {
@@ -101,6 +131,7 @@ export function renderIssues() {
     seg('Group issues', [['page', 'By page'], ['search', 'By search']], VIEW.group, (key) => { VIEW.group = key; renderIssues(); }));
 
   const groups = new Map();
+  const groupUrl = new Map();
   for (const issue of shown) {
     let keys;
     if (VIEW.group === 'search') keys = [issue.search ? `"${issue.search}"` : 'Not tied to a search'];
@@ -108,6 +139,7 @@ export function renderIssues() {
     for (const key of keys) {
       if (!groups.has(key)) groups.set(key, []);
       groups.get(key).push(issue);
+      if (VIEW.group === 'page' && issue.page && !(issue.pages && issue.pages.length > 1)) groupUrl.set(key, issue.page);
     }
   }
   const rank = (list) => list.reduce((sum, issue) => sum + (issue.severity === 'high' ? 1000 : 0) + (issue.score || 0), 0);
@@ -121,6 +153,7 @@ export function renderIssues() {
     const high = list.filter((issue) => issue.severity === 'high').length;
     body.append(h('section', { class: 'tile span-2' },
       h('div', { class: 'tile-head' }, h('h2', { class: 'one-line', text: where }), h('span', { class: 'aside', text: high ? `${plural(list.length, 'issue')}, ${high} high` : plural(list.length, 'issue') })),
+      groupUrl.has(where) ? fixButton(all, groupUrl.get(where)) : null,
       h('div', { class: 'rows' }, list.map((issue) => issueRow(issue, false)))));
   }
   clear(main).append(page('Issues', `${counts.high} high, ${counts.medium} medium and ${counts.low} low on ${R.site}`, controls, body), footer());

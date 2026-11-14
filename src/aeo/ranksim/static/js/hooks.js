@@ -88,7 +88,8 @@
      diff()        what changed against the page as loaded, block by block in plain words:
                    { changes: [{ type: 'changed' | 'added' | 'removed' | 'moved', kind, label, before, after,
                    words? }], counts: { changed, added, removed, moved }, total, summary }. summary is one sentence such
-                   as "1 change and 2 additions." or "No changes yet.". label reads like "Main heading
+                   as "3 parts of the page changed: 1 edited
+                   and 2 added." or "No changes yet.". label reads like "Main heading
                    changed"; words is a word diff [{ op: '=' | '+' | '-', text }] for changed blocks.
      undo(), redo()  step through the draft's history (visual, HTML, inserted blocks, title and description share one
                    history). Return true when something changed. canUndo, canRedo: booleans.

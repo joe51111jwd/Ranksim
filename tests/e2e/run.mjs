@@ -275,6 +275,29 @@ try {
     await page.waitForSelector(SEL.sheet, { state: 'detached' });
   });
 
+  await step('report-building', async () => {
+    // Infra's contract: on a fresh server GET /report answers 202 { building: true, job } until the report exists,
+    // and a cold server may answer 502 once. Fake both: 202, 202, 502, then the real report.
+    allowed.push({ phase: 'report-building', pattern: /status of (404|502)/ });
+    let calls = 0;
+    await page.route('**/api/v1/projects/*/report', async (route) => {
+      calls += 1;
+      if (calls <= 2) return route.fulfill({ status: 202, contentType: 'application/json', body: JSON.stringify({ building: true, job: 'e2e-fake-job' }) });
+      if (calls === 3) return route.fulfill({ status: 502, contentType: 'text/html', body: '<html>Bad gateway</html>' });
+      return route.continue();
+    });
+    await page.goto(`${BASE}/app/${encodeURIComponent(slug)}/issues`, { waitUntil: 'domcontentloaded' });
+    const note = page.locator('.skeleton .sk-building');
+    await note.waitFor({ timeout: 20000 });
+    expect(/Building the report for .+\. This takes about a minute the first time\./.test(await note.innerText()), 'the skeleton says the report is building');
+    await audit(page, 'desktop-06e-report-building');
+    await page.waitForSelector(SEL.issueRow, { timeout: 30000 });
+    expect(calls >= 4, `polled through 202, 202 and one 502 (${calls} calls)`);
+    expect(!(await page.locator('.empty-state').count()), 'no error screen');
+    await page.unroute('**/api/v1/projects/*/report');
+    await goto(page, `/app/${encodeURIComponent(slug)}`);
+  });
+
   await step('gsc-not-set-up', async () => {
     const tile = page.locator(SEL.gscTile);
     await tile.waitFor();

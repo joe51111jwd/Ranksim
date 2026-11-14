@@ -429,7 +429,15 @@ async function analyzeOnce(url, onDone) {
 
 async function finishOpen(slug, url) {
   try {
-    await openSite(slug, { keepDrafts: true });
+    await openSite(slug, {
+      keepDrafts: true,
+      onBuilding: (message) => {
+        // the editor stays usable; the last step of the analysis panel says the report is being built
+        if (!S.open) return;
+        S.open.steps.set('report', { state: 'active', message });
+        paintProgress();
+      },
+    });
   } catch (err) {
     S.open.state = 'failed';
     S.open.error = err.message;

@@ -68,7 +68,7 @@ export function renderSearches() {
     const item = known.get(row.q);
     const predicted = row.predicted && row.predicted.position != null ? `#${row.predicted.position}` : '';
     table.append(h('div', { class: 'srow', role: 'row' },
-      h('button', { class: 'c-q', type: 'button', role: 'cell', onClick: () => openSearch(row) }, h('span', { class: 'q', text: row.q })),
+      h('button', { class: 'c-q qrow', type: 'button', role: 'cell', onClick: () => openSearch(row) }, h('span', { class: 'q', text: row.q })),
       h('span', { class: `c-num p${row.position ? '' : ' none'}`, role: 'cell', text: row.position ? `#${row.position}` : row.checked ? 'Not top 10' : 'Not checked' }),
       columns.map((column) => columnCell(column, row)),
       h('span', { class: `c-num pred${predicted ? '' : ' none'}`, role: 'cell', title: predicted ? `PREDICTED of ${row.predicted.of}` : '', text: predicted || '' }),

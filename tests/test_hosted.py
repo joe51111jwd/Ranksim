@@ -807,3 +807,37 @@ def test_export_legacy_hands_the_newest_state_back_to_the_old_format(tmp_path, f
     with sqlite3.connect(tmp_path / "check" / "rank.db") as conn:
         assert sorted(row[0] for row in conn.execute("select v from t")) == ["after deploy", "first"]
     assert first in fake_blob.items  # nothing old is deleted
+
+
+def test_an_instance_far_behind_never_loses_saves_to_pruning(tmp_path):
+    """QA finding: 70 quick saves on A while B looked a moment ago. Saves younger than the age rule are never deleted,
+    so B applies every one of them; old saves are pruned only after PRUNE_AFTER_SECONDS."""
+    import aeo.ranksim.cloud as cloudmod
+    from aeo.ranksim.objects import MemoryStore
+
+    store = MemoryStore()
+    a = CloudState(data_dir=tmp_path / "a", db_file=tmp_path / "a" / "rank.db", enabled=True, store=store)
+    b = CloudState(data_dir=tmp_path / "b", db_file=tmp_path / "b" / "rank.db", enabled=True, store=store)
+    demo = tmp_path / "a" / "projects" / "demo"
+    demo.mkdir(parents=True)
+    (demo / "n.json").write_text("0")
+    a.save()
+    b.refresh(force=True)
+    for n in range(1, 71):
+        (demo / f"f{n}.json").write_text(str(n))
+        a.save()
+    assert b.refresh(force=True) is True
+    assert sorted(path.name for path in (tmp_path / "b" / "projects" / "demo").iterdir()) == sorted(path.name for path in demo.iterdir())
+    early = cloudmod.chain_name(2)
+    assert early in store.items  # young saves stay, even far behind the newest
+    real_time = cloudmod.time.time
+    try:
+        cloudmod.time.time = lambda: real_time() + cloudmod.PRUNE_AFTER_SECONDS + 1
+        (demo / "late.json").write_text("x")
+        a.save()
+    finally:
+        cloudmod.time.time = real_time
+    assert early not in store.items  # an hour later the old, unreferenced saves go
+    c = CloudState(data_dir=tmp_path / "c", db_file=tmp_path / "c" / "rank.db", enabled=True, store=store)
+    c.refresh(force=True)
+    assert (tmp_path / "c" / "projects" / "demo" / "late.json").is_file() and (tmp_path / "c" / "projects" / "demo" / "f1.json").is_file()

@@ -79,7 +79,10 @@ LEGACY_WATCH_SECONDS = 14 * 24 * 3600
 LEGACY_CHECK_SECONDS = 1800.0
 POINTER_EVERY = 8  # the pointer is rewritten on every 8th save (an advanced op), so a cold start probes a few names
 KEEP_CHAIN = 64  # saves kept behind the newest (older ones nobody references are deleted, which is free)
-PRUNE_AFTER_SECONDS = 600  # and never one younger than this: a reader mid-download still finds it
+# A save is deleted only when it is KEEP_CHAIN behind AND was written more than PRUNE_AFTER_SECONDS ago. An instance
+# that last looked longer ago than VERIFY_AFTER_SECONDS (well under this) reads the pointer and reloads from the newest
+# manifest, so no instance can be caught between saves it has not applied and saves that are already gone.
+PRUNE_AFTER_SECONDS = 3600
 COMPACT_DELTAS = 15  # after this many database deltas the next save uploads a full snapshot
 COMPACT_RATIO = 0.5  # or when the deltas add up to half the snapshot's size (counted from COMPACT_FLOOR_BYTES up)
 COMPACT_FLOOR_BYTES = 4 * 1024 * 1024
@@ -597,15 +600,28 @@ class CloudState:
     def _prunable(self, manifest: dict, seq: int) -> list[int]:
         """Saves old enough to delete: more than KEEP_CHAIN behind and referenced by nobody. Deletes cost nothing,
         so no listing: every number since the last prune is deleted by name (a missing name is fine)."""
+        times = {int(k): float(v) for k, v in (manifest.get("times") or {}).items()}
+        times[seq] = time.time()  # when each save was written, for the age rule
         start = int(manifest.get("pruned") or 0) + 1
         stop = seq - KEEP_CHAIN
-        if stop < start:
-            return []
-        referenced = set((manifest.get("projects") or {}).values())
-        db = manifest.get("db") or {}
-        referenced |= set(db.get("deltas") or []) | {db.get("snapshot")} | {int(manifest.get("legacy", {}).get("seq") or 0)}
-        manifest["pruned"] = stop
-        return [n for n in range(start, stop + 1) if n not in referenced]
+        doomed: list[int] = []
+        if stop >= start:
+            referenced = set((manifest.get("projects") or {}).values())
+            db = manifest.get("db") or {}
+            referenced |= set(db.get("deltas") or []) | {db.get("snapshot")} | {int(manifest.get("legacy", {}).get("seq") or 0)}
+            cutoff = time.time() - PRUNE_AFTER_SECONDS
+            last = start - 1
+            for n in range(start, stop + 1):
+                written = times.get(n)
+                if written is not None and written > cutoff:
+                    break  # too young; so is everything after it
+                last = n
+                if n not in referenced:
+                    doomed.append(n)
+            manifest["pruned"] = last
+        floor = int(manifest.get("pruned") or 0)
+        manifest["times"] = {str(n): t for n, t in times.items() if n > floor}
+        return doomed
 
     def _local_slugs(self) -> list[str]:
         if not self.projects_dir.is_dir():

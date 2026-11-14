@@ -215,3 +215,31 @@ def test_a_stale_instance_catches_up_from_the_cookie_hint(tmp_path):
     assert b.refresh(hint=a.stamp) is True  # the browser saw a's save: b catches up at once
     assert (tmp_path / "b" / "projects" / "demo" / "project.json").is_file()
     assert store.ops.count("list") == 0
+
+
+def test_anonymous_traffic_never_starts_a_cold_sync(hosted_cloud, tmp_path):
+    """QA finding: a cold instance must not run its cold-start sync for anonymous requests to login-exempt routes."""
+    from aeo.ranksim.cloud import CloudState
+
+    h = hosted_cloud
+    _project(h)
+    cold_dir = tmp_path / "cold"
+    cold = CloudState(data_dir=cold_dir, db_file=cold_dir / "rank.db", enabled=True, store=h["store"], clock=Clock())
+    settings = make_settings(cold_dir, serpapi_key="sk-budget-test")
+    app = create_app(settings=settings, projects_root=cold_dir / "projects", public_demo=False, access_password=PASSWORD,
+                     access_secret="budget-secret", cloud=cold)
+    anon = TestClient(app)
+    h["store"].reset()
+    for path in ("/r/nonsense", "/r/x/y/z", "/r/assets/share.js", "/api/v1/cron/recheck", "/r/" + "a" * 24 + ".short",
+                 "/api/v1/projects", "/app/anything", "/healthz"):
+        anon.get(path)
+        anon.post(path, json={})
+    assert h["store"].ops == []  # nothing: no list, no head, no get
+    assert cold.stamp == 0  # still cold
+    anon.get("/r/" + "a" * 24 + "." + "b" * 22)  # a well-formed (unknown) token: the routine cold start, once
+    first = list(h["store"].ops)
+    assert first and "list" not in first and "put" not in first
+    h["store"].reset()
+    for _ in range(20):
+        anon.get("/r/" + "a" * 24 + "." + "b" * 22 + "/data")
+    assert h["store"].ops == []  # warm now, and anonymous requests never force a check

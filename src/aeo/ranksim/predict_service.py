@@ -37,9 +37,11 @@ GUIDE_ABOVE = 3
 MAX_SEARCHES = 40
 
 FORWARD_NOTE = (
-    "Forward check, scored once on 2026-11-09 SmartCrew searches (HTML fetched 2026-11-14): new pages were "
-    "ordered among themselves in 92 of 151 pairs (0.61), and the full list with ranking pages anchored on their "
-    "current position in 1056 of 1341 pairs (0.79). One interval, one niche."
+    "One forward check, on SmartCrew searches only (2026-11-06 to 2026-11-09, page HTML fetched 2026-11-14, "
+    "83 of 97 new pages scorable): new pages that entered a top 10 were put in the right order among themselves "
+    "in 92 of 151 pairs (0.61). Against pages already ranking it was not clearly better than placing every new "
+    "page last, and its position number was no better than a constant guess. Weights here are refit on this "
+    "project, so that check does not measure this project."
 )
 
 
@@ -119,18 +121,13 @@ def _signals(search: str, url: str, doc, html, peers, rows) -> dict[str, float]:
     return signals
 
 
-def build_predictor(ctx) -> ProjectPredictor:
-    """Fit the pairwise model on this project's observed results, plus a family-out backtest."""
-    from aeo.ranksim.snapshot_protocol import assign_families
-
-    items = observed_items(ctx)
-    rows = [(search, _domain(item.url), item.key, item.position) for search, found in items.items() for item in found]
+def _groups(items: dict[str, list[Item]], rows) -> list[Group]:
     groups: list[Group] = []
     for search, found in sorted(items.items()):
-        peers = [item.doc for item in found if item.doc is not None]
         stored = [item for item in found if item.doc is not None]
         if len(stored) < 2:
             continue
+        peers = [item.doc for item in stored]
         groups.append(
             Group(
                 search,
@@ -139,6 +136,16 @@ def build_predictor(ctx) -> ProjectPredictor:
                 [item.key for item in stored],
             )
         )
+    return groups
+
+
+def build_predictor(ctx) -> ProjectPredictor:
+    """Fit the pairwise model on this project's observed results, plus a family-out backtest."""
+    from aeo.ranksim.snapshot_protocol import assign_families
+
+    items = observed_items(ctx)
+    rows = [(search, _domain(item.url), item.key, item.position) for search, found in items.items() for item in found]
+    groups = _groups(items, rows)
     if not groups:
         raise PredictError("No search has two or more stored pages yet, so there is nothing to learn from. Run a pull first.")
     model = fit_pairwise(groups, ALL_FEATURES, l2=RECIPE_L2, trained_on="this project's observed results")
@@ -150,8 +157,12 @@ def build_predictor(ctx) -> ProjectPredictor:
     if len(folds) >= 2:
         signs = []
         for fold in folds:
-            train = [group for group in groups if families[group.search] != fold]
-            test = [group for group in groups if families[group.search] == fold]
+            # Hide the held-out family's positions from the site features too, so a sibling
+            # search in the same snapshot cannot leak its order into the backtest.
+            held = {search for search, family in families.items() if family == fold}
+            fold_groups = _groups(items, [row for row in rows if row[0] not in held])
+            train = [group for group in fold_groups if families[group.search] != fold]
+            test = [group for group in fold_groups if families[group.search] == fold]
             fold_model = fit_pairwise(train, ALL_FEATURES, l2=RECIPE_L2)
             signs.append(fold_model.weights)
             for group in test:
@@ -174,17 +185,18 @@ def build_predictor(ctx) -> ProjectPredictor:
     return ProjectPredictor(model, backtest, stable, items, rows, len(groups), notes)
 
 
-_CACHE: dict[int, tuple[object, ProjectPredictor]] = {}
+_CACHE: dict[int, tuple] = {}
 
 
 def predictor_for(ctx) -> ProjectPredictor:
+    stamp = (getattr(ctx, "pull_id", None), len(getattr(ctx, "pages", {}) or {}))
     cached = _CACHE.get(id(ctx))
-    if cached is not None and cached[0] is ctx:
+    if cached is not None and cached[0] is ctx and cached[2] == stamp:
         return cached[1]
     built = build_predictor(ctx)
     if len(_CACHE) > 8:
         _CACHE.clear()
-    _CACHE[id(ctx)] = (ctx, built)
+    _CACHE[id(ctx)] = (ctx, built, stamp)
     return built
 
 
@@ -194,11 +206,13 @@ def target_searches(ctx, url: str, draft_doc, requested: list[str] | None) -> li
     searches = list(ctx.project.searches)
     if requested:
         wanted = [search for search in requested if search in searches]
+        if not wanted:
+            raise PredictError("None of those searches are in this project. Nothing was run.")
         return wanted[:MAX_SEARCHES]
     key = _key(url)
     ranked = []
     for search, entry in ctx.google.by_search().items():
-        if any(_key(result.url) == key for result in entry.results) and search in searches:
+        if any(_key(result.url) == key and 1 <= result.position <= 10 for result in entry.results) and search in searches:
             ranked.append(search)
     head = f"{draft_doc.title} {draft_doc.h1}"
     matched = [search for search in searches if search not in ranked and term_match(search, head) >= 0.6]

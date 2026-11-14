@@ -40,7 +40,7 @@ No training score or same-snapshot score is ever shown as accuracy.
   entrant vs entrant, never-seen vs returning, never-seen vs never-seen, and the full list.
 - Pre-registered scorers: `hybrid_with_prior` (primary), `hybrid_no_prior` (Nov 6 only, no
   handicap), and the reference `persistence_bottom` (every entrant below every returning page,
-  0.704 on entrant vs returning in the existing report, which was public before this work).
+  0.704 on 479 entrant vs returning pairs in the existing report, which was public before this work; on this report's 398 scorable pairs the same rule is 0.719, and 0.719 is the fair comparison).
 - Coverage: entrants without fetched HTML are not scored and are listed.
 
 ## Caveats
@@ -93,6 +93,36 @@ Plain reading:
 - Not 90%. One interval, one niche, HTML fetched 5 to 8 days late. The pre-existing LambdaMART
   figures (0.477 draft vs ranking, 0.293 draft vs draft) used the private snapshot HTML and a
   different draft definition, so they are not a like-for-like comparison.
+
+## Corrections from an independent review (after scoring; scored numbers unchanged)
+
+A separate review re-ran train and score from the commits and got identical outputs. It found no
+Nov 9 information in training or features. It did find these, which this plan now states plainly:
+
+- **Site features leaked within the held-out family during selection.** A held-out page's site
+  features used its domain's Nov 6 positions on sibling searches of the same family. With those
+  hidden, family-out pairwise is site only 0.461 to 0.477 (below chance) and content+site 0.544 to
+  0.553, and L2 30 would have been picked instead of 0.3. The training table above overstates how
+  well site features generalize. The frozen model was still scored once as committed. The product
+  backtest (`predict_service.build_predictor`) now hides the held-out family's positions from site
+  features, so per-search confidence is no longer inflated by this.
+- **The hybrid's edge over "new pages land last" is not established.** Search-bootstrap difference
+  on new vs returning: +0.03, 95% interval -0.034 to +0.095. Without the handicap the model is below
+  that rule (0.701 vs 0.719). The full-list 0.79 vs 0.69 is mostly persistence plus the fact that
+  tied entrants count as wrong for persistence; with half credit for ties persistence is 0.767.
+- **Usable coverage is lower than "167 with HTML".** 49 of the 167 fetches are script shells with
+  0 to 21 words (Reddit, Facebook, YouTube, help.hcss). 19 of the 83 scored entrants have under 30
+  words. The negative word-count weight is partly this fetch artifact, so "never advise adding
+  words" is a property of this data, not a finding about Google.
+- **The handicap may be biased.** The Oct 29 export is cut at depth 7 to 10, so about 14 of the 96
+  "entrants" may only have been unobserved. That makes `entrant_logit` more negative.
+- `report.json` coverage note says unscorable entrants tie for all scorers in the full-list slice.
+  For the hybrid they sit below scored entrants (44 pairs, 21 right). It does not inflate the hybrid.
+- Every forward number is conditioned on pages that did enter a top 10. "New pages" includes 37
+  URLs already ranking on other searches; the never-seen subset is the closer stand-in for drafts.
+
+Product copy (`FORWARD_NOTE`) now says only the new-vs-new result, the coverage, and that the other
+results were no better than simple rules, and that it does not measure other projects.
 
 ## Product guardrails added after scoring (do not change the scored numbers)
 

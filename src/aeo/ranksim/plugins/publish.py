@@ -365,15 +365,30 @@ def sync_fixes(pub, project, entry: dict) -> None:
         pub.store.put_history(fresh)
 
 
-def log_change(project, entry: dict) -> None:
+def log_change(project, entry: dict, *, rollback: bool | None = None) -> None:
     """The client change log line for where this entry stands. Only what really went live is public: a pull request,
-    a saved draft, a closed pull request or a pending revert are owner-only notes. Keyed, so repeats add nothing."""
+    a saved draft, a closed pull request or a pending revert are owner-only notes. Keyed, so repeats add nothing.
+
+    rollback=True or False is the earlier call form (one line for a publish or a rollback, as the caller says),
+    kept for callers written against it."""
     share = _share()
     if share is None:
         return
     path = urlsplit(entry.get("url") or "").path or "/"
     fields = ", ".join(row["label"].lower() for row in entry.get("rows") or [] if row.get("apply"))
     platform = (entry.get("connection") or {}).get("kind", "")
+    if rollback is not None:
+        detail = f"{platform}, live check: {(entry.get('verify') or {}).get('status') or entry.get('status') or ''}".strip(", ")
+        if rollback:
+            summary, key = f"Rolled back the published change to {path}.", f"publish-rollback:{entry['id']}"
+        else:
+            summary = f"Published changes to {path}: {fields}." if fields else f"Published changes to {path}."
+            key = f"publish:{entry['id']}"
+        try:
+            share.log_change(project, "publish", summary, detail=detail, key=key)
+        except Exception:  # noqa: BLE001
+            log.exception("publish: change log entry failed")
+        return
     rollback = entry.get("rollback") or {}
     lines = []
     if entry.get("status") == "live":
@@ -389,7 +404,7 @@ def log_change(project, entry: dict) -> None:
         if rollback.get("status") == "closed":
             lines.append((False, f"Closed the pull request for {path}. Nothing went live.", f"publish-closed:{entry['id']}", platform))
         elif entry.get("status") == "live":
-            lines.append((True, f"Rolled back the change to {path}.", f"publish-rollback:{entry['id']}", f"{platform}, {rollback.get('status', '')}".strip(", ")))
+            lines.append((True, f"Rolled back the published change to {path}.", f"publish-rollback:{entry['id']}", f"{platform}, {rollback.get('status', '')}".strip(", ")))
     for public, summary, key, detail in lines:
         try:
             share.log_change(project, "publish", summary, detail=detail, public=public, key=key)

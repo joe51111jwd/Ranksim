@@ -1345,7 +1345,7 @@ def test_publish_and_rollback_reach_the_client_change_log(app_env, monkeypatch):
     entry = client.post("/api/v1/projects/acme/publish", json={"url": url, "html": page(h1="New"), "connection_id": conn["id"]}, headers=H).json()
     client.post(f"/api/v1/projects/acme/publish/history/{entry['id']}/rollback", headers=H)
     assert logged[0] == ("publish", "Published changes to /about: main heading.", f"publish:{entry['id']}", True)
-    assert logged[1] == ("publish", "Rolled back the change to /about.", f"publish-rollback:{entry['id']}", True)
+    assert logged[1] == ("publish", "Rolled back the published change to /about.", f"publish-rollback:{entry['id']}", True)
     assert len(logged) == 2
 
 

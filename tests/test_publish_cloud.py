@@ -131,7 +131,7 @@ def test_issue_round_trip_across_two_instances(env):
     rows = log_rows(a, slug)
     assert rows.count("Fixed: Weak heading") == 1 and rows.count("Reopened: Weak heading") == 1
     assert sum(1 for row in rows if row.startswith("Published changes to /about:")) == 1
-    assert rows.count("Rolled back the change to /about.") == 1
+    assert rows.count("Rolled back the published change to /about.") == 1
 
 
 def test_one_rollback_when_two_instances_are_clicked_at_once(env):

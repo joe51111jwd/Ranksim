@@ -72,7 +72,11 @@ LEGACY_POINTER = "ranksim/HEAD"
 REFRESH_EVERY_SECONDS = 300.0  # an active instance looks for a newer save (one get) at most this often
 HINT_MIN_SECONDS = 5.0  # a stale-hint cookie can force a look at most this often per instance
 VERIFY_AFTER_SECONDS = 600.0  # an instance idle this long also reads the pointer, in case it slept through pruning
-LEGACY_WATCH_SECONDS = 24 * 3600  # after the migration, watch the old pointer (one head per check) for a day
+# After the migration, watch the old format's pointer for LEGACY_WATCH_SECONDS, one head at most every
+# LEGACY_CHECK_SECONDS per instance. Two weeks, because a preview deployment that shares the production Blob store can
+# migrate it well before production moves over, while the old production keeps saving in the old format.
+LEGACY_WATCH_SECONDS = 14 * 24 * 3600
+LEGACY_CHECK_SECONDS = 1800.0
 POINTER_EVERY = 8  # the pointer is rewritten on every 8th save (an advanced op), so a cold start probes a few names
 KEEP_CHAIN = 64  # saves kept behind the newest (older ones nobody references are deleted, which is free)
 PRUNE_AFTER_SECONDS = 600  # and never one younger than this: a reader mid-download still finds it
@@ -686,7 +690,7 @@ class CloudState:
         if not legacy.get("since") or time.time() - float(legacy["since"]) > LEGACY_WATCH_SECONDS:
             return False
         now = self.clock()
-        if now - self._legacy_checked < REFRESH_EVERY_SECONDS:
+        if now - self._legacy_checked < LEGACY_CHECK_SECONDS:
             return False
         self._legacy_checked = now
         etag = self.store.head(LEGACY_POINTER)
@@ -700,6 +704,72 @@ class CloudState:
         self._extra.setdefault("legacy", {}).update({"name": names[-1], "etag": etag})
         self._commit()
         return True
+
+
+def export_legacy(state: "CloudState") -> str:
+    """Write the newest state back in the old format (ranksim/state/<time>-<rand>.tgz plus the ranksim/HEAD pointer),
+    so a rollback to a deployment that only knows the old format starts from everything saved since the migration.
+
+    Brings state up to date first. The tarball holds projects/ and a consistent copy of the rank database, exactly as
+    the old code packed them. Instances on the new code that still watch the old pointer import it back, which
+    changes nothing.
+    """
+    if not state.enabled:
+        raise CloudError("cloud storage is off (BLOB_READ_WRITE_TOKEN is not set)")
+    with state.lock:
+        state.refresh(force=True)
+        buffer = io.BytesIO()
+        with tarfile.open(fileobj=buffer, mode="w:gz", compresslevel=6) as archive:
+            for slug in state._local_slugs():
+                scope = state._scope(slug)
+                for rel, path in scope.files():
+                    arc = f"projects/{rel}" if slug == LOOSE else f"projects/{slug}/{rel}"
+                    archive.add(path, arcname=arc, recursive=False)
+            if state.db_file.is_file():
+                state._meta_dir.mkdir(parents=True, exist_ok=True)
+                copy = state._meta_dir / f".export-{secrets.token_hex(4)}.db"
+                try:
+                    _sqlite_copy(state.db_file, copy)
+                    archive.add(copy, arcname="rank.db", recursive=False)
+                finally:
+                    copy.unlink(missing_ok=True)
+        name = f"{LEGACY_PREFIX}{time.time_ns():020d}-{secrets.token_hex(3)}.tgz"
+        state.store.put(name, buffer.getvalue(), content_type="application/gzip")
+        state.store.put(LEGACY_POINTER, name.encode(), overwrite=True, content_type="text/plain")
+        return name
+
+
+def main(argv: list[str] | None = None) -> int:
+    """python -m aeo.ranksim.cloud export-legacy: run with the production BLOB_READ_WRITE_TOKEN before rolling back."""
+    import argparse
+    import tempfile
+
+    parser = argparse.ArgumentParser(prog="python -m aeo.ranksim.cloud")
+    parser.add_argument("command", choices=["export-legacy", "import-legacy", "status"])
+    args = parser.parse_args(argv)
+    folder = Path(tempfile.mkdtemp(prefix="ranksim-cloud-"))
+    state = CloudState.from_env(folder, folder / "rank.db")
+    if not state.enabled:
+        print("Set BLOB_READ_WRITE_TOKEN (vercel env pull) first. Nothing was done.")
+        return 2
+    if args.command == "status":
+        state.refresh(force=True)
+        print(json.dumps({"save": state.stamp, "projects": sorted(state._installed), "legacy": state._manifest.get("legacy")}, indent=2))
+        return 0
+    if args.command == "import-legacy":
+        # After a long rollback (past the watch window), bring what the old deployment saved back into the chain.
+        state.refresh(force=True)
+        names = sorted(state.store.list(LEGACY_PREFIX))
+        if not names:
+            print("No old-format save found. Nothing was done.")
+            return 1
+        state._import_legacy(names[-1], first=False)
+        state._extra.setdefault("legacy", {}).update({"name": names[-1], "etag": state.store.head(LEGACY_POINTER), "since": time.time()})
+        print(f"Imported {names[-1]}; saved as {state.save()}. Instances watch the old format again for two weeks.")
+        return 0
+    name = export_legacy(state)
+    print(f"Wrote {name} and pointed ranksim/HEAD at it. An old deployment now starts from the newest state.")
+    return 0
 
 
 class _NothingToSave(Exception):
@@ -1142,3 +1212,7 @@ def _dispose_engines(db_file: Path) -> None:
             bind = factory.kw.get("bind")
             if bind is not None:
                 bind.dispose()
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

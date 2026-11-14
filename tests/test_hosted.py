@@ -635,7 +635,7 @@ def test_security_headers(hosted):
 def test_an_old_instance_saving_during_the_rollout_is_merged_once(tmp_path, fake_blob):
     """First deploy: old and new instances overlap. A save in the old format after the migration is not lost, a newer
     edit made on the new side is not overwritten, and importing the same old save twice changes nothing."""
-    from aeo.ranksim.cloud import LEGACY_POINTER, REFRESH_EVERY_SECONDS
+    from aeo.ranksim.cloud import LEGACY_CHECK_SECONDS, LEGACY_POINTER
 
     old = tmp_path / "old"
     _make_state(old)
@@ -658,7 +658,7 @@ def test_an_old_instance_saving_during_the_rollout_is_merged_once(tmp_path, fake
     fake_blob.put_blob(second_name, _legacy_tarball(old), access="private")
     fake_blob.put_blob(LEGACY_POINTER, second_name.encode(), access="private", allow_overwrite=True)
 
-    clock[0] += REFRESH_EVERY_SECONDS + 1
+    clock[0] += LEGACY_CHECK_SECONDS + 1
     assert new.refresh() is True
     assert (demo_new / "project.json").read_text() == '{"name": "Demo, renamed on the old instance"}'
     assert (demo_new / "notes.json").read_text() == '{"by": "new"}'  # not removed: the old instance never had it
@@ -671,7 +671,7 @@ def test_an_old_instance_saving_during_the_rollout_is_merged_once(tmp_path, fake
     assert (tmp_path / "reader" / "projects" / "demo" / "notes.json").is_file()
 
     fake_blob.calls.clear()
-    clock[0] += REFRESH_EVERY_SECONDS + 1
+    clock[0] += LEGACY_CHECK_SECONDS + 1
     assert new.refresh() is False  # the same old save again: nothing to import, nothing uploaded
     assert not [call for call in fake_blob.calls if call.startswith("put")]
 
@@ -778,3 +778,32 @@ def test_jobs_and_the_classic_project_lock_see_each_other(hosted):
     gate.set()
     runner.join(30)
     assert not lock.locked()
+
+
+def test_export_legacy_hands_the_newest_state_back_to_the_old_format(tmp_path, fake_blob):
+    """Rollback safety: after work on the new code, export writes an old-format tarball the old code would load."""
+    import io
+    import tarfile
+
+    from aeo.ranksim.cloud import LEGACY_POINTER, export_legacy
+
+    old = tmp_path / "old"
+    _make_state(old)
+    first = f"{LEGACY_PREFIX}00000000000000000001-aaa.tgz"
+    fake_blob.put_blob(first, _legacy_tarball(old), access="private")
+    fake_blob.put_blob(LEGACY_POINTER, first.encode(), access="private", allow_overwrite=True)
+    new = _instance(tmp_path / "new")
+    new.refresh(force=True)
+    (tmp_path / "new" / "projects" / "demo" / "since-deploy.json").write_text("{}")
+    with sqlite3.connect(tmp_path / "new" / "rank.db") as conn:
+        conn.execute("insert into t values ('after deploy')")
+    new.save()
+    name = export_legacy(_instance(tmp_path / "exporter"))
+    assert name > first and fake_blob.items[LEGACY_POINTER] == name.encode()
+    with tarfile.open(fileobj=io.BytesIO(fake_blob.items[name]), mode="r:gz") as archive:
+        names = archive.getnames()
+        assert "projects/demo/since-deploy.json" in names and "projects/demo/project.json" in names and "rank.db" in names
+        archive.extract("rank.db", tmp_path / "check", filter="data")
+    with sqlite3.connect(tmp_path / "check" / "rank.db") as conn:
+        assert sorted(row[0] for row in conn.execute("select v from t")) == ["after deploy", "first"]
+    assert first in fake_blob.items  # nothing old is deleted

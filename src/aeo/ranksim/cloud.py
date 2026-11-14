@@ -234,14 +234,14 @@ class CloudState:
         self.db_file.parent.mkdir(parents=True, exist_ok=True)
         if not self.db_file.is_file() or self.db_file.stat().st_size == 0:
             _dispose_engines(self.db_file)
-            shutil.copyfile(theirs, self.db_file)
+            _copy_db(theirs, self.db_file)
             clean = True
         else:
             # Local rows not saved yet stay "dirty" after the merge, so the next save uploads them.
             clean = self._db_version is not None and _stat_sig(self.db_file) == self._db_clean
             base = self._base_db if self._base_db.is_file() else None
             merge_sqlite(self.db_file, base, theirs)
-        shutil.copyfile(theirs, self._base_db)
+        _copy_db(theirs, self._base_db)
         self._db_clean = _stat_sig(self.db_file) if clean else None
 
     # -- writing ---------------------------------------------------------------------------------
@@ -364,10 +364,12 @@ class CloudState:
                 _sqlite_copy(self.db_file, copy)
                 ours = new_name(DB_PREFIX, ".db.gz")
                 self.store.put(ours, gzip.compress(copy.read_bytes(), compresslevel=6), content_type="application/gzip")
-                os.replace(copy, self._base_db)
+                _copy_db(copy, self._base_db)
             finally:
                 copy.unlink(missing_ok=True)
             self._db_version = ours
+            # Taken after the copy, because closing the copy's connection may checkpoint the WAL into the main file.
+            # A write landing in the instant between is not lost: it is uploaded with the next change.
             self._db_clean = _stat_sig(self.db_file)
         if len(remote) >= KEEP_VERSIONS:
             self._prune(DB_PREFIX, keep=self._db_version)
@@ -457,7 +459,7 @@ class CloudState:
                 else:
                     self.db_file.parent.mkdir(parents=True, exist_ok=True)
                     _dispose_engines(self.db_file)
-                    shutil.copyfile(incoming_db, self.db_file)
+                    _copy_db(incoming_db, self.db_file)
         finally:
             shutil.rmtree(staging, ignore_errors=True)
         for slug in self._local_slugs():
@@ -597,11 +599,29 @@ def _remove_if_empty(folder: Path) -> None:
 
 
 def _stat_sig(path: Path) -> tuple | None:
+    """Changes whenever the database changes. SQLite in WAL mode (aeo.db turns it on for every engine) writes to the
+    -wal file first, so that file counts too."""
     try:
         stat = path.stat()
     except FileNotFoundError:
         return None
-    return (stat.st_size, stat.st_mtime_ns)
+    sig = [stat.st_size, stat.st_mtime_ns]
+    for suffix in ("-wal",):
+        try:
+            extra = Path(f"{path}{suffix}").stat()
+            sig += [extra.st_size, extra.st_mtime_ns]
+        except FileNotFoundError:
+            sig += [0, 0]
+    return tuple(sig)
+
+
+def _copy_db(source: Path, target: Path) -> None:
+    """Replace a database file we own, dropping stale -wal and -shm files that belong to the old one."""
+    for suffix in ("-wal", "-shm", "-journal"):
+        Path(f"{target}{suffix}").unlink(missing_ok=True)
+    temp = target.with_name(f".{target.name}.{secrets.token_hex(4)}.tmp")
+    shutil.copyfile(source, temp)
+    os.replace(temp, target)
 
 
 # -- the rank database ---------------------------------------------------------------------------

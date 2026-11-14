@@ -882,3 +882,95 @@ def test_a_small_edit_uploads_only_the_changed_file(tmp_path):
     b.save()
     a.refresh(force=True)
     assert (demo / "pages.json").read_text() == "changed on b" and (demo / "models.json").read_text() == models
+
+
+def test_a_database_with_a_full_text_table_migrates_syncs_and_saves(tmp_path, fake_blob):
+    """Live issue: production's rank.db has an FTS5 virtual table. Its shadow tables broke the cold-start merge ("table
+    already exists") and every delta export, so saves failed and instances stayed cold."""
+    from aeo.ranksim.cloud import LEGACY_POINTER
+
+    old = tmp_path / "old"
+    _make_state(old)
+    with sqlite3.connect(old / "rank.db") as conn:
+        conn.execute("create virtual table chunks_fts using fts5(body)")
+        conn.execute("insert into chunks_fts values ('dirt work software')")
+    name = f"{LEGACY_PREFIX}00000000000000000001-aaa.tgz"
+    fake_blob.put_blob(name, _legacy_tarball(old), access="private")
+    fake_blob.put_blob(LEGACY_POINTER, name.encode(), access="private", allow_overwrite=True)
+
+    first = _instance(tmp_path / "first")
+    assert first.refresh(force=True) is True  # the migration, with the FTS table in the snapshot
+    second_dir = tmp_path / "second"
+    second_dir.mkdir()
+    with sqlite3.connect(second_dir / "rank.db") as conn:  # the empty database the app creates at start-up
+        conn.execute("create table t (v text)")
+    second = _instance(second_dir)
+    assert second.refresh(force=True) is True  # cold start: no "table already exists"
+    with sqlite3.connect(second_dir / "rank.db") as conn:
+        assert conn.execute("select v from t").fetchall() == [("first",)]
+        conn.execute("insert into t values ('after a draft test')")
+    assert second.save()  # the delta export skips the virtual table and its shadows
+    first.refresh(force=True)
+    with sqlite3.connect(tmp_path / "first" / "rank.db") as conn:
+        assert sorted(row[0] for row in conn.execute("select v from t")) == ["after a draft test", "first"]
+        assert conn.execute("select body from chunks_fts").fetchall() == [("dirt work software",)]
+
+
+def test_a_failed_save_keeps_the_answer_and_is_retried(hosted, monkeypatch):
+    """Live issue: a failed save after a write replaced the route's answer and hung the request for minutes."""
+    from aeo.ranksim.cloud import CloudError
+
+    client, token, app = hosted["client"], hosted["token"], hosted["app"]
+    _sign_in(hosted)
+
+    class Flaky:
+        enabled, stamp, save_failed_at, _checked = True, 1, None, 1.0
+        calls: list = []
+
+        def refresh(self, force=False, hint=0):
+            return False
+
+        def save(self):
+            Flaky.calls.append("save")
+            if len(Flaky.calls) == 1:
+                self.save_failed_at = time.time() - 60  # failed a minute ago
+                raise CloudError("Could not save to storage: OperationalError.")
+            self.save_failed_at = None
+            return "saved"
+
+    app.state.ui.cloud = Flaky()
+    made = _post(client, "/api/v1/projects", {"name": "Kept", "site": SITE, "queries": SEARCHES}, token)
+    assert made.status_code == 200 and made.json()["slug"] and made.headers["x-ranksim-storage"] == "unsaved"
+    assert client.get("/api/v1/projects").status_code == 200  # the next signed-in request retries the save
+    assert Flaky.calls == ["save", "save"] and app.state.ui.cloud.save_failed_at is None
+
+
+def test_a_failed_look_at_storage_backs_off(tmp_path):
+    """Live issue: an instance whose cold start failed looked at storage again on every request."""
+    from aeo.ranksim.cloud import FAILURE_BACKOFF_SECONDS, CloudError
+    from aeo.ranksim.objects import MemoryStore, StoreError
+
+    class Down(MemoryStore):
+        calls = 0
+
+        def get(self, name):
+            Down.calls += 1
+            raise StoreError("down")
+
+        def head(self, name):
+            Down.calls += 1
+            raise StoreError("down")
+
+    now = [1000.0]
+    state = CloudState(data_dir=tmp_path, db_file=tmp_path / "rank.db", enabled=True, store=Down(), clock=lambda: now[0])
+    with pytest.raises(CloudError):
+        state.refresh()
+    calls = Down.calls
+    for _ in range(50):
+        with pytest.raises(CloudError):
+            state.refresh(hint=99)
+    assert Down.calls == calls  # no storage call while backing off
+    now[0] += FAILURE_BACKOFF_SECONDS + 1
+    with pytest.raises(CloudError):
+        state.refresh()
+    assert Down.calls > calls

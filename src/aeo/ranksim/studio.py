@@ -11,6 +11,7 @@ On a public host (public_demo) the API serves only the synthetic demo, never sav
 from __future__ import annotations
 
 import re
+import time
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request
@@ -65,6 +66,7 @@ OPEN_PREFIX = ("/studio/", "/app/")
 NO_STATE_PREFIX = ("/studio/", "/static/")
 NO_SAVE_SUFFIX = ("/pull", "/fetch", "/login", "/logout", "/sites", "/resume")  # jobs save themselves
 SYNC_COOKIE = "rs_sync"
+SAVE_RETRY_SECONDS = 30.0  # a failed save is tried again by the next signed-in request after this long
 
 
 def _serve():
@@ -233,13 +235,16 @@ def register(app: FastAPI, ui) -> None:
             # A project made on another instance a moment ago: check storage once, then answer again.
             if await run_in_threadpool(lambda: cloud.refresh(hint=cloud.stamp + 1)):
                 response = await call_next(request)
-        if writing and response.status_code < 400 and not path.endswith(NO_SAVE_SUFFIX):
+        retry = trusted and not writing and getattr(cloud, "save_failed_at", None) and time.time() - cloud.save_failed_at > SAVE_RETRY_SECONDS
+        if (writing and response.status_code < 400 and not path.endswith(NO_SAVE_SUFFIX)) or retry:
             try:
                 await run_in_threadpool(cloud.save)
             except CloudError as exc:
-                print(f"ranksim: {exc}", flush=True)
-                if path.startswith("/api/"):
-                    return _error(503, f"{exc} The change was made on this server but may not last. Try again.")
+                # The route's own answer stands (the change is made here; replacing the answer would also leave the
+                # route's body unread, which hangs the request). The save is retried by the next write, or by the
+                # next signed-in request after SAVE_RETRY_SECONDS.
+                print(f"ranksim: {exc} Kept the answer; the save is retried later.", flush=True)
+                response.headers["x-ranksim-storage"] = "unsaved"
         if trusted and hinted and cloud.stamp > hint:  # never a cookie for a signed-out visitor (a share link)
             response.set_cookie(SYNC_COOKIE, str(cloud.stamp), max_age=30 * 24 * 3600, httponly=False, samesite="lax", path="/")
         return response

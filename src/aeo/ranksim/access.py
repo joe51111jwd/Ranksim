@@ -248,7 +248,7 @@ class Access:
         """Newest revocation time in ms (0 when none). Lists the store at most once per REVOKE_CACHE_SECONDS; with a
         shared cloud state it reads the manifest that instance already holds (no storage call)."""
         if self.shared is not None:
-            if getattr(self.shared, "stamp", 1) == 0:
+            if getattr(self.shared, "stamp", 1) == 0 and getattr(self.shared, "_checked", 0) is None:  # never looked yet
                 try:
                     self.shared.refresh()  # a cold instance reads storage before trusting any cookie
                 except Exception:  # noqa: BLE001 - the request's own storage check reports the failure

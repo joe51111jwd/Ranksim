@@ -160,8 +160,11 @@ function insertSheet(kind) {
     const body = h('div', { class: 'sheet-body' });
     const form = h('form', { class: 'form' });
     if (isFaq) {
-      const ld = h('input', { type: 'checkbox', checked: true, id: 'faq-ld' });
-      form.append(h('label', { class: 'check-row', for: 'faq-ld' }, ld, h('span', null, h('strong', { text: 'Add FAQ structured data' }), h('span', { class: 'muted', text: 'FAQPage JSON-LD that Google reads. It follows your edits to the questions.' }))));
+      const ctx = editorCtx();
+      const live = ctx && ctx.doc();
+      const has = !!live && Array.from(live.querySelectorAll('script[type="application/ld+json" i]')).some((el) => /"FAQPage"/.test(el.textContent || ''));
+      const ld = h('input', { type: 'checkbox', checked: !has, id: 'faq-ld' });
+      form.append(h('label', { class: 'check-row', for: 'faq-ld' }, ld, h('span', null, h('strong', { text: 'Add FAQ structured data' }), h('span', { class: 'muted', text: has ? 'This page already has FAQ structured data. Google reads one FAQ block per page, so this is off.' : 'FAQPage JSON-LD that Google reads. It follows your edits to the questions.' }))));
       form.append(h('div', { class: 'form-actions' }, h('button', { class: 'btn btn-primary btn-large', type: 'submit' }, 'Add FAQ')));
       form.addEventListener('submit', (event) => {
         event.preventDefault();

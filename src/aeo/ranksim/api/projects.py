@@ -181,10 +181,28 @@ def project_overview(ui, slug: str) -> dict:
     return data
 
 
-def project_report(ui, slug: str) -> dict:
-    from aeo.ranksim.report import build_report
+def project_report(ui, slug: str, *, cached: bool = True) -> dict:
+    """The report, from the on-disk cache when nothing it is built from changed (reportcache.py), else built."""
+    from aeo.ranksim import reportcache
 
     project = ui.project(slug)
+    google_ready = google_status(ui)["ready"]
+    key = reportcache.signature(ui, project, google_ready=google_ready)
+    if cached:
+        hit = reportcache.load(project, key)
+        if hit is not None:
+            return hit
+    data = _build_project_report(ui, project, google_ready)
+    # Building writes other caches into the project folder (page facts, competitor profiles, discovery), so the key is
+    # taken again: it describes the folder as the next request will find it.
+    reportcache.store(project, reportcache.signature(ui, project, google_ready=google_ready), data)
+    return data
+
+
+def _build_project_report(ui, project, google_ready: bool) -> dict:
+    from aeo.ranksim.report import build_report
+
+    slug = project.slug
     meta = ws.load_meta(project)
     ready, _reason = ws.engine_state(project)
     ctx = None
@@ -193,7 +211,7 @@ def project_report(ui, slug: str) -> dict:
             ctx = ui.context(slug)
         except Exception:  # noqa: BLE001 - the report shows what it can without the engine
             ctx = None
-    data = build_report(project, meta, ui.database, ctx=ctx, google_ready=google_status(ui)["ready"], ui=ui)
+    data = build_report(project, meta, ui.database, ctx=ctx, google_ready=google_ready, ui=ui)
     data["slug"] = project.slug
     data["data"] = _dataset_info(meta)
     data["engine"] = {"ready": ready}

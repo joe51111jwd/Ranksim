@@ -70,7 +70,8 @@ LEGACY_POINTER = "ranksim/HEAD"
 # Blob operation budget (Vercel Hobby: 10,000 simple and 2,000 advanced operations a month; Blob is blocked for 30
 # days past a cap; deletes are free). Ordinary requests make no Blob call at all.
 REFRESH_EVERY_SECONDS = 300.0  # an active instance looks for a newer save (one get) at most this often
-HINT_MIN_SECONDS = 5.0  # a stale-hint cookie can force a look at most this often per instance
+HINT_MIN_SECONDS = 5.0
+FAILURE_BACKOFF_SECONDS = 15.0  # after a failed look, ordinary requests wait this long before looking again  # a stale-hint cookie can force a look at most this often per instance
 VERIFY_AFTER_SECONDS = 600.0  # an instance idle this long also reads the pointer, in case it slept through pruning
 # After the migration, watch the old format's pointer for LEGACY_WATCH_SECONDS, one head at most every
 # LEGACY_CHECK_SECONDS per instance. Two weeks, because a preview deployment that shares the production Blob store can
@@ -129,6 +130,8 @@ class CloudState:
     _version: str | None = None
     _checked: float | None = None
     _hinted: float = -1e18
+    _failed_at: float = -1e18  # when the last look at storage failed (non-forced looks back off for a while)
+    save_failed_at: float | None = None  # when the last save failed; the app retries it later
     _legacy_checked: float = -1e18
     _legacy_seen: str | None = None
     _lock: threading.RLock = field(default_factory=threading.RLock)
@@ -235,10 +238,14 @@ class CloudState:
                     return False
                 if stale_hint:
                     self._hinted = now
+            if not force and now - self._failed_at < FAILURE_BACKOFF_SECONDS:
+                raise CloudError(self.last_error or "Could not read storage.")  # tried a moment ago: no storage call
             try:
                 changed = self._sync(now)
             except (StoreError, KeyError, OSError, ValueError, tarfile.TarError, sqlite3.Error) as exc:
+                self._failed_at = now
                 self.last_error = f"Could not read storage: {type(exc).__name__}."
+                print(f"ranksim: {self.last_error} ({str(exc)[:200]})", flush=True)
                 raise CloudError(self.last_error) from exc
             self._checked = self.clock()
             self.last_error = ""
@@ -418,6 +425,7 @@ class CloudState:
             if self._base_db.is_file():
                 _copy_db(self._base_db, self.db_file)
         if self.db_file.is_file():
+            _dispose_engines(self.db_file)  # idle pooled connections must not hold a lock while rows are merged
             merge_sqlite(self.db_file, minus, plus)
         if self._base_db.is_file():
             merge_sqlite(self._base_db, minus, plus)
@@ -430,13 +438,14 @@ class CloudState:
         """Three-way merge of a full database snapshot into the local db (local unsaved rows are kept)."""
         self._meta_dir.mkdir(parents=True, exist_ok=True)
         self.db_file.parent.mkdir(parents=True, exist_ok=True)
-        if not self.db_file.is_file() or self.db_file.stat().st_size == 0:
-            _dispose_engines(self.db_file)
+        if not self.db_file.is_file() or self.db_file.stat().st_size == 0 or _no_rows(self.db_file):
+            _dispose_engines(self.db_file)  # a fresh instance: the snapshot replaces the empty file the app created
             _copy_db(theirs, self.db_file)
             clean = True
         else:
             clean = self._db_is_clean()
             base = self._base_db if self._base_db.is_file() else None
+            _dispose_engines(self.db_file)  # idle pooled connections must not hold a lock while rows are merged
             merge_sqlite(self.db_file, base, theirs)
         _copy_db(theirs, self._base_db)
         self._db_clean = _stat_sig(self.db_file) if clean else None
@@ -453,10 +462,15 @@ class CloudState:
             self._load_meta()
             try:
                 if not self._dirty():
+                    self.save_failed_at = None
                     return None
-                return self._commit()
+                name = self._commit()
+                self.save_failed_at = None
+                return name
             except (StoreError, KeyError, OSError, ValueError, tarfile.TarError, sqlite3.Error) as exc:
+                self.save_failed_at = time.time()
                 self.last_error = f"Could not save to storage: {type(exc).__name__}."
+                print(f"ranksim: {self.last_error} ({str(exc)[:200]})", flush=True)
                 raise CloudError(self.last_error) from exc
             finally:
                 self._save_meta()
@@ -1018,7 +1032,7 @@ def merge_sqlite(ours: Path, base: Path | None, theirs: Path) -> dict:
     - the prediction ledger: rows are known by row_hash; theirs' new rows are appended, and our rows that theirs does
       not have are re-chained after them, so verify() still sees one unbroken chain.
     """
-    conn = sqlite3.connect(str(ours), timeout=30, isolation_level=None)
+    conn = sqlite3.connect(str(ours), timeout=10, isolation_level=None)
     counts: dict[str, int] = {}
     try:
         conn.execute("ATTACH DATABASE ? AS t", (str(theirs),))
@@ -1049,9 +1063,33 @@ def merge_sqlite(ours: Path, base: Path | None, theirs: Path) -> dict:
     return counts
 
 
+def _no_rows(path: Path) -> bool:
+    """True when no ordinary table of the database holds a row (a file the app created at start-up)."""
+    try:
+        conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True, timeout=5)
+    except sqlite3.Error:
+        return False
+    try:
+        for table in _tables(conn, "main"):
+            if conn.execute(f'SELECT 1 FROM "{table}" LIMIT 1').fetchone():
+                return False
+        return True
+    except sqlite3.Error:
+        return False
+    finally:
+        conn.close()
+
+
 def _tables(conn, schema: str) -> dict[str, str]:
+    """Ordinary tables only. A virtual table (FTS5 and the like) and its shadow tables (<name>_data, _idx, _content,
+    _docsize, _config) are SQLite's own structures: recreating them breaks ("table already exists"), and merging their
+    rows corrupts them. They are derived data and travel only inside full snapshots."""
     rows = conn.execute(f"SELECT name, sql FROM {schema}.sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'").fetchall()
-    return {name: sql for name, sql in rows if sql}
+    virtual = [name for name, sql in rows if sql and sql.lstrip().upper().startswith("CREATE VIRTUAL")]
+    return {
+        name: sql for name, sql in rows
+        if sql and name not in virtual and not any(name.startswith(f"{v}_") for v in virtual)
+    }
 
 
 def _in_schema(sql: str, table: str, schema: str) -> str:

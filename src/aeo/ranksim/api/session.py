@@ -26,9 +26,13 @@ def register(app: FastAPI, ui) -> None:
         body = await _json_body(request, 8192)
         if not ui.access.enabled:
             return JSONResponse({"ok": True})
-        if ui.access.locked_out():
-            return _error(429, "Too many tries. Wait a minute and try again.")
-        if not await run_in_threadpool(ui.access.check_password, _text(body.get("password"), 500)):
+        # The limit counts per client as well as overall. Vercel sets x-real-ip itself; a client cannot forge it there.
+        client = request.headers.get("x-real-ip") or (request.client.host if request.client else None)
+        if await run_in_threadpool(lambda: ui.access.locked_out(client=client)):
+            refused = _error(429, "Too many tries. Wait a minute and try again.")
+            refused.headers["retry-after"] = str(max(1, ui.access.retry_after(client=client)))
+            return refused
+        if not await run_in_threadpool(lambda: ui.access.check_password(_text(body.get("password"), 500), client=client)):
             return _error(401, "That password isn't right.")
         response = JSONResponse({"ok": True})
         secure = request.headers.get("x-forwarded-proto", request.url.scheme) == "https"
@@ -40,6 +44,12 @@ def register(app: FastAPI, ui) -> None:
         from aeo.ranksim.access import COOKIE
 
         _check_header_csrf(ui, request)
-        response = JSONResponse({"ok": True})
+        try:
+            everywhere = bool((await _json_body(request, 1024)).get("everywhere"))
+        except Exception:  # noqa: BLE001 - an empty or odd body is a plain sign out
+            everywhere = False
+        if everywhere and ui.access.enabled and _signed_in(ui, request):
+            await run_in_threadpool(ui.access.revoke_all)  # every session on every instance, this one included
+        response = JSONResponse({"ok": True, "everywhere": everywhere})
         response.delete_cookie(COOKIE, path="/")
         return response

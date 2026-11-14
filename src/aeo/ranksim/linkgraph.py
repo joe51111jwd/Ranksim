@@ -11,8 +11,6 @@ from collections import defaultdict, deque
 from dataclasses import dataclass, field
 from urllib.parse import urljoin, urlsplit
 
-from bs4 import BeautifulSoup
-
 from aeo.crawl.urls import domain_of, normalize_url
 from aeo.ranksim.graph import pagerank
 
@@ -154,6 +152,8 @@ def crawl_link_graph(
 
 
 def extract_anchors(html: str, base: str) -> list[tuple[str, str]]:
+    from bs4 import BeautifulSoup  # lazy: keeps bs4 out of server start-up
+
     soup = BeautifulSoup(html or "", "lxml")
     found: list[tuple[str, str]] = []
     seen: set[str] = set()
@@ -226,6 +226,8 @@ def _finish(graph: LinkGraph) -> None:
 
 
 def _title(html: str) -> str:
+    from bs4 import BeautifulSoup
+
     soup = BeautifulSoup(html or "", "lxml")
     if soup.title and soup.title.string:
         return " ".join(soup.title.string.split())[:180]

@@ -7,7 +7,6 @@ from datetime import date
 
 from sqlalchemy.orm import Session
 
-from aeo.crawl.extract import extract_html
 from aeo.crawl.urls import domain_of, normalize_url
 from aeo.ranksim import OUR_DOMAIN
 from aeo.ranksim.features import PageDoc
@@ -68,6 +67,8 @@ def is_our_url(url: str) -> bool:
 
 
 def page_from_html(url: str, html: str, *, fetch_ms: float | None = None, is_ours: bool | None = None) -> PageDoc:
+    from aeo.crawl.extract import extract_html  # lazy: it imports bs4, which server start-up does not need
+
     extracted = extract_html(html or "", url)
     headings = " ".join(str(item.get("text") or "") for item in extracted.headings)
     schema_types = _schema_types(extracted.schema_objects)

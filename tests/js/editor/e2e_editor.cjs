@@ -33,7 +33,12 @@ async function settled() {
   page = await browser.newPage({ viewport: { width: 1400, height: 1000 }, acceptDownloads: true });
   const errors = [];
   page.on('pageerror', (e) => errors.push(e.message));
-  await page.route('**/api/v1/fetch', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ url: URL_, html: SOURCE }) }));
+  await page.route('**/api/v1/fetch', (route) => {
+    const asked = JSON.parse(route.request().postData() || '{}').url || '';
+    const html = asked.includes('spa.test') ? '<!doctype html><html><head><title>App</title></head><body><div id="root"></div><script src="/app.js"></script></body></html>' : SOURCE;
+    return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ url: asked || URL_, html }) });
+  });
+  await page.route('**/slow.png', () => {}); // never answers: the page must still be editable
   await page.route('**/api/v1/sites', (route) => route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ error: 'Offline test.' }) }));
   await page.goto(`${BASE}/`);
   if (PASSWORD) {
@@ -45,6 +50,14 @@ async function settled() {
   await page.goto(`${BASE}/edit?url=${encodeURIComponent(URL_)}`);
   await settled();
   const frame = page.frameLocator('.viewport iframe');
+
+  // content a site fades in with its scripts is shown; the marker never reaches the draft
+  const faded = await editor(async () => {
+    const doc = (await import('/studio/js/editor/editor.js')).editorCtx().doc();
+    return doc.defaultView.getComputedStyle(doc.querySelector('.fade-in')).opacity;
+  });
+  check(faded === '1', `a block hidden until a script fades it in is shown (opacity ${faded})`);
+  check(await editor(async () => !(await import('/studio/js/editor/editor.js')).editorCtx().getHtml().includes('data-rs-shown')), 'the reveal marker is not in the draft');
 
   // the preview never runs scripts
   const sandbox = await page.locator('.viewport iframe').getAttribute('sandbox');
@@ -126,6 +139,15 @@ async function settled() {
   const clean = await editor(async () => (await import('/studio/js/editor/editor.js')).editorCtx().getHtml());
   check(clean.includes('data-rs-slide="2"') && clean.includes('data-rs="hero"') && !clean.includes('data-rs-id'), "getHtml keeps the page's own data-rs attributes and none of the editor's");
   check(out.includes('Track crews, trucks &amp; haul tickets.<!-- --> Built for contractors&nbsp;&copy; 2026.'), 'untouched text keeps its entities');
+
+  check(out.includes('<div class="fade-in"><p>'), 'the faded block is exported as the page wrote it');
+
+  // a page drawn entirely by scripts says so
+  await page.goto(`${BASE}/edit?url=${encodeURIComponent('https://spa.test/')}`);
+  await settled();
+  check((await page.locator('.edit-hint').textContent()) === 'Built by scripts', 'a script-only page is labeled Built by scripts');
+  await page.goto(`${BASE}/edit?url=${encodeURIComponent(URL_)}`);
+  await settled();
 
   // at phone width the insert menu opens on screen
   await page.setViewportSize({ width: 390, height: 844 });

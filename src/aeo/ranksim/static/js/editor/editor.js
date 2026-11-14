@@ -8,7 +8,7 @@ import {
   reduceMotion, toast,
 } from '../core.js';
 import { call, editorPanels, editorTools, registerEditorPanel, registerEditorTool, registerScreen, renderAll, renderEntry } from '../hooks.js';
-import { asHtml, cleanDoc, cleanParsed, facts, frameSource, normalize as cleanNormalize, pick, revealHidden, serialize } from './preview.js';
+import { asHtml, cleanDoc, cleanParsed, facts, frameSource, normalize as cleanNormalize, pick, revealFaded, revealHidden, serialize, visibleTextLength } from './preview.js';
 import { renderResult, runTest } from './test.js';
 import { exportHtml, stripRs } from './roundtrip.js';
 import { draftFromHtml, makeBase, ownRsAttrs, serializeDraft as serializeWith } from './model.js';
@@ -185,6 +185,23 @@ export function showText(draft, text) {
   paintSide();
 }
 
+/* Chrome types a space at the end of a text as a no-break space, and often leaves it there once the next word
+   follows. Right after typing, turn the no-break space just behind the new word back into a plain space. */
+function plainSpace(doc) {
+  const sel = doc.getSelection();
+  const node = sel && sel.anchorNode;
+  if (!node || node.nodeType !== 3) return;
+  const at = sel.anchorOffset;
+  const text = node.data;
+  let k = at - 1;
+  while (k > 0 && !/\s/.test(text[k])) k -= 1;
+  const before = k > 0 ? text[k - 1] : (node.previousSibling ? (node.previousSibling.textContent || '').slice(-1) : '');
+  if (text[k] === '\u00a0' && before && !/\s/.test(before) && k + 1 < at) {
+    node.replaceData(k, 1, ' ');
+    sel.collapse(node, at);
+  }
+}
+
 /* Updates the live preview in place to show `text`, keeping the scroll position and the loaded styles. Returns false
    when the head changed in ways only a fresh preview shows. */
 function morph(text, draft) {
@@ -201,6 +218,7 @@ function morph(text, draft) {
   const win = doc.defaultView;
   const y = win ? win.scrollY : 0;
   doc.body.replaceWith(doc.importNode(fresh.body, true));
+  revealFaded(doc);
   revealHidden(doc);
   if (win) win.scrollTo(0, y);
   ED.caret = null;
@@ -767,14 +785,44 @@ export function paintFrame() {
   const frame = h('iframe', { sandbox: 'allow-same-origin', title: 'Editable page', referrerpolicy: 'no-referrer' });
   const rs = modelOf(draft);
   frame.srcdoc = frameSource(rs ? rs.text : draft.text, draft.url);
-  frame.addEventListener('load', () => {
-    const doc = frame.contentDocument;
-    if (!doc || !doc.body) return;
+  /* The page is editable as soon as it is parsed: a slow image or font on the site never holds editing back. The
+     reveal passes need the page's styles, so they run again when everything has loaded. */
+  const reveal = (doc) => {
+    if (ED.frame !== frame) return;
+    revealFaded(doc);
     const revealed = revealHidden(doc);
+    const empty = !revealed && visibleTextLength(doc) < 40;
     if (ED.refs && ED.refs.hint) {
-      ED.refs.hint.textContent = revealed ? 'Showing what Google reads' : 'Click any text to edit it';
-      ED.refs.hint.title = revealed ? 'The live site builds its look with scripts, which never run here. This is the HTML Google and Ranksim score. Click any text to edit it.' : '';
+      ED.refs.hint.textContent = revealed ? 'Showing what Google reads' : empty ? 'Built by scripts' : 'Click any text to edit it';
+      ED.refs.hint.title = revealed ? 'The live site builds its look with scripts, which never run here. This is the HTML Google and Ranksim score. Click any text to edit it.'
+        : empty ? 'This page draws everything with scripts in the browser, so its HTML has almost no text for Google or Ranksim to read. Switch to HTML to see what is there.' : '';
     }
+  };
+  let started = null;
+  const start = () => {
+    const doc = frame.contentDocument;
+    if (!doc || !doc.body || doc === started || doc.URL !== 'about:srcdoc' || ED.frame !== frame) return;
+    started = doc;
+    reveal(doc);
+    setTimeout(() => reveal(doc), 1500); // styles that were still on their way
+    setup(doc);
+  };
+  frame.addEventListener('load', () => {
+    start();
+    if (started) reveal(started);
+  });
+  const poll = setInterval(() => {
+    const doc = frame.contentDocument;
+    if (ED.frame !== frame || !frame.isConnected) {
+      clearInterval(poll);
+      return;
+    }
+    if (doc && doc.URL === 'about:srcdoc' && doc.readyState !== 'loading') {
+      clearInterval(poll);
+      start();
+    }
+  }, 60);
+  const setup = (doc) => {
     doc.designMode = 'on';
     try {
       doc.execCommand('styleWithCSS', false, false); // no inline styles from the browser's own editing
@@ -782,7 +830,10 @@ export function paintFrame() {
     } catch (_err) {
       // older engines: the defaults are fine
     }
-    doc.addEventListener('input', () => { draft.touched = true; }); // at once, so a quick mode switch reads the edit
+    doc.addEventListener('input', (event) => {
+      draft.touched = true; // at once, so a quick mode switch reads the edit
+      if (event.inputType === 'insertText') plainSpace(doc);
+    });
     doc.addEventListener('input', debounce(() => {
       if (ED.frame !== frame) return;
       draft.touched = true;
@@ -815,7 +866,7 @@ export function paintFrame() {
       ED.ready = frame;
       ready();
     }
-  });
+  };
   if (ED.device === 'mobile') viewport.append(h('div', { class: 'device' }, frame));
   else viewport.append(frame);
   ED.frame = frame;

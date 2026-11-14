@@ -47,6 +47,7 @@ class FakeGoogle:
         self.give_refresh = True
         self.fail_next_api_with: int | None = None
         self.forbidden_sites: set[str] = set()
+        self.challenge = ""  # the code_challenge of the last authorization URL, checked at the exchange
 
     def transport(self) -> httpx.MockTransport:
         return httpx.MockTransport(self.handle)
@@ -65,6 +66,8 @@ class FakeGoogle:
             if form.get("client_id") != CLIENT_ID or form.get("client_secret") != CLIENT_SECRET:
                 return httpx.Response(401, json={"error": "invalid_client"})
             if form["grant_type"] == "authorization_code":
+                if self.challenge and gsc.pkce_challenge(form.get("code_verifier", "")) != self.challenge:
+                    return httpx.Response(400, json={"error": "invalid_grant", "error_description": "Missing code verifier."})
                 if form.get("code") != "good-code":
                     return httpx.Response(400, json={"error": "invalid_grant"})
                 reply = {"access_token": self._token(), "expires_in": 3599, "scope": self.scope, "token_type": "Bearer"}
@@ -152,11 +155,12 @@ def env(monkeypatch):
     monkeypatch.setenv(gsc.CLIENT_SECRET_ENV, CLIENT_SECRET)
     monkeypatch.setenv(secretbox.SECRET_ENV, SECRET)
     monkeypatch.delenv(gsc.REDIRECT_ENV, raising=False)
+    monkeypatch.delenv(gsc.PUBLIC_URL_ENV, raising=False)
 
 
 @pytest.fixture()
 def no_env(monkeypatch):
-    for name in (gsc.CLIENT_ID_ENV, gsc.CLIENT_SECRET_ENV, gsc.REDIRECT_ENV, secretbox.SECRET_ENV):
+    for name in (gsc.CLIENT_ID_ENV, gsc.CLIENT_SECRET_ENV, gsc.REDIRECT_ENV, gsc.PUBLIC_URL_ENV, secretbox.SECRET_ENV):
         monkeypatch.delenv(name, raising=False)
 
 
@@ -205,7 +209,9 @@ def _connect(box) -> dict:
     assert started.status_code == 200, started.text
     url = started.json()["url"]
     assert url.startswith(gsc.AUTH_URL + "?")
-    return {key: values[0] for key, values in parse_qs(urlsplit(url).query).items()}
+    query = {key: values[0] for key, values in parse_qs(urlsplit(url).query).items()}
+    box.google.challenge = query["code_challenge"]  # what Google remembers for this code
+    return query
 
 
 def _callback(box, params: dict):
@@ -885,3 +891,138 @@ def test_discovery_skips_rarely_seen_queries(tmp_path, env):
     rows = gsc.discovery_sources(project=_project(box), pages=[], ui=box.ui)
     assert [row["q"] for row in rows] == ["big search", "fifty search"]  # 1% of 5,000 is 50
     assert gsc.discovery_min_impressions(300) == 10 and gsc.discovery_min_impressions(5000) == 50 and gsc.discovery_min_impressions(5001) == 51
+
+
+def test_page_data_for_the_editor_panel(tmp_path, env):
+    box = _app(tmp_path)
+    _sign_in(box)
+    slug = box.project.slug
+    off = box.client.get(f"/api/v1/gsc/projects/{slug}/page", params={"url": "https://www.dirtcrew.example/pricing"}).json()
+    assert off["state"] == "off" and "page" not in off
+    query = _connect(box)
+    _callback(box, {"code": "good-code", "state": query["state"]})
+    data = box.client.get(f"/api/v1/gsc/projects/{slug}/page", params={"url": "http://dirtcrew.example/pricing/?utm=x#top"}).json()
+    assert data["state"] == "ready" and data["range"]["days"] == 28 and data["label"] == gsc.LABEL
+    assert data["page"] == {"page": "https://www.dirtcrew.example/pricing", "clicks": 50, "impressions": 900, "ctr": 0.0556, "position": 6.2}
+    assert [row["q"] for row in data["page_queries"]] == ["dirt work software", "heavy civil software"]
+    home = box.client.get(f"/api/v1/gsc/projects/{slug}/page", params={"url": "https://www.dirtcrew.example"}).json()
+    assert home["page"]["clicks"] == 70 and home["page_queries"][0]["q"] == "heavy civil software"
+    none = box.client.get(f"/api/v1/gsc/projects/{slug}/page", params={"url": "https://www.dirtcrew.example/new-page"}).json()
+    assert none["page"] is None and none["page_queries"] == []
+    assert gsc.page_key("HTTPS://WWW.Example.com/A/") == "example.com/A" and gsc.page_key("https://example.com") == "example.com/"
+
+
+def test_pkce_s256(tmp_path, env):
+    box = _app(tmp_path)
+    _sign_in(box)
+    query = _connect(box)
+    assert query["code_challenge_method"] == "S256" and len(query["code_challenge"]) == 43
+    payload = json.loads(secretbox.unseal(query["state"], purpose=gsc.STATE_PURPOSE))
+    assert gsc.pkce_challenge(payload["verifier"]) == query["code_challenge"]
+    assert payload["verifier"] not in json.dumps(query)  # never in the URL, only sealed inside the state
+    done = _callback(box, {"code": "good-code", "state": query["state"]})
+    assert done.headers["location"].endswith("?gsc=connected")
+    exchange = [form for kind, grant, form in box.google.calls if kind == "token"][0]
+    assert exchange["code_verifier"] == payload["verifier"]
+    # A code redeemed with another flow's verifier is refused by Google.
+    other = _connect(box)
+    box.google.challenge = "not-the-challenge-for-this-verifier-0000000"
+    refused = _callback(box, {"code": "good-code", "state": other["state"]})
+    assert refused.headers["location"].endswith("?gsc=invalid_grant")
+
+
+def test_public_url_pins_the_redirect_uri(monkeypatch):
+    request = SimpleNamespace(headers={"host": "evil.example"}, url=SimpleNamespace(scheme="http", netloc="evil.example"))
+    monkeypatch.delenv(gsc.REDIRECT_ENV, raising=False)
+    monkeypatch.delenv(gsc.PUBLIC_URL_ENV, raising=False)
+    assert gsc.redirect_uri_for(request) == "http://evil.example/api/v1/gsc/callback"
+    monkeypatch.setenv(gsc.PUBLIC_URL_ENV, "https://ranksim.example/")
+    assert gsc.redirect_uri_for(request) == "https://ranksim.example/api/v1/gsc/callback"
+    monkeypatch.setenv(gsc.PUBLIC_URL_ENV, "ranksim.example")
+    assert gsc.redirect_uri_for(request) == "https://ranksim.example/api/v1/gsc/callback"
+    monkeypatch.setenv(gsc.REDIRECT_ENV, "https://other.example/api/v1/gsc/callback")
+    assert gsc.redirect_uri_for(request) == "https://other.example/api/v1/gsc/callback"
+
+
+# -- Search Console as a free rank source -------------------------------------------------------------------------
+
+
+def _connected_box(tmp_path, pages=None):
+    from test_project import FakeCrawler
+
+    box = _app(tmp_path)
+    _sign_in(box)
+    box.crawler = FakeCrawler(pages or {})
+    box.ui.pull_options = {**(box.ui.pull_options or {}), "fetcher": box.crawler}
+    query = _connect(box)
+    _callback(box, {"code": "good-code", "state": query["state"]})
+    return box
+
+
+def test_gsc_positions_for_searches_without_google_results(tmp_path, env):
+    box = _connected_box(tmp_path)
+    report = box.client.get(f"/api/v1/projects/{box.project.slug}/report").json()
+    assert all(not row["checked"] and row["position"] is None for row in report["rankings"])  # no Google data, unchanged
+    section = report["gsc"]
+    assert section["positions_label"] == f"Search Console average position, {section['range']['label']}"
+    assert section["positions"]["heavy civil software"] == {"position": 11.1, "clicks": 50, "impressions": 3000, "ctr": 0.0167, "page": "https://www.dirtcrew.example/"}
+    assert section["positions"]["dirt work software"]["page"] == "https://www.dirtcrew.example/pricing"
+    assert "excavation estimating" not in section["positions"]  # no Search Console data for it either
+    assert "not a Google top 10 position" in section["positions_note"]
+
+
+def test_gsc_positions_never_touch_google_rows():
+    section = {"range": {"label": "Oct 1 to Oct 28, 2026"}, "searches": {"a": {"position": 4.2, "clicks": 1, "impressions": 9, "ctr": 0.1, "page": "p"}, "b": {"position": 7.0, "clicks": 0, "impressions": 3, "ctr": 0.0}}}
+    rankings = [{"q": "a", "checked": True, "position": 3}, {"q": "b", "checked": False, "position": None}, {"q": "c", "checked": False}]
+    out = gsc.rank_source(section, rankings)
+    assert list(out["positions"]) == ["b"] and rankings[0]["position"] == 3 and "gsc" not in rankings[1]
+    assert gsc.rank_source({"searches": {}}, rankings) == {}  # no data, nothing added
+
+
+def test_gsc_pages_are_read_for_issues(tmp_path, env):
+    from test_project import page_html
+
+    pages = {
+        "https://www.dirtcrew.example/": page_html("Heavy Civil Software for Contractors", "Heavy civil software"),
+        "https://www.dirtcrew.example/pricing": page_html("Pricing | Dirt Crew", "Plans and pricing"),
+        "https://www.dirtcrew.example/features": page_html("Features", "Features"),
+    }
+    box = _connected_box(tmp_path, pages)
+    gsc.after_pull(project=_project(box), report=None, ui=box.ui)
+    assert sorted(box.crawler.asked) == sorted(pages)  # best pages for tracked searches, then pages by clicks
+    gsc.after_pull(project=_project(box), report=None, ui=box.ui)
+    assert len(box.crawler.asked) == 3  # stored pages are not fetched again
+    report = box.client.get(f"/api/v1/projects/{box.project.slug}/report").json()
+    assert report["pages_read"] >= 3
+    found = [issue for issue in report["issues"] if issue["kind"] == "gsc-title-search"]
+    assert [(issue["search"], issue["page"]) for issue in found] == [("dirt work software", "https://www.dirtcrew.example/pricing")]
+    issue = found[0]
+    assert issue["element"]["selector"] == "title" and "average position 8.4" in issue["comment"] and "Google Search Console" in issue["comment"]
+    assert not any(dash in json.dumps(found, ensure_ascii=False) for dash in DASHES)
+
+
+def test_page_feed_stays_on_the_site_and_off_when_gsc_is_off(tmp_path, env):
+    project = SimpleNamespace(searches=["x"], is_our_url=lambda url: "dirtcrew.example" in url)
+    snapshot = {"query_pages": [{"q": "x", "page": "https://evil.example/x", "clicks": 9, "impressions": 9}], "pages": [{"page": "https://www.dirtcrew.example/a"}, {"page": "javascript:alert(1)"}]}
+    assert gsc.feed_urls(project, snapshot) == ["https://www.dirtcrew.example/a"]
+    box = _connected_box(tmp_path)
+    _post(box, f"/api/v1/gsc/projects/{box.project.slug}", {"enabled": False})
+    gsc.after_pull(project=_project(box), report=None, ui=box.ui)
+    assert box.crawler.asked == []
+
+
+def test_client_report_carries_search_console_apart_from_google(tmp_path, env):
+    from aeo.ranksim.plugins import share
+
+    box = _connected_box(tmp_path)
+    data = share.client_report(box.ui, _project(box))
+    sc = data["search_console"]
+    assert sc["label"] == gsc.LABEL and sc["range"] and sc["totals"]["clicks"] == 120
+    assert [row["q"] for row in sc["positions"]] == ["dirt work software", "heavy civil software"]  # best average first
+    assert sc["positions"][0] == {"q": "dirt work software", "position": 8.4, "impressions": 900, "clicks": 30, "page": "/pricing"}
+    assert all(row["position"] is None for row in data["rankings"])  # Google positions stay empty
+    assert "not Google top 10 positions" in sc["note"]
+    _post(box, f"/api/v1/gsc/projects/{box.project.slug}", {"enabled": False})
+    share_state = share._state(box.ui)
+    share_state["cache"].clear()
+    assert "search_console" not in share.client_report(box.ui, _project(box))  # absent when off: the key set stays as before

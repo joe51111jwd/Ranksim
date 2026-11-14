@@ -41,8 +41,22 @@ def registry(ui) -> JobRegistry:
     reg = getattr(ui, "job_registry", None)
     if reg is None:
         cloud = getattr(ui, "cloud", None)
-        store = cloud.store if cloud is not None and getattr(cloud, "enabled", False) else None
-        reg = JobRegistry(store, scrub=ui.scrub)
+        hosted = cloud is not None and getattr(cloud, "enabled", False)
+        on_finish = recall = None
+        if hosted:
+            # Vercel Blob operations are capped per month: a job's final (or paused) record rides in the manifest of
+            # the job's own data save, one put for both (cloud.record_job), and is read back from the manifest.
+            def on_finish(record: dict) -> bool:
+                cloud.record_job(record)
+                cloud.save()
+                return True
+
+            def recall(job_id: str, fresh: bool):
+                if fresh:
+                    cloud.refresh(hint=cloud.stamp + 1)  # one look for a newer save, at most every few seconds
+                return cloud.job_record(job_id)
+
+        reg = JobRegistry(cloud.store if hosted else None, scrub=ui.scrub, frugal=hosted, on_finish=on_finish, recall=recall)
         ui.job_registry = reg
     return reg
 
@@ -96,7 +110,11 @@ def _job_stream(ui, record: dict, first: dict, resume_work) -> StreamingResponse
                 yield {"type": "error", "error": "That job is gone."}
                 return
             if end.get("status") in TERMINAL or end.get("status") == "paused":
-                yield _terminal_line({**end, "id": job_id})
+                line = _terminal_line({**end, "id": job_id})
+                cloud = getattr(ui, "cloud", None)
+                if cloud is not None and getattr(cloud, "enabled", False):
+                    line["sync"] = str(cloud.stamp)  # the browser keeps it in rs_sync, so the next request sees this save
+                yield line
                 return
             if end.get("stalled") and resume_work is not None:
                 taken = reg.resume(job_id, resume_work)
@@ -105,7 +123,7 @@ def _job_stream(ui, record: dict, first: dict, resume_work) -> StreamingResponse
             if time.monotonic() - began > STREAM_SECONDS:
                 yield _terminal_line({"status": "paused", "id": job_id})
                 return
-            time.sleep(POLL_SECONDS)  # running on another instance: poll storage
+            time.sleep(POLL_SECONDS * (10 if reg.frugal else 1))  # running on another instance: poll storage (a list each)
 
     async def lines():
         gen = lines_sync()
@@ -290,8 +308,10 @@ class _CheckpointedSerp:
             return [SerpHit(**row) for row in kept]
         hits = self.inner.search(query, count)
         with self._lock:
-            self.ctx.checkpoint.setdefault("serp", {})[key] = [asdict(hit) for hit in hits]
-            self.ctx.save_checkpoint()
+            kept = self.ctx.checkpoint.setdefault("serp", {})
+            kept[key] = [asdict(hit) for hit in hits]
+            if len(kept) % 5 == 0:
+                self.ctx.save_checkpoint()  # every few answers (each save is a storage write); a pause keeps them all
         return hits
 
     def close(self) -> None:
@@ -428,8 +448,7 @@ def _run_pull(ui, project, use_google: bool, events, *, notify: bool = True, ctx
     except JobPaused:
         events.put({"type": "progress", "step": "store", "message": "Saving progress. It continues in a moment.", "done": 0, "total": 1, "seconds": 0})
         ui.forget(project.slug)
-        _save_now(ui)
-        raise
+        raise  # the job saves the project with its paused record
     ui.forget(project.slug)
     if report.searches_with_results:
         from aeo.ranksim.competitors import pick_competitors
@@ -450,7 +469,8 @@ def _run_pull(ui, project, use_google: bool, events, *, notify: bool = True, ctx
     cloud = getattr(ui, "cloud", None)
     if cloud is not None and cloud.enabled:
         events.put({"type": "progress", "step": "store", "message": "Saving the project, pages and engine.", "done": 0, "total": 1, "seconds": 0})
-        cloud.save()
+        if ctx is None:
+            cloud.save()  # a job saves once, with its final record, when it ends
     return summary
 
 
@@ -552,8 +572,7 @@ def _analyze_rest(ui, project, chosen: list, events, step, ctx, *, resumed: bool
         events.put({"type": "project", "slug": project.slug, "name": project.name, "site": project.site})
     google = google_status(ui)
     if ctx is not None and ctx.should_pause():
-        _save_now(ui)
-        raise JobPaused("time budget")
+        raise JobPaused("time budget")  # the job saves the project with its paused record
     previous = latest_google(project)
     can_rank = google["ready"] or (previous is not None and any(entry.results for entry in previous.searches))
     if can_rank:
@@ -581,8 +600,8 @@ def _analyze_rest(ui, project, chosen: list, events, step, ctx, *, resumed: bool
         step("google", "Search data isn't connected on this server yet, so rankings are skipped. Your pages were still checked.", state="skipped")
     _after_pull(ui, project, summary)  # before the cloud save, so what plugins store is kept
     cloud = getattr(ui, "cloud", None)
-    if cloud is not None and cloud.enabled:
-        cloud.save()
+    if cloud is not None and cloud.enabled and ctx is None:
+        cloud.save()  # a job saves once, with its final record, when it ends
     ui.forget(project.slug)
     step("report", "Report ready.", 1, 1, state="done")
     return {"slug": project.slug, "searches": chosen, "pull": summary}

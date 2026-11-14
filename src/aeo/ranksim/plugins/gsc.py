@@ -47,7 +47,8 @@ HOSTED_REDIRECT_URI = "https://ranksim.vercel.app" + CALLBACK_PATH
 
 CLIENT_ID_ENV = "GOOGLE_OAUTH_CLIENT_ID"
 CLIENT_SECRET_ENV = "GOOGLE_OAUTH_CLIENT_SECRET"
-REDIRECT_ENV = "GOOGLE_OAUTH_REDIRECT_URI"  # optional override when the public address differs from the Host header
+REDIRECT_ENV = "GOOGLE_OAUTH_REDIRECT_URI"  # optional: the whole redirect URI
+PUBLIC_URL_ENV = "RANKSIM_PUBLIC_URL"  # optional: pins the redirect URI's base (https://ranksim.example), else the request
 
 STATE_PURPOSE = "gsc-oauth-state"
 REFRESH_PURPOSE = "gsc-refresh-token"
@@ -121,6 +122,11 @@ def redirect_uri_for(request) -> str:
     override = os.environ.get(REDIRECT_ENV, "").strip()
     if override:
         return override
+    public = os.environ.get(PUBLIC_URL_ENV, "").strip().rstrip("/")
+    if public:
+        parts = urlsplit(public if "://" in public else "https://" + public)
+        if parts.scheme in {"http", "https"} and parts.netloc:
+            return f"{parts.scheme}://{parts.netloc}{CALLBACK_PATH}"
     proto = (request.headers.get("x-forwarded-proto") or request.url.scheme or "http").split(",")[0].strip().lower()
     if proto not in {"http", "https"}:
         proto = "https"
@@ -249,17 +255,17 @@ class GoogleClient:
         except httpx.HTTPError as exc:
             raise GscError(f"Google did not answer ({type(exc).__name__}). Try again in a moment.", code="network", status=502) from None
 
-    def exchange_code(self, config: dict, code: str, redirect_uri: str) -> dict:
-        response = self._post_form(
-            TOKEN_URL,
-            {
-                "grant_type": "authorization_code",
-                "code": code,
-                "redirect_uri": redirect_uri,
-                "client_id": config["client_id"],
-                "client_secret": config["client_secret"],
-            },
-        )
+    def exchange_code(self, config: dict, code: str, redirect_uri: str, verifier: str = "") -> dict:
+        form = {
+            "grant_type": "authorization_code",
+            "code": code,
+            "redirect_uri": redirect_uri,
+            "client_id": config["client_id"],
+            "client_secret": config["client_secret"],
+        }
+        if verifier:
+            form["code_verifier"] = verifier
+        response = self._post_form(TOKEN_URL, form)
         return _token_reply(response, during="connect")
 
     def refresh(self, config: dict, refresh_token: str) -> dict:
@@ -433,10 +439,19 @@ def session_binding(ui, request) -> str:
     return hashlib.sha256(f"gsc-state|{value}".encode("utf-8")).hexdigest()[:32] if value else ""
 
 
-def make_state(ui, request, slug: str, redirect_uri: str) -> tuple[str, str]:
+def make_state(ui, request, slug: str, redirect_uri: str) -> tuple[str, str, str]:
+    """(sealed state, nonce for the cookie, PKCE challenge for the authorization URL)."""
     nonce = secrets.token_urlsafe(24)
-    payload = {"slug": slug, "nonce": nonce, "exp": int(_now(ui) + STATE_SECONDS), "sess": session_binding(ui, request), "redirect_uri": redirect_uri}
-    return secretbox.seal(json.dumps(payload, sort_keys=True), purpose=STATE_PURPOSE), nonce
+    # PKCE (S256): the verifier travels only inside the sealed state, so an intercepted code cannot be redeemed alone.
+    payload = {
+        "slug": slug,
+        "nonce": nonce,
+        "exp": int(_now(ui) + STATE_SECONDS),
+        "sess": session_binding(ui, request),
+        "redirect_uri": redirect_uri,
+        "verifier": secrets.token_urlsafe(48),
+    }
+    return secretbox.seal(json.dumps(payload, sort_keys=True), purpose=STATE_PURPOSE), nonce, pkce_challenge(payload["verifier"])
 
 
 def check_state(ui, request, state: str, *, bind_session: bool = True) -> dict:
@@ -464,7 +479,7 @@ def complete_connection(ui, project, code: str, payload: dict) -> str:
     cloud = getattr(ui, "cloud", None)
     if cloud is not None and getattr(cloud, "enabled", False):
         cloud.refresh(force=True)
-    tokens = client_for(ui).exchange_code(oauth_config(), code, str(payload["redirect_uri"]))
+    tokens = client_for(ui).exchange_code(oauth_config(), code, str(payload["redirect_uri"]), str(payload.get("verifier") or ""))
     if SCOPE not in str(tokens.get("scope") or SCOPE).split():
         # Not stored. No revoke: Google's revoke ends the whole grant, which could cut a working connection.
         raise GscError("Search Console access was not granted.", code="scope_missing")
@@ -491,7 +506,14 @@ def complete_connection(ui, project, code: str, payload: dict) -> str:
     return result
 
 
-def auth_url(config: dict, redirect_uri: str, state: str) -> str:
+def pkce_challenge(verifier: str) -> str:
+    import base64
+
+    digest = hashlib.sha256(verifier.encode("ascii")).digest()
+    return base64.urlsafe_b64encode(digest).decode("ascii").rstrip("=")
+
+
+def auth_url(config: dict, redirect_uri: str, state: str, *, challenge: str = "") -> str:
     query = {
         "client_id": config["client_id"],
         "redirect_uri": redirect_uri,
@@ -502,6 +524,9 @@ def auth_url(config: dict, redirect_uri: str, state: str) -> str:
         "include_granted_scopes": "true",
         "state": state,
     }
+    if challenge:
+        query["code_challenge"] = challenge
+        query["code_challenge_method"] = "S256"
     return AUTH_URL + "?" + urlencode(query)
 
 
@@ -754,6 +779,36 @@ def report_section(ui, project) -> dict:
     return data
 
 
+PAGE_QUERIES = 10
+
+
+def page_key(url: str) -> str:
+    """A page address compared loosely: no scheme, no www, no query or fragment, no trailing slash, lowercase host."""
+    parts = urlsplit(str(url or "").strip())
+    host = (parts.hostname or "").lower().removeprefix("www.")
+    path = parts.path.rstrip("/") or "/"
+    return f"{host}{path}"
+
+
+def page_data(ui, project, url: str) -> dict:
+    """Search Console numbers for one page and its top searches, from the stored snapshot (no network)."""
+    data = project_state(ui, project)
+    data["url"] = url
+    snapshot = load_snapshot(project)
+    if "range" not in data or not snapshot:
+        return data
+    key = page_key(url)
+    row = next((item for item in snapshot.get("pages") or [] if page_key(item["page"]) == key), None)
+    queries = sorted(
+        ({k: pair[k] for k in ("q", "clicks", "impressions", "ctr", "position")} for pair in snapshot.get("query_pages") or [] if page_key(pair["page"]) == key),
+        key=lambda item: (-item["impressions"], -item["clicks"], item["q"]),
+    )
+    data["page"] = {k: row[k] for k in ("page", "clicks", "impressions", "ctr", "position")} if row else None
+    data["page_queries"] = queries[:PAGE_QUERIES]
+    data["page_query_count"] = len(queries)
+    return data
+
+
 NEAR_MIN, NEAR_MAX = 8.0, 20.0
 OPPORTUNITY_LIMIT = 25
 # A rough typical click rate by position on page one (organic, desktop and mobile mixed). A benchmark for spotting
@@ -974,7 +1029,177 @@ def discovery_sources(*, project, pages=None, ui=None) -> list[dict]:
 def extend_report(report: dict, *, project=None, meta=None, database=None, ctx=None, ui=None) -> None:
     if ui is None or project is None:
         return
-    report[NAME] = report_section(ui, project)
+    section = report_section(ui, project)
+    section.update(rank_source(section, report.get("rankings") or []))
+    report[NAME] = section
+
+
+def rank_source(section: dict, rankings: list) -> dict:
+    """Search Console as a free rank source. For each tracked search Google has no results for yet (no search data
+    key, or not pulled), the Search Console average position and the page that gets most of its clicks. Kept apart
+    from Google top 10 positions: its own key and its own label, never merged into a ranking row."""
+    if "range" not in section:
+        return {}
+    searches = section.get("searches") or {}
+    positions = {}
+    for row in rankings:
+        if not isinstance(row, dict) or row.get("checked"):
+            continue
+        q = str(row.get("q") or "")
+        hit = searches.get(q)
+        if hit and hit.get("position"):
+            positions[q] = {key: hit[key] for key in ("position", "clicks", "impressions", "ctr") if key in hit}
+            positions[q]["page"] = hit.get("page", "")
+    return {
+        "positions": positions,
+        "positions_label": f"Search Console average position, {section['range']['label']}",
+        "positions_note": "Average position over 28 days from Google Search Console, for searches without Google top 10 results "
+        "yet. It is not a Google top 10 position and is never mixed into one.",
+    }
+
+
+def client_section(report: dict) -> dict | None:
+    """What the client report (share plugin) shows from Search Console: totals for the date range and the average
+    position per tracked search without Google data. Plain values only; None when Search Console has no data."""
+    section = report.get(NAME) if isinstance(report, dict) else None
+    if not isinstance(section, dict) or section.get("state") not in {"ready", "error"} or not isinstance(section.get("range"), dict):
+        return None
+    totals = section.get("totals") or {}
+    positions = []
+    for q, row in sorted((section.get("positions") or {}).items(), key=lambda item: item[1].get("position") or 99):
+        page = str(row.get("page") or "")
+        positions.append({
+            "q": str(q)[:200],
+            "position": round(float(row.get("position") or 0), 1),
+            "impressions": int(row.get("impressions") or 0),
+            "clicks": int(row.get("clicks") or 0),
+            "page": (urlsplit(page).path or "/") if page.startswith(("http://", "https://")) else "",
+        })
+    return {
+        "label": LABEL,
+        "range": str(section["range"].get("label") or "")[:80],
+        "totals": {key: totals.get(key) for key in ("clicks", "impressions", "ctr", "position") if isinstance(totals.get(key), (int, float))},
+        "positions": positions[:50],
+        "positions_label": str(section.get("positions_label") or "")[:120],
+        "note": "Search Console numbers are Google's own data for the site over the dates shown. Average positions are not "
+        "Google top 10 positions.",
+    }
+
+
+FEED_LIMIT = 15
+
+
+def feed_urls(project, snapshot: dict) -> list[str]:
+    """The site's own pages Search Console says matter: the best page for each tracked search, then the pages with the
+    most clicks. Only the project's own site."""
+    wanted: list[str] = []
+    tracked = {_loose(q) for q in getattr(project, "searches", None) or []}
+    best: dict[str, dict] = {}
+    for pair in snapshot.get("query_pages") or []:
+        key = _loose(pair["q"])
+        if key in tracked and (key not in best or (pair["clicks"], pair["impressions"]) > (best[key]["clicks"], best[key]["impressions"])):
+            best[key] = pair
+    wanted.extend(pair["page"] for pair in best.values())
+    wanted.extend(row["page"] for row in snapshot.get("pages") or [])
+    out, seen = [], set()
+    for url in wanted:
+        key = page_key(url)
+        if key in seen or not project.is_our_url(url) or urlsplit(url).scheme not in {"http", "https"}:
+            continue
+        seen.add(key)
+        out.append(url)
+    return out[:FEED_LIMIT]
+
+
+def feed_pages(ui, project) -> list[str]:
+    """Fetch and store the Search Console pages the site read has not stored yet, so Issues covers them. Returns the
+    URLs fetched. Uses the app's crawler (robots respected, private addresses refused), or the test fetcher."""
+    snapshot = load_snapshot(project)
+    if not snapshot or snapshot.get("property") != load_settings(project)["property"]:
+        return []
+    urls = feed_urls(project, snapshot)
+    if not urls:
+        return []
+    from aeo.ranksim.project import _crawler_batch, _record_fetch
+    from aeo.ranksim.store import RsPage, open_session
+
+    session = open_session(ui.database)
+    try:
+        stored = {page_key(row.url) for row in session.query(RsPage).filter(RsPage.domain.in_([project.domain, "www." + project.domain.removeprefix("www.")])).all() if row.status == "fetched"}
+        missing = [url for url in urls if page_key(url) not in stored]
+        if not missing:
+            return []
+        fetch = (getattr(ui, "pull_options", None) or {}).get("fetcher") or _crawler_batch(ui.settings, 0.2)
+        fetched = []
+        for url in missing:
+            try:
+                result = fetch([url])[0]
+            except Exception:  # noqa: BLE001 - one page that cannot be read never stops the rest
+                continue
+            _record_fetch(session, url, result, None, True, [])
+            fetched.append(url)
+        session.commit()
+    finally:
+        session.close()
+    return fetched
+
+
+def audit_checks() -> list:
+    return [check_title_uses_search]
+
+
+def check_title_uses_search(ctx) -> list[dict]:
+    """For tracked searches Google has no results for yet: when Search Console shows the site's best page for the search
+    and that page's title does not use the search's words, say so on the title."""
+    project = getattr(ctx, "project", None)
+    if project is None or not getattr(project, "dir", None):
+        return []
+    settings = load_settings(project)
+    snapshot = load_snapshot(project)
+    if not (settings["enabled"] and settings["property"] and snapshot and snapshot.get("property") == settings["property"]):
+        return []
+    section = {"range": {"label": _range_label(snapshot["start"], snapshot["end"])}, "searches": _search_rows(project, snapshot)}
+    positions = rank_source(section, getattr(ctx, "rankings", None) or [])["positions"]
+    pages = {page_key(page.url): page for page in getattr(ctx, "readable", None) or []}
+    issues = []
+    for q, hit in positions.items():
+        page = pages.get(page_key(hit.get("page") or ""))
+        if page is None:
+            continue
+        words = [word for word in _loose(q).split() if len(word) > 2]
+        title = _loose(page.title)
+        if not words or all(word in title for word in words):
+            continue
+        issues.append(
+            {
+                "severity": "medium",
+                "kind": "gsc-title-search",
+                "title": f'Title does not use "{q}"',
+                "comment": f'Google Search Console shows this page at average position {hit["position"]} for "{q}" '
+                f'({hit.get("impressions", 0)} impressions, {section["range"]["label"]}). Its title does not use those words.',
+                "fix": "Work the search into the title, near the start, in words a person would click.",
+                "page": page.url,
+                "search": q,
+                "element": {"selector": "title", "text": (page.title or "")[:160]},
+                "evidence": [f"Search Console average position {hit['position']}", f"{hit.get('impressions', 0)} impressions in 28 days"],
+            }
+        )
+    return issues
+
+
+def _search_rows(project, snapshot: dict) -> dict:
+    by_query = {_loose(item["q"]): item for item in snapshot.get("queries") or []}
+    best: dict[str, dict] = {}
+    for pair in snapshot.get("query_pages") or []:
+        key = _loose(pair["q"])
+        if key not in best or (pair["clicks"], pair["impressions"]) > (best[key]["clicks"], best[key]["impressions"]):
+            best[key] = pair
+    rows = {}
+    for q in getattr(project, "searches", None) or []:
+        row = by_query.get(_loose(q))
+        if row:
+            rows[q] = {**{k: row[k] for k in ("clicks", "impressions", "ctr", "position")}, "page": best[_loose(q)]["page"] if _loose(q) in best else ""}
+    return rows
 
 
 def after_pull(*, project=None, report=None, ui=None) -> None:
@@ -987,6 +1212,10 @@ def after_pull(*, project=None, report=None, ui=None) -> None:
         refresh_project(ui, project)
     except GscError:
         pass  # recorded in settings; the pull itself is not affected
+    try:
+        feed_pages(ui, project)
+    except Exception as exc:  # noqa: BLE001 - reading extra pages never breaks a pull
+        print(f"ranksim: gsc: page feed skipped: {type(exc).__name__}", flush=True)
 
 
 def settings_schema() -> dict:
@@ -1062,6 +1291,13 @@ def register(app, ui) -> None:
             return common._error(404, "No such project.")
         return JSONResponse(status_payload(request, project))
 
+    @app.get("/api/v1/gsc/projects/{slug}/page")
+    def gsc_page(slug: str, url: str = "") -> JSONResponse:
+        project = project_or_404(slug)
+        if project is None:
+            return common._error(404, "No such project.")
+        return JSONResponse(page_data(ui, project, url[:2000]))
+
     @app.get("/api/v1/gsc/projects/{slug}/properties")
     async def gsc_properties(slug: str) -> JSONResponse:
         blocked = common._not_public(ui)
@@ -1090,8 +1326,8 @@ def register(app, ui) -> None:
         if not config["ready"]:
             return common._error(409, "Search Console is not set up yet. " + " ".join(f"Set {name}." for name in config["missing"]))
         uri = redirect_uri_for(request)
-        state, nonce = make_state(ui, request, project.slug, uri)
-        response = JSONResponse({"url": auth_url(config, uri, state)})
+        state, nonce, challenge = make_state(ui, request, project.slug, uri)
+        response = JSONResponse({"url": auth_url(config, uri, state, challenge=challenge)})
         secure = uri.startswith("https://")
         response.set_cookie(NONCE_COOKIE, nonce, max_age=STATE_SECONDS, httponly=True, secure=secure, samesite="lax", path="/api/v1/gsc")
         return response

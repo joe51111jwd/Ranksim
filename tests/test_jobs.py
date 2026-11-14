@@ -1,516 +1,225 @@
-"""Tests for the job registry (jobs.py): no network, fake clocks, two registries on one store act as two instances."""
+"""Jobs: ids, events, per-key locks across instances, pause and resume, reattach. No network, no keys."""
 
 from __future__ import annotations
 
-import json
 import threading
 import time
 
 import pytest
 
-from aeo.ranksim import jobs
-from aeo.ranksim.jobs import JobPaused, JobRegistry, ResumableFetch, valid_job_id
-from aeo.ranksim.loop import FetchResult
+from aeo.ranksim.jobs import JobPaused, JobRegistry, valid_job_id
 from aeo.ranksim.objects import DirStore, MemoryStore
 
-SECRET = "sk-test-FAKE-0123456789"
+SECRET = "sk-live-JOBS-0123456789"
 
 
 class Clock:
-    """A controllable clock: time moves only when the test says so."""
-
-    def __init__(self, t: float = 1_000.0) -> None:
-        self.t = t
+    def __init__(self, now: float = 1000.0) -> None:
+        self.now = now
 
     def __call__(self) -> float:
-        return self.t
-
-    def advance(self, seconds: float) -> None:
-        self.t += seconds
+        return self.now
 
 
-def scrub(text: str) -> str:
-    return text.replace(SECRET, "[redacted]")
+def _wait(reg, job_id, timeout=5.0):
+    assert reg.join(job_id, timeout), "the job did not finish"
 
 
-def wait_for(predicate, timeout: float = 2.0) -> bool:
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        if predicate():
-            return True
-        time.sleep(0.01)
-    return predicate()
+def _scrub(text: str) -> str:
+    return text.replace(SECRET, "[key]")
 
 
-def blocking_work(gate: threading.Event, started: threading.Event | None = None, checkpoint: dict | None = None):
-    """Work that saves a checkpoint (which persists), emits progress, then waits for the gate."""
+def test_a_job_runs_emits_and_finishes():
+    reg = JobRegistry(MemoryStore(), scrub=_scrub)
 
     def work(ctx):
-        ctx.emit({"type": "progress", "message": "crawling", "done": 1})
-        ctx.save_checkpoint(checkpoint or {"step": 1})
-        if started is not None:
-            started.set()
-        gate.wait(5)
-        return {"attempt": ctx.attempt}
+        for n in range(3):
+            ctx.emit({"type": "step", "n": n, "message": f"step {n} with {SECRET}"})
+        return {"answer": 42}
 
-    return work
-
-
-def job_snapshots(store, job_id: str) -> list[str]:
-    return [n for n in store.list(f"ranksim/v2/jobs/{job_id}/") if n.endswith(".json")]
-
-
-# -- basics ------------------------------------------------------------------------------------------
+    record = reg.start("analyze", "site:a.example", "Analysis", work)
+    assert valid_job_id(record["id"]) and record["status"] in {"running", "done"}
+    _wait(reg, record["id"])
+    view = reg.events_since(record["id"], 0)
+    assert view["status"] == "done" and view["result"] == {"answer": 42}
+    assert [e["n"] for e in view["events"]] == [0, 1, 2] and view["cursor"] == 3
+    assert reg.events_since(record["id"], 2)["events"][0]["n"] == 2
+    assert SECRET not in str(view)
 
 
-def test_start_finish_events_and_cursor_paging():
-    reg = JobRegistry(clock=Clock())
-
-    def work(ctx):
-        assert ctx.params == {"site": "example.com"}
-        assert ctx.checkpoint == {} and ctx.attempt == 1
-        for i in range(3):
-            ctx.emit({"type": "progress", "n": i})
-        return {"pages": 3}
-
-    job = reg.start("analyze", "site:example.com", "Analyze example.com", work, params={"site": "example.com"})
-    assert valid_job_id(job["id"]) and len(job["id"]) >= 16
-    assert reg.join(job["id"], 2)
-    record = reg.get(job["id"])
-    assert record["status"] == "done" and record["result"] == {"pages": 3}
-    assert record["kind"] == "analyze" and record["key"] == "site:example.com" and record["attempts"] == 1
-
-    everything = reg.events_since(job["id"], 0)
-    seqs = [e["seq"] for e in everything["events"]]
-    assert seqs == sorted(seqs) and len(set(seqs)) == len(seqs)
-    assert [e["n"] for e in everything["events"] if e.get("type") == "progress"] == [0, 1, 2]
-    assert everything["events"][-1] == {**everything["events"][-1], "type": "status", "status": "done"}
-    assert everything["cursor"] == seqs[-1]
-
-    # Paging: only events after the cursor, and the cursor stays put when nothing is new.
-    middle = seqs[1]
-    page = reg.events_since(job["id"], middle)
-    assert [e["seq"] for e in page["events"]] == seqs[2:]
-    empty = reg.events_since(job["id"], everything["cursor"])
-    assert empty["events"] == [] and empty["cursor"] == everything["cursor"]
-    assert empty["resumable"] is False and empty["stalled"] is False
-
-
-def test_error_is_scrubbed_and_secret_never_stored():
+def test_errors_are_scrubbed_and_the_lock_is_released():
     store = MemoryStore()
-    reg = JobRegistry(store, scrub=scrub, clock=Clock())
+    reg = JobRegistry(store, scrub=_scrub)
 
-    def work(ctx):
-        ctx.emit({"type": "log", "message": f"using {SECRET}", "nested": {"headers": [f"Bearer {SECRET}"]}})
-        raise RuntimeError(f"provider refused key {SECRET}")
+    def boom(ctx):
+        raise RuntimeError(f"provider said no to {SECRET}")
 
-    job = reg.start("pull", "project:demo", "Pull", work)
-    reg.join(job["id"], 2)
-    record = reg.get(job["id"])
-    assert record["status"] == "error"
-    assert record["error"].startswith("RuntimeError: provider refused key [redacted]")
-    assert SECRET not in json.dumps(record)
+    record = reg.start("pull", "site:a.example", "Pull", boom)
+    _wait(reg, record["id"])
+    assert reg.get(record["id"])["status"] == "error" and SECRET not in reg.get(record["id"])["error"]
+    assert not any(name.startswith("ranksim/v2/locks/") for name in store.items)
+    again = reg.start("pull", "site:a.example", "Pull", lambda ctx: {"ok": True})
+    assert again["id"] != record["id"] and not again.get("attached")
     assert all(SECRET.encode() not in body for body in store.items.values())
 
 
-def test_custom_error_text_and_events_cap():
-    reg = JobRegistry(clock=Clock())
-
-    def work(ctx):
-        for i in range(jobs.MAX_EVENTS + 20):
-            ctx.emit({"n": i})
-        raise ValueError("boom")
-
-    job = reg.start("analyze", "site:cap.test", "Cap", work, error_text=lambda exc: "Analysis failed, try again.")
-    reg.join(job["id"], 2)
-    record = reg.get(job["id"])
-    assert record["error"] == "Analysis failed, try again."
-    assert len(record["events"]) == jobs.MAX_EVENTS
-    assert record["events"][-1]["seq"] > jobs.MAX_EVENTS  # seq keeps counting past the cap
-    assert reg.events_since(job["id"], 0)["truncated"] is True
-
-
-def test_job_id_validation_rejects_path_tricks():
-    reg = JobRegistry(clock=Clock())
-    for bad in ["../../etc/passwd", "a/b", "..", "", "abc", "x" * 65, "abcdefghijklmnop/..", "abcdefghijklmnop--1", None, 12]:
-        assert not valid_job_id(bad)
-        assert reg.get(bad) is None
-        assert reg.events_since(bad, 0) is None
-        assert reg.resume(bad, lambda ctx: {}) is None
-        assert list(reg.follow(bad)) == []
-    assert reg.get("A" * 20) is None  # well formed but unknown
-
-
-# -- two instances -----------------------------------------------------------------------------------
-
-
-def test_second_instance_reads_progress_and_attaches_instead_of_starting():
+def test_a_second_instance_attaches_instead_of_starting_twice_and_other_keys_run():
     store = MemoryStore()
-    clock = Clock()
-    a = JobRegistry(store, clock=clock, instance="a")
-    b = JobRegistry(store, clock=clock, instance="b")
-    gate, started = threading.Event(), threading.Event()
-    try:
-        job = a.start("analyze", "site:shared.test", "Analyze", blocking_work(gate, started))
-        assert started.wait(2)
-        seen = b.events_since(job["id"], 0)  # from the stored snapshot: B does not run the job
-        assert seen["status"] == "running" and seen["stalled"] is False
-        assert any(e.get("message") == "crawling" for e in seen["events"])
-
-        ran = []
-        attached = b.start("analyze", "site:shared.test", "Analyze again", lambda ctx: ran.append(1) or {})
-        assert attached["attached"] is True and attached["id"] == job["id"]
-        assert [j["id"] for j in b.active("site:shared.test")] == [job["id"]]
-        assert [j["id"] for j in b.active()] == [job["id"]]
-        # Same instance, same key: attaches too.
-        assert a.start("analyze", "site:shared.test", "Again", lambda ctx: {})["attached"] is True
-    finally:
-        gate.set()
-    assert a.join(job["id"], 2)
-    assert b.get(job["id"])["status"] == "done"
-    assert ran == []
-    assert b.active("site:shared.test") == []
-
-
-def test_different_keys_run_concurrently():
-    store = MemoryStore()
-    a = JobRegistry(store, clock=Clock(), instance="a")
-    b = JobRegistry(store, clock=Clock(), instance="b")
+    a, b = JobRegistry(store), JobRegistry(store)
     gate = threading.Event()
-    s1, s2 = threading.Event(), threading.Event()
-    try:
-        one = a.start("analyze", "site:one.test", "One", blocking_work(gate, s1))
-        two = b.start("analyze", "site:two.test", "Two", blocking_work(gate, s2))
-        assert s1.wait(2) and s2.wait(2)
-        assert "attached" not in one and "attached" not in two and one["id"] != two["id"]
-        assert {j["key"] for j in a.active()} == {"site:one.test", "site:two.test"}
-    finally:
-        gate.set()
-    assert a.join(one["id"], 2) and b.join(two["id"], 2)
-    assert a.get(two["id"])["status"] == "done" and b.get(one["id"])["status"] == "done"
+    first = a.start("analyze", "site:a.example", "A", lambda ctx: gate.wait(5) and {"slug": "a"})
+    attached = b.start("analyze", "site:a.example", "A again", lambda ctx: pytest.fail("must not run twice"))
+    assert attached["attached"] is True and attached["id"] == first["id"] and attached["status"] == "running"
+    seen = b.get(first["id"])  # another instance reads the job from its lock
+    assert seen["status"] == "running" and not seen["stalled"]
+    other = b.start("analyze", "site:b.example", "B", lambda ctx: {"slug": "b"})
+    assert not other.get("attached")
+    _wait(b, other["id"])
+    gate.set()
+    _wait(a, first["id"])
+    assert b.get(first["id"])["status"] == "done" and b.get(first["id"])["result"] == {"slug": "a"}
 
 
-def test_stale_job_is_resumable_and_another_instance_resumes_with_checkpoint():
-    store = MemoryStore()
-    clock_a, clock_b = Clock(1_000.0), Clock(1_000.0)
-    a = JobRegistry(store, clock=clock_a, instance="a")
-    b = JobRegistry(store, clock=clock_b, instance="b")
-    gate, started = threading.Event(), threading.Event()
-    job = a.start("analyze", "site:stale.test", "Analyze", blocking_work(gate, started, {"step": 7}))
-    assert started.wait(2)
-    try:
-        # Instance A freezes (its clock stops, so no heartbeat). 50 s later B sees a stalled job.
-        clock_b.advance(jobs.STALE_SECONDS + 5)
-        view = b.events_since(job["id"], 0)
-        assert view["status"] == "running" and view["stalled"] is True and view["resumable"] is True
-        assert b.active("site:stale.test") == []
-        assert [j["id"] for j in b.active("site:stale.test", include_stalled=True)] == [job["id"]]
-
-        seen = {}
-
-        def finish(ctx):
-            seen.update(checkpoint=ctx.checkpoint, attempt=ctx.attempt)
-            return {"finished_by": "b"}
-
-        resumed = b.resume(job["id"], finish)
-        assert resumed["id"] == job["id"] and "attached" not in resumed
-        assert b.join(job["id"], 2)
-        assert seen == {"checkpoint": {"step": 7}, "attempt": 2}
-    finally:
-        gate.set()  # A thaws and its work returns: it must notice it was superseded and not overwrite B
-    assert a.join(job["id"], 2)
-    final = b.get(job["id"])
-    assert final["status"] == "done" and final["result"] == {"finished_by": "b"} and final["attempts"] == 2
-    assert a.get(job["id"])["result"] == {"finished_by": "b"}
-    assert any(e.get("type") == "resumed" for e in final["events"])
-    # Done jobs are returned unchanged by resume.
-    assert b.resume(job["id"], lambda ctx: {"again": True})["result"] == {"finished_by": "b"}
+def test_a_job_whose_instance_died_is_resumed_elsewhere():
+    store, clock = MemoryStore(), Clock()
+    a = JobRegistry(store, clock=clock, budget_seconds=240)
+    b = JobRegistry(store, clock=clock, budget_seconds=240)
+    hang = threading.Event()
+    record = a.start("analyze", "site:a.example", "A", lambda ctx: hang.wait(10) or {})
+    clock.now += 240 + 61  # past the deadline in the lock: its instance is gone
+    view = b.get(record["id"])
+    assert view["stalled"] and view["resumable"]
+    resumed = b.resume(record["id"], lambda ctx: {"attempt": ctx.attempt})
+    assert not resumed.get("attached")
+    _wait(b, record["id"])
+    assert b.get(record["id"])["result"] == {"attempt": 2}
+    hang.set()
+    _wait(a, record["id"])
+    # The old runner woke up late: it must not overwrite the new runner's result.
+    assert b.get(record["id"])["result"] == {"attempt": 2}
 
 
-def test_resume_of_running_job_attaches():
-    store = MemoryStore()
-    clock = Clock()
-    a = JobRegistry(store, clock=clock, instance="a")
-    b = JobRegistry(store, clock=clock, instance="b")
-    gate, started = threading.Event(), threading.Event()
-    try:
-        job = a.start("pull", "project:p", "Pull", blocking_work(gate, started))
-        assert started.wait(2)
-        assert b.resume(job["id"], lambda ctx: {})["attached"] is True
-        assert a.resume(job["id"], lambda ctx: {})["attached"] is True
-    finally:
-        gate.set()
-    a.join(job["id"], 2)
+def test_pause_keeps_the_checkpoint_and_resume_continues():
+    store, clock = MemoryStore(), Clock()
+    a = JobRegistry(store, clock=clock, budget_seconds=30, safety_seconds=25)
+    b = JobRegistry(store, clock=clock, budget_seconds=30, safety_seconds=25)
+    done_urls: list[str] = []
+
+    def crawl(ctx):
+        todo = [f"https://a.example/{n}" for n in range(10)]
+        for url in todo:
+            if url in ctx.checkpoint.get("done", []):
+                continue
+            if ctx.should_pause():
+                raise JobPaused()
+            done_urls.append(url)
+            ctx.checkpoint.setdefault("done", []).append(url)
+            clock.now += 1
+        return {"fetched": len(ctx.checkpoint["done"])}
+
+    record = a.start("pull", "site:a.example", "Pull", crawl)
+    _wait(a, record["id"])
+    assert a.get(record["id"])["status"] == "paused" and 0 < len(done_urls) < 10
+    attached = b.start("pull", "site:a.example", "Pull", crawl)  # posting the site again finds the paused job
+    assert attached["attached"] and attached["status"] == "paused" and attached["resumable"]
+    b.resume(record["id"], crawl)
+    _wait(b, record["id"])
+    assert b.get(record["id"])["status"] == "done" and b.get(record["id"])["result"] == {"fetched": 10}
+    assert len(done_urls) == len(set(done_urls)) == 10  # nothing fetched twice
 
 
-# -- pause and resume --------------------------------------------------------------------------------
-
-
-def test_pause_before_budget_then_resume_without_refetching():
-    store = MemoryStore()
-    clock = Clock()
-    reg = JobRegistry(store, clock=clock, budget_seconds=100, safety_seconds=25)
-    urls = [f"https://example.com/p{i}" for i in range(10)]
-    calls: dict[str, int] = {}
-    database: dict[str, FetchResult] = {}
-
-    def fetcher(batch):
-        assert len(batch) == 1  # one URL per call, so pausing is fine grained
-        out = []
-        for url in batch:
-            calls[url] = calls.get(url, 0) + 1
-            clock.advance(10)  # each page takes 10 s of the budget
-            result = FetchResult(url=url, html=f"<p>{url}</p>", status="ok")
-            database[url] = result
-            out.append(result)
-        return out
-
-    def work(ctx):
-        fetch = ResumableFetch(ctx, fetcher, lookup=database.get, namespace="crawl")
-        pages = fetch(urls)
-        ctx.emit({"type": "fetched", "fetched": fetch.fetched, "reused": fetch.reused})
-        return {"pages": len(pages), "html": [p.html for p in pages]}
-
-    job = reg.start("analyze", "site:example.com", "Analyze", work)
-    reg.join(job["id"], 2)
-    paused = reg.get(job["id"])
-    assert paused["status"] == "paused" and paused["resumable"] is True
-    first_round = len(paused["checkpoint"]["crawl"]["done"])
-    assert 0 < first_round < len(urls)  # stopped with time to spare, not after the budget
-    # The paused job still holds the key, so a new start attaches to it.
-    assert reg.start("analyze", "site:example.com", "Again", work)["attached"] is True
-
-    resumed = reg.resume(job["id"], work)
-    assert "attached" not in resumed
-    reg.join(job["id"], 2)
-    done = reg.get(job["id"])
-    assert done["status"] == "done" and done["attempts"] == 2
-    assert done["result"]["pages"] == len(urls)
-    assert done["result"]["html"] == [f"<p>{u}</p>" for u in urls]
-    assert all(calls[u] == 1 for u in urls), calls  # nothing fetched twice
-    fetched = [e for e in done["events"] if e.get("type") == "fetched"][-1]
-    assert fetched["reused"] == first_round and fetched["fetched"] == len(urls) - first_round
-
-
-def test_abandoned_pause_stops_blocking_the_key():
-    clock = Clock()
-    reg = JobRegistry(clock=clock)
-
-    def pause(ctx):
-        ctx.save_checkpoint({"at": 1})
-        raise JobPaused()
-
-    job = reg.start("analyze", "site:p.test", "P", pause)
-    reg.join(job["id"], 2)
-    assert reg.start("analyze", "site:p.test", "P", lambda ctx: {})["attached"] is True
-    clock.advance(jobs.PAUSED_HOLD_SECONDS + 1)
-    fresh = reg.start("analyze", "site:p.test", "P2", lambda ctx: {"ok": 1})
-    assert "attached" not in fresh and fresh["id"] != job["id"]
-    reg.join(fresh["id"], 2)
-    assert reg.get(fresh["id"])["status"] == "done"
-
-
-def test_resume_refused_after_max_attempts(monkeypatch):
-    monkeypatch.setattr(jobs, "MAX_ATTEMPTS", 2)
-    reg = JobRegistry(clock=Clock())
+def test_an_abandoned_pause_stops_blocking_the_key():
+    store, clock = MemoryStore(), Clock()
+    reg = JobRegistry(store, clock=clock, budget_seconds=30, safety_seconds=40)
 
     def pause(ctx):
         raise JobPaused()
 
-    job = reg.start("analyze", "site:m.test", "M", pause)
-    reg.join(job["id"], 2)
-    reg.resume(job["id"], pause)
-    reg.join(job["id"], 2)
-    stuck = reg.resume(job["id"], lambda ctx: {"never": True})
-    assert stuck["status"] == "paused" and stuck["attempts"] == 2 and stuck["resumable"] is False
+    record = reg.start("pull", "site:a.example", "Pull", pause)
+    _wait(reg, record["id"])
+    clock.now += 601
+    fresh = JobRegistry(store, clock=clock).start("pull", "site:a.example", "Pull", lambda ctx: {})
+    assert not fresh.get("attached") and fresh["id"] != record["id"]
 
 
-def test_should_pause_tracks_budget():
-    clock = Clock()
-    reg = JobRegistry(clock=clock, budget_seconds=60, safety_seconds=25)
-    seen = []
-
-    def work(ctx):
-        seen.append((ctx.time_left(), ctx.should_pause()))
-        clock.advance(40)
-        seen.append((ctx.time_left(), ctx.should_pause()))
-        return {}
-
-    reg.start("analyze", "site:t.test", "T", work, background=False)
-    assert seen == [(60, False), (20, True)]
-
-
-def test_budget_from_environment(monkeypatch):
-    monkeypatch.setenv("RANKSIM_JOB_BUDGET_SECONDS", "123")
-    assert JobRegistry().budget_seconds == 123
-    monkeypatch.delenv("RANKSIM_JOB_BUDGET_SECONDS")
-    assert JobRegistry().budget_seconds == 240
-
-
-# -- locks, persistence and pruning -------------------------------------------------------------------
-
-
-def test_lock_released_after_finish_so_new_start_works():
+def test_on_finish_carries_the_record_and_recall_finds_it():
     store = MemoryStore()
-    reg = JobRegistry(store, clock=Clock())
-    first = reg.start("analyze", "site:x.test", "X", lambda ctx: {"n": 1}, background=False)
-    assert first["status"] == "done"
-    assert store.list("ranksim/v2/locks/") == []
-    second = reg.start("analyze", "site:x.test", "X", lambda ctx: {"n": 2}, background=False)
-    assert "attached" not in second and second["id"] != first["id"] and second["result"] == {"n": 2}
-    assert store.list("ranksim/v2/locks/") == []
+    kept: dict = {}
+
+    def on_finish(record):
+        kept[record["id"]] = record
+        return True
+
+    a = JobRegistry(store, on_finish=on_finish, recall=lambda job_id, fresh: kept.get(job_id))
+    record = a.start("analyze", "site:a.example", "A", lambda ctx: {"slug": "a"})
+    _wait(a, record["id"])
+    assert not any(name.startswith("ranksim/v2/jobs/") for name in store.items)  # no separate record object
+    b = JobRegistry(store, recall=lambda job_id, fresh: kept.get(job_id))
+    assert b.get(record["id"])["result"] == {"slug": "a"}
 
 
-def test_dead_lock_entries_are_cleaned_up():
-    store = MemoryStore()
-    reg = JobRegistry(store, clock=Clock())
-    job = reg.start("analyze", "site:y.test", "Y", lambda ctx: {}, background=False)
-    # Simulate a release that never happened: a leftover entry for a finished job.
-    folder = reg._lock_dir("site:y.test")
-    store.put(f"{folder}{1:020d}-abcdef--{job['id']}.1", b"{}")
-    fresh = reg.start("analyze", "site:y.test", "Y", lambda ctx: {}, background=False)
-    assert "attached" not in fresh
-    assert store.list(folder) == []
+def test_job_ids_are_checked():
+    reg = JobRegistry(MemoryStore())
+    for bad in ("../../etc/passwd", "short", "a" * 65, "has space in it here", None, 7):
+        assert reg.get(bad) is None and reg.resume(bad, lambda ctx: {}) is None
+    assert reg.get("a" * 24) is None
 
 
-def test_old_snapshots_pruned_to_two():
-    store = MemoryStore()
-    reg = JobRegistry(store, clock=Clock())
-
-    def work(ctx):
-        for i in range(6):
-            ctx.save_checkpoint({"i": i})
-        return {"ok": True}
-
-    job = reg.start("analyze", "site:z.test", "Z", work, background=False)
-    assert len(job_snapshots(store, job["id"])) == jobs.KEEP_SNAPSHOTS
-    assert reg.get(job["id"])["checkpoint"] == {"i": 5}
-
-
-def test_throttled_events_flush_and_heartbeat():
-    store = MemoryStore()
-    clock = Clock()
-    a = JobRegistry(store, clock=clock, instance="a")
-    b = JobRegistry(store, clock=clock, instance="b")
-    gate, emitted = threading.Event(), threading.Event()
-
-    def work(ctx):
-        ctx.emit({"type": "progress", "n": 1})
-        emitted.set()
-        gate.wait(5)
-        return {}
-
-    try:
-        job = a.start("analyze", "site:h.test", "H", work)
-        assert emitted.wait(2)
-        count = len(job_snapshots(store, job["id"]))
-        # The plain event is held back (throttle) until time moves past PERSIST_EVERY_SECONDS.
-        assert not any(e.get("n") == 1 for e in b.events_since(job["id"], 0)["events"])
-        clock.advance(jobs.PERSIST_EVERY_SECONDS + 0.1)
-        assert wait_for(lambda: any(e.get("n") == 1 for e in b.events_since(job["id"], 0)["events"]))
-        # With nothing new, a heartbeat still refreshes `updated` so the job never looks stalled.
-        before = b.get(job["id"])["updated"]
-        clock.advance(jobs.HEARTBEAT_SECONDS + 1)
-        assert wait_for(lambda: b.get(job["id"])["updated"] > before)
-        assert b.get(job["id"])["stalled"] is False
-        assert len(job_snapshots(store, job["id"])) <= max(count, jobs.KEEP_SNAPSHOTS)
-    finally:
-        gate.set()
-    a.join(job["id"], 2)
-
-
-def test_follow_streams_events_then_end():
-    reg = JobRegistry(clock=Clock())
+def test_follow_streams_events_live():
+    reg = JobRegistry(MemoryStore())
     gate = threading.Event()
 
     def work(ctx):
-        ctx.emit({"type": "progress", "n": 1})
+        ctx.emit({"type": "step", "n": 1})
         gate.wait(5)
-        ctx.emit({"type": "progress", "n": 2})
-        return {"ok": True}
+        ctx.emit({"type": "step", "n": 2})
+        return {}
 
-    job = reg.start("analyze", "site:f.test", "F", work)
-    stream = reg.follow(job["id"], 0, timeout=3)
-    got = []
-    for item in stream:
-        got.append(item)
-        if item.get("n") == 1:
-            gate.set()
-    assert [e["n"] for e in got if e.get("type") == "progress"] == [1, 2]
-    assert got[-1]["type"] == "end" and got[-1]["job"]["status"] == "done" and got[-1]["job"]["result"] == {"ok": True}
-    # Following a finished job replays what is stored.
-    replay = list(reg.follow(job["id"], 0))
-    assert replay[-1]["type"] == "end" and len(replay) == len(got)
+    record = reg.start("analyze", "site:a.example", "A", work)
+    stream = reg.follow(record["id"])
+    assert next(stream)["n"] == 1
+    gate.set()
+    rest = list(stream)
+    assert rest[0]["n"] == 2 and rest[-1]["type"] == "end" and rest[-1]["job"]["status"] == "done"
 
 
-def test_prune_finished_jobs_older_than_a_week():
+def test_budget_from_the_environment(monkeypatch):
+    monkeypatch.setenv("RANKSIM_JOB_BUDGET_SECONDS", "90")
+    assert JobRegistry(MemoryStore()).budget_seconds == 90.0
+
+
+def test_dir_store_backend(tmp_path):
+    a, b = JobRegistry(DirStore(tmp_path)), JobRegistry(DirStore(tmp_path))
+    gate = threading.Event()
+    record = a.start("analyze", "site:a.example", "A", lambda ctx: gate.wait(5) and {"ok": 1})
+    assert b.start("analyze", "site:a.example", "A", lambda ctx: {})["attached"]
+    gate.set()
+    _wait(a, record["id"])
+    assert b.get(record["id"])["result"] == {"ok": 1}
+
+
+def test_many_threads_on_one_key_start_exactly_one_job():
     store = MemoryStore()
-    now = time.time()
-    clock = Clock(now)
-    reg = JobRegistry(store, clock=clock)
-    old = reg.start("analyze", "site:old.test", "Old", lambda ctx: {}, background=False)
-    assert reg.prune() == 0  # a fresh finished job is kept
-    clock.advance(jobs.PRUNE_AFTER_SECONDS + 3600)
-    assert reg.prune() == 1
-    assert reg.get(old["id"]) is None or job_snapshots(store, old["id"]) == []
-    assert store.list("ranksim/v2/jobs/") == []
-
-
-def test_dirstore_backend(tmp_path):
-    store = DirStore(tmp_path / "objects")
-    clock = Clock()
-    a = JobRegistry(store, clock=clock, instance="a", scrub=scrub)
-    b = JobRegistry(DirStore(tmp_path / "objects"), clock=clock, instance="b")
+    regs = [JobRegistry(store) for _ in range(4)]
+    gate = threading.Event()
+    ids, ran = [], []
 
     def work(ctx):
-        ctx.emit({"type": "progress", "message": f"key {SECRET}"})
-        ctx.save_checkpoint({"step": 1})
-        return {"ok": True}
-
-    job = a.start("pull", "project:demo", "Pull", work, background=False)
-    view = b.events_since(job["id"], 0)
-    assert view["status"] == "done" and view["result"] == {"ok": True}
-    assert any(e.get("message") == "key [redacted]" for e in view["events"])
-    assert len(job_snapshots(store, job["id"])) == jobs.KEEP_SNAPSHOTS
-    assert store.list("ranksim/v2/locks/") == []
-    assert SECRET not in "".join(p.read_text() for p in (tmp_path / "objects").rglob("*.json"))
-    assert b.start("pull", "project:demo", "Pull", lambda ctx: {}, background=False)["status"] == "done"
-
-
-def test_non_json_result_becomes_error():
-    reg = JobRegistry(clock=Clock())
-    job = reg.start("analyze", "site:j.test", "J", lambda ctx: {"bad": object()}, background=False)
-    assert job["status"] == "error" and job["error"].startswith("TypeError")
-
-
-def test_two_threads_racing_one_key_start_one_job():
-    store = MemoryStore()
-    clock = Clock()
-    regs = [JobRegistry(store, clock=clock, instance=f"i{i}") for i in range(4)]
-    gate = threading.Event()
-    results = []
+        ran.append(ctx.job_id)
+        gate.wait(5)
+        return {}
 
     def go(reg):
-        results.append(reg.start("analyze", "site:race.test", "Race", lambda ctx: gate.wait(5) and {}))
+        ids.append(reg.start("analyze", "site:a.example", "A", work)["id"])
 
-    threads = [threading.Thread(target=go, args=(reg,)) for reg in regs for _ in range(2)]
-    try:
-        for t in threads:
-            t.start()
-        for t in threads:
-            t.join(3)
-        owners = [r for r in results if not r.get("attached")]
-        assert len(owners) == 1
-        assert {r["id"] for r in results} == {owners[0]["id"]}
-    finally:
-        gate.set()
-    for reg in regs:
-        reg.join(owners[0]["id"], 2)
-
-
-@pytest.fixture(autouse=True)
-def _fast_flush(monkeypatch):
-    monkeypatch.setattr(jobs, "FLUSH_POLL_SECONDS", 0.02)
+    threads = [threading.Thread(target=go, args=(regs[n % 4],)) for n in range(8)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(5)
+    time.sleep(0.05)
+    gate.set()
+    assert len(set(ids)) == 1 and len(ran) == 1
 
 
 # -- the routes: analyses and pulls as jobs ------------------------------------------------------

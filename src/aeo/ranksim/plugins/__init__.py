@@ -22,6 +22,12 @@ register(app, ui) -> None
                                        outside caller never has that header, so a login_exempt POST needs this too.
     Only the route the router picks for a request counts, so a login_exempt route never opens a core route that
     shares its path. Each login_exempt route is logged at startup.
+    Cloud storage and signed-out callers (Vercel Hobby caps Blob operations a month and blocks Blob for 30 days past
+    a cap): a signed-out request to a login_exempt route gets only the routine storage check (cold start, every few
+    minutes), never a forced one, and its rs_sync cookie is ignored. Such a route must never call save(ui) for a
+    caller who has only a share link or similar public token: keep what it writes on the instance (it goes up with
+    the next owner save), and never rewrite a file the owner also changes (a revocation could be lost in the merge).
+    Only a caller that proved a server secret (CRON_SECRET) may trigger a save.
 
 extend_report(report: dict, *, project, meta, database, ctx, ui) -> None
     Called at the end of build_report, once per plugin in load order. Add keys under your own namespace, e.g.

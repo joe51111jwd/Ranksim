@@ -113,6 +113,30 @@
     ]);
   }
 
+  // Owner preview only (/report/<slug>, behind the login). A share link never shows or fetches this.
+  function weeklyCopyButton(slug) {
+    var button = h("button", { type: "button", class: "btn" }, ["Copy weekly update"]);
+    button.addEventListener("click", function () {
+      button.disabled = true;
+      fetch("/api/v1/projects/" + slug + "/weekly-update", { credentials: "same-origin", headers: { accept: "application/json" } })
+        .then(function (res) { if (!res.ok) throw new Error("not ok"); return res.json(); })
+        .then(function (data) {
+          var full = "Subject: " + data.subject + "\n\n" + data.text;
+          if (window.ClipboardItem && navigator.clipboard && navigator.clipboard.write) {
+            return navigator.clipboard.write([new ClipboardItem({
+              "text/html": new Blob([data.html], { type: "text/html" }),
+              "text/plain": new Blob([data.text], { type: "text/plain" }),
+            })]).catch(function () { window.prompt("Copy the weekly update", full); });
+          }
+          return navigator.clipboard.writeText(full).catch(function () { window.prompt("Copy the weekly update", full); });
+        })
+        .then(function () { button.textContent = "Copied"; })
+        .catch(function () { button.textContent = "Could not copy"; })
+        .then(function () { button.disabled = false; setTimeout(function () { button.textContent = "Copy weekly update"; }, 2500); });
+    });
+    return button;
+  }
+
   function render(d) {
     root.textContent = "";
     var src = d.source || "Google";
@@ -130,6 +154,7 @@
       h("span", { class: "agency", text: (d.agency && d.agency.name) || "Search report" }),
     ]);
     var actions = h("div", { class: "actions no-print" }, [
+      d.preview && preview ? weeklyCopyButton(preview[1]) : null,
       h("button", { type: "button", class: "btn primary", on: { click: function () { window.print(); } } }, ["Print or save PDF"]),
       csvBase ? h("a", { class: "btn", href: csvBase + "/rankings.csv", download: "" }, ["Positions (CSV)"]) : null,
       csvBase ? h("a", { class: "btn", href: csvBase + "/issues.csv", download: "" }, ["Fixes (CSV)"]) : null,
@@ -184,6 +209,28 @@
         h("tbody", {}, rows),
       ])]) : h("p", { class: "muted", text: "No searches yet." }),
     ]));
+
+    var sc = d.search_console; // gsc session, flagged edit: Search Console data, never mixed with Google positions
+    if (sc) {
+      var t = sc.totals || {};
+      root.appendChild(tile("", [
+        head("Google Search Console", sc.label + ", " + sc.range + ". " + sc.note),
+        h("div", { class: "stats" }, [
+          stat("Clicks", (t.clicks || 0).toLocaleString("en-US"), "From Google Search"),
+          stat("Impressions", (t.impressions || 0).toLocaleString("en-US"), "Times the site was shown"),
+        ]),
+        (sc.positions || []).length ? h("div", { class: "table-wrap" }, [h("table", { class: "stack" }, [
+          h("thead", {}, [h("tr", {}, [h("th", { text: "Search" }), h("th", { class: "num", text: "Search Console average position" }), h("th", { class: "num", text: "Impressions" })])]),
+          h("tbody", {}, sc.positions.map(function (p) {
+            return h("tr", {}, [
+              h("td", { class: "q", "data-label": "Search" }, [h("span", { text: p.q }), p.page ? h("span", { class: "muted small", text: "Page: " + p.page }) : null]),
+              h("td", { class: "num", "data-label": "Search Console average position", text: "avg #" + p.position }),
+              h("td", { class: "num", "data-label": "Impressions", text: (p.impressions || 0).toLocaleString("en-US") }),
+            ]);
+          })),
+        ])]) : null,
+      ]));
+    }
 
     var issues = d.issues || [];
     root.appendChild(tile("", [

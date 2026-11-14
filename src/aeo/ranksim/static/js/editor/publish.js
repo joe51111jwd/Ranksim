@@ -6,6 +6,7 @@
    to the server once and never come back. */
 
 import { S, h, api, enc, hostOf, pathOf, toast, openSheet, clear, icon, put } from '../core.js';
+import { collect } from '../hooks.js';
 import { ED, draftFor, syncFromFrame, editorCtx } from './editor.js';
 
 const METHOD_NAMES = { meta: 'meta tag', file: 'file', dns: 'DNS record' };
@@ -54,7 +55,20 @@ function editedPage(draft) {
     html: exported || (ctx ? ctx.getHtml() : draftFor(ED.refs ? ED.refs.page : draft.url).text) || draft.text,
     roundTrip: !!exported,
     diff: ctx && typeof ctx.diff === 'function' ? ctx.diff() : null,
+    fixes: ctx ? appliedFixes(ctx) : [],
   };
+}
+
+/* Issues whose suggestion was applied to this draft. The audit plugin answers the 'publish-fixes' event with
+   [{ id, title }] for ctx.page and ctx.draft (on('publish-fixes', (ctx) => [...])). A live publish marks them Done in
+   the client report; a rollback opens them again. Without a listener the list is empty. */
+function appliedFixes(ctx) {
+  const seen = new Set();
+  return collect('publish-fixes', ctx).filter((fix) => {
+    const ok = fix && typeof fix.id === 'string' && /^[a-z0-9][a-z0-9-]{0,119}$/.test(fix.id) && !seen.has(fix.id);
+    if (ok) seen.add(fix.id);
+    return ok;
+  }).map((fix) => ({ id: fix.id, title: String(fix.title || '') }));
 }
 
 /* Element.append writes null as the text "null"; put() skips it. */
@@ -173,6 +187,12 @@ function paintChanges(view, changes, error) {
   if (!changes) {
     add(tile, h('p', { class: 'caveat', text: 'Comparing with the live page...' }));
     return;
+  }
+  if (view.page.fixes.length) {
+    add(tile, h('div', { class: 'publish-fixes' },
+      h('b', { text: view.page.fixes.length === 1 ? 'Fixes 1 issue' : `Fixes ${view.page.fixes.length} issues` }),
+      h('ul', { class: 'publish-steps' }, view.page.fixes.map((fix) => h('li', { class: 'ok' }, icon('check'), h('span', { text: fix.title || fix.id })))),
+      h('p', { class: 'caveat', text: 'Once the change is live, these show as Done in the client report.' })));
   }
   if (!changes.length) {
     add(tile, h('p', { class: 'caveat', text: 'The live page already matches this page. Edit it to publish a change.' }));
@@ -308,7 +328,7 @@ function paintConnect(view) {
     busy(publishBtn, 'Publishing...');
     view.plan = null;  // this plan is used up: no second click while the sheet reloads
     try {
-      const entry = await api.post(base(), { url: view.url, html: view.page.html, connection_id: planned, confirm: [...view.confirm], options: view.options });
+      const entry = await api.post(base(), { url: view.url, html: view.page.html, connection_id: planned, confirm: [...view.confirm], options: view.options, fixes: view.page.fixes });
       toast(publishedText(entry));
     } catch (err) {
       toast(err.message);

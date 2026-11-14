@@ -3,7 +3,7 @@
    rate in "Seen but not clicked", which is a rough industry curve and labeled so.
    Server side: src/aeo/ranksim/plugins/gsc.py (routes under /api/v1/gsc). */
 
-import { registerSettingsSection, registerSearchColumn, registerOverviewTile, registerScreen } from '../hooks.js';
+import { registerSettingsSection, registerSearchColumn, registerOverviewTile, registerScreen, registerEditorPanel, on } from '../hooks.js';
 import { S, h, icon, api, enc, toast, link, clear, go, page, pathOf, reloadSite } from '../core.js';
 
 const LABEL = 'Google Search Console data';
@@ -272,8 +272,10 @@ registerSearchColumn({
     const tip = `${LABEL}, ${rangeText(g)}`;
     if (!hit) return h('span', { class: 'gsc-cell none', title: `${tip}. No impressions for this search.`, text: 'No data' });
     const near = nearFor(g, row.q);
-    return h('span', { class: 'gsc-cell', title: `${tip}. CTR ${pctText(hit.ctr)}, average position ${posText(hit.position)}.` },
-      h('b', { text: `${fmt(hit.clicks)} clicks` }),
+    const avg = !row.checked && (g.positions || {})[row.q];
+    return h('span', { class: 'gsc-cell', title: avg ? `${g.positions_label}. Not a Google top 10 position. ${fmt(hit.clicks)} clicks, ${fmt(hit.impressions)} impressions.` : `${tip}. CTR ${pctText(hit.ctr)}, average position ${posText(hit.position)}.` },
+      avg ? h('b', { class: 'gsc-avg', text: `GSC avg #${posText(avg.position)}` }) : null,
+      h(avg ? 'small' : 'b', { text: `${fmt(hit.clicks)} clicks` }),
       h('small', { text: `${fmt(hit.impressions)} impr.` }),
       near ? h('span', { class: 'gsc-chip', text: 'Positions 8 to 20' }) : null);
   },
@@ -419,5 +421,87 @@ registerScreen('gsc', {
       h('p', { class: 'tile-sub gsc-rule', text: rules.low_ctr || '' }),
       o.low_ctr.length ? h('div', { class: 'form' }, o.low_ctr.map((row) => lowRow(row, false))) : h('div', { class: 'empty-note', text: 'None right now.' }));
     return [page('Search Console opportunities', `${LABEL}, ${rangeText(g)}`, null, h('div', { class: 'bento' }, near, low))];
+  },
+});
+
+/* ------------------------------------------------------------------ Editor panel */
+
+const pageData = new Map(); // `${slug} ${url}` -> answer, or a promise while it loads
+
+on('report-loaded', () => pageData.clear());
+
+function pagePanel(g, data) {
+  const p = data.page;
+  const head = h('div', { class: 'tile-head' }, h('h2', { text: 'Search Console' }), h('span', { class: 'aside', text: '28 days' }));
+  const label = h('div', { class: 'tile-k gsc-panel-k', text: `${LABEL}, ${rangeText(data.range ? data : g)}` });
+  if (!p) {
+    return [head, label, h('p', { class: 'tile-sub', text: 'No impressions for this page in Google Search in these 28 days.' })];
+  }
+  const stats = h('div', { class: 'gsc-panel-stats' },
+    stat(fmt(p.clicks), 'clicks'), stat(fmt(p.impressions), 'impressions'), stat(pctText(p.ctr), 'CTR'), stat(posText(p.position), 'avg position'));
+  const list = (data.page_queries || []).length
+    ? h('ol', { class: 'gsc-top gsc-panel-q' }, data.page_queries.map((row) => h('li', { title: `CTR ${pctText(row.ctr)}, average position ${posText(row.position)}` },
+      h('span', { class: 'gsc-q', text: row.q }),
+      h('span', { class: 'gsc-n', text: `${fmt(row.clicks)} / ${fmt(row.impressions)} #${posText(row.position)}` }))))
+    : null;
+  return [head, label, stats,
+    list ? h('div', { class: 'gsc-group-k gsc-gap', text: 'Top searches (clicks / impressions, position)' }) : null,
+    list].filter(Boolean);
+}
+
+registerEditorPanel({
+  key: 'gsc-page',
+  order: 35,
+  render(ctx) {
+    const g = gscOf(ctx.report || S.report);
+    if (!ready(g) || !ctx.slug) return null;
+    const url = (ctx.draft && ctx.draft.url) || ctx.url || ctx.page;
+    if (!url) return null;
+    const key = `${ctx.slug} ${url}`;
+    const tile = h('section', { class: 'tile gsc-panel', 'data-gsc': 'editor' });
+    const cached = pageData.get(key);
+    if (cached && !(cached instanceof Promise)) {
+      if (!ready(cached)) return null;
+      tile.append(...pagePanel(g, cached));
+      return tile;
+    }
+    tile.append(h('div', { class: 'tile-head' }, h('h2', { text: 'Search Console' })), h('span', { class: 'form-help', text: 'Loading' }));
+    const loading = cached || api.get(`/api/v1/gsc/projects/${enc(ctx.slug)}/page?url=${enc(url)}`).then((data) => {
+      pageData.set(key, data);
+      return data;
+    }).catch(() => {
+      pageData.delete(key);
+      return null;
+    });
+    if (!cached) pageData.set(key, loading);
+    loading.then((data) => {
+      if (!tile.isConnected) return;
+      if (!data || !ready(data)) {
+        tile.remove();
+        return;
+      }
+      clear(tile).append(...pagePanel(g, data));
+    });
+    return tile;
+  },
+});
+
+/* ------------------------------------------------------------------ Search Console positions (free rank source) */
+
+registerOverviewTile({
+  key: 'gsc-positions',
+  order: 14,
+  render(R) {
+    const g = gscOf(R);
+    const positions = (g && g.positions) || {};
+    const rows = Object.entries(positions).sort((a, b) => a[1].position - b[1].position);
+    if (!ready(g) || !rows.length) return null;
+    return h('section', { class: 'tile span-2 gsc-tile', 'data-gsc': 'positions' },
+      h('div', { class: 'tile-head' }, h('h2', { text: 'Where you show up' }), h('span', { class: 'aside', text: `${rows.length} without Google data` })),
+      h('div', { class: 'tile-k', text: g.positions_label }),
+      h('ol', { class: 'gsc-top' }, rows.slice(0, 8).map(([q, row]) => h('li', null,
+        h('span', { class: 'gsc-q' }, h('span', { text: q }), row.page ? h('small', { class: 'gsc-path gsc-sub', text: pathOf(row.page) }) : null),
+        h('span', { class: 'gsc-n' }, h('b', { text: `avg #${posText(row.position)}` }), ` ${fmt(row.impressions)} impr.`)))),
+      h('p', { class: 'tile-sub', text: 'Averages from Search Console, not Google top 10 positions. Refresh with search data for those.' }));
   },
 });

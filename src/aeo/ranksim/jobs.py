@@ -1,24 +1,23 @@
-"""Background jobs for Ranksim: analyses and pulls with ids, progress events, per-site locks and checkpoints.
+"""Jobs: long work (an analysis, a pull) with an id, progress events, a per-key lock, pause and resume.
 
-A hosted Ranksim runs as many short-lived serverless instances (Vercel, 300 s per request at most). Long work is a job:
+A job runs in a thread of the instance that started it. Its events live in memory there, so the request that started
+it (or any request on that instance) can follow it live. Other instances see it through storage, which is budgeted
+(Vercel Hobby caps Blob operations per month), so storage holds as little as possible:
 
-- start() creates a job record, takes the lock for its key (for example "site:example.com") and runs the work in a
-  daemon thread. The browser polls events_since(job_id, cursor) for progress and can reattach after a refresh, or from
-  another instance, because every record is persisted to the object store (objects.py).
-- Records are never overwritten in place. Each persist writes a new immutable name under
-  <prefix>jobs/<id>/ and readers list that folder to find the newest (Blob reads of an overwritten name may be served
-  stale from a cache; lists are not cached). The newest KEEP_SNAPSHOTS are kept, older ones deleted.
-- Work checks ctx.should_pause() and raises JobPaused at a checkpoint before the request limit. The job is then
-  "paused" and resume() runs the work again (possibly on another instance) with the saved checkpoint.
-- A running job heartbeats (persists) every HEARTBEAT_SECONDS. A queued or running job whose record is older than
-  STALE_SECONDS lost its runner (the instance was frozen or killed) and is reported stalled and resumable.
-- Locks across instances are immutable entries <prefix>locks/<sha256(key)[:24]>/<new_name>--<job_id>.<attempt>.
-  To acquire: write an own entry, list the folder, and the earliest entry whose job is live wins. Losers delete their
-  entry. Entries of dead jobs are deleted when seen.
-- A runner whose job was resumed elsewhere (a higher attempt was persisted) notices on its next persist, stops
-  writing and asks its work to pause, so a thawed old instance cannot overwrite the new runner's progress.
+- The lock. ranksim/v2/locks/<hash of key>.json is created with a create-only put (one advanced operation). If the
+  name is taken, its holder is read: a live holder means the caller attaches to that job instead of starting a second
+  one. The lock records a deadline (start + budget + STALL_GRACE_SECONDS); a holder past its deadline with no final
+  record lost its instance and is reported stalled and resumable.
+- The final or paused record. on_finish(record) gets it; the app hands it to cloud storage, which carries it in the
+  manifest of the job's own data save, so it costs nothing extra. Without on_finish (or when it declines) the record
+  is written to ranksim/v2/jobs/<id>.json.
+- Nothing else: no heartbeats, no progress snapshots. A browser that reattaches on another instance sees the job as
+  running and gets its events once it finishes or pauses.
 
-Nothing here touches the network itself; the store decides where records live (MemoryStore, DirStore, BlobStore).
+A job id starts with 12 characters of its key's hash, so any instance can find the job's lock from the id alone.
+Long work checks ctx.should_pause() and raises JobPaused before the request's time limit; the record keeps
+ctx.checkpoint, and resume() continues it in a new request on any instance. A paused job keeps its lock for
+PAUSED_HOLD_SECONDS, so posting the same site again resumes it instead of starting over.
 """
 
 from __future__ import annotations
@@ -32,24 +31,17 @@ import secrets
 import string
 import threading
 import time
-from typing import Callable, Iterator
+from collections.abc import Callable, Iterator
 
-from aeo.ranksim.objects import DirStore, MemoryStore, ObjectStore, StoreError, stamp_of
+from aeo.ranksim.objects import DirStore, MemoryStore, ObjectExists, ObjectStore, StoreError
 
-STALE_SECONDS = 45.0  # a queued/running record older than this lost its runner
-PAUSED_HOLD_SECONDS = 600.0  # a paused job keeps its lock this long, then an abandoned pause stops blocking the key
-HEARTBEAT_SECONDS = 10.0
-PERSIST_EVERY_SECONDS = 1.5  # plain events are persisted at most this often
 SAFETY_SECONDS = 25.0  # should_pause() turns true when less than this is left of the budget
 DEFAULT_BUDGET_SECONDS = 240.0
-MAX_EVENTS = 500
+STALL_GRACE_SECONDS = 60.0  # a running job past start + budget + this lost its instance
+PAUSED_HOLD_SECONDS = 600.0  # a paused job keeps its key this long, then an abandoned pause stops blocking it
+MAX_EVENTS = 500  # kept in memory
+STORED_EVENTS = 60  # kept in a stored record (the manifest carries a few records)
 MAX_ATTEMPTS = 30
-KEEP_SNAPSHOTS = 2
-PRUNE_AFTER_SECONDS = 7 * 24 * 3600.0
-PRUNE_EVERY_SECONDS = 3600.0
-ORPHAN_GRACE_SECONDS = 60.0  # a lock entry whose job record is missing counts as live this long (record still landing)
-FLUSH_POLL_SECONDS = 0.5  # how often (real time) the flusher thread looks at a running job
-
 LIVE = ("queued", "running")
 FINISHED = ("done", "error")
 _ID_RE = re.compile(r"^[A-Za-z0-9]{16,64}$")
@@ -64,12 +56,16 @@ class JobPaused(BaseException):
 
 
 def valid_job_id(job_id: object) -> bool:
-    """Job ids are letters and digits only, so they can never smuggle a path, a separator or a lock suffix."""
     return isinstance(job_id, str) and bool(_ID_RE.match(job_id))
 
 
-def new_job_id() -> str:
-    return "".join(secrets.choice(_ID_ALPHABET) for _ in range(20))
+def _key_hash(key: str) -> str:
+    return hashlib.sha256(key.encode("utf-8")).hexdigest()[:24]
+
+
+def new_job_id(key: str = "") -> str:
+    """12 hex characters of the key's hash (any instance finds the job's lock from its id) and 12 random ones."""
+    return _key_hash(key)[:12] + "".join(secrets.choice(_ID_ALPHABET) for _ in range(12))
 
 
 def default_error_text(exc: BaseException) -> str:
@@ -77,37 +73,27 @@ def default_error_text(exc: BaseException) -> str:
 
 
 def _scrub_all(value, scrub):
-    """Apply scrub to every string inside value (dicts, lists and tuples included)."""
     if isinstance(value, str):
         return scrub(value)
     if isinstance(value, dict):
-        return {(scrub(k) if isinstance(k, str) else k): _scrub_all(v, scrub) for k, v in value.items()}
+        return {(_scrub_all(k, scrub) if isinstance(k, str) else k): _scrub_all(v, scrub) for k, v in value.items()}
     if isinstance(value, (list, tuple)):
         return [_scrub_all(v, scrub) for v in value]
     return value
 
 
 def _json_copy(value):
-    """A deep copy that is guaranteed to be JSON (raises TypeError/ValueError otherwise)."""
     return json.loads(json.dumps(value))
 
 
 class _Run:
-    """One attempt of a job running in this process."""
-
-    def __init__(self, record: dict, started: float, min_stamp: int = 0) -> None:
+    def __init__(self, record: dict, started: float) -> None:
         self.record = record
+        self.started = started
         self.lock = threading.RLock()
         self.cond = threading.Condition(self.lock)
-        self.io_lock = threading.Lock()  # one persist at a time, so snapshot names land in order
-        self.written: list[str] = []  # snapshot names this run wrote, oldest first
-        self.last_stamp = min_stamp  # every new snapshot name sorts after this
-        self.checked: dict[str, int] = {}  # foreign snapshot name -> its attempts (read once)
-        self.last_persist = float("-inf")
-        self.dirty = False
-        self.superseded = False
         self.finished = threading.Event()
-        self.started = started
+        self.superseded = False
 
 
 class JobContext:
@@ -126,26 +112,23 @@ class JobContext:
         return self._registry._emit(self._run, event)
 
     def save_checkpoint(self, data: dict | None = None) -> None:
-        """Store data (default: ctx.checkpoint) as the job's checkpoint and persist right away."""
-        if data is None:
-            data = self.checkpoint
-        clean = _json_copy(data)
-        self.checkpoint = data
+        """Keep data (default: ctx.checkpoint) as the checkpoint. It is stored when the job pauses or ends."""
+        if data is not None:
+            self.checkpoint = data
         with self._run.lock:
-            self._run.record["checkpoint"] = clean
-        self._registry._persist(self._run, force=True)
+            self._run.record["checkpoint"] = _json_copy(self.checkpoint)
 
     def time_left(self) -> float:
         reg = self._registry
         return reg.budget_seconds - (reg.clock() - self._run.started)
 
     def should_pause(self) -> bool:
-        """True when the work should checkpoint and raise JobPaused now (budget nearly spent, or resumed elsewhere)."""
+        """True when the work should raise JobPaused now (the budget is nearly spent)."""
         return self._run.superseded or self.time_left() < self._registry.safety_seconds
 
 
 class JobRegistry:
-    """Jobs persisted in an object store. One registry per process; several processes may share one store."""
+    """Jobs of this process, with locks and final records in an object store shared by every instance."""
 
     def __init__(
         self,
@@ -157,7 +140,10 @@ class JobRegistry:
         clock: Callable[[], float] = time.time,
         instance: str | None = None,
         safety_seconds: float = SAFETY_SECONDS,
-        lock_settle_seconds: float | None = None,
+        frugal: bool | None = None,
+        on_finish: Callable[[dict], bool] | None = None,
+        recall: Callable[[str, bool], dict | None] | None = None,
+        **_ignored,
     ) -> None:
         self.store = store if store is not None else MemoryStore()
         self.prefix = prefix
@@ -170,99 +156,76 @@ class JobRegistry:
         self.budget_seconds = float(budget_seconds)
         self.safety_seconds = float(safety_seconds)
         self.clock = clock
-        if lock_settle_seconds is None:
-            # Local stores write in microseconds; a remote store (Blob) can take a few hundred milliseconds per put.
-            lock_settle_seconds = 0.02 if isinstance(self.store, (MemoryStore, DirStore)) else 0.75
-        self.lock_settle_seconds = float(lock_settle_seconds)
+        self.frugal = (not isinstance(self.store, (MemoryStore, DirStore))) if frugal is None else bool(frugal)
+        self.on_finish = on_finish
+        self.recall = recall
         self.instance = instance or f"{os.getpid()}-{secrets.token_hex(4)}"
         self.last_error = ""
         self._mutex = threading.Lock()
         self._key_locks: dict[str, threading.Lock] = {}
-        self._runs: dict[str, _Run] = {}  # job id -> the latest attempt run by this process
-        self._swept = clock()  # first sweep an hour after start, not on the first request
+        self._runs: dict[str, _Run] = {}
 
-    # -- names -----------------------------------------------------------------------------------
+    # -- names and records -------------------------------------------------------------------------
 
-    def _job_dir(self, job_id: str) -> str:
-        return f"{self.prefix}jobs/{job_id}/"
+    def _lock_name(self, key_hash: str) -> str:
+        return f"{self.prefix}locks/{key_hash[:12]}.json"
 
-    def _lock_dir(self, key: str) -> str:
-        return f"{self.prefix}locks/{hashlib.sha256(key.encode()).hexdigest()[:24]}/"
+    def _record_name(self, job_id: str) -> str:
+        return f"{self.prefix}jobs/{job_id}.json"
 
-    @staticmethod
-    def _parse_lock(name: str) -> tuple[str, int] | None:
-        """(job id, attempt) from a lock entry name, or None when it is not one."""
-        tail = name.rsplit("/", 1)[-1]
-        if "--" not in tail:
-            return None
-        rest = tail.split("--", 1)[1]
-        job_id, _, attempt = rest.rpartition(".")
-        if not valid_job_id(job_id) or not attempt.isdigit():
-            return None
-        return job_id, int(attempt)
-
-    def _age(self, name: str) -> float:
-        """Seconds since the time encoded in an object name, measured on this registry's clock."""
-        stamp = stamp_of(name)
-        return self.clock() - stamp / 1e9 if stamp else float("inf")
-
-    # -- liveness --------------------------------------------------------------------------------
-
-    def _is_live(self, record: dict) -> bool:
-        """Does this job still hold its key? Running and fresh, or paused not too long ago."""
-        status = record.get("status")
-        age = self.clock() - float(record.get("updated") or 0)
-        if status in LIVE:
-            return age <= STALE_SECONDS
-        if status == "paused":
-            return age <= PAUSED_HOLD_SECONDS
-        return False
+    def _key_lock(self, key: str) -> threading.Lock:
+        with self._mutex:
+            return self._key_locks.setdefault(key, threading.Lock())
 
     def _local(self, job_id: str) -> _Run | None:
-        """The run of job_id in this process while it is in flight (not finished, not superseded)."""
         with self._mutex:
-            run = self._runs.get(job_id)
-        if run is None or run.finished.is_set() or run.superseded:
-            return None
-        return run
+            return self._runs.get(job_id)
 
-    def _view(self, record: dict, *, local: bool = False) -> dict:
-        """A copy of record plus the derived stalled/resumable flags."""
+    def _view(self, record: dict, *, local: bool) -> dict:
         out = copy.deepcopy(record)
         status = out.get("status")
-        stalled = (not local) and status in LIVE and self.clock() - float(out.get("updated") or 0) > STALE_SECONDS
-        out["stalled"] = bool(stalled)
+        stalled = (not local) and status in LIVE and self.clock() > float(out.get("deadline") or 0)
+        out["stalled"] = stalled
         out["resumable"] = bool((status == "paused" or stalled) and int(out.get("attempts") or 0) < MAX_ATTEMPTS)
         return out
 
-    # -- reading ---------------------------------------------------------------------------------
+    def _read(self, name: str) -> dict | None:
+        try:
+            data = json.loads(self.store.get(name).decode("utf-8"))
+        except (KeyError, ValueError):
+            return None
+        return data if isinstance(data, dict) else None
 
-    def _stored(self, job_id: str) -> tuple[dict | None, list[str]]:
-        """The newest stored snapshot of job_id and the folder listing it came from."""
-        names = [n for n in self.store.list(self._job_dir(job_id)) if n.endswith(".json")]
-        for name in reversed(names):
-            try:
-                return json.loads(self.store.get(name)), names
-            except KeyError:
-                continue  # pruned between list and get: try the one before
-            except ValueError:
-                continue  # a torn or foreign object; an older snapshot is better than nothing
-        return None, names
+    def _final(self, job_id: str, *, fresh: bool = False) -> dict | None:
+        """A finished or paused record: this process, the app's recall (cloud manifest), or the record object."""
+        run = self._local(job_id)
+        if run is not None and run.finished.is_set() and not run.superseded:
+            with run.lock:
+                return copy.deepcopy(run.record)
+        if self.recall is not None:
+            found = self.recall(job_id, False)
+            if found is not None:
+                return found
+        found = self._read(self._record_name(job_id))
+        if found is None and fresh and self.recall is not None:
+            found = self.recall(job_id, True)  # another instance may have saved it a moment ago
+        return found
 
     def _record(self, job_id: str) -> tuple[dict | None, bool]:
-        """(record, is_local): memory while this process runs the job, else the newest stored snapshot."""
+        """(record, is_local): memory while this process runs the job, else storage."""
         run = self._local(job_id)
-        if run is not None:
+        if run is not None and not run.finished.is_set() and not run.superseded:
             with run.lock:
                 return copy.deepcopy(run.record), True
-        record, _ = self._stored(job_id)
-        if record is None:
-            with self._mutex:
-                run = self._runs.get(job_id)
-            if run is not None:  # the store lost it (or never got it); this process still knows the outcome
-                with run.lock:
-                    return copy.deepcopy(run.record), False
-        return record, False
+        final = self._final(job_id)
+        if final is not None:
+            return final, False
+        holder = self._read(self._lock_name(job_id))
+        if holder is not None and holder.get("id") == job_id:
+            return holder, False
+        return self._final(job_id, fresh=True), False
+
+    # -- reading ---------------------------------------------------------------------------------
 
     def get(self, job_id: str) -> dict | None:
         """The full job record (plus stalled/resumable), or None for an unknown or malformed id."""
@@ -273,12 +236,9 @@ class JobRegistry:
 
     def events_since(self, job_id: str, cursor: int = 0) -> dict | None:
         """What a poller needs: status, the events after cursor, the new cursor, result and error."""
-        if not valid_job_id(job_id):
+        view = self.get(job_id)
+        if view is None:
             return None
-        record, local = self._record(job_id)
-        if record is None:
-            return None
-        view = self._view(record, local=local)
         try:
             cursor = max(0, int(cursor))
         except (TypeError, ValueError):
@@ -293,400 +253,37 @@ class JobRegistry:
             "title": view.get("title"),
             "status": view.get("status"),
             "events": events,
-            "cursor": max([cursor] + [int(e["seq"]) for e in events]),
-            "truncated": cursor < first - 1,  # older events were dropped from the capped list
+            "cursor": max([cursor] + [int(e.get("seq", 0)) for e in events]),
+            "truncated": cursor + 1 < first,
             "result": view.get("result"),
             "error": view.get("error"),
             "attempts": view.get("attempts"),
-            "resumable": view["resumable"],
-            "stalled": view["stalled"],
+            "resumable": view.get("resumable"),
+            "stalled": view.get("stalled"),
             "updated": view.get("updated"),
         }
 
     def active(self, key: str | None = None, *, include_stalled: bool = False) -> list[dict]:
-        """Live jobs (queued, running, or paused recently), optionally only those for key. Newest first."""
-        if key is not None:
-            names = self.store.list(self._lock_dir(key))
-            ids = []
-            for name in names:
-                parsed = self._parse_lock(name)
-                if parsed and parsed[0] not in ids:
-                    ids.append(parsed[0])
-        else:
-            newest: dict[str, str] = {}
-            for name in self.store.list(f"{self.prefix}jobs/"):
-                parts = name[len(self.prefix) + len("jobs/"):].split("/")
-                if len(parts) == 2 and valid_job_id(parts[0]):
-                    newest[parts[0]] = max(newest.get(parts[0], ""), name)
-            # A live job persisted within the paused hold; skip reading anything older than that.
-            ids = [jid for jid, name in newest.items() if self._age(name) <= PAUSED_HOLD_SECONDS + 60]
-        found = []
-        for jid in ids:
-            record, local = self._record(jid)
-            if record is None or (key is not None and record.get("key") != key):
-                continue
-            view = self._view(record, local=local)
-            if self._is_live(record) or local or (include_stalled and view["stalled"]):
-                found.append({k: view.get(k) for k in ("id", "kind", "key", "title", "status", "updated", "attempts", "stalled", "resumable", "instance")})
-        found.sort(key=lambda j: float(j.get("updated") or 0), reverse=True)
-        return found
-
-    # -- writing ---------------------------------------------------------------------------------
-
-    def _snapshot_name(self, run: _Run) -> str:
-        """A new immutable name that sorts after every snapshot this run (or the attempt it resumed) wrote."""
-        stamp = max(time.time_ns(), run.last_stamp + 1)
-        run.last_stamp = stamp
-        return f"{self._job_dir(run.record['id'])}{stamp:020d}-{secrets.token_hex(3)}.json"
-
-    def _persist(self, run: _Run, *, force: bool = False) -> bool:
-        """Write the run's record as a new snapshot. Throttled unless force. Returns True when a snapshot was written."""
-        with run.lock:
-            if run.superseded:
-                return False
-            if not force and self.clock() - run.last_persist < PERSIST_EVERY_SECONDS:
-                run.dirty = True
-                return False
-        with run.io_lock:
-            with run.lock:
-                if run.superseded:
-                    return False
-                now = self.clock()
-                run.record["updated"] = now
-                run.last_persist = now
-                run.dirty = False
-                body = json.dumps(run.record).encode()
-                attempts = int(run.record.get("attempts") or 0)
-                name = self._snapshot_name(run)
-            try:
-                self.store.put(name, body, content_type="application/json")
-                run.written.append(name)
-                self._after_write(run, attempts)
-            except StoreError as exc:
-                # The job keeps running; the next persist (or heartbeat) tries again.
-                self.last_error = f"Could not save job state: {exc}"
-                with run.lock:
-                    run.dirty = True
-                return False
-        return True
-
-    def _after_write(self, run: _Run, attempts: int) -> None:
-        """List the job's snapshots: step aside if a later attempt runs elsewhere, else prune to KEEP_SNAPSHOTS."""
-        names = [n for n in self.store.list(self._job_dir(run.record["id"])) if n.endswith(".json")]
-        first = stamp_of(run.written[0]) if run.written else 0
-        mine = set(run.written)
-        for name in reversed(names):
-            if name in mine or stamp_of(name) < first:
-                continue
-            if name not in run.checked:
-                try:
-                    run.checked[name] = int(json.loads(self.store.get(name)).get("attempts") or 0)
-                except (KeyError, ValueError):
-                    run.checked[name] = 0
-            if run.checked[name] > attempts:
-                with run.cond:
-                    run.superseded = True
-                    run.cond.notify_all()
-                self.store.delete(list(run.written))  # so readers see the new runner's snapshots, not ours
-                return
-        # Keep our newest snapshot and the KEEP_SNAPSHOTS - 1 before it. Names sorting after ours belong to another
-        # runner (a superseding one, or an old one about to notice it was superseded) and are left alone.
-        latest = run.written[-1]
-        before = [n for n in names if n < latest]
-        old = before[: max(0, len(before) - (KEEP_SNAPSHOTS - 1))]
-        if old:
-            self.store.delete(old)
-            gone = set(old)
-            run.written = [n for n in run.written if n not in gone]
-
-    def _emit(self, run: _Run, event: dict) -> dict:
-        clean = _scrub_all(dict(event), self.scrub)
-        with run.cond:
-            run.record["seq"] = int(run.record.get("seq") or 0) + 1
-            clean["seq"] = run.record["seq"]
-            clean.setdefault("time", self.clock())
-            try:
-                clean = _json_copy(clean)
-            except (TypeError, ValueError):
-                clean = {"seq": clean["seq"], "time": clean["time"], "type": "event", "text": self.scrub(str(event))[:300]}
-            events = run.record.setdefault("events", [])
-            events.append(clean)
-            if len(events) > MAX_EVENTS:
-                del events[: len(events) - MAX_EVENTS]
-            run.dirty = True
-            run.cond.notify_all()
-        return clean
-
-    def _set_status(self, run: _Run, status: str, **fields) -> None:
-        """Change status (with a status event) and persist immediately."""
-        with run.cond:
-            run.record["status"] = status
-            run.record.update(fields)
-        self._emit(run, {"type": "status", "status": status})
-        self._persist(run, force=True)
-
-    # -- locks -----------------------------------------------------------------------------------
-
-    def _key_lock(self, key: str) -> threading.Lock:
+        """Live jobs this process runs (another instance's job is found from its id or its key's lock)."""
         with self._mutex:
-            return self._key_locks.setdefault(key, threading.Lock())
-
-    def _acquire(self, key: str, job_id: str, attempt: int) -> str | None:
-        """Take the lock for key on behalf of job_id's attempt. Returns None when won, else the holding job's id."""
-        folder = self._lock_dir(key)
-        mine = f"{folder}{time.time_ns():020d}-{secrets.token_hex(3)}--{job_id}.{attempt}"
-        self.store.put(mine, json.dumps({"job": job_id, "attempt": attempt, "instance": self.instance}).encode(), content_type="application/json")
-        try:
-            names = self.store.list(folder)
-        except StoreError:
-            self.store.delete([mine])
-            raise
-        winner, dead = self._scan(names, mine, job_id, attempt)
-        if winner is None and self.lock_settle_seconds > 0:
-            # An entry named (stamped) before ours may still be landing: its put started earlier but finished later,
-            # so our first list missed it. Look once more after the usual write latency; the earliest live entry wins.
-            time.sleep(self.lock_settle_seconds)
-            try:
-                names = self.store.list(folder)
-            except StoreError:
-                self.store.delete([mine])
-                raise
-            winner, more = self._scan(names, mine, job_id, attempt)
-            dead = sorted(set(dead) | set(more))
-        try:
-            if winner is not None:
-                self.store.delete([mine])
-            if dead:
-                self.store.delete(dead)
-        except StoreError:
-            pass  # a leftover entry of a dead job is skipped (and retried) by the next acquirer
-        return winner
-
-    def _scan(self, names: list[str], mine: str, job_id: str, attempt: int) -> tuple[str | None, list[str]]:
-        """Walk lock entries oldest first. Returns (holder job id or None when ours is the earliest live, dead entries)."""
-        winner: str | None = None
-        dead: list[str] = []
-        for name in names:
-            if name == mine:
-                break  # every earlier entry is dead: ours wins
-            parsed = self._parse_lock(name)
-            if parsed is None:
+            runs = list(self._runs.values())
+        rows = []
+        for run in runs:
+            if run.finished.is_set() or run.superseded:
                 continue
-            jid, att = parsed
-            if jid == job_id:
-                if att < attempt:
-                    dead.append(name)  # an earlier attempt of the job we are resuming
-                    continue
-                winner = jid  # another resumer of this same attempt got there first
-                break
-            try:
-                record, _ = self._record(jid)
-            except StoreError:
-                winner = jid  # cannot tell: do not take a lock that may be held
-                break
-            if record is None:
-                if self._age(name) < ORPHAN_GRACE_SECONDS:
-                    winner = jid
-                    break
-                dead.append(name)
-            elif self._is_live(record):
-                winner = jid
-                break
-            else:
-                dead.append(name)
-        return winner, dead
-
-    def _release(self, key: str, job_id: str) -> None:
-        """Delete every lock entry of job_id for key (best effort)."""
-        try:
-            folder = self._lock_dir(key)
-            names = [n for n in self.store.list(folder) if (self._parse_lock(n) or ("",))[0] == job_id]
-            if names:
-                self.store.delete(names)
-        except StoreError:
-            pass  # the job is finished, so its entry counts as dead and the next acquirer deletes it
-
-    # -- running ---------------------------------------------------------------------------------
-
-    def start(
-        self,
-        kind: str,
-        key: str,
-        title: str,
-        work: Callable[[JobContext], dict | None],
-        *,
-        params: dict | None = None,
-        error_text: Callable[[BaseException], str] | None = None,
-        background: bool = True,
-    ) -> dict:
-        """Start a job for key, or attach to the live job already holding key (then the record has attached=True).
-
-        With background=False the work runs in the calling thread and the finished record is returned.
-        """
-        self._maybe_sweep()
-        with self._key_lock(key):
-            with self._mutex:
-                local = [r for r in self._runs.values() if r.record.get("key") == key]
-            for run in local:
-                if not run.finished.is_set() and not run.superseded:
-                    with run.lock:
-                        return {**self._view(run.record, local=True), "attached": True}
-            now = self.clock()
-            record = {
-                "v": 1,
-                "id": new_job_id(),
-                "kind": kind,
-                "key": key,
-                "title": self.scrub(title),
-                "params": _json_copy(params or {}),
-                "status": "queued",
-                "created": now,
-                "updated": now,
-                "instance": self.instance,
-                "attempts": 1,
-                "seq": 0,
-                "events": [],
-                "result": None,
-                "error": None,
-                "checkpoint": {},
-            }
-            run = _Run(record, started=now)
-            # The record lands before the lock entry, so anyone who sees our entry can also read our record.
-            if not self._persist(run, force=True):
-                raise StoreError(self.last_error or "could not save job")
-            try:
-                holder = self._acquire(key, record["id"], 1)
-            except StoreError:
-                self.store.delete(list(run.written))
-                raise
-            if holder is not None:
-                self.store.delete(list(run.written))
-                held, local_flag = self._record(holder)
-                if held is None:
-                    raise StoreError("lock holder vanished")
-                return {**self._view(held, local=local_flag), "attached": True}
-            with self._mutex:
-                self._runs[record["id"]] = run
-            self._set_status(run, "running")
-        return self._launch(run, work, error_text, background)
-
-    def resume(
-        self,
-        job_id: str,
-        work: Callable[[JobContext], dict | None],
-        *,
-        error_text: Callable[[BaseException], str] | None = None,
-        background: bool = True,
-    ) -> dict | None:
-        """Continue a paused or stalled job from its checkpoint. Live jobs come back with attached=True, finished ones unchanged."""
-        if not valid_job_id(job_id):
-            return None
-        local = self._local(job_id)
-        if local is not None:
-            with local.lock:
-                return {**self._view(local.record, local=True), "attached": True}
-        record, names = self._stored(job_id)
-        if record is None:
-            return None
-        key = str(record.get("key") or "")
-        with self._key_lock(key):
-            again = self._local(job_id)
-            if again is not None:  # another thread here resumed it meanwhile
-                with again.lock:
-                    return {**self._view(again.record, local=True), "attached": True}
-            view = self._view(record)
-            if record.get("status") in FINISHED:
-                return view
-            if record.get("status") in LIVE and not view["stalled"]:
-                return {**view, "attached": True}
-            attempt = int(record.get("attempts") or 1) + 1
-            if attempt > MAX_ATTEMPTS:
-                return view  # resumable is False here; the caller shows the job as stuck
-            holder = self._acquire(key, job_id, attempt)
-            if holder is not None:
-                held, held_local = self._record(holder)
-                return {**self._view(held or record, local=held_local), "attached": True}
-            now = self.clock()
-            record.update({"attempts": attempt, "instance": self.instance, "error": None, "result": None})
-            # Our snapshots must sort after every earlier one, even if this machine's clock is behind.
-            run = _Run(record, started=now, min_stamp=max([stamp_of(n) for n in names] + [0]))
-            with self._mutex:
-                self._runs[job_id] = run
-            self._emit(run, {"type": "resumed", "attempt": attempt})
-            self._set_status(run, "running")
-        return self._launch(run, work, error_text, background)
-
-    def _launch(self, run: _Run, work, error_text, background: bool) -> dict:
-        flusher = threading.Thread(target=self._flush_loop, args=(run,), name=f"ranksim-job-flush-{run.record['id'][:6]}", daemon=True)
-        flusher.start()
-        if background:
-            thread = threading.Thread(target=self._execute, args=(run, work, error_text), name=f"ranksim-job-{run.record['id'][:6]}", daemon=True)
-            thread.start()
             with run.lock:
-                return self._view(run.record, local=True)
-        self._execute(run, work, error_text)
-        with run.lock:
-            return self._view(run.record, local=not run.superseded)
-
-    def _execute(self, run: _Run, work, error_text) -> None:
-        """Run one attempt of work and record how it ended."""
-        ctx = JobContext(self, run)
-        status, fields = "done", {}
-        try:
-            result = work(ctx)
-            if result is None:
-                result = {}
-            elif not isinstance(result, dict):
-                result = {"value": result}
-            fields["result"] = _json_copy(result)
-        except JobPaused:
-            status = "paused"
-        except Exception as exc:  # noqa: BLE001 - any failure of the work becomes the job's error
-            status = "error"
-            try:
-                text = (error_text or default_error_text)(exc)
-            except Exception:  # noqa: BLE001 - a broken formatter must not hide the failure
-                text = default_error_text(exc)
-            fields["error"] = self.scrub(str(text))
-        try:
-            if not run.superseded:  # a superseded run was resumed elsewhere; its new runner owns the record
-                if status == "paused":
-                    # Keep the newest checkpoint even if the work forgot to save it before raising JobPaused.
-                    try:
-                        with run.lock:
-                            run.record["checkpoint"] = _json_copy(ctx.checkpoint)
-                    except (TypeError, ValueError):
-                        pass
-                self._set_status(run, status, **fields)
-                if status in FINISHED and not run.superseded:
-                    self._release(str(run.record.get("key") or ""), run.record["id"])
-        finally:
-            with run.cond:
-                run.finished.set()
-                run.cond.notify_all()
-
-    def _flush_loop(self, run: _Run) -> None:
-        """Persist throttled events and heartbeat while the attempt runs."""
-        while not run.finished.is_set() and not run.superseded:
-            with run.cond:
-                run.cond.wait(FLUSH_POLL_SECONDS)
-                if run.finished.is_set() or run.superseded:
-                    return
-                since = self.clock() - run.last_persist
-                due = (run.dirty and since >= PERSIST_EVERY_SECONDS) or since >= HEARTBEAT_SECONDS
-            if due:
-                self._persist(run, force=True)
+                if key is None or run.record.get("key") == key:
+                    rows.append(self._view(run.record, local=True))
+        return sorted(rows, key=lambda row: -float(row.get("created") or 0))
 
     def join(self, job_id: str, timeout: float | None = None) -> bool:
-        """Wait (real time) for this process's run of job_id to end. True when it ended (or is not running here)."""
-        with self._mutex:
-            run = self._runs.get(job_id)
+        run = self._local(job_id)
         return True if run is None else run.finished.wait(timeout)
 
     def follow(self, job_id: str, cursor: int = 0, timeout: float | None = None) -> Iterator[dict]:
-        """Yield events after cursor as they arrive, then {"type": "end", "job": <events_since view>}.
+        """Yield events after cursor as they arrive, then {"type": "end", "job": <summary>}.
 
-        Live streaming works for a job running in this process; for any other job it yields what is stored and ends.
+        Live for a job running in this process; for any other job it yields what is stored and ends.
         timeout (real seconds) stops the stream without the end item; the client then polls or follows again.
         """
         run = self._local(job_id) if valid_job_id(job_id) else None
@@ -694,7 +291,7 @@ class JobRegistry:
             cursor = max(0, int(cursor))
         except (TypeError, ValueError):
             cursor = 0
-        if run is None:
+        if run is None or run.superseded:
             view = self.events_since(job_id, cursor)
             if view is None:
                 return
@@ -716,97 +313,245 @@ class JobRegistry:
                 cursor = int(event["seq"])
                 yield event
             if ended:
-                view = self.events_since(job_id, cursor) or {}
-                yield {"type": "end", "job": {k: v for k, v in view.items() if k != "events"}}
+                with run.lock:
+                    view = self._view(run.record, local=not run.superseded)
+                summary = {k: view.get(k) for k in ("id", "kind", "key", "title", "status", "result", "error", "attempts", "resumable", "stalled", "updated")}
+                summary["cursor"] = cursor
+                yield {"type": "end", "job": summary}
                 return
 
-    # -- pruning ---------------------------------------------------------------------------------
+    def prune(self, older_than: float = 0) -> int:
+        """Nothing to prune: locks are deleted when jobs end, and records ride on cloud saves."""
+        return 0
 
-    def _maybe_sweep(self) -> None:
-        if self.clock() - self._swept < PRUNE_EVERY_SECONDS:
-            return
-        self._swept = self.clock()
-        threading.Thread(target=self._sweep_quietly, name="ranksim-job-prune", daemon=True).start()
+    # -- locks -----------------------------------------------------------------------------------
 
-    def _sweep_quietly(self) -> None:
+    def _lock_body(self, record: dict) -> bytes:
+        keep = ("v", "id", "kind", "key", "title", "params", "status", "created", "updated", "deadline", "instance", "attempts")
+        return json.dumps({name: record.get(name) for name in keep}).encode("utf-8")
+
+    def _holder_view(self, holder: dict) -> dict | None:
+        """The lock holder as a view while it holds the key (running, stalled and not taken over yet, or paused
+        recently), else None (the lock is a leftover and may be taken)."""
+        final = self._final(str(holder.get("id") or ""))
+        if final is not None and int(final.get("attempts") or 0) >= int(holder.get("attempts") or 0):
+            if final.get("status") == "paused" and self.clock() - float(final.get("updated") or 0) < PAUSED_HOLD_SECONDS:
+                return self._view(final, local=False)
+            return None
+        return self._view(holder, local=False)
+
+    def _take(self, record: dict, *, replace_id: str | None = None) -> dict | None:
+        """Create the lock for record's key. None when taken; else the holder's view (the caller attaches).
+        replace_id: the job being resumed, whose own older lock may be replaced."""
+        name = self._lock_name(record["id"])
+        body = self._lock_body(record)
+        for _round in range(4):
+            try:
+                self.store.put(name, body, content_type="application/json")
+                return None
+            except ObjectExists:
+                pass
+            holder = self._read(name)
+            if holder is None:
+                continue  # deleted meanwhile: try again
+            if replace_id is not None and holder.get("id") == replace_id:
+                if int(holder.get("attempts") or 0) >= int(record["attempts"]):
+                    return self._view(holder, local=False)  # another instance resumed it first
+                self.store.delete([name])
+                continue
+            view = self._holder_view(holder)
+            if view is not None:
+                return view
+            self.store.delete([name])  # a leftover lock of a finished or abandoned job
+        raise StoreError("could not take the lock")
+
+    def _release(self, record: dict) -> None:
+        name = self._lock_name(record["id"])
         try:
-            self.prune()
+            holder = self._read(name)
+            if holder is not None and holder.get("id") == record["id"] and int(holder.get("attempts") or 0) <= int(record.get("attempts") or 0):
+                self.store.delete([name])
         except StoreError:
-            pass  # pruning saves storage; the next sweep tries again
+            pass  # a leftover lock is taken over once its job reads as finished
 
-    def prune(self, older_than: float = PRUNE_AFTER_SECONDS) -> int:
-        """Delete jobs that are not live and were last written more than older_than seconds ago, plus old lock entries.
+    # -- running ---------------------------------------------------------------------------------
 
-        Returns how many jobs were deleted.
-        """
-        by_job: dict[str, list[str]] = {}
-        for name in self.store.list(f"{self.prefix}jobs/"):
-            parts = name[len(self.prefix) + len("jobs/"):].split("/")
-            if len(parts) == 2 and valid_job_id(parts[0]):
-                by_job.setdefault(parts[0], []).append(name)
-        removed = 0
-        for job_id, names in by_job.items():
-            if self._age(max(names)) <= older_than or self._local(job_id) is not None:
-                continue
-            record, _ = self._stored(job_id)
-            if record is not None and self._is_live(record):
-                continue
-            self.store.delete(names)
-            removed += 1
-        old_locks = [n for n in self.store.list(f"{self.prefix}locks/") if self._age(n) > older_than]
-        if old_locks:
-            self.store.delete(old_locks)
-        return removed
+    def start(
+        self,
+        kind: str,
+        key: str,
+        title: str,
+        work: Callable[[JobContext], dict | None],
+        *,
+        params: dict | None = None,
+        error_text: Callable[[BaseException], str] | None = None,
+        background: bool = True,
+    ) -> dict:
+        """Start a job for key, or attach to the live job already holding key (then the record has attached=True)."""
+        with self._key_lock(key):
+            with self._mutex:
+                local = [r for r in self._runs.values() if r.record.get("key") == key]
+            for run in local:
+                if not run.finished.is_set() and not run.superseded:
+                    with run.lock:
+                        return {**self._view(run.record, local=True), "attached": True}
+            now = self.clock()
+            record = {
+                "v": 2,
+                "id": new_job_id(key),
+                "kind": kind,
+                "key": key,
+                "title": self.scrub(title),
+                "params": _json_copy(params or {}),
+                "status": "running",
+                "created": now,
+                "updated": now,
+                "deadline": now + self.budget_seconds + STALL_GRACE_SECONDS,
+                "instance": self.instance,
+                "attempts": 1,
+                "seq": 0,
+                "events": [],
+                "result": None,
+                "error": None,
+                "checkpoint": {},
+            }
+            holder = self._take(record)
+            if holder is not None:
+                return {**holder, "attached": True}
+            run = _Run(record, started=now)
+            with self._mutex:
+                self._runs[record["id"]] = run
+        return self._launch(run, work, error_text, background)
 
+    def resume(
+        self,
+        job_id: str,
+        work: Callable[[JobContext], dict | None],
+        *,
+        error_text: Callable[[BaseException], str] | None = None,
+        background: bool = True,
+    ) -> dict | None:
+        """Continue a paused or stalled job. Live jobs come back with attached=True, finished ones unchanged."""
+        if not valid_job_id(job_id):
+            return None
+        run = self._local(job_id)
+        if run is not None and not run.finished.is_set() and not run.superseded:
+            with run.lock:
+                return {**self._view(run.record, local=True), "attached": True}
+        record, local = self._record(job_id)
+        if record is None:
+            return None
+        view = self._view(record, local=local)
+        if record.get("status") in FINISHED:
+            return view
+        if record.get("status") in LIVE and not view["stalled"]:
+            return {**view, "attached": True}
+        if not view["resumable"]:
+            return view
+        key = str(record.get("key") or "")
+        with self._key_lock(key):
+            now = self.clock()
+            fresh = copy.deepcopy(record)
+            fresh.update({
+                "status": "running",
+                "updated": now,
+                "deadline": now + self.budget_seconds + STALL_GRACE_SECONDS,
+                "instance": self.instance,
+                "attempts": int(record.get("attempts") or 1) + 1,
+                "result": None,
+                "error": None,
+            })
+            if record.get("status") != "paused":
+                fresh["checkpoint"] = {}  # a stalled runner never stored one
+            fresh.setdefault("events", [])
+            fresh.setdefault("seq", max([0] + [int(e.get("seq", 0)) for e in fresh["events"]]))
+            holder = self._take(fresh, replace_id=job_id)
+            if holder is not None:
+                return {**holder, "attached": True}
+            run = _Run(fresh, started=now)
+            with self._mutex:
+                self._runs[job_id] = run
+        return self._launch(run, work, error_text, background)
 
-class ResumableFetch:
-    """Fetch URLs one at a time inside a job, pausing before the budget runs out and skipping work done earlier.
+    def _launch(self, run: _Run, work, error_text, background: bool) -> dict:
+        if background:
+            threading.Thread(target=self._execute, args=(run, work, error_text), name=f"job-{run.record['id']}", daemon=True).start()
+        else:
+            self._execute(run, work, error_text)
+        with run.lock:
+            return self._view(run.record, local=True)
 
-    fetch(urls) is any batch fetcher returning FetchResult objects (loop.py); it is called with one URL at a time so a
-    pause can come between any two pages. URLs finished in an earlier attempt are listed in the checkpoint under
-    namespace; for those, lookup(url) (for example the page already stored in the database) supplies the result and the
-    URL is fetched again only when lookup has nothing.
-    """
+    def _emit(self, run: _Run, event: dict) -> dict:
+        clean = _scrub_all(dict(event), self.scrub)
+        with run.cond:
+            run.record["seq"] = int(run.record.get("seq") or 0) + 1
+            clean["seq"] = run.record["seq"]
+            clean.setdefault("time", self.clock())
+            try:
+                clean = _json_copy(clean)
+            except (TypeError, ValueError):
+                clean = {"type": "note", "message": self.scrub(str(event))[:500], "seq": clean["seq"]}
+            events = run.record.setdefault("events", [])
+            events.append(clean)
+            if len(events) > MAX_EVENTS:
+                del events[: len(events) - MAX_EVENTS]
+            run.record["updated"] = self.clock()
+            run.cond.notify_all()
+        return clean
 
-    def __init__(self, ctx: JobContext, fetch: Callable[[list[str]], list], *, lookup: Callable[[str], object] | None = None,
-                 namespace: str = "fetch", save_every: int = 10) -> None:
-        self.ctx = ctx
-        self.fetch = fetch
-        self.lookup = lookup
-        self.namespace = namespace
-        self.save_every = max(1, int(save_every))
-        self.fetched = 0  # network fetches made in this attempt
-        self.reused = 0  # results taken from lookup instead
+    def _execute(self, run: _Run, work, error_text) -> None:
+        ctx = JobContext(self, run)
+        status, fields = "done", {}
+        try:
+            result = work(ctx)
+            if result is None:
+                result = {}
+            elif not isinstance(result, dict):
+                result = {"value": result}
+            fields["result"] = _json_copy(result)
+        except JobPaused:
+            status = "paused"
+        except Exception as exc:  # noqa: BLE001 - any failure of the work becomes the job's error
+            status = "error"
+            try:
+                text = (error_text or default_error_text)(exc)
+            except Exception:  # noqa: BLE001
+                text = default_error_text(exc)
+            fields["error"] = self.scrub(str(text))
+        with run.cond:
+            if status == "paused":
+                try:
+                    run.record["checkpoint"] = _json_copy(ctx.checkpoint)
+                except (TypeError, ValueError):
+                    pass
+            run.record.update(fields)
+            run.record["status"] = status
+            run.record["updated"] = self.clock()
+            stored = copy.deepcopy(run.record)
+        stored["events"] = stored.get("events", [])[-STORED_EVENTS:]
+        try:
+            self._store_final(run, stored)
+        finally:
+            with run.cond:
+                run.finished.set()
+                run.cond.notify_all()
 
-    def _state(self) -> dict:
-        state = self.ctx.checkpoint.setdefault(self.namespace, {})
-        state.setdefault("done", [])
-        return state
-
-    def __call__(self, urls: list[str]) -> list:
-        state = self._state()
-        done = set(state["done"])
-        results = []
-        unsaved = 0
-        for url in urls:
-            if url in done and self.lookup is not None:
-                cached = self.lookup(url)
-                if cached is not None:
-                    results.append(cached)
-                    self.reused += 1
-                    continue
-            if self.ctx.should_pause():
-                self.ctx.save_checkpoint()
-                raise JobPaused(f"paused before {len(urls) - len(results)} of {len(urls)} URLs")
-            results.extend(self.fetch([url]))
-            self.fetched += 1
-            if url not in done:
-                done.add(url)
-                state["done"].append(url)
-            unsaved += 1
-            if unsaved >= self.save_every:
-                self.ctx.save_checkpoint()
-                unsaved = 0
-        if unsaved:
-            self.ctx.save_checkpoint()
-        return results
+    def _store_final(self, run: _Run, record: dict) -> None:
+        """Make the outcome visible to every instance, then release the lock (a paused job keeps it)."""
+        holder = self._read(self._lock_name(record["id"]))
+        if holder is not None and holder.get("id") == record["id"] and int(holder.get("attempts") or 0) > int(record.get("attempts") or 0):
+            run.superseded = True  # resumed elsewhere after we looked stalled: that runner owns the record now
+            return
+        kept = False
+        if self.on_finish is not None:
+            try:
+                kept = bool(self.on_finish(record))
+            except Exception as exc:  # noqa: BLE001 - fall back to the record object below
+                self.last_error = f"Could not save the job with the project: {type(exc).__name__}"
+        if not kept:
+            try:
+                self.store.put(self._record_name(record["id"]), json.dumps(record).encode("utf-8"), overwrite=True, content_type="application/json")
+            except StoreError as exc:
+                self.last_error = f"Could not save job state: {exc}"
+        if record.get("status") in FINISHED:
+            self._release(record)

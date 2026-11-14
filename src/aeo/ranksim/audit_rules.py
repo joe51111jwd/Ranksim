@@ -118,6 +118,29 @@ def words_in(text: str) -> list[str]:
     return WORD.findall(text or "")
 
 
+def plural(count: int, noun: str) -> str:
+    return f"{count:,} {noun}" + ("" if count == 1 else "s")
+
+
+def _split(url: str):
+    try:
+        parts = urlsplit(url or "")
+        parts.port  # noqa: B018 - raises on a bad port
+        return parts
+    except ValueError:
+        return urlsplit("")
+
+
+def safe_join(base: str, href: str) -> str:
+    """urljoin that never raises on a malformed address (it returns "")."""
+    try:
+        joined = urljoin(base, href)
+        urlsplit(joined).port  # noqa: B018 - raises on a bad port or host
+        return joined
+    except ValueError:
+        return ""
+
+
 def squash(text: str) -> str:
     return re.sub(r"\s+", " ", text or "").strip()
 
@@ -178,20 +201,20 @@ def trim_sentences(text: str, limit: int = META_TARGET) -> str:
 
 
 def path_of(url: str) -> str:
-    parts = urlsplit(url or "")
+    parts = _split(url or "")
     return (parts.path or "/") + (f"?{parts.query}" if parts.query else "")
 
 
 def url_key(url: str) -> str:
     """One spelling per page: no scheme, no www, no fragment, no trailing slash, lower-case host."""
-    parts = urlsplit((url or "").strip())
+    parts = _split((url or "").strip())
     host = (parts.hostname or "").lower().removeprefix("www.")
     path = parts.path.rstrip("/") or ""
     return f"{host}{path}" + (f"?{parts.query}" if parts.query else "")
 
 
 def host_of(url: str) -> str:
-    return (urlsplit(url or "").hostname or "").lower().removeprefix("www.")
+    return (_split(url or "").hostname or "").lower().removeprefix("www.")
 
 
 # -- the page ------------------------------------------------------------------------------------
@@ -220,7 +243,7 @@ class PageDoc:
 
     @property
     def is_home(self) -> bool:
-        return urlsplit(self.url).path in {"", "/"}
+        return _split(self.url).path in {"", "/"}
 
     @cached_property
     def soup(self) -> BeautifulSoup:
@@ -242,8 +265,7 @@ class PageDoc:
 
     @cached_property
     def title_el(self) -> Tag | None:
-        head = self.head or self.soup
-        return head.find("title") or self.soup.find("title")
+        return next((tag for tag in self.soup.find_all("title") if not any(parent.name in {"svg", "symbol", "math"} for parent in tag.parents)), None)
 
     @property
     def title(self) -> str:
@@ -272,7 +294,7 @@ class PageDoc:
 
     @property
     def canonical(self) -> str:
-        return urljoin(self.url, self.canonical_el.get("href", "").strip()) if self.canonical_el else ""
+        return safe_join(self.url, self.canonical_el.get("href", "").strip()) if self.canonical_el else ""
 
     @cached_property
     def viewport_el(self) -> Tag | None:
@@ -327,6 +349,8 @@ class PageDoc:
         if "display:none" in style or "visibility:hidden" in style or "clip:rect(0" in style:
             return True
         classes = tag.get("class") or []
+        if any(":" in name for name in classes):
+            return False  # responsive utilities (hidden md:block) show the element on some screens
         return any(name in self.hidden_classes for name in classes)
 
     @cached_property
@@ -396,7 +420,9 @@ class PageDoc:
             if not href or href.startswith(("#", "mailto:", "tel:", "javascript:", "sms:", "data:")) or self._in_skipped(tag):
                 continue
             label = squash(tag.get_text(" ")) or squash(tag.get("aria-label", "")) or squash(" ".join(img.get("alt", "") for img in tag.find_all("img")))
-            out.append((tag, urljoin(self.url, href).split("#", 1)[0], label))
+            joined = safe_join(self.url, href).split("#", 1)[0]
+            if joined:
+                out.append((tag, joined, label))
         return out
 
     def is_internal(self, url: str) -> bool:
@@ -501,52 +527,91 @@ def _matches_only(soup: BeautifulSoup, selector: str, tag: Tag) -> bool:
     return len(found) == 1 and found[0] is tag
 
 
+TABLE_PARTS = {"caption", "colgroup", "thead", "tbody", "tfoot", "tr", "script", "template", "style"}
+BLOCKS = {"address", "article", "aside", "blockquote", "details", "div", "dl", "fieldset", "figcaption", "figure", "footer", "form", "h1", "h2", "h3", "h4", "h5", "h6", "header", "hr", "main", "menu", "nav", "ol", "p", "pre", "section", "table", "ul"}
+HEADINGS = {"h1", "h2", "h3", "h4", "h5", "h6"}
+TAG_NAME = re.compile(r"[a-z][a-z0-9-]*")
+
+
+def _browser_safe(tag: Tag) -> bool:
+    """False when a browser would build this part of the tree differently from lxml (a stray element inside a
+    table, a block inside a paragraph, a heading inside a heading, nested forms or links). A selector for it
+    could then match nothing or the wrong element in the editor, so the issue is not pinned."""
+    chain = [tag] + [parent for parent in tag.parents if isinstance(parent, Tag) and not isinstance(parent, BeautifulSoup)]
+    for index, node in enumerate(chain):
+        if not TAG_NAME.fullmatch(node.name or ""):
+            return False
+        parent = chain[index + 1] if index + 1 < len(chain) else None
+        if parent is None:
+            continue
+        if parent.name == "table" and node.name not in TABLE_PARTS:
+            return False
+        if parent.name in {"tbody", "thead", "tfoot"} and node.name not in {"tr", "script", "template"}:
+            return False
+        if parent.name == "tr" and node.name not in {"td", "th", "script", "template"}:
+            return False
+        above = {item.name for item in chain[index + 1 :]}
+        if node.name in BLOCKS and "p" in above:
+            return False
+        if node.name in HEADINGS and above & HEADINGS:
+            return False
+        if node.name in {"form", "a", "nobr", "button"} and node.name in above:
+            return False
+    if tag.name == "image":
+        return False
+    return True
+
+
 def selector_for(tag: Tag, soup: BeautifulSoup | None = None) -> str:
-    """A CSS selector that matches exactly this element, in BeautifulSoup and in a browser.
+    """A CSS selector that matches exactly this element, in BeautifulSoup and in a browser, or "" when no safe
+    one exists (the issue then has no element and is listed without a pin).
 
     Head tags use their attributes (``meta[name="description"]``). Body tags use the nearest unique id, then
-    ``tag:nth-of-type(n)`` steps. Table rows skip the tbody a browser adds."""
+    ``tag:nth-of-type(n)`` steps. A loose table row gets two alternatives, with and without the tbody a browser
+    adds, joined into one selector list."""
     soup = soup or next((parent for parent in tag.parents if isinstance(parent, BeautifulSoup)), None)
-    if tag.name in {"title", "head", "body", "html"}:
+    if soup is None or not _browser_safe(tag):
+        return ""
+    if tag.name in {"head", "body", "html"}:
         return tag.name
-    if tag.name in {"meta", "link"} and soup is not None:
+    if tag.name == "title":
+        selector = "head > title"
+        return selector if _matches_only(soup, selector, tag) else ""
+    if tag.name in {"meta", "link"}:
         for key in ("name", "property", "rel", "http-equiv", "itemprop"):
             value = tag.get(key)
             if isinstance(value, list):
                 value = " ".join(value)
-            if value:
-                selector = f'{tag.name}[{key}="{_attr_value(value)}"]'
+            value = squash(value or "")
+            if value and " " not in value:
+                op = "~=" if key == "rel" else "="
+                selector = f'{tag.name}[{key}{op}"{_attr_value(value)}"]'
                 if _matches_only(soup, selector, tag):
                     return selector
-    steps: list[str] = []
+    alternatives = [""]
     node: Tag | None = tag
     while node is not None and isinstance(node, Tag) and not isinstance(node, BeautifulSoup):
-        if node.name in {"html"}:
+        if node.name == "html":
             break
         if node.name in {"body", "head"}:
-            steps.append(node.name)
-            break
-        ident = node.get("id")
-        if isinstance(ident, str) and _ident(ident) and soup is not None and len(soup.find_all(id=ident)) == 1:
-            steps.append(f"{node.name}#{ident}")
-            break
-        parent = node.parent
-        same = [child for child in parent.children if isinstance(child, Tag) and child.name == node.name] if parent is not None else [node]
-        step = node.name if len(same) <= 1 else f"{node.name}:nth-of-type({same.index(node) + 1})"
-        if node.name == "tr" and parent is not None and parent.name == "table":
-            step = " " + step  # a browser wraps loose rows in tbody: use a descendant step
-        steps.append(step)
-        node = parent
-    parts = list(reversed(steps))
-    selector = ""
-    for part in parts:
-        if not selector:
-            selector = part.strip()
-        elif part.startswith(" "):
-            selector += part
+            options = [node.name]
+            node = None
         else:
-            selector += " > " + part
-    return selector
+            ident = node.get("id")
+            parent = node.parent
+            if isinstance(ident, str) and _ident(ident) and len(soup.find_all(id=ident)) == 1:
+                options = [f"{node.name}#{ident}"]
+                node = None
+            else:
+                same = [child for child in parent.children if isinstance(child, Tag) and child.name == node.name] if parent is not None else [node]
+                step = node.name if len(same) <= 1 else f"{node.name}:nth-of-type({same.index(node) + 1})"
+                options = [step, f"tbody > {step}"] if node.name == "tr" and parent is not None and parent.name == "table" else [step]
+                node = parent
+        alternatives = [f"{option} > {rest}" if rest else option for option in options for rest in alternatives]
+        if len(alternatives) > 8:
+            return ""
+    selector = ", ".join(alternatives)
+    return selector if _matches_only(soup, selector, tag) else ""
 
 
 def element_of(tag: Tag | None, doc: PageDoc, *, attr: str | None = None) -> dict | None:
@@ -564,7 +629,10 @@ def element_of(tag: Tag | None, doc: PageDoc, *, attr: str | None = None) -> dic
         text = ""
     else:
         text = tag.get_text(" ")
-    out = {"selector": selector_for(tag, doc.soup), "text": short(text, 160), "tag": tag.name}
+    selector = selector_for(tag, doc.soup)
+    if not selector:
+        return None
+    out = {"selector": selector, "text": short(text, 160), "tag": tag.name}
     if attr:
         out["attr"] = attr
     return out
@@ -828,7 +896,7 @@ def check_indexable(ctx: AuditContext) -> list[dict]:
                     fix="Point the canonical at this page's own URL unless it really is a copy.",
                 )
             )
-        elif not page.canonical_el and page.head is not None:
+        elif not page.canonical_el:
             issues.append(
                 make_issue(
                     "canonical-missing", f"{page.path} has no canonical tag", "Without one, Google picks the main URL itself when the page is reachable at several addresses.",
@@ -848,24 +916,30 @@ def check_script_built(ctx: AuditContext) -> list[dict]:
         visible = page.visible_words
         if visible >= SCRIPT_BUILT_WORDS:
             continue
-        has_root = any(page.soup.select_one(selector) is not None for selector in APP_ROOTS)
         heavy = page.script_bytes >= 2000 or len(page.soup.find_all("script", src=True)) >= 1
+        if not heavy:
+            continue  # no scripts: a short page, not one a script draws
+        roots = [found for selector in APP_ROOTS for found in [page.soup.select_one(selector)] if found is not None]
+        empty_root = any(len(words_in(" ".join(piece for piece in root.find_all(string=True) if piece.parent.name not in SKIP_TAGS))) < 10 for root in roots)
         hidden = page.hidden_words
-        if not (hidden >= 20 or (has_root and heavy)):
-            continue
         block = max(page.hidden_blocks, key=lambda tag: len(words_in(tag.get_text(" "))), default=None)
+        crawl_copy = block is not None and hidden >= 20 and hidden >= 2 * visible and len(words_in(block.get_text(" "))) >= 0.6 * hidden
+        if not (crawl_copy or (empty_root and visible < 20)):
+            continue
+        if not crawl_copy:
+            block = None
         where = None
         if block is not None:
             classes = ".".join(block.get("class") or [])
             where = f"{block.name}.{classes}" if classes else block.name
         if hidden and block is not None:
             comment = (
-                f"Browsers build {page.path} with scripts. Its HTML shows {visible} words to a reader, and the real text "
+                f"Browsers build {page.path} with scripts. Its HTML shows {plural(visible, 'word')} to a reader, and the real text "
                 f"({hidden} words) sits in a hidden {where} block. Google may treat hidden text as less important, and "
                 "tools that don't run scripts see an empty page."
             )
         else:
-            comment = f"Browsers build {page.path} with scripts. Its HTML has only {visible} words, so Google's first pass and tools that don't run scripts see an empty page."
+            comment = f"Browsers build {page.path} with scripts. Its HTML has only {plural(visible, 'word')}, so Google's first pass and tools that don't run scripts see an empty page."
         issues.append(
             make_issue(
                 "script-built", f"{page.path} is drawn by scripts", comment, page=page, el=block or page.main,
@@ -1121,7 +1195,7 @@ def _label_for(url: str, ctx: AuditContext, page: PageDoc) -> str | None:
         label = target.h1 or core_title(target.title, ctx.brand)
         if label:
             return short(label, 70)
-    slug = unquote(urlsplit(url).path.rstrip("/").rsplit("/", 1)[-1])
+    slug = unquote(_split(url).path.rstrip("/").rsplit("/", 1)[-1])
     slug = re.sub(r"\.(html?|php|aspx?)$", "", slug)
     parts = [part for part in re.split(r"[-_]+", slug) if part]
     if len(parts) >= 2 and not any(re.fullmatch(r"[0-9a-f]{8,}|\d+", part) for part in parts):
@@ -1195,7 +1269,7 @@ def check_images(ctx: AuditContext) -> list[dict]:
             if tag.get("width") in {"1", "0"} or (tag.get("role") or "") == "presentation" or (tag.get("aria-hidden") or "") == "true":
                 continue
             if not tag.has_attr("alt"):
-                name = unquote(urlsplit(src).path.rsplit("/", 1)[-1]) if src and not src.startswith("data:") else ""
+                name = unquote(_split(src).path.rsplit("/", 1)[-1]) if src and not src.startswith("data:") else ""
                 stem = re.sub(r"\.[a-z0-9]{2,5}$", "", name, flags=re.I)
                 parts = [part for part in re.split(r"[-_ .]+", stem) if part and not re.fullmatch(r"\d+(x\d+)?|[0-9a-f]{6,}|img|image|photo|pic|dsc|copy|final|scaled|w\d+|\d+w|v\d+", part, flags=re.I)]
                 suggestion = cased(" ".join(parts), page.text) if len(parts) >= 2 else None
@@ -1206,12 +1280,13 @@ def check_images(ctx: AuditContext) -> list[dict]:
                         fix="Describe what the image shows in a few words. Use alt=\"\" only for decoration.",
                     )
                 )
-            absolute = urljoin(page.url, src) if src else ""
+            absolute = safe_join(page.url, src) if src else ""
             size = page.image_bytes.get(absolute) or page.image_bytes.get(src)
             width = _image_width(tag, src)
             sized = tag.has_attr("width") and tag.has_attr("height")
             styled = re.search(r"(^|;)\s*(width|height|aspect-ratio)\s*:", tag.get("style") or "")
-            if not sized and not styled and ((size and size >= HUGE_IMAGE_BYTES) or width >= HUGE_IMAGE_WIDTH):
+            responsive = tag.has_attr("sizes") and tag.has_attr("srcset")
+            if not sized and not styled and not (responsive and not size) and ((size and size >= HUGE_IMAGE_BYTES) or width >= HUGE_IMAGE_WIDTH):
                 facts = []
                 if size:
                     facts.append(f"{size // 1000:,} KB")
@@ -1219,7 +1294,7 @@ def check_images(ctx: AuditContext) -> list[dict]:
                     facts.append(f"{width:,} pixels wide")
                 huge.append(
                     make_issue(
-                        "img-huge", "Large image with no width and height", f"The image {short(urlsplit(src).path.rsplit('/', 1)[-1], 60)} on {page.path} is {' and '.join(facts)} and sets no size, so the page jumps while it loads and loads slowly on phones.",
+                        "img-huge", "Large image with no width and height", f"The image {short(_split(src).path.rsplit('/', 1)[-1], 60)} on {page.path} is {' and '.join(facts)} and sets no size, so the page jumps while it loads and loads slowly on phones.",
                         page=page, el=tag, key=src, fix="Add width and height attributes, serve a smaller version, and lazy-load it if it is below the fold.",
                     )
                 )
@@ -1259,7 +1334,7 @@ def _ld_script(data: dict) -> str:
 
 
 def _origin(url: str) -> str:
-    parts = urlsplit(url)
+    parts = _split(url)
     return f"{parts.scheme}://{parts.netloc}/"
 
 
@@ -1308,7 +1383,7 @@ def check_structured_data(ctx: AuditContext) -> list[dict]:
                         fix="Fix the JSON so it parses, and check it with Google's Rich Results Test.",
                     )
                 )
-        if not page.types and page.head is not None:
+        if not page.types:
             issues.append(
                 make_issue(
                     "schema-missing", f"{page.path} has no structured data", "Structured data tells Google what the page is: a company, a product, an article, questions and answers.",
@@ -1347,8 +1422,6 @@ def check_structured_data(ctx: AuditContext) -> list[dict]:
 def check_social(ctx: AuditContext) -> list[dict]:
     issues = []
     for page in ctx.readable:
-        if page.head is None:
-            continue
         missing = [prop for prop in ("og:title", "og:description", "og:image") if page.og(prop) is None]
         if missing:
             tags = []
@@ -1359,7 +1432,7 @@ def check_social(ctx: AuditContext) -> list[dict]:
             if "og:image" in missing:
                 first = next((tag for tag in page.images if (tag.get("src") or "").strip() and not tag["src"].startswith("data:")), None)
                 if first is not None:
-                    tags.append(f'<meta property="og:image" content="{_html_attr(urljoin(page.url, first["src"].strip()))}">')
+                    tags.append(f'<meta property="og:image" content="{_html_attr(safe_join(page.url, first["src"].strip()))}">')
             issues.append(
                 make_issue(
                     "og-missing", f"{page.path} is missing {', '.join(missing)}", "When someone shares the page, Slack, LinkedIn and Facebook build the preview from Open Graph tags. Without them the preview is blank or wrong.",
@@ -1405,7 +1478,7 @@ def check_mobile(ctx: AuditContext) -> list[dict]:
 def check_urls(ctx: AuditContext) -> list[dict]:
     issues = []
     for page in ctx.readable:
-        parts = urlsplit(page.url)
+        parts = _split(page.url)
         path = unquote(parts.path or "/")
         problems = []
         if any(ch.isupper() for ch in path):
@@ -1531,29 +1604,33 @@ def plugin_checks() -> list[CheckFn]:
     return [check for check in found if callable(check)]
 
 
+TEMPLATE_NOTE = re.compile(r" The same element is on \d+ pages, so it is likely one fix in a shared template\.$")
+
+
 def _merge_template(issues: list[dict]) -> list[dict]:
     """The same element with the same problem and the same fix on many pages (a footer link, a logo) is one
-    issue that lists the pages."""
+    issue that lists the pages. Safe to run again on its own output."""
     out: list[dict] = []
     groups: dict[tuple, dict] = {}
     for issue in issues:
         element = issue.get("element") or {}
-        if issue["kind"] not in TEMPLATE_KINDS or not element.get("selector") or not issue.get("page"):
+        pages = [url for url in (issue.get("pages") or []) if isinstance(url, str)] or ([issue["page"]] if issue.get("page") else [])
+        if issue["kind"] not in TEMPLATE_KINDS or not element.get("selector") or not pages:
             out.append(issue)
             continue
         key = (issue["kind"], element.get("selector"), element.get("text"), issue.get("suggestion"), issue.get("search"))
         first = groups.get(key)
         if first is None:
             groups[key] = issue
-            issue["pages"] = [issue["page"]]
+            issue["pages"] = list(dict.fromkeys(pages))
             out.append(issue)
             continue
-        if issue["page"] not in first["pages"]:
-            first["pages"].append(issue["page"])
+        first["pages"] += [url for url in pages if url not in first["pages"]]
     for issue in groups.values():
         count = len(issue["pages"])
-        issue["count"] = count
+        issue["comment"] = TEMPLATE_NOTE.sub("", issue["comment"])
         if count > 1:
+            issue["count"] = count
             issue["comment"] += f" The same element is on {count} pages, so it is likely one fix in a shared template."
         else:
             issue.pop("pages", None)
@@ -1561,26 +1638,55 @@ def _merge_template(issues: list[dict]) -> list[dict]:
     return out
 
 
+def _clean_issue(issue) -> dict | None:
+    """Coerce one issue (possibly from a plugin) to the shape, or None when it can't be."""
+    if not isinstance(issue, dict):
+        return None
+    kind, title = issue.get("kind"), issue.get("title")
+    if not isinstance(kind, str) or not kind or title is None or title == "":
+        return None
+    issue["title"] = str(title)
+    for key in ("comment", "fix"):
+        issue[key] = "" if issue.get(key) is None else str(issue[key])
+    for key in ("page", "search", "suggestion", "action"):
+        value = issue.get(key)
+        if value is not None and not isinstance(value, str):
+            if key in {"suggestion", "action"}:
+                issue.pop(key, None)
+            else:
+                issue[key] = None
+        else:
+            issue.setdefault(key, None) if key in {"page", "search"} else None
+    element = issue.get("element")
+    if element is not None and not (isinstance(element, dict) and isinstance(element.get("selector"), str) and element["selector"]):
+        issue.pop("element", None)
+    if "pages" in issue and not isinstance(issue["pages"], list):
+        issue.pop("pages", None)
+    if "evidence" in issue and not isinstance(issue["evidence"], list):
+        issue["evidence"] = [str(issue["evidence"])]
+    if issue.get("severity") not in SEVERITY_ORDER:
+        issue["severity"] = RULES.get(kind, ("medium",))[0]
+    rule = RULES.get(kind, (issue["severity"], 4, 2))
+    for key, default, low, high in (("impact", rule[1], 1, 10), ("effort", rule[2], 1, 3)):
+        try:
+            issue[key] = min(high, max(low, int(issue.get(key, default))))
+        except (TypeError, ValueError):
+            issue[key] = default
+    if not isinstance(issue.get("id"), str) or not issue["id"]:
+        issue["id"] = make_issue(kind, issue["title"], "", page=issue.get("page"), search=issue.get("search"), key=issue["title"])["id"]
+    return issue
+
+
 def finalize(issues: list[dict]) -> list[dict]:
-    """Drop duplicates, merge template repeats, score, and sort: severity, then score, then title."""
+    """Drop broken and duplicate issues, merge template repeats, score, and sort: severity, then score, then
+    ranking issues first, then title."""
     seen_ids: set[str] = set()
     seen_keys: set[tuple] = set()
     unique = []
-    for issue in issues:
-        if not isinstance(issue, dict) or not issue.get("kind") or not issue.get("title"):
+    for raw in issues:
+        issue = _clean_issue(raw)
+        if issue is None:
             continue
-        issue.setdefault("severity", RULES.get(issue["kind"], ("medium",))[0])
-        if issue["severity"] not in SEVERITY_ORDER:
-            issue["severity"] = "medium"
-        rule = RULES.get(issue["kind"], (issue["severity"], 4, 2))
-        issue.setdefault("impact", rule[1])
-        issue.setdefault("effort", rule[2])
-        issue.setdefault("fix", "")
-        issue.setdefault("comment", "")
-        issue.setdefault("page", None)
-        issue.setdefault("search", None)
-        if not issue.get("id"):
-            issue["id"] = make_issue(issue["kind"], issue["title"], "", page=issue.get("page"), search=issue.get("search"), key=issue["title"])["id"]
         element = issue.get("element") or {}
         key = (issue["kind"], issue.get("page"), issue.get("search"), element.get("selector"), issue["title"])
         if issue["id"] in seen_ids or key in seen_keys:
@@ -1602,10 +1708,16 @@ def run_audit(ctx: AuditContext, *, checks: Iterable[CheckFn] | None = None) -> 
     issues: list[dict] = []
     for check in list(checks if checks is not None else CHECKS) + (plugin_checks() if checks is None else []):
         try:
-            found = check(ctx) or []
+            found = list(check(ctx) or [])
         except Exception:  # noqa: BLE001
-            log.exception("audit check %s failed", getattr(check, "__name__", check))
-            continue
+            log.exception("audit check %s failed; running it page by page", getattr(check, "__name__", check))
+            found = []
+            for page in ctx.pages:  # one odd page must not hide the check's issues on every other page
+                single = AuditContext(pages=[page], rankings=ctx.rankings, docs=ctx.docs, project=ctx.project, robots_txt=ctx.robots_txt, statuses=ctx.statuses, brand=ctx.brand)
+                try:
+                    found.extend(check(single) or [])
+                except Exception:  # noqa: BLE001
+                    log.warning("audit check %s failed on %s", getattr(check, "__name__", check), page.url)
         issues.extend(found)
     return finalize(issues)
 

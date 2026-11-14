@@ -94,7 +94,7 @@ def test_title_missing_long_short_duplicate_and_search():
     assert missing["suggestion"].startswith("<title>Dirt work software for excavation crews") and missing["action"] == "append"
     long = only(issues, "title-long")[0]
     assert long["page"] == f"{SITE}/b/" and str(len("Shovel is the all in one dirt work software for excavation, grading and utility contractors | Shovel")) in long["title"]
-    assert long["element"]["selector"] == "title" and len(long["suggestion"]) <= A.TITLE_MAX
+    assert long["element"]["selector"] == "head > title" and len(long["suggestion"]) <= A.TITLE_MAX
     short = only(issues, "title-short")[0]
     assert short["page"] == f"{SITE}/c/" and "Dirt work software for excavation crews" in short["suggestion"]
     dupes = only(issues, "title-duplicate")
@@ -428,7 +428,7 @@ def test_ranking_issues_per_search():
     assert no_page["search"] == "dirt work estimating software" and no_page.get("page") is None
     behind = only(issues, "behind")[0]
     assert behind["title"] == '#6 for "crew time tracking app"' and "have a table" in behind["comment"] and "FAQ" in behind["comment"]
-    assert 'missing "time tracking"' in behind["comment"] and behind["element"]["selector"] == "title"
+    assert 'missing "time tracking"' in behind["comment"] and behind["element"]["selector"] == "head > title"
     assert behind["suggestion"].startswith("Crew time tracking app")
     assert not any(issue.get("search") == "unchecked search" for issue in issues)
 
@@ -512,3 +512,116 @@ def test_selectors_survive_tables_ids_and_odd_markup():
     soup = BeautifulSoup(pages[f"{SITE}/odd/"].replace("<table>", "<table><tbody>").replace("</table>", "</tbody></table>"), "lxml")
     row = next(issue for issue in generic if " tr" in issue["element"]["selector"])
     assert len(soup.select(row["element"]["selector"])) == 1  # still matches after a browser adds tbody
+
+
+# -- cases from the adversarial review -----------------------------------------------------------
+
+
+def test_svg_titles_are_not_the_page_title():
+    icon = '<svg><title>Menu</title><path d="M0 0"/></svg>'
+    pages = {f"{SITE}/svg/": page(body=f"<header>{icon}</header><main><h1>Dirt work software</h1><p>{FILLER}</p></main>"), f"{SITE}/notitle/": page(title=None, body=f"<header>{icon}</header><main><h1>Dirt work</h1><p>{FILLER}</p></main>")}
+    issues = run(pages)
+    assert "title-short" not in kinds(issues)
+    assert "title-missing" in kinds(issues, f"{SITE}/notitle/")
+    assert_selectors_match(issues, pages)
+
+
+def test_rows_in_thead_tbody_and_nested_tables_get_unique_selectors():
+    body = (
+        f"<main><h1>Dirt work software</h1><p>{FILLER}</p>"
+        "<table><thead><tr><th>h</th></tr></thead><tr><td><a href='/x/'>click here</a></td></tr></table>"
+        "<table><tr><td>a</td></tr><tr><td><table><tr><td>i</td></tr><tr><td><a href='/y/'>read more</a></td></tr></table><a href='/z/'>here</a></td></tr></table></main>"
+    )
+    pages = {f"{SITE}/tables/": page(body=body)}
+    issues = run(pages)
+    generic = only(issues, "link-generic")
+    assert len(generic) == 3 and all(issue.get("element") for issue in generic)
+    assert_selectors_match(issues, pages)
+    browserish = BeautifulSoup(pages[f"{SITE}/tables/"].replace("{url}", f"{SITE}/tables/"), "lxml")
+    for table in browserish.find_all("table"):  # what a browser builds: loose rows wrapped in tbody
+        loose = [row for row in table.find_all("tr", recursive=False)]
+        if loose:
+            wrapper = browserish.new_tag("tbody")
+            loose[0].insert_before(wrapper)
+            for row in loose:
+                wrapper.append(row.extract())
+    for issue in generic:
+        found = browserish.select(issue["element"]["selector"])
+        assert len(found) == 1 and found[0].name == "a", issue["element"]["selector"]
+
+
+def test_markup_a_browser_rebuilds_is_not_pinned():
+    body = (
+        f"<main><h1>Dirt work software</h1><p>{FILLER}</p>"
+        "<div><table><a href='/f/'>click here</a><tr><td>x</td></tr></table></div>"
+        "<p><o:p><a href='/h/'>here</a></o:p></p></main>"
+    )
+    pages = {f"{SITE}/odd/": page(body=body)}
+    issues = run(pages)
+    for issue in only(issues, "link-generic"):
+        assert "element" not in issue, issue["element"]  # listed, but not pinned on a guess
+
+
+def test_canonical_rel_with_spaces_uses_a_word_match():
+    pages = {f"{SITE}/rel/": page().replace('<link rel="canonical" href="{url}">', f'<link rel=" canonical " href="{SITE}/other/">')}
+    issue = only(run(pages), "canonical-other")[0]
+    assert issue["element"]["selector"] == 'link[rel~="canonical"]'
+
+
+def test_a_malformed_link_does_not_hide_other_pages_issues():
+    pages = {
+        f"{SITE}/bad/": page(body=f'<main><h1>Dirt work software</h1><p>{FILLER}</p><a href="http://[bad">click here</a><img src="http://[bad/x.png"></main>'),
+        f"{SITE}/ok/": page(body=f'<main><h1>Dirt work software</h1><p>{FILLER}</p><a href="/a/">click here</a></main>'),
+    }
+    issues = run(pages)
+    assert "link-generic" in kinds(issues, f"{SITE}/ok/") and "img-alt" in kinds(issues, f"{SITE}/bad/")
+
+
+def test_short_pages_without_scripts_or_server_rendered_apps_are_not_script_built():
+    modal = '<div style="display:none"><p>' + FILLER[:300] + "</p></div>"
+    pages = {
+        f"{SITE}/contact/": page(body=f"<main><h1>Contact</h1><p>Call us any day of the week.</p>{modal}</main>"),
+        f"{SITE}/ssr/": page(body='<div id="__next"><main><h1>Dirt work</h1><p>' + " ".join(["word"] * 30) + '</p></main></div><script src="/_next/app.js"></script>'),
+        f"{SITE}/tw/": page(body='<main><h1>Dirt work</h1><div class="hidden md:block"><p>' + FILLER + "</p></div></main>"),
+    }
+    assert "script-built" not in kinds(run(pages))
+
+
+def test_responsive_images_are_not_called_huge():
+    body = f'<main><h1>Dirt work software</h1><p>{FILLER}</p><img alt="Dashboard" src="/d-2880.png" srcset="/d-960.png 960w, /d-2880.png 2880w" sizes="(max-width:760px) 260px, 420px"></main>'
+    assert "img-huge" not in kinds(run({f"{SITE}/r/": page(body=body)}))
+
+
+def test_bad_plugin_issues_are_dropped_or_coerced(monkeypatch):
+    def sloppy(ctx):
+        url = ctx.pages[0].url
+        return [
+            {"kind": "p1", "title": 5, "page": url},
+            {"kind": "p2", "title": "Element is a string", "element": "body", "page": url},
+            {"kind": "p3", "title": "Page is a list", "page": [url]},
+            {"kind": "p4", "title": "Impact is text", "impact": "5", "page": url},
+            "not an issue",
+            {"title": "no kind"},
+        ]
+
+    monkeypatch.setattr(A, "plugin_checks", lambda: [sloppy])
+    issues = run({GOOD: page()})
+    assert sorted(issue["kind"] for issue in issues) == ["p1", "p2", "p3", "p4"]
+    assert all(isinstance(issue["title"], str) and "element" not in issue for issue in issues)
+    assert next(issue for issue in issues if issue["kind"] == "p4")["impact"] == 5
+
+
+def test_finalize_twice_keeps_merged_pages():
+    body = f'<main><h1>Dirt work software</h1><p>{FILLER}</p><a href="/a/">a page</a><a href="/b/">b page</a><a href="/c/">c page</a></main><footer><a href="/blog/">Read more</a></footer>'
+    pages = {f"{SITE}/{name}/": page(body=body, title=f"{name.title()} for dirt work contractors | Shovel") for name in ("one", "two", "three")}
+    once = run(pages)
+    twice = A.finalize([dict(issue) for issue in once])
+    generic = only(twice, "link-generic")[0]
+    assert generic["count"] == 3 and generic["comment"].count("3 pages") == 1
+    assert [issue["id"] for issue in once] == [issue["id"] for issue in twice]
+
+
+def test_a_page_without_a_head_still_gets_head_checks():
+    url = f"{SITE}/nohead/"
+    issues = A.audit_html({url: f"<h1>Dirt work software</h1><p>{FILLER}</p>"})
+    assert {"title-missing", "meta-missing", "viewport-missing", "og-missing", "schema-missing"} <= set(kinds(issues, url))

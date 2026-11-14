@@ -137,12 +137,12 @@ Lists hold at most 10 items, strings at most 300 characters. Parsed for Serper, 
 
 All in `js/plugins/history.js` and `css/plugins/history.css`, through the P0 hooks only.
 
-- Overview tile "Rank changes" (`registerOverviewTile`, key `rank-changes`, order 55): up, down, new and lost counts
+- Overview tile "Rank changes" (`registerOverviewTile`, key `track-rank-changes`, order 55): up, down, new and lost counts
   since the last check, then a stacked bar per check of searches on the first page (top 3 dark, rest of the top 10
   blue), with a hover tooltip, a next check line and a link to the History screen. Before the second check it says so.
 - Searches column "Trend" (`registerSearchColumn`): a sparkline of our position at each check plus the change chip.
   The Searches row is a button, so the cell is passive.
-- History screen (`registerScreen('history', {nav: false})`, `/app/<slug>/history`): every search with position,
+- History screen (`registerScreen('track-history', {nav: false})`, `/app/<slug>/track-history`): every search with position,
   sparkline and change. A row opens a sheet with our line plus the two best competitors (legend, crosshair tooltip,
   a table view), people also ask, related searches and the other SERP features seen.
 - Settings section `tracking` (order 15): re-check schedule (off, daily, weekly) saved with POST, the monthly usage

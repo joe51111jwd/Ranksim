@@ -1,5 +1,5 @@
 /* Rank history (track workstream): Overview tile "Rank changes", a trend column in Searches, a History screen
-   (/app/<slug>/history) whose rows open a per-search chart, and a Settings section for the re-check schedule and the monthly search meter.
+   (/app/<slug>/track-history) whose rows open a per-search chart, and a Settings section for the re-check schedule and the monthly search meter.
 
    Data: report.history (compact, from plugins/tracking.py extend_report), GET /api/v1/projects/{slug}/history (full,
    for the sheet), GET /api/v1/tracking/status and GET|POST /api/v1/projects/{slug}/tracking. Every position shown is
@@ -249,7 +249,7 @@ function table(series) {
 /* ------------------------------------------------------------------ overview tile */
 
 registerOverviewTile({
-  key: 'rank-changes',
+  key: 'track-rank-changes',
   order: 55,
   render(R) {
     const H = R.history;
@@ -268,7 +268,7 @@ registerOverviewTile({
     const foot = h('div', { class: 'history-foot' });
     if (H.next_check_at) foot.append(h('span', { class: 'tile-sub', text: `Next check ${day(H.next_check_at)}` }));
     else if (H.schedule === 'off') foot.append(h('span', { class: 'tile-sub', text: 'Re-checks are off. Turn them on in Settings.' }));
-    if (H.checks) foot.append(link('history', 'Every search', { class: 'btn btn-plain' }));
+    if (H.checks) foot.append(link('track-history', 'Every search', { class: 'btn btn-plain' }));
     tile.append(foot);
     return tile;
   },
@@ -277,7 +277,7 @@ registerOverviewTile({
 /* ------------------------------------------------------------------ searches column */
 
 registerSearchColumn({
-  key: 'history',
+  key: 'track-history',
   order: 50,
   header: 'Trend',
   cell(row) {
@@ -291,7 +291,7 @@ registerSearchColumn({
 
 /* ------------------------------------------------------------------ history screen */
 
-registerScreen('history', {
+registerScreen('track-history', {
   label: 'History',
   nav: false,
   order: 35,

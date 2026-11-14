@@ -211,7 +211,7 @@ function item(ctx, issue, index) {
 }
 
 registerEditorPanel({
-  key: 'annotations',
+  key: 'audit-annotations',
   order: 15,
   render(ctx) {
     STATE.ctx = ctx;

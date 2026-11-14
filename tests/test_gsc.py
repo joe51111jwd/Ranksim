@@ -20,7 +20,7 @@ from tests.test_serve_project import make_settings
 PASSWORD = "gsc owner password"
 CLIENT_ID = "fake-client-id.apps.googleusercontent.com"
 CLIENT_SECRET = "fake-client-secret-XYZ"
-SECRET = "test-ranksim-secret-0123456789"
+SECRET = "test-ranksim-secret-0123456789-abcdefgh"
 NOW = 1_794_000_000.0  # 2026-11-06 (UTC)
 DASHES = ("—", "–")
 
@@ -35,7 +35,8 @@ class FakeGoogle:
         self.calls: list[tuple[str, str, dict]] = []
         self.issued = 0
         self.valid_access: set[str] = set()
-        self.refresh_tokens = {"refresh-1"}
+        self.refresh_tokens: set[str] = set()
+        self.consents = 0
         self.revoked: list[str] = []
         self.sites = [
             {"siteUrl": "sc-domain:dirtcrew.example", "permissionLevel": "siteOwner"},
@@ -68,7 +69,10 @@ class FakeGoogle:
                     return httpx.Response(400, json={"error": "invalid_grant"})
                 reply = {"access_token": self._token(), "expires_in": 3599, "scope": self.scope, "token_type": "Bearer"}
                 if self.give_refresh:
-                    reply["refresh_token"] = "refresh-1"
+                    self.consents += 1
+                    refresh = f"refresh-{self.consents}"  # prompt=consent: a new refresh token every time
+                    self.refresh_tokens.add(refresh)
+                    reply["refresh_token"] = refresh
                 return httpx.Response(200, json=reply)
             if form["grant_type"] == "refresh_token":
                 if form.get("refresh_token") not in self.refresh_tokens:
@@ -78,7 +82,9 @@ class FakeGoogle:
             token = parse_qs(request.content.decode())["token"][0]
             self.calls.append(("revoke", token, {}))
             self.revoked.append(token)
-            self.refresh_tokens.discard(token)
+            # Like Google: revoking any token ends the whole grant for this account and client.
+            self.refresh_tokens.clear()
+            self.valid_access.clear()
             return httpx.Response(200, json={})
         if url.startswith(gsc.API_BASE):
             auth = request.headers.get("authorization", "")
@@ -254,7 +260,7 @@ def test_secretbox_needs_a_secret(monkeypatch):
     assert not secretbox.configured()
     with pytest.raises(secretbox.SecretBoxError):
         secretbox.seal("x", purpose="p")
-    monkeypatch.setenv(secretbox.SECRET_ENV, "short")
+    monkeypatch.setenv(secretbox.SECRET_ENV, "short-password-123")
     assert not secretbox.configured()
     with pytest.raises(secretbox.SecretBoxError):
         secretbox.seal("x", purpose="p")
@@ -552,7 +558,7 @@ def test_google_denied_and_missing_scope(tmp_path, env):
     query = _connect(box)
     missing = _callback(box, {"code": "good-code", "state": query["state"]})
     assert missing.headers["location"].endswith("?gsc=scope_missing")
-    assert not gsc.account_path(box.ui).exists() and box.google.revoked == ["refresh-1"]
+    assert not gsc.account_path(box.ui).exists() and box.google.revoked == []
     box.google.scope = gsc.SCOPE
     box.google.give_refresh = False
     query = _connect(box)
@@ -568,7 +574,7 @@ def test_changed_secret_means_reconnect(tmp_path, env, monkeypatch):
     _sign_in(box)
     query = _connect(box)
     _callback(box, {"code": "good-code", "state": query["state"]})
-    monkeypatch.setenv(secretbox.SECRET_ENV, "rotated-secret-value-0123")
+    monkeypatch.setenv(secretbox.SECRET_ENV, "rotated-secret-value-0123456789-abcdefgh")
     box.ui.gsc_clock.now += 2 * 3600
     result = _post(box, f"/api/v1/gsc/projects/{box.project.slug}/refresh")
     assert result.status_code == 409 and "reconnect" in result.json()["error"]
@@ -612,3 +618,61 @@ def test_the_redirect_uri_follows_the_host_or_the_override(monkeypatch):
     assert gsc.redirect_uri_for(request) == gsc.HOSTED_REDIRECT_URI
     monkeypatch.setenv(gsc.REDIRECT_ENV, "https://seo.example/api/v1/gsc/callback")
     assert gsc.redirect_uri_for(request) == "https://seo.example/api/v1/gsc/callback"
+
+
+def test_reconnecting_keeps_the_new_grant_working(tmp_path, env):
+    box = _app(tmp_path)
+    _sign_in(box)
+    for _ in range(2):
+        query = _connect(box)
+        assert _callback(box, {"code": "good-code", "state": query["state"]}).headers["location"].endswith("?gsc=connected")
+    assert box.google.revoked == []
+    box.ui.gsc_clock.now += 2 * 3600  # the access token expired; the stored refresh token must still work
+    result = _post(box, f"/api/v1/gsc/projects/{box.project.slug}/refresh")
+    assert result.status_code == 200 and result.json()["state"] == "ready"
+    refresh = [form["refresh_token"] for kind, grant, form in box.google.calls if kind == "token" and grant == "refresh_token"]
+    assert refresh == ["refresh-2"]
+
+
+def test_a_wrong_client_secret_keeps_the_stored_grant(tmp_path, env, monkeypatch):
+    box = _app(tmp_path)
+    _sign_in(box)
+    query = _connect(box)
+    _callback(box, {"code": "good-code", "state": query["state"]})
+    monkeypatch.setenv(gsc.CLIENT_SECRET_ENV, "mistyped-secret")
+    box.ui.gsc_clock.now += 2 * 3600
+    result = _post(box, f"/api/v1/gsc/projects/{box.project.slug}/refresh")
+    assert result.status_code == 502 and gsc.CLIENT_SECRET_ENV in result.json()["error"]
+    assert "mistyped-secret" not in result.text
+    assert gsc.account_path(box.ui).exists()
+    assert box.client.get(f"/api/v1/gsc/projects/{box.project.slug}").json()["state"] == "error"
+    monkeypatch.setenv(gsc.CLIENT_SECRET_ENV, CLIENT_SECRET)
+    fixed = _post(box, f"/api/v1/gsc/projects/{box.project.slug}/refresh")
+    assert fixed.status_code == 200 and fixed.json()["state"] == "ready"
+
+
+def test_a_storage_failure_in_the_callback_redirects(tmp_path, env):
+    from aeo.ranksim.cloud import CloudError
+
+    box = _app(tmp_path)
+    _sign_in(box)
+
+    class BrokenCloud:
+        enabled = True
+        on_change: list = []
+
+        def refresh(self, force=False):
+            raise CloudError("Storage is not answering.")
+
+        def save(self):
+            raise CloudError("Storage is not answering.")
+
+    query = _connect(box)
+    box.ui.cloud = BrokenCloud()
+    try:
+        done = box.client.get("/api/v1/gsc/callback", params={"code": "good-code", "state": query["state"]}, follow_redirects=False)
+    finally:
+        box.ui.cloud = None
+    # The storage middleware answers 503 for /api/ paths before the route runs; either way no raw 500 and nothing stored.
+    assert done.status_code in {303, 503}
+    assert not gsc.account_path(box.ui).exists()

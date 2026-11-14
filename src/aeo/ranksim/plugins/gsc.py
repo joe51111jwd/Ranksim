@@ -114,7 +114,10 @@ def setup_info(redirect_uri: str | None = None) -> dict:
     if redirect_uri and redirect_uri != HOSTED_REDIRECT_URI:
         steps[5] = f"Under Authorized redirect URIs add {HOSTED_REDIRECT_URI} and {redirect_uri}, then save."
     if secretbox.SECRET_ENV in config["missing"]:
-        steps.append(f"Also set {secretbox.SECRET_ENV} on Vercel to a long random value. Ranksim uses it to encrypt the Google token.")
+        steps.append(
+            f"Also set {secretbox.SECRET_ENV} on Vercel to a random value of at least {secretbox.MIN_SECRET_CHARS} characters "
+            "(for example the output of: openssl rand -base64 32). Ranksim uses it to encrypt the Google token. Changing it signs you out."
+        )
     return {"missing": config["missing"], "steps": steps, "redirect_uri": redirect_uri or HOSTED_REDIRECT_URI, "scope": SCOPE}
 
 
@@ -312,7 +315,10 @@ def _token_reply(response: httpx.Response, *, during: str) -> dict:
     if response.status_code == 200 and data.get("access_token"):
         return data
     error = str(data.get("error") or "")
-    if error in {"invalid_grant", "unauthorized_client", "invalid_client"}:
+    if error in {"invalid_client", "unauthorized_client"}:
+        # The OAuth client is wrong (a mistyped or rotated secret). The stored grant is still good: keep it.
+        raise GscError(f"Google refused the OAuth client. Check {CLIENT_ID_ENV} and {CLIENT_SECRET_ENV}.", code="client_config", status=502)
+    if error == "invalid_grant":
         if during == "connect":
             raise GscAuthError("Google did not accept the sign in. Try connecting again.", code=error, status=400)
         raise GscAuthError("Google access for Search Console ended. Turn it on again to reconnect.", code=error, status=401)
@@ -900,17 +906,11 @@ def register(app, ui) -> None:
                 cloud.refresh(force=True)
             tokens = client_for(ui).exchange_code(oauth_config(), code, str(payload["redirect_uri"]))
             if SCOPE not in str(tokens.get("scope") or SCOPE).split():
-                client_for(ui).revoke(str(tokens.get("refresh_token") or tokens["access_token"]))
+                # Not stored. No revoke: Google's revoke ends the whole grant, which could cut a working connection.
                 raise GscError("Search Console access was not granted.", code="scope_missing")
-            old = load_account(ui)
+            # A reconnect replaces the stored tokens. The older refresh token is not revoked: for the same account and
+            # client, revoking any token ends the whole grant, including the token just issued.
             store_tokens(ui, tokens)
-            if old and old.get("refresh_token"):
-                try:
-                    old_refresh = secretbox.unseal(old["refresh_token"], purpose=REFRESH_PURPOSE)
-                    if old_refresh != tokens.get("refresh_token"):
-                        client_for(ui).revoke(old_refresh)
-                except secretbox.SecretBoxError:
-                    pass
             settings = save_settings(ui, project, {"enabled": True, "last_error": "", "error_at": ""})
             result = "connected"
             if not settings["property"]:
@@ -930,8 +930,12 @@ def register(app, ui) -> None:
             _save_cloud(ui)
             return result
 
+        from aeo.ranksim.cloud import CloudError
+
         try:
             result = await run_in_threadpool(finish)
+        except CloudError:
+            return back(project.slug, "storage")
         except GscError as exc:
             return back(project.slug, exc.code)
         except secretbox.SecretBoxError:
@@ -998,6 +1002,7 @@ def register(app, ui) -> None:
         try:
             await run_in_threadpool(lambda: refresh_project(ui, project, force=True))
         except GscError as exc:
+            await run_in_threadpool(_save_cloud, ui)  # a failed POST is not mirrored by the middleware; keep the error state
             return fail(exc)
         return JSONResponse(status_payload(request, project))
 

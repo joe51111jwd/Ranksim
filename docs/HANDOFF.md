@@ -71,3 +71,31 @@ session to extend e2e across all features, run it, deploy, seed and check the li
 
 - Pages drawn entirely by scripts (SmartCrew's homepage) show the text Google reads, not their full design.
 - Prediction accuracy is below the 90% target (see predict above). Every prediction is labeled PREDICTED.
+
+## Phase C (after a session's phase B is merged): cross-review and polish
+
+Goal: a finished app James can use for clients on the morning of Nov 14. Every session that finishes phase B gets
+phase C work on a fresh branch `claude/rs-<key>-c` from the latest `claude/kind-hopper-lglg98` (ultracode, adversarial
+verify, push every 30 minutes, report to the coordinator). Fix what you find in your own files; for another
+session's files, fix only clear bugs, keep the edit small and flag it.
+
+| Key | Phase C task |
+| --- | --- |
+| gsc | Review publish's credential handling and secretbox use. Then add Search Console opportunities: queries with high impressions at positions 8 to 20, shown on Overview and Searches. |
+| track | Review infra's storage and job code against cron re-checks and concurrent pulls. Then rank change alerts in the UI (what moved since the last check). |
+| discover | Run the merged app on SmartCrew and three competitor sites. Review the audit's issues and comments for accuracy and plain wording; fix false alarms. |
+| audit | Review discovery and competitor output on the same sites. Then a "fix the top issues" flow: apply several suggestions to a page in one go in the editor. |
+| editor | Review the publish sheet with exportHtml and diff on real pages. Then the editor on a phone and tablet: touch editing, toolbar, outline. |
+| predict | Review the whole Test changes flow as a user on SmartCrew pages. Then make confidence and guidance clear and short; check every number's label. |
+| publish | Review the GSC OAuth flow and token storage for security. Then a guided "connect your site" flow for WordPress, the most common client platform. |
+| client | Review every client-visible screen and the share page for clarity to a non-SEO client. Then a weekly client summary (what changed, what is next) in the share page. |
+| infra | Full security review of the merged app, every plugin route included. Then measure and cut cold start and report time on the merged app. |
+| shell | Extend the e2e suite to every feature after the merges and run it. Then a visual consistency pass across every plugin UI at desktop and phone width. |
+
+## Hourly coordinator loop
+
+A scheduled task fires into the coordinator session every hour until 15:00 UTC on Nov 14 (10 AM ET, when James's
+weekly usage resets). Each run: read notifications; restart any build session that is idle or failed with work left
+(the 5-hour usage limit stops all sessions at once); merge finished branches in the merge order with the full suite
+after each; when everything is merged and green, deploy to Vercel, check the live site and tell James; hand
+finished sessions their phase C task.

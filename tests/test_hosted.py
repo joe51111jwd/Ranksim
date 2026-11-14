@@ -537,3 +537,24 @@ def test_storage_errors_surface_as_cloud_errors(tmp_path, fake_blob, monkeypatch
         state.refresh(force=True)
     with pytest.raises(CloudError):
         state.save()
+
+
+def test_workspace_plugin_data_is_its_own_object(tmp_path, fake_blob):
+    a, b = _instance(tmp_path / "a"), _instance(tmp_path / "b")
+    _make_state(tmp_path / "a")
+    shared = tmp_path / "a" / "projects" / "_plugins" / "gsc"
+    shared.mkdir(parents=True)
+    (shared / "token.json").write_text('{"connected": true}')
+    (tmp_path / "a" / "projects" / ".hidden").mkdir()
+    (tmp_path / "a" / "projects" / ".hidden" / "x").write_text("no")
+    a.save()
+    assert _versions(fake_blob, "_plugins") and not _versions(fake_blob, ".hidden")
+    b.refresh(force=True)
+    assert (tmp_path / "b" / "projects" / "_plugins" / "gsc" / "token.json").read_text() == '{"connected": true}'
+    assert not (tmp_path / "b" / "projects" / ".hidden").exists()
+    # plugins.save(ui) still calls cloud.save(): a change to workspace data alone is uploaded alone
+    (shared / "usage.json").write_text("{}")
+    fake_blob.calls.clear()
+    a.save()
+    puts = [call for call in fake_blob.calls if call.startswith("put") and call.endswith(".tgz")]
+    assert len(puts) == 1 and "/_plugins/" in puts[0]

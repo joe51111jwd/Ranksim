@@ -70,7 +70,9 @@ CONFIRM_ROUNDS = 3
 SKIP_PARTS = {"llm-cache", "__pycache__"}
 VERSION_FILE = ".ranksim-version.json"
 LOOSE = "_files"  # pseudo project: files sitting directly in projects/
-SLUG_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$")
+# Project folders, plus "_plugins" (workspace-wide plugin data: plugins.workspace_dir), saved as its own object with
+# the same merge rules. Dot folders are never saved.
+SLUG_RE = re.compile(r"^(?:[A-Za-z0-9][A-Za-z0-9._-]{0,199}|_plugins)$")
 
 
 class CloudError(RuntimeError):

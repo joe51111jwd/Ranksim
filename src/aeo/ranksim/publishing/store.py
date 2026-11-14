@@ -125,11 +125,21 @@ class PublishStore:
     def _purpose(self, connection_id: str) -> str:
         return f"ranksim.publish:{self.scope}:{connection_id}"
 
+    @staticmethod
+    def _binding(kind: str, domain: str, settings: dict) -> str:
+        """A digest of the unsealed fields that decide where the credential is sent (review fix, gsc session).
+        Sealed with the secret, so editing state.json (a WordPress address or webhook URL pointed at another host)
+        makes the credential refuse to open instead of sending it there."""
+        import hashlib
+
+        return hashlib.sha256(json.dumps([kind, domain, settings or {}], sort_keys=True).encode("utf-8")).hexdigest()
+
     def add_connection(self, *, kind: str, domain: str, label: str, settings: dict, secret: dict, now: float | None = None) -> dict:
         connection_id = "c" + secrets.token_hex(6)
         box = _box()
         try:
-            sealed = box.seal(json.dumps(secret, sort_keys=True), purpose=self._purpose(connection_id))
+            bound = {"secret": secret, "bind": self._binding(kind, domain, settings)}
+            sealed = box.seal(json.dumps(bound, sort_keys=True), purpose=self._purpose(connection_id))
         except Exception as exc:  # noqa: BLE001 - no key set (RANKSIM_SECRET), never echo the secret
             raise StoreError("Credential encryption is not set up on this server yet, so connections cannot be saved.") from exc
         connection = {
@@ -160,7 +170,13 @@ class PublishStore:
             raise
         except Exception as exc:  # noqa: BLE001 - a key change or tampering; never echo the token
             raise StoreError("The saved credentials for this connection could not be opened. Connect it again.") from exc
-        return json.loads(plain)
+        data = json.loads(plain)
+        if isinstance(data, dict) and set(data) == {"secret", "bind"}:
+            expected = self._binding(connection.get("kind", ""), connection.get("domain", ""), connection.get("settings") or {})
+            if not secrets.compare_digest(str(data["bind"]), expected):
+                raise StoreError("This connection's saved settings were changed outside Ranksim, so its credentials stay locked. Connect it again.")
+            return data["secret"]
+        return data  # sealed before the binding existed
 
     def remove_connection(self, connection_id: str) -> bool:
         with self.lock:

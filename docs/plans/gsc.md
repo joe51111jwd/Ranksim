@@ -134,7 +134,8 @@ count.
   only, never the network.
 - `discovery_sources`: when on, up to 30 top queries `{q, weight, source: "gsc", impressions, clicks, position}`.
   The weight is on discovery's scale (a title phrase scores 3.0, 2.5 is the bar): `2.5 + 2.5 * impressions / top`,
-  so every query qualifies (2.5 to 5.0) and the most seen rank first. Refreshes stale data first
+  so every query sent qualifies (2.5 to 5.0) and the most seen rank first. Only queries with at least
+  max(10, 1% of the top query's) impressions are sent. Refreshes stale data first
   (best effort). Not called on a site's first analysis (no project yet), so GSC queries join from the next analysis.
 - `after_pull`: refresh stale data (best effort, errors recorded in settings).
 - `settings_schema`: toggle and property.
@@ -190,6 +191,16 @@ phone width (390 px, no horizontal scroll), disconnect. No console errors.
   one" mark in the Searches column. Labels: "Positions 8 to 20" and "Seen but not clicked" (benchmark CTR labeled not
   Google data). Automatic matching (first analysis, new projects) never picks a parent domain property; a project
   with no match is rechecked once a day. Parked first-analysis data older than an hour is deleted.
+
+- **Editor panel** (`registerEditorPanel`, key `gsc-page`, order 35): clicks, impressions, CTR, average position and
+  the top 10 searches for the page being edited, from `GET /api/v1/gsc/projects/{slug}/page?url=` (stored snapshot,
+  no network; pages matched without scheme, www, query or trailing slash). Labeled Google Search Console data with
+  the date range. Hidden when GSC is not ready.
+
+- **PKCE (S256).** `make_state` adds a random verifier to the sealed state; the authorization URL carries its
+  S256 `code_challenge`, and the exchange sends `code_verifier`. The verifier never appears in a URL.
+- **`RANKSIM_PUBLIC_URL`** (optional) pins the redirect URI's base, for example `https://ranksim.vercel.app`.
+  `GOOGLE_OAUTH_REDIRECT_URI` still overrides the whole URI. With neither, the request origin is used.
 
 ## Known gaps
 

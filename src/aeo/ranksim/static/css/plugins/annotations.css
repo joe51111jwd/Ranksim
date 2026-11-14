@@ -1,0 +1,39 @@
+/* Annotations: the audit's comments in the editor side column (js/plugins/annotations.js). The pins inside the
+   preview carry their own style, since the preview is a separate document. */
+
+.annot-panel .tile-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.annot-list { list-style: none; margin: 10px 0 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.annot-item { border-radius: var(--r-sm); background: var(--card); }
+.annot-item.open { box-shadow: var(--shadow), inset 0 0 0 1px var(--blue-soft); }
+.annot-head { display: flex; align-items: flex-start; gap: 10px; width: 100%; border: 0; background: transparent; padding: 10px 12px; text-align: left; color: var(--ink); font: inherit; font-size: 14px; cursor: pointer; border-radius: var(--r-sm); }
+.annot-head:hover .annot-title { color: var(--blue); }
+.annot-num { flex: none; min-width: 22px; height: 22px; padding: 0 6px; border-radius: 11px; color: #fff; font-size: 12px; font-weight: 600; line-height: 22px; text-align: center; background: var(--ink-2); }
+.annot-num.high { background: var(--red); }
+.annot-num.medium { background: var(--amber); }
+.annot-title { flex: 1; min-width: 0; font-weight: 550; line-height: 1.4; overflow-wrap: anywhere; }
+.annot-done { flex: none; font-size: 12px; font-weight: 600; color: var(--green); }
+.annot-body { padding: 0 12px 12px 44px; font-size: 13.5px; }
+.annot-comment { margin: 0 0 8px; color: var(--ink); }
+.annot-fix { margin: 0 0 8px; color: var(--ink-2); }
+.annot-el { display: flex; gap: 8px; align-items: baseline; margin: 0 0 8px; color: var(--ink-2); overflow-wrap: anywhere; }
+.annot-tag { flex: none; font-family: var(--mono); font-size: 11.5px; color: var(--ink-3); }
+.annot-suggestion { margin: 0 0 10px; padding: 10px 12px; border-radius: var(--r-sm); background: var(--tile); font-family: var(--mono); font-size: 12px; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 200px; overflow: auto; }
+.annot-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.annot-note { margin: 8px 0 0; color: var(--ink-3); font-size: 12.5px; }
+
+/* Fix the top issues: the button in the Comments panel and the review sheet. */
+.annot-fix-all { margin-top: 10px; }
+.fix-list { list-style: none; margin: 12px 0 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.fix-row { padding: 12px 14px; border-radius: var(--r-sm); background: var(--card); font-size: 13.5px; }
+.fix-head { display: flex; align-items: flex-start; gap: 10px; cursor: pointer; }
+.fix-head input { margin-top: 4px; flex: none; }
+.fix-title { flex: 1; min-width: 0; font-weight: 550; overflow-wrap: anywhere; }
+.fix-where { margin: 6px 0 0 56px; color: var(--ink-3); font-family: var(--mono); font-size: 11.5px; }
+.fix-before, .fix-after { display: flex; gap: 8px; margin: 6px 0 0 56px; overflow-wrap: anywhere; min-width: 0; }
+.fix-before { color: var(--ink-2); }
+.fix-before span:last-child { text-decoration: line-through; text-decoration-color: var(--ink-3); }
+.fix-after { color: var(--ink); }
+.fix-k { flex: none; width: 40px; color: var(--ink-3); font-size: 12px; }
+.fix-after span:last-child, .fix-before span:last-child { min-width: 0; white-space: pre-wrap; }
+.fix-actions { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+@media (max-width: 640px) { .fix-where, .fix-before, .fix-after { margin-left: 0; } }

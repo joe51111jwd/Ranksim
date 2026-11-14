@@ -88,6 +88,15 @@ class Connector:
     def rollback(self, entry: dict) -> dict:
         raise NotImplementedError
 
+    def inspect(self, url: str = "") -> list[dict]:
+        """Step by step check for the guided connect flow: [{key, label, ok, detail}]. Never saves anything.
+        The default is one step, the credential check. Connectors with a guided flow say more."""
+        try:
+            account = self.check()
+            return [{"key": "login", "label": "Credentials", "ok": True, "detail": f"Connected to {account}."}]
+        except ConnectorError as exc:
+            return [{"key": "login", "label": "Credentials", "ok": False, "detail": str(exc)}]
+
     # -- shared helpers ----------------------------------------------------
 
     @classmethod

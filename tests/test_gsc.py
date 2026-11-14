@@ -47,6 +47,7 @@ class FakeGoogle:
         self.give_refresh = True
         self.fail_next_api_with: int | None = None
         self.forbidden_sites: set[str] = set()
+        self.challenge = ""  # the code_challenge of the last authorization URL, checked at the exchange
 
     def transport(self) -> httpx.MockTransport:
         return httpx.MockTransport(self.handle)
@@ -65,6 +66,8 @@ class FakeGoogle:
             if form.get("client_id") != CLIENT_ID or form.get("client_secret") != CLIENT_SECRET:
                 return httpx.Response(401, json={"error": "invalid_client"})
             if form["grant_type"] == "authorization_code":
+                if self.challenge and gsc.pkce_challenge(form.get("code_verifier", "")) != self.challenge:
+                    return httpx.Response(400, json={"error": "invalid_grant", "error_description": "Missing code verifier."})
                 if form.get("code") != "good-code":
                     return httpx.Response(400, json={"error": "invalid_grant"})
                 reply = {"access_token": self._token(), "expires_in": 3599, "scope": self.scope, "token_type": "Bearer"}
@@ -152,11 +155,12 @@ def env(monkeypatch):
     monkeypatch.setenv(gsc.CLIENT_SECRET_ENV, CLIENT_SECRET)
     monkeypatch.setenv(secretbox.SECRET_ENV, SECRET)
     monkeypatch.delenv(gsc.REDIRECT_ENV, raising=False)
+    monkeypatch.delenv(gsc.PUBLIC_URL_ENV, raising=False)
 
 
 @pytest.fixture()
 def no_env(monkeypatch):
-    for name in (gsc.CLIENT_ID_ENV, gsc.CLIENT_SECRET_ENV, gsc.REDIRECT_ENV, secretbox.SECRET_ENV):
+    for name in (gsc.CLIENT_ID_ENV, gsc.CLIENT_SECRET_ENV, gsc.REDIRECT_ENV, gsc.PUBLIC_URL_ENV, secretbox.SECRET_ENV):
         monkeypatch.delenv(name, raising=False)
 
 
@@ -205,7 +209,9 @@ def _connect(box) -> dict:
     assert started.status_code == 200, started.text
     url = started.json()["url"]
     assert url.startswith(gsc.AUTH_URL + "?")
-    return {key: values[0] for key, values in parse_qs(urlsplit(url).query).items()}
+    query = {key: values[0] for key, values in parse_qs(urlsplit(url).query).items()}
+    box.google.challenge = query["code_challenge"]  # what Google remembers for this code
+    return query
 
 
 def _callback(box, params: dict):
@@ -759,7 +765,9 @@ def test_first_analysis_uses_gsc_before_the_project_exists(tmp_path, env):
     _sign_in(box)
     query = _connect(box)
     _callback(box, {"code": "good-code", "state": query["state"]})
-    pages = [SimpleNamespace(url="https://www.other.example/", status="fetched", title="", h1="", h2s=[])]
+    from aeo.ranksim.site import SitePage
+
+    pages = [SitePage(url="https://www.other.example/", status="fetched")]  # a real page row, as discovery reads every field
     found = discovery.discover_with_plugins(pages, "Other", host="www.other.example", project=None, ui=box.ui)
     assert found[:2] == ["heavy civil software", "dirt work software"]
     assert any(path.endswith("/sites/https%3A%2F%2Fother.example%2F/searchAnalytics/query") for kind, path, _ in box.google.calls)
@@ -867,3 +875,70 @@ def test_stale_parked_data_is_deleted(tmp_path, env):
     box.ui.gsc_clock.now += gsc.PENDING_SECONDS + 1
     gsc.discovery_sources(project=None, pages=[SimpleNamespace(url="https://nomatch.example/")], ui=box.ui)
     assert list(folder.glob("*.json")) == []
+
+
+def test_discovery_skips_rarely_seen_queries(tmp_path, env):
+    box = _app(tmp_path)
+    _sign_in(box)
+    box.google.analytics = staticmethod(lambda body: {"rows": [
+        {"keys": ["big search"], "clicks": 10, "impressions": 5000, "ctr": 0.002, "position": 9.0},
+        {"keys": ["fifty search"], "clicks": 0, "impressions": 50, "ctr": 0.0, "position": 30.0},
+        {"keys": ["forty nine"], "clicks": 0, "impressions": 49, "ctr": 0.0, "position": 30.0},
+        {"keys": ["seen once"], "clicks": 0, "impressions": 1, "ctr": 0.0, "position": 60.0},
+    ]} if body.get("dimensions") == ["query"] else FakeGoogle.analytics(body))
+    query = _connect(box)
+    _callback(box, {"code": "good-code", "state": query["state"]})
+    rows = gsc.discovery_sources(project=_project(box), pages=[], ui=box.ui)
+    assert [row["q"] for row in rows] == ["big search", "fifty search"]  # 1% of 5,000 is 50
+    assert gsc.discovery_min_impressions(300) == 10 and gsc.discovery_min_impressions(5000) == 50 and gsc.discovery_min_impressions(5001) == 51
+
+
+def test_page_data_for_the_editor_panel(tmp_path, env):
+    box = _app(tmp_path)
+    _sign_in(box)
+    slug = box.project.slug
+    off = box.client.get(f"/api/v1/gsc/projects/{slug}/page", params={"url": "https://www.dirtcrew.example/pricing"}).json()
+    assert off["state"] == "off" and "page" not in off
+    query = _connect(box)
+    _callback(box, {"code": "good-code", "state": query["state"]})
+    data = box.client.get(f"/api/v1/gsc/projects/{slug}/page", params={"url": "http://dirtcrew.example/pricing/?utm=x#top"}).json()
+    assert data["state"] == "ready" and data["range"]["days"] == 28 and data["label"] == gsc.LABEL
+    assert data["page"] == {"page": "https://www.dirtcrew.example/pricing", "clicks": 50, "impressions": 900, "ctr": 0.0556, "position": 6.2}
+    assert [row["q"] for row in data["page_queries"]] == ["dirt work software", "heavy civil software"]
+    home = box.client.get(f"/api/v1/gsc/projects/{slug}/page", params={"url": "https://www.dirtcrew.example"}).json()
+    assert home["page"]["clicks"] == 70 and home["page_queries"][0]["q"] == "heavy civil software"
+    none = box.client.get(f"/api/v1/gsc/projects/{slug}/page", params={"url": "https://www.dirtcrew.example/new-page"}).json()
+    assert none["page"] is None and none["page_queries"] == []
+    assert gsc.page_key("HTTPS://WWW.Example.com/A/") == "example.com/A" and gsc.page_key("https://example.com") == "example.com/"
+
+
+def test_pkce_s256(tmp_path, env):
+    box = _app(tmp_path)
+    _sign_in(box)
+    query = _connect(box)
+    assert query["code_challenge_method"] == "S256" and len(query["code_challenge"]) == 43
+    payload = json.loads(secretbox.unseal(query["state"], purpose=gsc.STATE_PURPOSE))
+    assert gsc.pkce_challenge(payload["verifier"]) == query["code_challenge"]
+    assert payload["verifier"] not in json.dumps(query)  # never in the URL, only sealed inside the state
+    done = _callback(box, {"code": "good-code", "state": query["state"]})
+    assert done.headers["location"].endswith("?gsc=connected")
+    exchange = [form for kind, grant, form in box.google.calls if kind == "token"][0]
+    assert exchange["code_verifier"] == payload["verifier"]
+    # A code redeemed with another flow's verifier is refused by Google.
+    other = _connect(box)
+    box.google.challenge = "not-the-challenge-for-this-verifier-0000000"
+    refused = _callback(box, {"code": "good-code", "state": other["state"]})
+    assert refused.headers["location"].endswith("?gsc=invalid_grant")
+
+
+def test_public_url_pins_the_redirect_uri(monkeypatch):
+    request = SimpleNamespace(headers={"host": "evil.example"}, url=SimpleNamespace(scheme="http", netloc="evil.example"))
+    monkeypatch.delenv(gsc.REDIRECT_ENV, raising=False)
+    monkeypatch.delenv(gsc.PUBLIC_URL_ENV, raising=False)
+    assert gsc.redirect_uri_for(request) == "http://evil.example/api/v1/gsc/callback"
+    monkeypatch.setenv(gsc.PUBLIC_URL_ENV, "https://ranksim.example/")
+    assert gsc.redirect_uri_for(request) == "https://ranksim.example/api/v1/gsc/callback"
+    monkeypatch.setenv(gsc.PUBLIC_URL_ENV, "ranksim.example")
+    assert gsc.redirect_uri_for(request) == "https://ranksim.example/api/v1/gsc/callback"
+    monkeypatch.setenv(gsc.REDIRECT_ENV, "https://other.example/api/v1/gsc/callback")
+    assert gsc.redirect_uri_for(request) == "https://other.example/api/v1/gsc/callback"

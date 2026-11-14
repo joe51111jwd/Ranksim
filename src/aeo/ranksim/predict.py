@@ -79,6 +79,12 @@ _SCHEMA = re.compile(r"application/ld\+json|itemtype\s*=", re.I)
 _HEADING_TAG = re.compile(r"<h[2-6][\s>]", re.I)
 
 
+def has_schema(html: str) -> bool:
+    """JSON-LD or microdata present. Plain substring checks: a regex over a large page was the slowest step."""
+    lower = html.lower()
+    return "application/ld+json" in lower or "itemtype" in lower
+
+
 def _compact(text: str) -> str:
     return re.sub(r"[^a-z0-9]", "", (text or "").lower())
 
@@ -110,7 +116,7 @@ def page_signals(query: str, doc, html: str | None, peers: Iterable = ()) -> dic
     peer_list = [peer for peer in peers if getattr(peer, "url", None) != doc.url]
     body = (doc.body or "")[:20000]
     heading_count = float(len(_HEADING_TAG.findall(html))) if html else float("nan")
-    schema = (1.0 if _SCHEMA.search(html) else 0.0) if html else float("nan")
+    schema = (1.0 if has_schema(html) else 0.0) if html else float("nan")
     return {
         "title_match": term_match(query, doc.title),
         "h1_match": term_match(query, doc.h1),
@@ -412,37 +418,34 @@ def _display(name: str, value: float, raw: dict | None, raw_list: list[dict] | N
 
 def _advice(name: str, mine: float, target: float, count: int, values: list[float], raw: dict | None, raw_list: list[dict] | None) -> str:
     have = sum(1 for value in values if value >= 0.5)
-    pages = f"{count} page{'s' if count != 1 else ''} above"
+    one = count == 1
+    them = "The page above" if one else f"The {count} pages above"
+    match, cover, do, has = ("matches", "covers", "does", "has") if one else ("match", "cover", "do", "have")
+    of_them = ("The page above has" if have else "The page above does not") if one else f"{have} of the {count} pages above have"
     if name == "title_match":
-        return f"Put the search words in the title. The {pages} match more of them."
+        return f"Put the search words in the title. {them} {match} more of them."
     if name == "h1_match":
-        return f"Put the search words in the H1. The {pages} match more of them."
+        return f"Put the search words in the H1. {them} {match} more of them."
     if name == "url_match":
-        return f"Use the search words in the URL. The {pages} match more of them."
+        return f"Use the search words in the URL. {them} {match} more of them."
     if name == "heading_match":
-        return f"Use the search words in a subheading. The {pages} do more often."
+        return f"Use the search words in a subheading. {them} {do} more often."
     if name == "body_match":
-        return f"Use every search word in the body text. The {pages} cover more of them."
+        return f"Use every search word in the body text. {them} {cover} more of them."
     if name == "term_coverage":
-        return f"Cover the terms the ranking pages share. The {pages} cover more of them."
-    if name == "words":
-        yours = _display("words", mine, raw)
-        theirs = _display("words", target, None)
-        return f"Add depth. You have {yours} words. The {pages} have about {theirs}."
-    if name == "headings":
-        yours = _display("headings", mine, raw)
-        theirs = _display("headings", target, None)
-        return f"Break the page into sections. You have {yours} subheadings. The {pages} have about {theirs}."
+        return f"Cover the terms the ranking pages share. {them} {cover} more of them."
+    if name in {"words", "headings", "links"}:
+        yours = _display(name, mine, raw)
+        theirs = _display(name, target, None)
+        lead = {"words": "Add depth", "headings": "Break the page into sections", "links": "Link to more related pages"}[name]
+        unit = {"words": "words", "headings": "subheadings", "links": "links"}[name]
+        return f"{lead}. You have {yours} {unit}. {them} {has} about {theirs}."
     if name == "has_table":
-        return f"Add a table. {have} of the {pages} have one."
+        return f"Add a table. {of_them} one." if not one else f"Add a table. {of_them}{' one' if have else ''}."
     if name == "has_faq":
-        return f"Add an FAQ section. {have} of the {pages} have one."
+        return f"Add an FAQ section. {of_them} one." if not one else f"Add an FAQ section. {of_them}{' one' if have else ''}."
     if name == "schema":
-        return f"Add structured data (schema.org JSON-LD). {have} of the {pages} have it."
-    if name == "links":
-        yours = _display("links", mine, raw)
-        theirs = _display("links", target, None)
-        return f"Link to more related pages. You have {yours} links. The {pages} have about {theirs}."
+        return f"Add structured data (schema.org JSON-LD). {of_them} it." if not one else f"Add structured data (schema.org JSON-LD). {of_them}{' it' if have else ''}."
     return f"Close the gap on {FEATURE_TEXT.get(name, name)}."
 
 
@@ -450,29 +453,49 @@ def _advice(name: str, mine: float, target: float, count: int, values: list[floa
 
 
 def confidence(backtest_pairwise: float | None, pairs: int | None) -> dict:
-    """A per-search label from that search's backtest. The backtest is not accuracy."""
+    """A per-search label from that search's backtest. The backtest is not accuracy.
+
+    ``short`` is one plain line for a client. ``text`` is the detail shown on tap.
+    """
     if backtest_pairwise is None or not pairs:
         return {
             "label": UNSURE,
             "backtest_pairwise": None,
             "backtest_pairs": int(pairs or 0),
+            "near_chance": False,
+            "short": "Unsure: no backtest for this search yet.",
             "text": "No backtest for this search yet. Treat the PREDICTED position as a rough guide.",
         }
     near = abs(backtest_pairwise - 0.5) <= NEAR_CHANCE
     clearer = backtest_pairwise >= CLEARER_MIN_PAIRWISE and pairs >= CLEARER_MIN_PAIRS
+    share = f"{backtest_pairwise:.0%} of {pairs} page pairs"
     if clearer:
-        text = f"Backtest on held-out searches ordered {backtest_pairwise:.0%} of {pairs} page pairs for this search. Still a prediction."
+        short = "Clearer: the model did well on this search in a backtest."
+        text = f"Backtest on held-out searches: it put {share} in the right order for this search. Still a prediction."
     elif near:
-        text = f"Near chance: the backtest ordered {backtest_pairwise:.0%} of {pairs} page pairs for this search."
+        short = "Unsure: close to a coin flip on this search."
+        text = f"Near chance: the backtest put {share} in the right order for this search. 50% is a coin flip."
+    elif backtest_pairwise < 0.5:
+        short = "Unsure: the model has been wrong more often than right here."
+        text = f"The backtest put only {share} in the right order for this search. 50% is a coin flip."
     else:
-        text = f"The backtest ordered {backtest_pairwise:.0%} of {pairs} page pairs for this search. Not enough to be sure."
+        short = "Unsure: some signal, not enough to rely on."
+        text = f"The backtest put {share} in the right order for this search. Not enough to be sure."
     return {
         "label": CLEARER if clearer else UNSURE,
         "backtest_pairwise": round(float(backtest_pairwise), 3),
         "backtest_pairs": int(pairs),
         "near_chance": near,
+        "short": short,
         "text": text,
     }
+
+
+ONE_FAMILY_SHORT = "Unsure: no backtest, the searches are all close variants."
+ONE_FAMILY_TEXT = (
+    "Every search in this project is a close variant of the others, so the model could not be tested on a search "
+    "it did not learn from. Every call stays UNSURE. Add a few different searches to get a backtest."
+)
 
 
 def raw_counts(doc, html: str | None) -> dict:

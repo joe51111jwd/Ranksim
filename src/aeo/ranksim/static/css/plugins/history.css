@@ -111,3 +111,15 @@
 @media print {
   .history-tip, .history-hit, .history-cross { display: none; }
 }
+
+/* "Since your last visit" alert on Overview */
+.history-alert { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; background: var(--blue-wash); }
+.history-alert-text { min-width: 0; flex: 1 1 320px; }
+.history-alert-big { font-size: 22px; font-weight: 650; letter-spacing: -0.025em; margin-top: 4px; color: var(--ink); }
+.history-alert-list { display: flex; flex-wrap: wrap; gap: 6px 14px; margin-top: 10px; font-size: 13px; color: var(--ink-2); }
+.history-alert-list span { display: inline-flex; align-items: center; gap: 6px; min-width: 0; overflow-wrap: anywhere; }
+.history-alert-actions { display: flex; align-items: center; gap: 8px; flex: none; }
+@media (max-width: 720px) {
+  .history-alert-big { font-size: 18px; }
+  .history-alert-actions { width: 100%; }
+}

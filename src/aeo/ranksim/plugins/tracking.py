@@ -10,7 +10,9 @@ from __future__ import annotations
 import json
 import os
 import queue
+import re
 import secrets
+import shutil
 import threading
 import time
 from dataclasses import dataclass
@@ -30,7 +32,12 @@ DEFAULT_FRESH_HOURS = 6.0
 DEFAULT_CRON_SECONDS = 240.0
 MIN_PULL_SECONDS = 30.0
 COUNTERS = ("searches", "reused", "capped", "errors")
+HEALTH = ("last_ok_at", "last_error", "last_error_at")
 FEATURE = "tracking"
+USAGE_DIR = "usage"
+MONTH_RE = re.compile(r"^\d{4}-\d{2}$")
+# One id per process: this instance's counter file. Random, so two instances never share a file.
+INSTANCE_ID = secrets.token_hex(6)
 USAGE_FILE = "usage.json"
 PLUGIN_DIR = ("plugins", "tracking")
 SCHEDULES = {"off": None, "daily": 24.0, "weekly": 168.0}
@@ -151,20 +158,25 @@ def _reset_label(moment: datetime) -> str:
 class Budget:
     """Monthly search counter, cap and freshness reuse for paid Google requests.
 
-    Passed to project.pull(budget=...). Thread safe: the pull asks for searches from several threads. The counter
-    lives in <folder>/usage.json; the plugin uses plugins.workspace_dir(ui, "tracking"), which is
-    <projects root>/_plugins/tracking/ and is kept by cloud storage like project data.
+    Passed to project.pull(budget=...). Thread safe: the pull asks for searches from several threads.
+
+    Storage (in plugins.workspace_dir(ui, "tracking"), kept by cloud storage like project data):
+        usage/<YYYY-MM>/<instance>.json   this process's own counts for that month, written only by this process
+        usage.json                        the phase B single file, read (never written) so older counts still count
+    The month's total is the sum of every file. Cloud storage merges a folder file by file, and a file only one
+    instance writes never conflicts, so two instances counting at the same time never lose a count.
     """
 
-    def __init__(self, folder: str | Path, *, cap: int | None = None, fresh_hours: float | None = None, clock=None) -> None:
+    def __init__(self, folder: str | Path, *, cap: int | None = None, fresh_hours: float | None = None, clock=None, instance: str | None = None) -> None:
         self.folder = Path(folder)
         self._cap = cap
         self._fresh_hours = fresh_hours
         self.clock = clock or _now
-        self._lock = _file_lock(self.path)
-        # The highest count this process has seen per month. Cloud storage can swap in an older usage.json (the last
-        # save wins); the count never goes back below what this process already counted.
-        self._seen: dict[str, dict[str, int]] = {}
+        self.instance = instance or INSTANCE_ID
+        self._lock = _file_lock(self.folder / USAGE_DIR)
+        self._own: dict[str, dict] = {}  # month -> this process's row; the source of truth for its own file
+        self._others: dict[str, tuple] = {}  # month -> (signature of the other files, their summed row)
+        self._pruned: set[str] = set()
 
     # settings are read at call time so a changed env var applies without a restart
     @property
@@ -185,37 +197,91 @@ class Budget:
         return f"{hours:g} hour" if hours == 1 else f"{hours:g} hours"
 
     @property
-    def path(self) -> Path:
+    def legacy_path(self) -> Path:
         return self.folder / USAGE_FILE
+
+    def month_dir(self, key: str | None = None) -> Path:
+        return self.folder / USAGE_DIR / (key or month_key(self.clock()))
+
+    def own_path(self, key: str | None = None) -> Path:
+        return self.month_dir(key) / f"{self.instance}.json"
 
     # -- reading
 
+    def _own_row(self, key: str) -> dict:
+        """This process's row for a month: what it holds in memory, never below what its own file says."""
+        row = self._own.get(key)
+        disk = _read_json(self.own_path(key))
+        if row is None:
+            row = {}
+            self._own[key] = row
+        for name in COUNTERS:
+            row[name] = max(_count(row.get(name)), _count(disk.get(name)))
+        for name in HEALTH:
+            if disk.get(name) and not row.get(name):
+                row[name] = disk[name]
+        for old in sorted(self._own)[:-2]:
+            self._own.pop(old, None)
+        return row
+
+    def _other_rows(self, key: str) -> dict:
+        """The summed counts of every other instance's file for a month, plus the legacy file. Cached until a file
+        is added, removed or changed."""
+        files = []
+        folder = self.month_dir(key)
+        try:
+            entries = sorted(folder.iterdir()) if folder.is_dir() else []
+        except OSError:
+            entries = []
+        for path in entries:
+            if path.suffix != ".json" or path.stem == self.instance or path.name.startswith("."):
+                continue
+            try:
+                stat = path.stat()
+            except OSError:
+                continue
+            files.append((path.name, stat.st_mtime_ns, stat.st_size))
+        try:
+            legacy = self.legacy_path.stat()
+            files.append(("usage.json", legacy.st_mtime_ns, legacy.st_size))
+        except OSError:
+            pass
+        signature = tuple(files)
+        cached = self._others.get(key)
+        if cached and cached[0] == signature:
+            return cached[1]
+        total: dict = {name: 0 for name in COUNTERS}
+        for name, _mtime, _size in files:
+            if name == "usage.json":
+                data = _read_json(self.legacy_path)
+                months = data.get("months") if isinstance(data.get("months"), dict) else {}
+                row = months.get(key) if isinstance(months.get(key), dict) else {}
+                row = {**row, **{field: data.get(field) for field in HEALTH}}
+            else:
+                row = _read_json(folder / name)
+            for counter in COUNTERS:
+                total[counter] += _count(row.get(counter))
+            _newest_health(total, row)
+        self._others[key] = (signature, total)
+        for old in sorted(self._others)[:-2]:
+            self._others.pop(old, None)
+        return total
+
     def usage(self) -> dict:
-        data = _read_json(self.path)
-        months = data.get("months") if isinstance(data.get("months"), dict) else {}
-        data["months"] = months
-        return data
+        """The current month's totals across every instance, in the phase B shape: {"months": {key: row}, health}."""
+        key = month_key(self.clock())
+        own = self._own_row(key)
+        others = self._other_rows(key)
+        row = {name: own.get(name, 0) + others.get(name, 0) for name in COUNTERS}
+        health: dict = {}
+        _newest_health(health, others)
+        _newest_health(health, own)
+        return {"months": {key: row}, **{name: health.get(name) for name in HEALTH}}
 
     def month(self, data: dict | None = None) -> dict:
         data = data if data is not None else self.usage()
-        key = month_key(self.clock())
-        row = data["months"].get(key)
-        row = row if isinstance(row, dict) else {}
-        seen = self._seen.get(key, {})
-        return {name: max(_count(row.get(name)), seen.get(name, 0)) for name in COUNTERS}
-
-    def _merge_month(self, data: dict) -> dict:
-        """The month row to write: the file's counts, never below this process's high-water mark."""
-        key = month_key(self.clock())
-        merged = self.month(data)
-        data["months"][key] = merged
-        return merged
-
-    def _remember(self, data: dict) -> None:
-        key = month_key(self.clock())
-        self._seen[key] = dict(data["months"][key])
-        for old in sorted(self._seen)[:-2]:
-            self._seen.pop(old, None)
+        row = data["months"].get(month_key(self.clock())) or {}
+        return {name: _count(row.get(name)) for name in COUNTERS}
 
     def used(self) -> int:
         return self.month()["searches"]
@@ -259,22 +325,36 @@ class Budget:
 
     # -- writing
 
+    def _write_own(self, key: str, row: dict) -> None:
+        row["updated_at"] = _iso(self.clock())
+        _write_json(self.own_path(key), row)
+        if key not in self._pruned:
+            self._pruned.add(key)
+            self._prune()
+
+    def _prune(self) -> None:
+        """Month folders older than a year are history nobody reads. No instance writes them any more."""
+        root = self.folder / USAGE_DIR
+        try:
+            months = sorted(path for path in root.iterdir() if path.is_dir() and MONTH_RE.match(path.name))
+        except OSError:
+            return
+        now = self.clock().astimezone(timezone.utc)
+        oldest_kept = f"{now.year - 1:04d}-{now.month:02d}"  # the same month last year is the first one dropped
+        for old in months:
+            if old.name <= oldest_kept:
+                shutil.rmtree(old, ignore_errors=True)
+
     def _bump(self, **changes) -> None:
         with self._lock:
-            self._bump_locked(self.usage(), **changes)
-
-    def _bump_locked(self, data: dict, **changes) -> None:
-        row = self._merge_month(data)
-        for name, value in changes.items():
-            if name in COUNTERS:
-                row[name] = row[name] + int(value)
-            else:
-                data[name] = value
-        # keep a year of months; older rows are history nobody reads
-        for old in sorted(data["months"])[:-12]:
-            data["months"].pop(old, None)
-        self._remember(data)
-        _write_json(self.path, data)
+            key = month_key(self.clock())
+            row = self._own_row(key)
+            for name, value in changes.items():
+                if name in COUNTERS:
+                    row[name] = _count(row.get(name)) + int(value)
+                else:
+                    row[name] = value
+            self._write_own(key, row)
 
     def claim(self, search: str, earlier=None) -> str:
         """'reuse' (fresh earlier results), 'call' (one paid request, counted now), or a refusal sentence."""
@@ -282,12 +362,17 @@ class Budget:
             self._bump(reused=1)
             return "reuse"
         with self._lock:
-            data = self.usage()
-            if self.month(data)["searches"] >= self.cap:
+            if self.month()["searches"] >= self.cap:
                 verdict = self.cap_message()
-                self._bump_locked(data, capped=1)
+                key = month_key(self.clock())
+                row = self._own_row(key)
+                row["capped"] = _count(row.get("capped")) + 1
+                self._write_own(key, row)
                 return verdict
-            self._bump_locked(data, searches=1)
+            key = month_key(self.clock())
+            row = self._own_row(key)
+            row["searches"] = _count(row.get("searches")) + 1
+            self._write_own(key, row)
             return "call"
 
     def record(self, *, ok: bool, error: str = "") -> None:
@@ -297,6 +382,20 @@ class Budget:
             self._bump(last_ok_at=stamp)
         else:
             self._bump(errors=1, last_error=str(error)[:120], last_error_at=stamp)
+
+
+def _newest_health(target: dict, row: dict) -> None:
+    """Keep the newest last_ok_at, and the newest error with its time."""
+    ok = row.get("last_ok_at")
+    if ok and (not target.get("last_ok_at") or (parse_time(ok) or _EPOCH) > (parse_time(target["last_ok_at"]) or _EPOCH)):
+        target["last_ok_at"] = ok
+    bad = row.get("last_error_at")
+    if bad and (not target.get("last_error_at") or (parse_time(bad) or _EPOCH) > (parse_time(target["last_error_at"]) or _EPOCH)):
+        target["last_error_at"] = bad
+        target["last_error"] = row.get("last_error") or ""
+
+
+_EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)
 
 
 def budget_for(ui) -> Budget:
@@ -600,6 +699,7 @@ def compact_history(full: dict) -> dict:
             "change": row["change"],
             "delta": row["delta"],
             "spark": [point["position"] for point in row["points"][-SPARK_POINTS:]],
+            "spark_at": [point["at"] for point in row["points"][-SPARK_POINTS:]],
             "features": sorted(row.get("features") or {}),
         }
         for row in full.get("searches") or []
@@ -731,23 +831,79 @@ class _PullEvents:
             self.seen_google = True
         elif self.seen_google and not self.saved and step not in (None, "store"):
             self.saved = True
-            _cloud_save(self.ui)
+            _save_objects(self.ui, [PLUGINS_SCOPE])  # just the counter, not the project still being pulled
 
 
-def _cloud_save(ui) -> str:
-    """plugins.save(ui): a GET route is not saved by the middleware. Returns an error name, or empty."""
+PLUGINS_SCOPE = "_plugins"
+
+
+def _save_objects(ui, slugs) -> str:
+    """Save only these storage objects (project slugs, or "_plugins" for the counter) to cloud storage. A GET route
+    is not saved by the middleware. cloud.save_project uploads one object, so nothing else is uploaded twice. Falls
+    back to plugins.save(ui) with an older storage layer. Returns an error name, or empty."""
     from aeo.ranksim import plugins
 
+    cloud = getattr(ui, "cloud", None)
+    if cloud is None or not getattr(cloud, "enabled", False) or getattr(ui, "public_demo", False):
+        return ""
     try:
-        plugins.save(ui)
+        if callable(getattr(cloud, "save_project", None)):
+            for slug in dict.fromkeys(slugs):
+                cloud.save_project(slug)
+        else:
+            plugins.save(ui)
     except Exception as exc:  # noqa: BLE001 - reported, never fatal
         return type(exc).__name__
     return ""
 
 
+class SiteBusy(RuntimeError):
+    """Another pull or analysis holds this site's job lock (on any instance)."""
+
+
 def _default_run_pull(ui, project) -> dict:
-    """The same pull a person starts in the Studio, Google on, AI engines off. Saves to cloud storage itself."""
-    return _studio_run_pull()(ui, project, True, _PullEvents(ui))
+    """The same pull a person starts in the Studio, Google on, AI engines off, run as a job under infra's per-site
+    lock (api.sites: kind "pull", key "site:<domain>"). So it never runs beside a Studio pull or an analysis of the
+    same site on any instance, it pauses before the time limit like any job (saving its checkpoint), and a paused
+    job is continued here or from the app with the same params. Raises SiteBusy when the site is busy."""
+    from aeo.ranksim.api import sites
+
+    def work(ctx) -> dict:
+        events = _JobEvents(ui, sites._Events(ctx))
+        return {"report": sites._run_pull(ui, ui.project(project.slug), True, events, ctx=ctx)}
+
+    def error_text(exc: BaseException) -> str:
+        return _scrub(ui, f"{type(exc).__name__}: {str(exc)[:300]}")
+
+    reg = sites.registry(ui)
+    key = sites._site_key(project.domain)
+    record = reg.start("pull", key, f"Scheduled re-check of {project.name}", work, params={"slug": project.slug, "google": True}, error_text=error_text, background=False)
+    if record.get("attached"):
+        if record.get("kind") == "pull" and (record.get("status") == "paused" or record.get("stalled")):
+            resumed = reg.resume(record["id"], work, error_text=error_text, background=False)
+            if resumed is None or resumed.get("attached"):
+                raise SiteBusy("a pull is already running")
+            record = resumed
+        else:
+            raise SiteBusy("a pull or analysis is already running")
+    status = record.get("status")
+    if status == "done":
+        return dict((record.get("result") or {}).get("report") or {})
+    if status == "paused":
+        return {"paused": True, "job": record.get("id")}
+    raise RuntimeError(record.get("error") or f"the re-check job ended as {status}")
+
+
+class _JobEvents:
+    """The job's event sink plus _PullEvents: the counter object is saved right after the Google step."""
+
+    def __init__(self, ui, inner) -> None:
+        self.inner = inner
+        self.saver = _PullEvents(ui)
+
+    def put(self, event) -> None:
+        self.inner.put(event)
+        self.saver.put(event)
 
 
 def recheck(ui, *, now: datetime | None = None, run_pull=None, monotonic=time.monotonic, limit_seconds: float | None = None) -> dict:
@@ -770,10 +926,16 @@ def recheck(ui, *, now: datetime | None = None, run_pull=None, monotonic=time.mo
         return result
     cloud = getattr(ui, "cloud", None)
     if cloud is not None and getattr(cloud, "enabled", False):
-        cloud.refresh(force=True)
+        try:
+            cloud.refresh(force=True)
+        except Exception as exc:  # noqa: BLE001 - pulling on stale local data could pay twice: stop and say so
+            result["storage_error"] = type(exc).__name__
+            result["note"] = "Storage could not be read, so nothing was pulled. The next run tries again."
+            return result
     due, skipped = due_projects(ui.root, now=now)
     result["skipped"] = skipped
     touched = False
+    touched_slugs: list[str] = []
 
     def defer(project, slug: str, reason: str) -> None:
         nonlocal touched
@@ -785,6 +947,7 @@ def recheck(ui, *, now: datetime | None = None, run_pull=None, monotonic=time.mo
             state.update({"last_deferred_at": _iso(now), "last_deferred": reason})
             save_state(project, state)
             touched = True
+            touched_slugs.append(slug)
         except OSError:
             pass
 
@@ -814,21 +977,32 @@ def recheck(ui, *, now: datetime | None = None, run_pull=None, monotonic=time.mo
             state["last_attempt_at"] = _iso(now)
             save_state(project, state)
             touched = True
+            touched_slugs.append(item.slug)
             # the attempt marker reaches storage before any paid request, so a run stopped at its time limit is
             # not repeated by the next instance as if it never happened
-            stored = _cloud_save(ui)
+            stored = _save_objects(ui, [item.slug])
             if stored:
                 result.setdefault("storage_errors", []).append(stored)
             try:
                 summary = run_pull(ui, project)
-                outcome = {"slug": item.slug, "ok": True, "reason": item.reason, "summary": _short_summary(summary)}
-                state.update({"last_result": "ok", "last_error": "", "last_ok_at": _iso(now)})
+                if isinstance(summary, dict) and summary.get("paused"):
+                    outcome = {"slug": item.slug, "ok": True, "paused": True, "reason": item.reason, "summary": {"job": summary.get("job")}}
+                    state.update({"last_result": "paused", "last_error": ""})
+                else:
+                    outcome = {"slug": item.slug, "ok": True, "reason": item.reason, "summary": _short_summary(summary)}
+                    state.update({"last_result": "ok", "last_error": "", "last_ok_at": _iso(now)})
+            except SiteBusy as exc:
+                # not an attempt: the other job is doing the work. Clear the marker so the next run tries again.
+                state.pop("last_attempt_at", None)
+                outcome = {"slug": item.slug, "ok": True, "busy": True, "reason": str(exc)}
+                state.update({"last_deferred_at": _iso(now), "last_deferred": str(exc)})
             except Exception as exc:  # noqa: BLE001 - one project failing must not stop the others
                 message = _scrub(ui, f"{type(exc).__name__}: {str(exc)[:300]}")
                 outcome = {"slug": item.slug, "ok": False, "reason": item.reason, "error": message}
                 state.update({"last_result": "error", "last_error": message})
-            state.pop("last_deferred", None)
-            state.pop("last_deferred_at", None)
+            if not outcome.get("busy"):
+                state.pop("last_deferred", None)
+                state.pop("last_deferred_at", None)
             save_state(project, state)
         except OSError as exc:
             outcome = {"slug": item.slug, "ok": False, "reason": item.reason, "error": f"state not saved ({type(exc).__name__})"}
@@ -836,11 +1010,14 @@ def recheck(ui, *, now: datetime | None = None, run_pull=None, monotonic=time.mo
             if lock is not None:
                 lock.release()
         outcome["seconds"] = round(monotonic() - began, 1)
-        result["ran"].append(outcome)
+        if outcome.get("busy"):
+            result["deferred"].append({"slug": item.slug, "reason": outcome["reason"]})
+        else:
+            result["ran"].append(outcome)
     result["used"] = budget.used()
     result["cap"] = budget.cap
     if touched:
-        stored = _cloud_save(ui)
+        stored = _save_objects(ui, [*touched_slugs, PLUGINS_SCOPE])
         if stored:
             result["storage_error"] = stored
     return result
@@ -964,25 +1141,24 @@ def extend_report(report: dict, *, project, meta=None, database=None, ctx=None, 
 
 def after_pull(*, project, report=None, ui=None) -> None:
     """The classic /p/{slug}/pull does not save to cloud storage afterwards, so the search counter it wrote would be
-    lost on a cold start. Save when the counter changed since this process last saved it. (The Studio pull saves
-    again right after this hook; one extra upload is the price of never losing a count.)"""
+    lost on a cold start. Save the "_plugins" object (only the counter files, a few bytes) when this process's
+    counter file changed since it last saved it. The Studio pull's own save right after finds "_plugins" unchanged
+    and uploads only the project, so nothing is uploaded twice."""
     global _SAVED_USAGE_MTIME
     if ui is None or getattr(ui, "public_demo", False):
         return
     try:
-        path = budget_for(ui).path
-        mtime = path.stat().st_mtime if path.is_file() else None
+        path = budget_for(ui).own_path()
+        mtime = path.stat().st_mtime_ns if path.is_file() else None
     except (OSError, ValueError):
         return
     if mtime is None or mtime == _SAVED_USAGE_MTIME:
         return
-    from aeo.ranksim import plugins
-
-    if plugins.save(ui):
+    if not _save_objects(ui, [PLUGINS_SCOPE]):
         _SAVED_USAGE_MTIME = mtime
 
 
-_SAVED_USAGE_MTIME: float | None = None
+_SAVED_USAGE_MTIME: int | None = None
 
 
 def settings_schema() -> dict:

@@ -47,7 +47,8 @@ HOSTED_REDIRECT_URI = "https://ranksim.vercel.app" + CALLBACK_PATH
 
 CLIENT_ID_ENV = "GOOGLE_OAUTH_CLIENT_ID"
 CLIENT_SECRET_ENV = "GOOGLE_OAUTH_CLIENT_SECRET"
-REDIRECT_ENV = "GOOGLE_OAUTH_REDIRECT_URI"  # optional override when the public address differs from the Host header
+REDIRECT_ENV = "GOOGLE_OAUTH_REDIRECT_URI"  # optional: the whole redirect URI
+PUBLIC_URL_ENV = "RANKSIM_PUBLIC_URL"  # optional: pins the redirect URI's base (https://ranksim.example), else the request
 
 STATE_PURPOSE = "gsc-oauth-state"
 REFRESH_PURPOSE = "gsc-refresh-token"
@@ -67,6 +68,7 @@ REPORT_PAGES = 50
 DISCOVERY_LIMIT = 30
 DISCOVERY_TOP = 5.0
 DISCOVERY_FLOOR = 2.5
+DISCOVERY_MIN_IMPRESSIONS = 10
 LABEL = "Google Search Console data"
 GOOD_PERMISSIONS = {"siteOwner", "siteFullUser", "siteRestrictedUser"}
 
@@ -120,6 +122,11 @@ def redirect_uri_for(request) -> str:
     override = os.environ.get(REDIRECT_ENV, "").strip()
     if override:
         return override
+    public = os.environ.get(PUBLIC_URL_ENV, "").strip().rstrip("/")
+    if public:
+        parts = urlsplit(public if "://" in public else "https://" + public)
+        if parts.scheme in {"http", "https"} and parts.netloc:
+            return f"{parts.scheme}://{parts.netloc}{CALLBACK_PATH}"
     proto = (request.headers.get("x-forwarded-proto") or request.url.scheme or "http").split(",")[0].strip().lower()
     if proto not in {"http", "https"}:
         proto = "https"
@@ -248,17 +255,17 @@ class GoogleClient:
         except httpx.HTTPError as exc:
             raise GscError(f"Google did not answer ({type(exc).__name__}). Try again in a moment.", code="network", status=502) from None
 
-    def exchange_code(self, config: dict, code: str, redirect_uri: str) -> dict:
-        response = self._post_form(
-            TOKEN_URL,
-            {
-                "grant_type": "authorization_code",
-                "code": code,
-                "redirect_uri": redirect_uri,
-                "client_id": config["client_id"],
-                "client_secret": config["client_secret"],
-            },
-        )
+    def exchange_code(self, config: dict, code: str, redirect_uri: str, verifier: str = "") -> dict:
+        form = {
+            "grant_type": "authorization_code",
+            "code": code,
+            "redirect_uri": redirect_uri,
+            "client_id": config["client_id"],
+            "client_secret": config["client_secret"],
+        }
+        if verifier:
+            form["code_verifier"] = verifier
+        response = self._post_form(TOKEN_URL, form)
         return _token_reply(response, during="connect")
 
     def refresh(self, config: dict, refresh_token: str) -> dict:
@@ -432,10 +439,19 @@ def session_binding(ui, request) -> str:
     return hashlib.sha256(f"gsc-state|{value}".encode("utf-8")).hexdigest()[:32] if value else ""
 
 
-def make_state(ui, request, slug: str, redirect_uri: str) -> tuple[str, str]:
+def make_state(ui, request, slug: str, redirect_uri: str) -> tuple[str, str, str]:
+    """(sealed state, nonce for the cookie, PKCE challenge for the authorization URL)."""
     nonce = secrets.token_urlsafe(24)
-    payload = {"slug": slug, "nonce": nonce, "exp": int(_now(ui) + STATE_SECONDS), "sess": session_binding(ui, request), "redirect_uri": redirect_uri}
-    return secretbox.seal(json.dumps(payload, sort_keys=True), purpose=STATE_PURPOSE), nonce
+    # PKCE (S256): the verifier travels only inside the sealed state, so an intercepted code cannot be redeemed alone.
+    payload = {
+        "slug": slug,
+        "nonce": nonce,
+        "exp": int(_now(ui) + STATE_SECONDS),
+        "sess": session_binding(ui, request),
+        "redirect_uri": redirect_uri,
+        "verifier": secrets.token_urlsafe(48),
+    }
+    return secretbox.seal(json.dumps(payload, sort_keys=True), purpose=STATE_PURPOSE), nonce, pkce_challenge(payload["verifier"])
 
 
 def check_state(ui, request, state: str, *, bind_session: bool = True) -> dict:
@@ -463,7 +479,7 @@ def complete_connection(ui, project, code: str, payload: dict) -> str:
     cloud = getattr(ui, "cloud", None)
     if cloud is not None and getattr(cloud, "enabled", False):
         cloud.refresh(force=True)
-    tokens = client_for(ui).exchange_code(oauth_config(), code, str(payload["redirect_uri"]))
+    tokens = client_for(ui).exchange_code(oauth_config(), code, str(payload["redirect_uri"]), str(payload.get("verifier") or ""))
     if SCOPE not in str(tokens.get("scope") or SCOPE).split():
         # Not stored. No revoke: Google's revoke ends the whole grant, which could cut a working connection.
         raise GscError("Search Console access was not granted.", code="scope_missing")
@@ -490,7 +506,14 @@ def complete_connection(ui, project, code: str, payload: dict) -> str:
     return result
 
 
-def auth_url(config: dict, redirect_uri: str, state: str) -> str:
+def pkce_challenge(verifier: str) -> str:
+    import base64
+
+    digest = hashlib.sha256(verifier.encode("ascii")).digest()
+    return base64.urlsafe_b64encode(digest).decode("ascii").rstrip("=")
+
+
+def auth_url(config: dict, redirect_uri: str, state: str, *, challenge: str = "") -> str:
     query = {
         "client_id": config["client_id"],
         "redirect_uri": redirect_uri,
@@ -501,6 +524,9 @@ def auth_url(config: dict, redirect_uri: str, state: str) -> str:
         "include_granted_scopes": "true",
         "state": state,
     }
+    if challenge:
+        query["code_challenge"] = challenge
+        query["code_challenge_method"] = "S256"
     return AUTH_URL + "?" + urlencode(query)
 
 
@@ -753,6 +779,36 @@ def report_section(ui, project) -> dict:
     return data
 
 
+PAGE_QUERIES = 10
+
+
+def page_key(url: str) -> str:
+    """A page address compared loosely: no scheme, no www, no query or fragment, no trailing slash, lowercase host."""
+    parts = urlsplit(str(url or "").strip())
+    host = (parts.hostname or "").lower().removeprefix("www.")
+    path = parts.path.rstrip("/") or "/"
+    return f"{host}{path}"
+
+
+def page_data(ui, project, url: str) -> dict:
+    """Search Console numbers for one page and its top searches, from the stored snapshot (no network)."""
+    data = project_state(ui, project)
+    data["url"] = url
+    snapshot = load_snapshot(project)
+    if "range" not in data or not snapshot:
+        return data
+    key = page_key(url)
+    row = next((item for item in snapshot.get("pages") or [] if page_key(item["page"]) == key), None)
+    queries = sorted(
+        ({k: pair[k] for k in ("q", "clicks", "impressions", "ctr", "position")} for pair in snapshot.get("query_pages") or [] if page_key(pair["page"]) == key),
+        key=lambda item: (-item["impressions"], -item["clicks"], item["q"]),
+    )
+    data["page"] = {k: row[k] for k in ("page", "clicks", "impressions", "ctr", "position")} if row else None
+    data["page_queries"] = queries[:PAGE_QUERIES]
+    data["page_query_count"] = len(queries)
+    return data
+
+
 NEAR_MIN, NEAR_MAX = 8.0, 20.0
 OPPORTUNITY_LIMIT = 25
 # A rough typical click rate by position on page one (organic, desktop and mobile mixed). A benchmark for spotting
@@ -925,6 +981,12 @@ def _adopt(ui, project) -> None:
         _record_adopt_check(ui, project)
 
 
+def discovery_min_impressions(top: int) -> int:
+    """A query reaches discovery only with at least max(10, 1% of the top query's) impressions over the 28 days, so
+    a search seen once or twice never becomes a tracked search that costs a paid pull."""
+    return max(DISCOVERY_MIN_IMPRESSIONS, -(-int(top) // 100))
+
+
 def discovery_sources(*, project, pages=None, ui=None) -> list[dict]:
     """Top Search Console queries for the site, weighted on discovery's scale. For a project, only when GSC is on. On a
     site's first analysis (no project yet), when Google is connected and a property covers the site."""
@@ -943,10 +1005,14 @@ def discovery_sources(*, project, pages=None, ui=None) -> list[dict]:
             snapshot = None
     if not snapshot:
         return []
-    queries = [item for item in snapshot.get("queries") or [] if item.get("impressions", 0) > 0][:DISCOVERY_LIMIT]
+    ranked = [item for item in snapshot.get("queries") or [] if item.get("impressions", 0) > 0]
+    if not ranked:
+        return []
+    top = max(item["impressions"] for item in ranked)
+    floor = discovery_min_impressions(top)
+    queries = [item for item in ranked if item["impressions"] >= floor][:DISCOVERY_LIMIT]
     if not queries:
         return []
-    top = max(item["impressions"] for item in queries) or 1
     return [
         {
             "q": item["q"],
@@ -1051,6 +1117,13 @@ def register(app, ui) -> None:
             return common._error(404, "No such project.")
         return JSONResponse(status_payload(request, project))
 
+    @app.get("/api/v1/gsc/projects/{slug}/page")
+    def gsc_page(slug: str, url: str = "") -> JSONResponse:
+        project = project_or_404(slug)
+        if project is None:
+            return common._error(404, "No such project.")
+        return JSONResponse(page_data(ui, project, url[:2000]))
+
     @app.get("/api/v1/gsc/projects/{slug}/properties")
     async def gsc_properties(slug: str) -> JSONResponse:
         blocked = common._not_public(ui)
@@ -1079,8 +1152,8 @@ def register(app, ui) -> None:
         if not config["ready"]:
             return common._error(409, "Search Console is not set up yet. " + " ".join(f"Set {name}." for name in config["missing"]))
         uri = redirect_uri_for(request)
-        state, nonce = make_state(ui, request, project.slug, uri)
-        response = JSONResponse({"url": auth_url(config, uri, state)})
+        state, nonce, challenge = make_state(ui, request, project.slug, uri)
+        response = JSONResponse({"url": auth_url(config, uri, state, challenge=challenge)})
         secure = uri.startswith("https://")
         response.set_cookie(NONCE_COOKIE, nonce, max_age=STATE_SECONDS, httponly=True, secure=secure, samesite="lax", path="/api/v1/gsc")
         return response

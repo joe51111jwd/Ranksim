@@ -15,6 +15,8 @@ const args = Object.fromEntries(process.argv.slice(2).reduce((pairs, value, inde
   return pairs;
 }, []));
 const BASE = (args.base || 'http://127.0.0.1:8799').replace(/\/$/, '');
+// Optional second server whose job budget is so short that analyses pause and the app has to post again.
+const PAUSED_BASE = args['paused-base'] ? args['paused-base'].replace(/\/$/, '') : '';
 const OUT = args.out || 'tests/e2e/screenshots';
 const PASSWORD = process.env.E2E_PASSWORD || 'e2e-pass';
 const SITE = process.env.E2E_SITE || 'www.dirtcrew.example';
@@ -173,6 +175,8 @@ try {
     slug = decodeURIComponent(new URL(page.url()).pathname.split('/')[2]);
     expect(slug, 'a project slug after analysis');
     await page.waitForSelector(SEL.editorFrame, { timeout: SLOW });
+    await page.waitForFunction((sel) => /Report ready/.test(document.querySelector(sel).textContent), SEL.toast);
+    expect(await page.isVisible(SEL.nav), 'the section nav appears once the report exists');
     await audit(page, 'desktop-04-opened');
   });
 
@@ -285,6 +289,8 @@ try {
     expect((await page.locator(SEL.serpRow).count()) >= 5, 'the top 10 is listed');
     expect((await page.locator(SEL.serpYou).count()) === 1, 'your page is highlighted in the top 10');
     await audit(page, 'desktop-09-searches');
+    await page.keyboard.press('Escape');  // the search detail is a sheet (discover)
+    await page.waitForSelector(SEL.sheet, { state: 'detached' });
   });
 
   await step('competitors', async () => {
@@ -381,6 +387,35 @@ try {
     const live = (jobs.jobs || []).filter((job) => /slow-c/.test(JSON.stringify(job))); // the list holds running or paused jobs only
     expect(!live.length, `no job left running: ${JSON.stringify(live)}`);
     await tab.close();
+  });
+
+  await step('paused-resume', async () => {
+    if (!PAUSED_BASE) throw new Error('no --paused-base server given');
+    const ctx = await browser.newContext({ viewport: { width: 1280, height: 900 }, deviceScaleFactor: 2 });
+    const tab = await ctx.newPage();
+    watch(tab, 'paused');
+    await tab.goto(PAUSED_BASE + '/');
+    await tab.fill(SEL.password, PASSWORD);
+    await tab.click(SEL.loginSubmit);
+    await tab.waitForSelector(SEL.homeInput);
+    let posts = 0;
+    let paused = 0;
+    // Buffer each analysis answer through a route so its NDJSON lines can be read (this test does not need streaming).
+    await tab.route('**/api/v1/sites', async (route) => {
+      if (route.request().method() !== 'POST') return route.continue();
+      posts += 1;
+      const response = await route.fetch({ timeout: SLOW });
+      const body = await response.text();
+      if (/"type":\s*"paused"/.test(body)) paused += 1;
+      await route.fulfill({ response, body });
+    });
+    await tab.fill(SEL.homeInput, 'www.slow-p.example');
+    await tab.click(SEL.homeSubmit);
+    await tab.waitForURL(/\/app\//, { timeout: SLOW * 2 });
+    await tab.waitForSelector(SEL.editorFrame, { timeout: SLOW });
+    expect(posts >= 2, `the app posted again after a pause (${posts} posts, ${paused} paused answers)`);
+    expect(paused >= 1, `the server paused at least once (${paused})`);
+    await ctx.close();
   });
 
   state = await desk.storageState();

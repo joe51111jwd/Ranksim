@@ -13,7 +13,7 @@ from fastapi.testclient import TestClient
 from test_project import SEARCHES, SITE, TODAY, FakeCrawler, _results, page_html
 
 from aeo.ranksim.access import COOKIE, Access
-from aeo.ranksim.cloud import LEGACY_PREFIX, MIGRATED, POINTER, PROJECTS_PREFIX, CloudState, merge_sqlite
+from aeo.ranksim.cloud import LEGACY_PREFIX, POINTER, SAVES_PREFIX, CloudState, merge_sqlite
 from aeo.ranksim.serp import SerpHit
 from aeo.ranksim.serve import create_app
 from tests.test_serve_project import make_settings
@@ -275,9 +275,27 @@ def _instance(folder):
     return CloudState(data_dir=folder, db_file=folder / "rank.db", enabled=True)
 
 
+def _manifest_of(fake):
+    return json.loads(fake.items[POINTER]) if POINTER in fake.items else {}
+
+
 def _versions(fake, slug=None):
-    prefix = PROJECTS_PREFIX + (f"{slug}/v/" if slug else "")
-    return sorted(name for name in fake.items if name.startswith(prefix) and name.endswith(".tgz"))
+    """The save object holding slug's newest version (as a one-item list), or every save object."""
+    if slug is None:
+        return sorted(name for name in fake.items if name.startswith(SAVES_PREFIX))
+    name = (_manifest_of(fake).get("projects") or {}).get(slug)
+    return [name] if name and name in fake.items else []
+
+
+def _members(fake, name):
+    import io
+    import tarfile
+
+    return tarfile.open(fileobj=io.BytesIO(fake.items[name]), mode="r:gz").getnames()
+
+
+def _uploads(fake):
+    return [call.split(" ", 1)[1] for call in fake.calls if call.startswith(f"put {SAVES_PREFIX}")]
 
 
 def test_state_saves_and_a_second_instance_picks_it_up(tmp_path, fake_blob):
@@ -288,7 +306,7 @@ def test_state_saves_and_a_second_instance_picks_it_up(tmp_path, fake_blob):
     assert two.refresh(force=True) is False  # nothing saved yet
     first = one.save()
     assert first and POINTER in fake_blob.items
-    assert _versions(fake_blob, "demo") and any(name.startswith("ranksim/v2/db/v/") for name in fake_blob.items)
+    assert _versions(fake_blob, "demo") and "db.full" in _members(fake_blob, first)  # one object: projects and database
     changed = []
     two.on_change.append(lambda: changed.append(True))
     assert two.refresh(force=True) is True and changed == [True]
@@ -302,9 +320,11 @@ def test_state_saves_and_a_second_instance_picks_it_up(tmp_path, fake_blob):
     with sqlite3.connect(two_dir / "rank.db") as conn:
         conn.execute("insert into t values ('second')")
     (two_dir / "projects" / "demo" / "new.json").write_text("{}")
+    fake_blob.calls.clear()
     for _ in range(4):
         two.save()
-    assert len(_versions(fake_blob, "demo")) <= 4  # unchanged saves write nothing
+    assert len(_uploads(fake_blob)) == 1  # one save object; the next three saves had nothing to upload
+    assert "db.plus" in _members(fake_blob, _uploads(fake_blob)[0])  # the database went up as a small delta
     assert one.refresh(force=True) is True
     assert (one_dir / "projects" / "demo" / "new.json").is_file()
     with sqlite3.connect(db_one) as conn:
@@ -322,8 +342,9 @@ def test_a_save_with_nothing_changed_uploads_nothing(tmp_path, fake_blob):
     (tmp_path / "one" / "projects" / "other" / "project.json").write_text("{}")
     fake_blob.calls.clear()
     one.save()
-    puts = [call for call in fake_blob.calls if call.startswith("put") and call.endswith((".tgz", ".gz"))]
-    assert len(puts) == 1 and "/other/" in puts[0]  # only the changed project is uploaded, not the demo or the db
+    puts = _uploads(fake_blob)
+    members = _members(fake_blob, puts[0])
+    assert len(puts) == 1 and all(name.startswith("p/other/") for name in members)  # only the changed project
 
 
 def test_concurrent_saves_on_two_projects_never_clobber(tmp_path, fake_blob):
@@ -495,7 +516,7 @@ def test_the_old_single_tarball_is_migrated_once_and_kept(tmp_path, fake_blob):
     assert (tmp_path / "fresh" / "projects" / "second" / "project.json").read_text() == '{"name": "Second"}'
     with sqlite3.connect(tmp_path / "fresh" / "rank.db") as conn:
         assert conn.execute("select v from t").fetchall() == [("first",)]
-    assert fake_blob.items[MIGRATED] == legacy_name.encode()
+    assert _manifest_of(fake_blob)["legacy"]["name"] == legacy_name
     assert _versions(fake_blob, "demo") and _versions(fake_blob, "second")
     assert legacy_name in fake_blob.items  # the old tarball is never deleted
 
@@ -516,7 +537,7 @@ def test_versions_skip_caches_and_never_write_outside_the_folder(tmp_path, fake_
     state = _instance(tmp_path / "data")
     state.save()
     names = tarfile.open(fileobj=io.BytesIO(fake_blob.items[_versions(fake_blob, "demo")[-1]]), mode="r:gz").getnames()
-    assert "project.json" in names and ".ranksim-version.json" in names
+    assert "p/demo/project.json" in names and "p/demo/.ranksim-version.json" in names
     assert not any("llm-cache" in name for name in names)
     assert not any(name.startswith(("/", "..")) for name in names)
 
@@ -557,8 +578,8 @@ def test_workspace_plugin_data_is_its_own_object(tmp_path, fake_blob):
     (shared / "usage.json").write_text("{}")
     fake_blob.calls.clear()
     a.save()
-    puts = [call for call in fake_blob.calls if call.startswith("put") and call.endswith(".tgz")]
-    assert len(puts) == 1 and "/_plugins/" in puts[0]
+    puts = _uploads(fake_blob)
+    assert len(puts) == 1 and all(name.startswith("p/_plugins/") for name in _members(fake_blob, puts[0]))
 
 
 def test_login_limit_is_per_client_and_says_when_to_retry(hosted, monkeypatch):
@@ -598,3 +619,47 @@ def test_security_headers(hosted):
     assert "strict-transport-security" not in plain.headers  # only over https
     secure = client.get("/", headers={"x-forwarded-proto": "https"})
     assert secure.headers["strict-transport-security"].startswith("max-age=")
+
+
+def test_an_old_instance_saving_during_the_rollout_is_merged_once(tmp_path, fake_blob):
+    """First deploy: old and new instances overlap. A save in the old format after the migration is not lost, a newer
+    edit made on the new side is not overwritten, and importing the same old save twice changes nothing."""
+    from aeo.ranksim.cloud import LEGACY_POINTER, REFRESH_EVERY_SECONDS
+
+    old = tmp_path / "old"
+    _make_state(old)
+    first_name = f"{LEGACY_PREFIX}00000000000000000001-aaa.tgz"
+    fake_blob.put_blob(first_name, _legacy_tarball(old), access="private")
+    fake_blob.put_blob(LEGACY_POINTER, first_name.encode(), access="private", allow_overwrite=True)
+
+    clock = [1000.0]
+    new = CloudState(data_dir=tmp_path / "new", db_file=tmp_path / "new" / "rank.db", enabled=True, clock=lambda: clock[0])
+    assert new.refresh(force=True) is True
+    demo_new = tmp_path / "new" / "projects" / "demo"
+    (demo_new / "notes.json").write_text('{"by": "new"}')  # an edit on the new side after the migration
+    new.save()
+
+    # The old instance, unaware, saves again in the old format: it edits project.json and adds a project.
+    (old / "projects" / "demo" / "project.json").write_text('{"name": "Demo, renamed on the old instance"}')
+    (old / "projects" / "late").mkdir()
+    (old / "projects" / "late" / "project.json").write_text('{"name": "Late"}')
+    second_name = f"{LEGACY_PREFIX}00000000000000000002-bbb.tgz"
+    fake_blob.put_blob(second_name, _legacy_tarball(old), access="private")
+    fake_blob.put_blob(LEGACY_POINTER, second_name.encode(), access="private", allow_overwrite=True)
+
+    clock[0] += REFRESH_EVERY_SECONDS + 1
+    assert new.refresh() is True
+    assert (demo_new / "project.json").read_text() == '{"name": "Demo, renamed on the old instance"}'
+    assert (demo_new / "notes.json").read_text() == '{"by": "new"}'  # not removed: the old instance never had it
+    assert (tmp_path / "new" / "projects" / "late" / "project.json").is_file()
+    assert _manifest_of(fake_blob)["legacy"]["name"] == second_name
+
+    reader = _instance(tmp_path / "reader")
+    reader.refresh(force=True)
+    assert (tmp_path / "reader" / "projects" / "late" / "project.json").is_file()
+    assert (tmp_path / "reader" / "projects" / "demo" / "notes.json").is_file()
+
+    fake_blob.calls.clear()
+    clock[0] += REFRESH_EVERY_SECONDS + 1
+    assert new.refresh() is False  # the same old save again: nothing to import, nothing uploaded
+    assert not [call for call in fake_blob.calls if call.startswith("put")]

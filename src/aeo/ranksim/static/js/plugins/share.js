@@ -45,13 +45,42 @@ function statusChip(status) {
   return h('span', { class: 'chip chip-gray', text: 'Turned off' });
 }
 
+/* ------------------------------------------------------------------ weekly update email */
+
+// Copies the weekly update as rich text (HTML) and plain text, so it pastes cleanly into Gmail. The HTML is only
+// placed on the clipboard; it is never put into this page.
+export async function copyWeeklyUpdate(slug) {
+  const data = await api.get(`/api/v1/projects/${enc(slug)}/weekly-update`);
+  const full = `Subject: ${data.subject}\n\n${data.text}`;
+  try {
+    if (window.ClipboardItem && navigator.clipboard && navigator.clipboard.write) {
+      await navigator.clipboard.write([new ClipboardItem({
+        'text/html': new Blob([data.html], { type: 'text/html' }),
+        'text/plain': new Blob([data.text], { type: 'text/plain' }),
+      })]);
+    } else {
+      await navigator.clipboard.writeText(full);
+    }
+    toast(data.has_link ? 'Weekly update copied. Paste it into your email.' : 'Weekly update copied. Make a link to include the full report.');
+  } catch (_err) {
+    window.prompt('Copy the weekly update', full);
+  }
+  return data;
+}
+
 /* ------------------------------------------------------------------ client report links */
+
+function weeklyButton(slug) {
+  const button = h('button', { class: 'btn btn-primary', type: 'button' }, 'Copy weekly update');
+  button.addEventListener('click', busy(button, () => copyWeeklyUpdate(slug)));
+  return button;
+}
 
 function linksSection({ slug }) {
   const list = h('div', { class: 'share-list' }, h('p', { class: 'tile-sub', text: 'Loading links.' }));
   const label = h('input', { class: 'field', type: 'text', maxlength: '80', placeholder: 'Who is it for (only you see this)', 'aria-label': 'Link label' });
   const expiry = h('select', { class: 'field share-select', 'aria-label': 'Link expiry' }, EXPIRY.map(([value, text]) => h('option', { value, text })));
-  const create = h('button', { class: 'btn btn-primary', type: 'button' }, 'Create link');
+  const create = h('button', { class: 'btn btn-dark', type: 'button' }, 'Create link');
   const readOnly = MODE === 'public';
 
   function paintLinks(links) {
@@ -105,6 +134,7 @@ function linksSection({ slug }) {
   return h('section', { class: 'tile span-4 share-tile' },
     h('div', { class: 'tile-head' }, h('h2', { text: 'Client report' }),
       h('div', { class: 'share-head-actions' },
+        weeklyButton(slug),
         h('a', { class: 'btn', href: `/report/${enc(slug)}`, target: '_blank', rel: 'noopener' }, 'Preview and print'),
         h('a', { class: 'btn btn-plain', href: `/api/v1/projects/${enc(slug)}/export/rankings.csv`, download: '' }, 'Rankings CSV'),
         h('a', { class: 'btn btn-plain', href: `/api/v1/projects/${enc(slug)}/export/issues.csv`, download: '' }, 'Issues CSV'))),

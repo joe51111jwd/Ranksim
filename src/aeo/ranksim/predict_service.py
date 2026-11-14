@@ -241,6 +241,7 @@ def test_searches(
     *,
     searches: list[str] | None = None,
     original_html: str | None = None,
+    first: str | None = None,
 ) -> dict:
     """PREDICTED position now and with the edit for every target search, plus guidance."""
     from aeo.ranksim.loop import page_from_html
@@ -254,7 +255,10 @@ def test_searches(
     key = _key(url)
     own_domain = _domain(url)  # your other pages are not the pages to beat
     out_rows = []
-    for search in target_searches(ctx, url, draft_doc, searches):
+    picked = target_searches(ctx, url, draft_doc, searches)
+    if first and first in ctx.project.searches:
+        picked = [first] + [search for search in picked if search != first]
+    for search in picked[:MAX_SEARCHES]:
         found = predictor.items.get(search, [])
         mine = next((item for item in found if item.key == key), None)
         others = [item for item in found if item.key != key]

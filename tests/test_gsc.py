@@ -867,3 +867,19 @@ def test_stale_parked_data_is_deleted(tmp_path, env):
     box.ui.gsc_clock.now += gsc.PENDING_SECONDS + 1
     gsc.discovery_sources(project=None, pages=[SimpleNamespace(url="https://nomatch.example/")], ui=box.ui)
     assert list(folder.glob("*.json")) == []
+
+
+def test_discovery_skips_rarely_seen_queries(tmp_path, env):
+    box = _app(tmp_path)
+    _sign_in(box)
+    box.google.analytics = staticmethod(lambda body: {"rows": [
+        {"keys": ["big search"], "clicks": 10, "impressions": 5000, "ctr": 0.002, "position": 9.0},
+        {"keys": ["fifty search"], "clicks": 0, "impressions": 50, "ctr": 0.0, "position": 30.0},
+        {"keys": ["forty nine"], "clicks": 0, "impressions": 49, "ctr": 0.0, "position": 30.0},
+        {"keys": ["seen once"], "clicks": 0, "impressions": 1, "ctr": 0.0, "position": 60.0},
+    ]} if body.get("dimensions") == ["query"] else FakeGoogle.analytics(body))
+    query = _connect(box)
+    _callback(box, {"code": "good-code", "state": query["state"]})
+    rows = gsc.discovery_sources(project=_project(box), pages=[], ui=box.ui)
+    assert [row["q"] for row in rows] == ["big search", "fifty search"]  # 1% of 5,000 is 50
+    assert gsc.discovery_min_impressions(300) == 10 and gsc.discovery_min_impressions(5000) == 50 and gsc.discovery_min_impressions(5001) == 51

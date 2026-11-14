@@ -213,9 +213,14 @@ function paintOwner(view) {
     for (const b of seg.children) b.setAttribute('aria-pressed', String(b.dataset.method === method));
     clear(detail);
     const step = record.instructions[method];
-    add(detail, 
-      h('p', { class: 'publish-step', text: step.steps }),
-      h('div', { class: 'publish-code' }, h('code', { text: step.value }), h('button', { class: 'btn btn-plain', type: 'button', onClick: () => copyText(step.value, 'Copied.') }, 'Copy')));
+    const copyRow = (value) => h('div', { class: 'publish-code' }, h('code', { text: value }), h('button', { class: 'btn btn-plain', type: 'button', onClick: () => copyText(value, 'Copied.') }, 'Copy'));
+    add(detail, h('p', { class: 'publish-step', text: step.steps }));
+    if (step.fields) {
+      add(detail, step.fields.map(([name, value]) => h('div', { class: 'publish-kv' }, h('span', { text: name }),
+        name === 'Name' || name === 'Type' ? h('code', { text: value }) : copyRow(value))));
+    } else {
+      add(detail, copyRow(step.value));
+    }
   };
   for (const key of ['meta', 'file', 'dns']) {
     seg.append(h('button', { type: 'button', dataset: { method: key }, onClick: () => { method = key; view.method = key; paintMethod(); } }, record.instructions[key].label));
@@ -239,9 +244,18 @@ function paintOwner(view) {
       toast(err.message);
     }
   });
-  const last = record.last_check;
-  add(tile, seg, detail, h('div', { class: 'form-actions' }, check),
-    last && !last.ok ? h('p', { class: 'caveat publish-miss', text: `Last check, ${when(last.at)}: ${last.detail}` }) : null);
+  add(tile, seg, detail, h('div', { class: 'form-actions' }, check), foundList(record.last_check));
+}
+
+/* What the last Check found, one line per method it tried, in plain words. */
+function foundList(last) {
+  if (!last || last.ok || !(last.attempts || []).length) return null;
+  return h('div', { class: 'publish-found' },
+    h('b', { text: `What Check found, ${when(last.at)}` }),
+    h('ul', { class: 'publish-steps' }, last.attempts.map((a) => h('li', { class: a.found ? 'ok' : a.definitive ? 'miss' : 'unsure' },
+      icon(a.found ? 'check' : a.definitive ? 'x' : 'warn'),
+      h('span', null, h('b', { text: `${(METHOD_NAMES[a.method] || a.method).replace(/^./, (c) => c.toUpperCase())}: ` }), a.detail,
+        a.definitive ? '' : ' This check could not run, so try again in a minute.')))));
 }
 
 /* ------------------------------------------------------------------ connection and publishing */
@@ -326,6 +340,10 @@ function paintForm(view) {
     clear(form);
     const platform = platforms.find((p) => p.kind === kind);
     if (!platform) return;
+    if (kind === 'wordpress') {
+      wordpressGuide(view, form, platform);
+      return;
+    }
     add(form, h('p', { class: 'caveat', text: platform.summary }));
     if (platform.limits.length) add(form, h('ul', { class: 'publish-limits' }, platform.limits.map((text) => h('li', { text }))));
     const field = (key, secret) => {
@@ -364,6 +382,80 @@ function paintForm(view) {
   for (const p of platforms) seg.append(h('button', { type: 'button', dataset: { kind: p.kind }, onClick: () => { kind = p.kind; view.kind = kind; paint(); } }, p.label));
   paint();
   add(tile, seg, form);
+}
+
+/* ------------------------------------------------------------------ guided WordPress connect */
+
+/* Step by step: the address, an application password made in WordPress, a live Check that says what it found
+   (sign in, permission, SEO plugin, this page), then Save. Nothing is stored until Save. */
+function wordpressGuide(view, form, platform) {
+  const origin = new URL(view.url).origin;
+  const address = h('input', { class: 'field', name: 'base_url', type: 'url', value: origin, required: true, spellcheck: 'false', autocomplete: 'off' });
+  const user = h('input', { class: 'field', name: 'username', type: 'text', required: true, spellcheck: 'false', autocomplete: 'off', placeholder: 'Your WordPress username, not your email' });
+  const password = h('input', { class: 'field mono', name: 'app_password', type: 'password', required: true, autocomplete: 'new-password', placeholder: 'xxxx xxxx xxxx xxxx xxxx xxxx' });
+  const profile = h('a', { class: 'btn', target: '_blank', rel: 'noopener' }, 'Open your WordPress profile');
+  const setProfile = () => {
+    try {
+      profile.href = `${new URL(address.value).origin}/wp-admin/profile.php#application-passwords-section`;
+    } catch (_err) {
+      profile.removeAttribute('href');
+    }
+  };
+  address.addEventListener('input', setProfile);
+  setProfile();
+  const results = h('ul', { class: 'publish-steps' });
+  const checkBtn = h('button', { class: 'btn btn-dark', type: 'button' }, 'Check');
+  const save = h('button', { class: 'btn btn-primary', type: 'submit', disabled: true }, 'Save connection');
+  const values = () => ({ settings: { base_url: address.value.trim(), username: user.value.trim() }, secret: { app_password: password.value } });
+  const reset = () => {
+    save.disabled = true;
+    clear(results);
+  };
+  for (const input of [address, user, password]) input.addEventListener('input', reset);
+  checkBtn.addEventListener('click', async () => {
+    if (!form.reportValidity()) return;
+    const done = busy(checkBtn, 'Checking...');
+    clear(results);
+    try {
+      const answer = await api.post(`${base()}/connections/check`, { kind: 'wordpress', url: view.url, ...values() });
+      add(results, answer.steps.map((step) => h('li', { class: step.ok ? 'ok' : 'miss' }, icon(step.ok ? 'check' : 'x'),
+        h('span', null, h('b', { text: `${step.label}: ` }), step.detail))));
+      save.disabled = !answer.ok;
+      if (!answer.ok) add(results, h('li', { class: 'unsure' }, icon('warn'), h('span', { text: 'Fix the first item marked with a cross, then Check again.' })));
+    } catch (err) {
+      add(results, h('li', { class: 'miss' }, icon('x'), h('span', { text: err.message })));
+    }
+    done();
+  });
+  const stepBox = (n, title, ...kids) => h('div', { class: 'publish-guide-step' }, h('span', { class: 'publish-num', text: String(n) }), h('div', null, h('b', { text: title }), ...kids));
+  add(form,
+    h('p', { class: 'caveat', text: 'Four steps. Ranksim uses an application password, a separate password you can remove at any time. It never needs your normal password.' }),
+    stepBox(1, 'Your WordPress address', h('label', { class: 'publish-field' }, h('span', { text: 'Site address' }), address)),
+    stepBox(2, 'Make an application password',
+      h('p', { class: 'publish-step', text: 'In WordPress, open Users, then Profile. Scroll to Application Passwords, type Ranksim as the name, and click Add New Application Password. WordPress shows it once, so copy it.' }),
+      h('div', { class: 'form-actions' }, profile)),
+    stepBox(3, 'Paste it here',
+      h('label', { class: 'publish-field' }, h('span', { text: 'WordPress username' }), user),
+      h('label', { class: 'publish-field' }, h('span', { text: 'Application password' }), password)),
+    stepBox(4, 'Check it works',
+      h('p', { class: 'publish-step', text: 'Check signs in, looks for an SEO plugin and finds this page. Nothing is saved yet.' }),
+      h('div', { class: 'form-actions' }, checkBtn), results),
+    h('ul', { class: 'publish-limits' }, platform.limits.map((text) => h('li', { text }))),
+    h('div', { class: 'form-actions' }, save));
+  form.onsubmit = async (event) => {
+    event.preventDefault();
+    const done = busy(save, 'Saving...');
+    try {
+      const made = await api.post(`${base()}/connections`, { kind: 'wordpress', site: view.domain, ...values() });
+      form.reset();
+      toast(`Connected ${made.label}.`);
+      view.connection = made.id;
+      await load(view);
+    } catch (err) {
+      done();
+      toast(err.message);
+    }
+  };
 }
 
 /* ------------------------------------------------------------------ history */

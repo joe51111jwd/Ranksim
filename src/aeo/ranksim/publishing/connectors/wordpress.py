@@ -59,6 +59,68 @@ class WordPress(Connector):
         me = self.call("GET", "/wp/v2/users/me", params={"context": "edit"}).json()
         return f"{me.get('name') or me.get('slug') or 'user'} on {self.settings.get('base_url')}"
 
+    def inspect(self, url: str = "") -> list[dict]:
+        """The guided WordPress check, in the order a person fixes things: address, login, rights, SEO plugin, page."""
+        steps: list[dict] = []
+
+        def step(key, label, ok, detail):
+            steps.append({"key": key, "label": label, "ok": ok, "detail": detail})
+            return ok
+
+        try:
+            root = self.root
+        except ConnectorError as exc:
+            step("site", "WordPress address", False, str(exc))
+            return steps
+        try:
+            response = self.request("GET", root + "/", expect=None, pin=True)
+            info = response.json() if response.status_code == 200 else None
+        except (ConnectorError, ValueError):
+            info = None
+        if not isinstance(info, dict) or "namespaces" not in info:
+            step("site", "WordPress address", False,
+                 f"No WordPress API answered at {root}/. Check the address. A security plugin or host can also block /wp-json.")
+            return steps
+        namespaces = info.get("namespaces") or []
+        step("site", "WordPress address", True, f"Found WordPress{': ' + str(info['name']) if info.get('name') else ''}.")
+
+        try:
+            me = self.call("GET", "/wp/v2/users/me", params={"context": "edit"}).json()
+        except ConnectorError as exc:
+            text = str(exc)
+            if " 401" in text or " 403" in text:
+                text = ("WordPress did not accept the username and application password. Use your WordPress username "
+                        "(not your email) and the application password, not your normal password.")
+            step("login", "Sign in", False, text)
+            return steps
+        step("login", "Sign in", True, f"Signed in as {me.get('name') or me.get('slug') or 'your user'}.")
+
+        caps = me.get("capabilities") if isinstance(me.get("capabilities"), dict) else None
+        if caps is None:
+            step("rights", "Permission to edit", True, "WordPress did not list permissions. Ranksim finds out when it publishes.")
+        else:
+            missing = [label for cap, label in (("edit_pages", "pages"), ("edit_posts", "posts")) if not caps.get(cap)]
+            step("rights", "Permission to edit", not missing,
+                 "This user can edit pages and posts." if not missing else f"This user cannot edit {' or '.join(missing)}. Use an Editor or Administrator.")
+
+        if "rankmath/v1" in namespaces:
+            step("seo", "SEO plugin", True, "Rank Math found. Ranksim can change the SEO title and description.")
+        elif "yoast/v1" in namespaces:
+            step("seo", "SEO plugin", True, "Yoast found. Ranksim changes its SEO title and description only where this site lets the API write them.")
+        else:
+            step("seo", "SEO plugin", True, "No Yoast or Rank Math. The description is saved as the excerpt, and the title tag follows the WordPress title.")
+
+        if url:
+            try:
+                found = self.locate(url)
+                item = found["item"]
+                title = text_of((item.get("title") or {}).get("rendered", "")) if isinstance(item.get("title"), dict) else ""
+                kind = "page" if found["type"] == "pages" else "post"
+                step("page", "This page", True, f"Found the {kind} \"{title or item.get('id')}\".")
+            except (ConnectorError, KeyError, TypeError, AttributeError) as exc:
+                step("page", "This page", False, str(exc) if isinstance(exc, ConnectorError) else "WordPress answered in a way Ranksim did not expect.")
+        return steps
+
     def seo_plugin(self) -> str:
         try:
             namespaces = self.call("GET", "/").json().get("namespaces") or []

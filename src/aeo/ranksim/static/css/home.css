@@ -33,3 +33,6 @@
   .composer .btn { padding-left: 14px; padding-right: 14px; }
   .sites-grid { grid-template-columns: minmax(0, 1fr); }
 }
+/* the open-a-page progress panel (app.js progressTile) */
+.progress-tile .open-overall { margin: 10px 0 12px; }
+.progress-tile .found { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }

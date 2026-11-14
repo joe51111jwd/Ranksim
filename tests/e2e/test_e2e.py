@@ -63,27 +63,37 @@ def _wait(url: str, proc: subprocess.Popen, seconds: float = 60) -> None:
 @pytest.mark.skipif(os.environ.get("RANKSIM_SKIP_E2E", "").strip() in {"1", "true", "yes"}, reason="RANKSIM_SKIP_E2E is set")
 @pytest.mark.skipif(not _has_playwright(), reason="node or Playwright is not installed")
 def test_end_to_end(tmp_path):
-    port = _free_port()
-    env = {key: value for key, value in os.environ.items() if not key.endswith(("_API_KEY", "_KEY", "_PASSWORD", "_LOGIN", "_TOKEN"))}
-    server = subprocess.Popen(
-        [sys.executable, str(HERE / "server.py"), "--port", str(port), "--data", str(tmp_path / "data")],
-        cwd=ROOT, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
-    )
+    env = {key: value for key, value in os.environ.items() if not key.endswith(("_API_KEY", "_KEY", "_PASSWORD", "_LOGIN", "_TOKEN", "_SECRET", "_CLIENT_ID"))}
+    servers = []
     try:
-        base = f"http://127.0.0.1:{port}"
-        _wait(base + "/api/v1/session", server)
+        base = _start(servers, tmp_path / "data", env)
+        # A second server whose job budget leaves almost no time, so every analysis pauses and the app posts again.
+        paused = _start(servers, tmp_path / "paused", {**env, "RANKSIM_JOB_BUDGET_SECONDS": "27", "E2E_SLOW_SECONDS": "1.5"})
         run = subprocess.run(
-            [NODE, str(HERE / "run.mjs"), "--base", base, "--out", str(HERE / "screenshots")],
-            cwd=ROOT, env=env, capture_output=True, text=True, timeout=900,
+            [NODE, str(HERE / "run.mjs"), "--base", base, "--paused-base", paused, "--out", str(HERE / "screenshots")],
+            cwd=ROOT, env=env, capture_output=True, text=True, timeout=1200,
         )
     finally:
-        server.terminate()
-        try:
-            server.wait(timeout=10)
-        except subprocess.TimeoutExpired:
-            server.kill()
+        for server in servers:
+            server.terminate()
+            try:
+                server.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                server.kill()
     lines = [line for line in run.stdout.splitlines() if line.startswith("{")]
     assert lines, run.stdout[-3000:] + run.stderr[-3000:]
     result = json.loads(lines[-1])
     assert result["ok"], json.dumps(result["failures"], indent=1)
     assert run.returncode == 0
+
+
+def _start(servers: list, data: Path, env: dict) -> str:
+    port = _free_port()
+    server = subprocess.Popen(
+        [sys.executable, str(HERE / "server.py"), "--port", str(port), "--data", str(data)],
+        cwd=ROOT, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+    )
+    servers.append(server)
+    base = f"http://127.0.0.1:{port}"
+    _wait(base + "/api/v1/session", server)
+    return base

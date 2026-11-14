@@ -425,8 +425,14 @@ try {
     await page.keyboard.type(' for dirt work crews');
     await page.waitForTimeout(400);
     await page.waitForSelector(`${SEL.testButton}:not([disabled])`, { timeout: SLOW });
+    const answers = [];
+    const onAnswer = (r) => { if (/\/api\/v1\/projects\/[^/]+\/(test|predict)/.test(r.url()) && r.request().method() === 'POST') answers.push(`${r.status()} ${r.url().replace(BASE, '')}`); };
+    page.on('response', onAnswer);
     await page.click(SEL.testButton);
     await page.waitForSelector(SEL.verdict, { timeout: SLOW });
+    await page.waitForTimeout(500);
+    page.off('response', onAnswer);
+    expect(answers.length && answers.every((line) => line.startsWith('200')), `Test changes answers 200: ${answers.join(', ')}`);
     const body = await page.innerText('main');
     expect(/predict/i.test(body), 'the result says it is a prediction');
     await checkPredictTiles(page);

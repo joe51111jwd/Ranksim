@@ -326,11 +326,6 @@ def _tokens(text: str) -> set[str]:
 
 
 def _best_page(search: str, pages: list[SitePage]) -> str | None:
-    want = _tokens(search)
-    best, score = None, 0.0
-    for page in pages:
-        have = _tokens(f"{page.title} {page.h1}")
-        overlap = len(want & have) / len(want) if want else 0.0
-        if overlap > score:
-            best, score = page.url, overlap
-    return best if score >= 0.6 and len(want) >= 2 else None
+    from aeo.ranksim.discovery import best_page  # discover: word forms, compounds and the page address count
+
+    return best_page(search, pages)

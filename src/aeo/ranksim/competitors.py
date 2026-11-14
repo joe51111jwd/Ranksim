@@ -620,7 +620,7 @@ def stored_html(database: str, urls: list[str]) -> dict[str, str]:
     return {url: found[loose_key(url)] for url in urls if loose_key(url) in found}
 
 
-SECTIONS_VERSION = 2
+SECTIONS_VERSION = 3
 
 
 def _fingerprint(project, meta, google, features, rows, pages, docs) -> str:
@@ -682,9 +682,8 @@ def report_sections(project, meta, database: str, report: dict, *, pages=None) -
                 brand = discovery.brand_of(pages, project.domain)
                 found = discovery.discover(pages, brand, host=project.domain, google=google, serp_features=features, extra=rows, is_ours=project.is_our_url)
                 data = found.to_dict()
-                tracked = set(project.searches)
                 for item in data["searches"]:
-                    item["tracked"] = item["q"] in tracked
+                    item["tracked"] = discovery.is_tracked(item["q"], item.get("variants"), project.searches)
                 data["serp_features"] = len(features)
                 data["tracked"] = discovery.describe(list(project.searches), found, brands=set(discovery.host_tokens(project.domain)))
                 sections["discovery"] = data

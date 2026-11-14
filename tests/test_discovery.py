@@ -596,3 +596,38 @@ def test_gap_labels_drop_numbering_and_codes():
     assert [item["topic"] for item in gap["topics"]] == ["Which industries use it"]
     terms = {item["term"] for item in gap["terms"]}
     assert "accounting integration" in terms and not any("el4" in term for term in terms)
+
+
+def test_plugin_rows_cannot_pose_as_page_sources_or_be_multiplied():
+    pages = _smartcrew_pages()
+    posing = dn.discover(pages, "SmartCrew", host=SC, extra=[{"q": "grading crew app", "weight": 1.5, "source": "title"}])
+    assert "grading crew app" not in posing.queries  # 1.5 alone is under 2.5, whatever it calls itself
+    row = next(item for item in dn.discover(pages, "SmartCrew", host=SC, extra=[{"q": "grading crew app", "weight": 20, "source": "h1"}]).to_dict()["searches"] if item["q"] == "grading crew app")
+    assert row["source"] == "plugin-h1" and row["score"] > 0
+    plain = {item.q: item for item in dn.discover(pages, "SmartCrew", host=SC).searches}
+    boosted = {item.q: item for item in dn.discover(pages, "SmartCrew", host=SC, extra=[{"q": "excavation software", "weight": 10, "source": "gsc"}]).searches}
+    assert boosted["excavation software"].evidence == pytest.approx(plain["excavation software"].evidence + 10)
+
+
+def test_near_duplicates_of_tracked_searches_are_not_suggested():
+    assert dn.is_tracked("best excavation software", [], ["excavation software"])
+    assert dn.is_tracked("x", ["excavation software"], ["excavation software"])
+    assert not dn.is_tracked("excavation estimating software", [], ["excavation software"])
+
+
+def test_rows_from_a_first_analysis_reach_the_new_project(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    root = tmp_path / "projects"
+    root.mkdir()
+    monkeypatch.setattr(dn, "plugin_rows", lambda project, pages, ui: [{"q": "grading crew software", "weight": 4.0, "source": "gsc", "impressions": 120}])
+    found = dn.discover_with_plugins(_smartcrew_pages(), "SmartCrew", host="www." + SC, project=None, ui=SimpleNamespace(root=root))
+    assert "grading crew software" in found
+    project = SimpleNamespace(dir=root / "smartcrew", domain=SC)
+    project.dir.mkdir()
+    rows = dn.load_rows(project)
+    assert rows == [{"q": "grading crew software", "weight": 4.0, "source": "gsc", "detail": "weight 4, impressions 120"}]
+    assert not (root / "_plugins" / "discover" / "pending" / f"{SC}.json").exists()
+    assert dn.load_rows(project) == rows  # now saved in the project
+    detail = dn.discover(_smartcrew_pages(), "SmartCrew", host=SC, extra=rows).to_dict()["searches"]
+    assert any(item["q"] == "grading crew software" and "impressions 120" in item["sources"][0]["detail"][0] for item in detail)

@@ -38,6 +38,7 @@
   .srow > :not(.c-q):not(.c-open) { order: 2; }
   .srow .c-page { flex: 1 1 100%; }
   .srow .c-page:empty, .srow .pred.none { display: none; }
+  .srow .qcol[data-label]:not([data-label=''])::before { content: attr(data-label) ' '; font-size: 11px; color: var(--ink-3); font-weight: 550; }
   .srow .pred:not(.none)::before { content: 'PREDICTED '; font-size: 11px; color: var(--ink-3); font-weight: 550; }
   .sgrid .num { font-size: 26px; }
 }

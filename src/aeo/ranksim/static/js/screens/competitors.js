@@ -1,7 +1,7 @@
 /* Competitors: the businesses that compete for the site's searches (profiles with Track and Untrack), the directories
    and review sites whose lists rank, other sites in the top 10, and the content gaps per search. */
 
-import { S, api, h, icon, clear, main, enc, plural, initial, bar, toast, page, footer, noSearchData, reloadSite, openSheet, pathOf } from '../core.js';
+import { S, api, h, icon, clear, main, enc, plural, initial, bar, toast, page, footer, noSearchData, reloadSite, openSheet, closeSheet, pathOf } from '../core.js';
 import { registerScreen } from '../hooks.js';
 import { hostPath, openSearch } from './searches.js';
 
@@ -20,25 +20,33 @@ function isTracked(domain) {
   return (S.report.competitors || []).some((item) => baseDomain(item) === want);
 }
 
+let busy = false;
+
 function trackButton(domain) {
   if (S.publicDemo) return null;
   const tracked = isTracked(domain);
   return h('button', {
-    class: 'btn',
+    class: 'btn track',
     type: 'button',
+    disabled: busy || null,
     onClick: async (event) => {
       event.stopPropagation();
-      const button = event.currentTarget;
-      button.disabled = true;
+      if (busy) return;
+      busy = true;  // one change at a time, so a second click never sends a list without the first
+      document.querySelectorAll('button.track').forEach((button) => { button.disabled = true; });
       const want = baseDomain(domain);
-      const list = tracked ? S.report.competitors.filter((item) => baseDomain(item) !== want) : S.report.competitors.concat([domain]);
+      const now = S.report.competitors || [];
+      const list = tracked ? now.filter((item) => baseDomain(item) !== want) : now.concat([domain]);
       try {
-        await api.post(`/api/v1/projects/${enc(S.slug)}/settings`, { competitors: list });
+        const answer = await api.post(`/api/v1/projects/${enc(S.slug)}/settings`, { competitors: list });
         await reloadSite();
-        renderCompetitors();
+        if (answer && answer.problems && answer.problems.length) toast(answer.problems[0]);
+        closeSheet(true);
       } catch (err) {
         toast(err.message);
-        button.disabled = false;
+      } finally {
+        busy = false;
+        renderCompetitors();
       }
     },
   }, tracked ? 'Untrack' : 'Track');

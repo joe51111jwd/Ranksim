@@ -658,7 +658,8 @@ def discover(
         found.relevance = relevance(phrase, vocab)
         by_source = found.by_source()
         page_sources = [name for name in by_source if name in WEIGHTS]
-        found.evidence = sum(by_source.values()) * (1 + 0.25 * (len(page_sources) - 1) if len(page_sources) > 1 else 1)
+        page_total = sum(by_source[name] for name in page_sources) * (1 + 0.25 * (len(page_sources) - 1) if len(page_sources) > 1 else 1)
+        found.evidence = page_total + sum(value for name, value in by_source.items() if name not in WEIGHTS)
         if page_sources:
             found.evidence += LENGTH_BONUS if 2 <= len(phrase.split()) <= 5 else 0.0
             found.evidence += BUYING_BONUS if found.intent in {"commercial", "transactional"} else 0.0
@@ -704,6 +705,11 @@ def _unique_drops(items: list[dict]) -> list[dict]:
     return out
 
 
+def is_tracked(query: str, variants, searches) -> bool:
+    """True when the site already tracks this search or a near duplicate of it."""
+    return any(search == query or search in (variants or []) or same_search(query, search) for search in searches)
+
+
 def describe(searches: list[str], found: Discovery, *, brands: set[str] | None = None) -> list[dict]:
     """Intent and sources for every tracked search: from discovery when it found the same search, otherwise the
     intent rules alone and the source "added" (the person or an import added it)."""
@@ -736,12 +742,19 @@ def _source_rows(rows) -> list[tuple[str, float, str, str]]:
         if not phrase:
             continue
         source = re.sub(r"[^a-z0-9_-]", "", str(row.get("source") or "plugin").lower())[:24] or "plugin"
-        details = [f"weight {float(weight):g}"]
-        for key in ("impressions", "clicks", "position"):
-            value = row.get(key)
-            if isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value):
-                details.append(f"{key} {value:g}")
-        out.append((phrase, float(weight), source, ", ".join(details)))
+        if source in WEIGHTS or source in OWN_SOURCES or source == "added":
+            source = f"plugin-{source}"  # a plugin row never passes for one of the site's own sources
+        saved = row.get("detail")
+        if isinstance(saved, str) and saved:
+            detail = saved[:200]  # a row saved for the report keeps what it said
+        else:
+            details = [f"weight {float(weight):g}"]
+            for key in ("impressions", "clicks", "position"):
+                value = row.get(key)
+                if isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value):
+                    details.append(f"{key} {value:g}")
+            detail = ", ".join(details)
+        out.append((phrase, float(weight), source, detail))
     return out
 
 
@@ -768,6 +781,8 @@ def discover_with_plugins(pages: list[SitePage], brand: str, *, host: str = "", 
     if project is not None:
         save_rows(project, rows)
         google, features = google_inputs(project)
+    elif rows and host:
+        _stash_rows(ui, host, rows)  # the project does not exist yet; load_rows picks these up
     return discover_searches(pages, brand, limit=limit, host=host, extra=rows, google=google, serp_features=features)
 
 
@@ -781,21 +796,46 @@ def save_rows(project, rows: list[dict]) -> None:
     import json
 
     try:
-        clean_rows = [
-            {"q": phrase, "weight": weight, "source": source, "detail": detail} for phrase, weight, source, detail in _source_rows(rows)
-        ]
+        clean_rows = [{"q": phrase, "weight": weight, "source": source, "detail": detail} for phrase, weight, source, detail in _source_rows(rows)]
         _rows_path(project).write_text(json.dumps(clean_rows), encoding="utf-8")
     except (OSError, ValueError, TypeError, AttributeError):
         pass  # the rows only label sources in the report; discovery itself already used them
 
 
+def _stash_key(host: str) -> str:
+    return re.sub(r"[^a-z0-9.-]", "", (host or "").lower().removeprefix("www."))[:200] or "site"
+
+
+def _stash_rows(ui, host: str, rows: list[dict]) -> None:
+    """Rows from a site's first analysis, before its project exists: <projects root>/_plugins/discover/pending/."""
+    import json
+
+    from aeo.ranksim import plugins
+
+    try:
+        folder = plugins.workspace_dir(ui, "discover") / "pending"
+        folder.mkdir(parents=True, exist_ok=True)
+        clean_rows = [{"q": phrase, "weight": weight, "source": source, "detail": detail} for phrase, weight, source, detail in _source_rows(rows)]
+        (folder / f"{_stash_key(host)}.json").write_text(json.dumps(clean_rows), encoding="utf-8")
+    except (OSError, ValueError, TypeError, AttributeError):
+        pass
+
+
 def load_rows(project) -> list[dict]:
+    """The plugin rows saved for a project. Rows stashed by its first analysis move into the project here."""
     import json
 
     try:
         data = json.loads(_rows_path(project).read_text(encoding="utf-8"))
     except (OSError, ValueError, TypeError, AttributeError):
-        return []
+        data = None
+        try:
+            pending = project.dir.parent / "_plugins" / "discover" / "pending" / f"{_stash_key(project.domain)}.json"
+            data = json.loads(pending.read_text(encoding="utf-8"))
+            _rows_path(project).write_text(json.dumps(data), encoding="utf-8")
+            pending.unlink()
+        except (OSError, ValueError, TypeError, AttributeError):
+            return []
     return [row for row in data if isinstance(row, dict)] if isinstance(data, list) else []
 
 

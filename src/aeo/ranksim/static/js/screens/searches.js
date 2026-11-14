@@ -39,7 +39,7 @@ function sourceText(item) {
 
 function columnCell(column, row) {
   const out = renderEntry({ key: column.key, render: column.cell }, row);
-  return h('span', { class: 'qcol' }, out);
+  return h('span', { class: 'qcol', role: 'cell', 'data-label': column.header || '' }, out);
 }
 
 function openInEditor(row) {
@@ -53,15 +53,15 @@ export function renderSearches() {
   const columns = searchColumns();
   const table = h('div', { class: 'stable', role: 'table', 'aria-label': 'Your searches' });
   // repeat(0, auto) is invalid CSS, so the template is built here with exactly the columns there are.
-  table.style.gridTemplateColumns = ['minmax(0, 2fr)', 'auto', 'auto', 'auto', 'auto', 'minmax(0, 1.3fr)', ...columns.map(() => 'auto'), 'auto'].join(' ');
+  table.style.gridTemplateColumns = ['minmax(0, 2fr)', 'auto', ...columns.map(() => 'auto'), 'auto', 'auto', 'auto', 'minmax(0, 1.3fr)', 'auto'].join(' ');
   table.append(h('div', { class: 'srow shead', role: 'row' },
     h('span', { role: 'columnheader', text: 'Search' }),
     h('span', { class: 'c-num', role: 'columnheader', text: 'You' }),
+    columns.map((column) => h('span', { class: 'qcol', role: 'columnheader', text: column.header || '' })),
     h('span', { class: 'c-num', role: 'columnheader', text: 'PREDICTED' }),
     h('span', { class: 'c-intent', role: 'columnheader', text: 'Intent' }),
     h('span', { class: 'c-source', role: 'columnheader', text: 'Source' }),
     h('span', { class: 'c-page', role: 'columnheader', text: 'Best page' }),
-    columns.map((column) => h('span', { class: 'qcol', role: 'columnheader', text: column.header || '' })),
     h('span', { class: 'c-open', role: 'columnheader' }, h('span', { class: 'sr-only', text: 'Open' }))));
   const rows = R.rankings.slice().sort((a, b) => (a.position || 99) - (b.position || 99) || a.q.localeCompare(b.q));
   for (const row of rows) {
@@ -70,11 +70,11 @@ export function renderSearches() {
     table.append(h('div', { class: 'srow', role: 'row' },
       h('button', { class: 'c-q', type: 'button', role: 'cell', onClick: () => openSearch(row) }, h('span', { class: 'q', text: row.q })),
       h('span', { class: `c-num p${row.position ? '' : ' none'}`, role: 'cell', text: row.position ? `#${row.position}` : row.checked ? 'Not top 10' : 'Not checked' }),
+      columns.map((column) => columnCell(column, row)),
       h('span', { class: `c-num pred${predicted ? '' : ' none'}`, role: 'cell', title: predicted ? `PREDICTED of ${row.predicted.of}` : '', text: predicted || '' }),
       h('span', { class: 'c-intent', role: 'cell' }, intentChip(item)),
       h('span', { class: 'c-source', role: 'cell', text: sourceText(item) }),
       h('span', { class: 'c-page one-line', role: 'cell', title: row.url || '', text: row.url ? pathOf(row.url) : 'No page yet' }),
-      columns.map((column) => columnCell(column, row)),
       h('span', { class: 'c-open', role: 'cell' }, h('button', { class: 'icon-btn', type: 'button', 'aria-label': `Open ${row.q} in the editor`, title: 'Open in editor', onClick: () => openInEditor(row) }, icon('pencil')))));
   }
   if (!rows.length) table.append(h('div', { class: 'empty-note', text: 'No searches yet.' }));
@@ -92,21 +92,22 @@ function suggestions(R) {
   const fresh = ((data && data.searches) || []).filter((item) => !item.tracked && !R.rankings.some((row) => row.q === item.q));
   if (!fresh.length) return null;
   const list = h('div', { class: 'rows' });
+  const setBusy = (busy) => list.querySelectorAll('button.add').forEach((button) => { button.disabled = busy; });
   for (const item of fresh.slice(0, 12)) {
     const add = S.publicDemo ? null : h('button', {
-      class: 'btn',
+      class: 'btn add',
       type: 'button',
-      onClick: async (event) => {
-        const button = event.currentTarget;
-        button.disabled = true;
+      onClick: async () => {
+        setBusy(true);  // one change at a time, so a second Add never sends a list without the first
         try {
-          await api.post(`/api/v1/projects/${enc(S.slug)}/settings`, { queries: R.rankings.map((row) => row.q).concat([item.q]) });
+          const current = S.project && Array.isArray(S.project.queries) ? S.project.queries.map((entry) => entry.q) : S.report.rankings.map((row) => row.q);
+          if (!current.includes(item.q)) await api.post(`/api/v1/projects/${enc(S.slug)}/settings`, { queries: current.concat([item.q]) });
           await reloadSite();
           toast('Added. Refresh in Settings to get its Google results.');
           renderSearches();
         } catch (err) {
           toast(err.message);
-          button.disabled = false;
+          setBusy(false);
         }
       },
     }, icon('plus'), 'Add');

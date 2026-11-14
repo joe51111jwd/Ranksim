@@ -586,3 +586,13 @@ def test_report_sections_are_cached_until_their_inputs_change(tmp_path, monkeypa
     dn.save_rows(project, [{"q": "grading crew software", "weight": 4.0, "source": "gsc"}])  # new input: computed again
     third = client.get(f"/api/v1/projects/{slug}/report").json()
     assert calls and any(item["q"] == "grading crew software" for item in third["discovery"]["searches"])
+
+
+def test_gap_labels_drop_numbering_and_codes():
+    body = "Link el4 here. Accounting integration matters. Accounting integration again. " * 6
+    a = _page("", "A", "A", ["4. Which industries use it?"], body)
+    b = _page("", "B", "B", ["2) Which industries use it"], body)
+    gap = cp.gap_for("x software", None, None, [("https://a.example/", a), ("https://b.example/", b)])
+    assert [item["topic"] for item in gap["topics"]] == ["Which industries use it"]
+    terms = {item["term"] for item in gap["terms"]}
+    assert "accounting integration" in terms and not any("el4" in term for term in terms)

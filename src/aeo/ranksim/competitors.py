@@ -232,7 +232,7 @@ def _terms(text: str, url: str) -> tuple[Counter, dict[str, str]]:
 
         def ok(index: int) -> bool:
             word = raw[index]
-            return word not in TEXT_STOP and stem(word) not in TEXT_STOP and len(word) >= 3 and not word.isdigit() and stem(word) not in own and word not in own
+            return word not in TEXT_STOP and stem(word) not in TEXT_STOP and len(word) >= 3 and not any(char.isdigit() for char in word) and stem(word) not in own and word not in own
 
         for index, word in enumerate(words):
             if not ok(index):
@@ -478,6 +478,7 @@ def _cluster(headings: list[tuple[str, str]]) -> list[dict]:
         if home is None:
             home = {"key": set(key), "pages": {}, "texts": Counter()}
             topics.append(home)
+        text = re.sub(r"^\s*(?:step\s+)?\d+[.):]?\s+", "", text, flags=re.I) or text  # "4. Which industries" reads "Which industries"
         home["pages"].setdefault(url, text)
         home["texts"][text] += 1
     return topics
@@ -619,7 +620,7 @@ def stored_html(database: str, urls: list[str]) -> dict[str, str]:
     return {url: found[loose_key(url)] for url in urls if loose_key(url) in found}
 
 
-SECTIONS_VERSION = 1
+SECTIONS_VERSION = 2
 
 
 def _fingerprint(project, meta, google, features, rows, pages, docs) -> str:

@@ -82,21 +82,24 @@ it (HCSS, QuickBooks). When nothing honest can be built, the issue has no sugges
 The target search for a page comes from the report rankings: the search it ranks for, or the one the report
 picked it as the best page for.
 
-## Phase B (after P0 lands)
+## Phase B (done)
 
-1. Rebase onto `claude/kind-hopper-lglg98`. Move `audit_rules.py` into `audit.py` (keeping the names the
-   coordinator's `audit.py` exports, and `audit(project, pages, rankings, docs)` working for old callers).
-2. Feed it real HTML: `build_report` keeps the stored raw HTML for the site's own pages and the top-10 docs
-   (smallest possible edit to `report.py`, flagged), passes crawl statuses for broken links, and adds
-   `report["audit"] = {"groups", "summary"}` next to the existing `issues` list.
-3. `js/screens/issues.js`: filters for severity, page and search, groups by page or search, each issue opens a
-   sheet with the element snippet, comment, fix, suggestion (copy button) and "Fix in editor".
-4. `js/plugins/annotations.js` and `css/plugins/annotations.css`: on `editor-ready`, number markers on the
-   matching elements in the preview, a comment list through `registerEditorPanel`, "Apply suggestion" that
-   applies `action` to the element in the draft, and `?focus=<selector>` to scroll to and highlight an element.
-   Every marker, outline and style the plugin adds carries `data-rs` so it never reaches the saved HTML.
-5. Playwright check against a local server with SmartCrew imported from
-   `evals/forward-2026-11-09/forward_serp.csv` (BUILD_PLAN section 7). Full suite passes. Push and report.
+1. Rebased onto P0. `audit_rules.py` became `audit.py` and keeps P0's contract: `AuditContext(project, pages,
+   rankings, docs, database, meta)` with SitePage `pages`, `readable` and `docs` for plugins, plus `parsed`,
+   `ok_docs` and `doc(url)` (PageDocs) for the element checks; `CHECKS` and `@check`; plugin issues validated as
+   before and given ids from kind, page, search and selector; every id made unique.
+2. `audit()` reads the stored raw HTML itself from the `database` build_report already passes, so `report.py` is
+   unchanged. Top 10 pages are compared on their stored facts (words, tables, FAQ) and a regex read of their
+   JSON-LD, without a second parse. Built-in results are cached by a digest of every input, so a repeat report
+   load skips the audit. SitePages passed without HTML (old callers) still get the page-level checks.
+3. `js/screens/issues.js`: filters for priority, page and search, group by page or by search, and a sheet with
+   the element, the comment, the fix, the suggestion (copy), details, the pages a template issue is on, the top
+   results, and Fix in editor (`?page=&q=&focus=`).
+4. `js/plugins/annotations.js` and `css/plugins/annotations.css`: numbered pins in the preview (`data-rs`), the
+   page's own elements marked only with `data-rs-annotations`, a Comments panel (order 15) with Apply suggestion
+   through `ctx.replaceText` and `ctx.edit`, Copy for suggestions the preview can't hold (JSON-LD scripts), and
+   the `focus` param selected once on `editor-ready`.
+5. Checked in Chromium against a local server with SmartCrew read live and `forward_serp.csv` imported.
 
 ## Risks
 

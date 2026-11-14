@@ -31,6 +31,7 @@ import hashlib
 import json
 import logging
 import re
+import threading
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from functools import cached_property
@@ -2001,7 +2002,8 @@ def _sort_key(issue: dict):
     return (SEVERITY_ORDER[issue["severity"]], -issue.get("score", 0), issue["kind"] not in RANKING_KINDS, issue["title"], issue["id"])
 
 
-_CACHE: dict[str, list[dict]] = {}
+_CACHE: dict[str, str] = {}  # digest -> the finalized built-in issues as JSON
+_CACHE_LOCK = threading.Lock()
 _CACHE_SIZE = 16
 
 
@@ -2017,6 +2019,8 @@ def _cache_key(ctx: AuditContext) -> str | None:
             digest.update(hashlib.sha1((doc.html or "").encode("utf-8", "replace")).digest())
         for page in ctx.facts_only:
             digest.update(json.dumps([page.url, page.title, page.meta, page.h1, page.h1_count, page.words]).encode())
+        project = ctx.project
+        digest.update(json.dumps([getattr(project, "domain", None), getattr(project, "site", None), getattr(project, "name", None)], default=str).encode())
         digest.update(json.dumps([ctx.rankings, ctx.robots_txt, {str(k): str(v) for k, v in ctx.statuses.items()}, ctx.brand, [getattr(fn, "__qualname__", "") for fn in CHECKS]], sort_keys=True, default=str).encode())
         return digest.hexdigest()
     except (TypeError, ValueError):
@@ -2029,14 +2033,17 @@ def run_audit(ctx: AuditContext, *, checks: Iterable[CheckFn] | None = None) -> 
     Built-in results are cached by a digest of the pages, the top 10 pages and the rankings, so a report that is
     loaded again without changes skips the parsing."""
     key = _cache_key(ctx) if checks is None else None
-    if key is not None and key in _CACHE:
-        issues = json.loads(json.dumps(_CACHE[key]))
+    with _CACHE_LOCK:
+        hit = _CACHE.get(key) if key is not None else None
+    if hit is not None:
+        issues = json.loads(hit)
     else:
         issues = finalize(_run_builtin(ctx, list(checks) if checks is not None else list(CHECKS)))
         if key is not None:
-            if len(_CACHE) >= _CACHE_SIZE:
-                _CACHE.pop(next(iter(_CACHE)))
-            _CACHE[key] = json.loads(json.dumps(issues))
+            with _CACHE_LOCK:
+                while len(_CACHE) >= _CACHE_SIZE:
+                    _CACHE.pop(next(iter(_CACHE)))
+                _CACHE[key] = json.dumps(issues)
     if checks is None:
         extra = _plugin_issues(ctx)
         for issue in extra:

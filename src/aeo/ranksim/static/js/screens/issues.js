@@ -13,11 +13,24 @@ const onPage = (issue, url) => pagesOf(issue).some((item) => looseKey(item) === 
 /* Where "Fix in editor" goes: the issue's page, its search, and the element to focus. */
 export function editorParams(issue, url) {
   const params = {};
-  const target = url || pagesOf(issue)[0];
+  const target = url || (VIEW.page && onPage(issue, VIEW.page) ? VIEW.page : pagesOf(issue)[0]);
   if (target) params.page = target;
   if (issue.search) params.q = issue.search;
-  if (target && issue.element && issue.element.selector && !/^(head|title|head > |meta|link)/.test(issue.element.selector)) params.focus = issue.element.selector;
+  if (target && issue.element && issue.element.selector && !/^(head\b|title\b|meta\b|link\b)/.test(issue.element.selector)) params.focus = issue.element.selector;
   return params;
+}
+
+/* Opens the editor on the issue's element. The token tells the annotations plugin this is a fresh click, so the
+   element is selected again even when the same address was opened before. */
+export function fixInEditor(issue, url) {
+  const params = editorParams(issue, url);
+  try {
+    if (params.focus) sessionStorage.setItem('rs-audit-focus', JSON.stringify({ selector: params.focus, page: params.page, at: Date.now() }));
+  } catch (_err) {
+    // storage can be off; the focus param still works the first time
+  }
+  closeSheet(true);
+  go('editor', params);
 }
 
 export async function copyText(text) {
@@ -62,9 +75,10 @@ function seg(label, items, value, onPick) {
 export function renderIssues() {
   const R = S.report;
   const all = R.issues || [];
-  if (S.params.get('page') && !VIEW.fromLink) {
-    VIEW.page = S.params.get('page');
-    VIEW.fromLink = true;
+  const linked = S.params.get('page') || '';
+  if (linked !== (VIEW.linked || '')) {
+    VIEW.linked = linked; // a new ?page= in the address sets the page filter once
+    if (linked) VIEW.page = linked;
   }
   const counts = { all: all.length, high: 0, medium: 0, low: 0 };
   for (const issue of all) counts[issue.severity] += 1;
@@ -161,7 +175,7 @@ export function openIssue(issue) {
       body.append(h('div', { class: 'tile' }, h('div', { class: 'tile-k', text: 'Pages' }), h('div', { class: 'rows' }, pages.slice(0, 12).map((url) => h('button', {
         class: 'rowcard',
         type: 'button',
-        onClick: () => { closeSheet(true); go('editor', editorParams(issue, url)); },
+        onClick: () => fixInEditor(issue, url),
       }, h('div', { class: 'body' }, h('div', { class: 't one-line', text: pathOf(url) })), icon('pencil', 'go'))))));
     }
     if (issue.search) {
@@ -172,10 +186,7 @@ export function openIssue(issue) {
       body.append(h('div', { class: 'form-actions' }, h('button', {
         class: 'btn btn-primary btn-large',
         type: 'button',
-        onClick: () => {
-          closeSheet(true);
-          go('editor', editorParams(issue));
-        },
+        onClick: () => fixInEditor(issue),
       }, icon('pencil'), pages.length ? 'Fix in editor' : 'Write this page in the editor')));
     }
     sheet.append(body);

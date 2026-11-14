@@ -12,8 +12,16 @@
 import { on, registerEditorPanel } from '../hooks.js';
 import { S, h, icon, looseKey, plural, debounce, toast } from '../core.js';
 
-const STATE = { active: null, applied: new Set(), focused: '', wired: new WeakSet(), ctx: null };
-const HEAD_ONLY = /^(head|title|head > |meta|link)/;
+const STATE = { active: null, applied: new Map(), focused: '', wired: new WeakSet(), ctx: null };
+const HEAD_ONLY = /^(head\b|title\b|meta\b|link\b)/;
+const FOCUS_KEY = 'rs-audit-focus'; // set by the Issues screen's Fix in editor, read once here
+
+/* Applied suggestions are remembered per page draft: a reset or reloaded draft forgets them. */
+const appliedKey = (ctx, issue) => `${looseKey(ctx.page)}|${issue.id}`;
+function isApplied(ctx, issue) {
+  const draft = STATE.applied.get(appliedKey(ctx, issue));
+  return !!draft && draft === ctx.draft && ctx.draft.touched;
+}
 
 const PIN_CSS = `[data-rs="annotations"]{position:absolute!important;left:0!important;top:0!important;width:0!important;height:0!important;margin:0!important;padding:0!important;border:0!important;z-index:2147483646!important;pointer-events:none!important}
 [data-rs="annotations"] [data-rs-pin]{all:initial;position:absolute;box-sizing:border-box;min-width:22px;height:22px;padding:0 6px;border-radius:11px;background:#3358eb;color:#fff;font:600 12px/22px "Geist",ui-sans-serif,-apple-system,"Segoe UI",sans-serif;text-align:center;cursor:pointer;pointer-events:auto;box-shadow:0 0 0 2px #fff,0 2px 8px rgba(0,0,0,.25);user-select:none;-webkit-user-select:none}
@@ -41,6 +49,35 @@ function find(doc, selector) {
   } catch (_err) {
     return null;
   }
+}
+
+const norm = (text) => String(text || '').replace(/\s+/g, ' ').trim().replace(/\.\.\.$/, '').toLowerCase();
+
+function looksRight(el, element) {
+  if (!el || el.tagName.toLowerCase() !== (element.tag || el.tagName.toLowerCase())) return false;
+  const want = norm(element.text);
+  if (!want) return true;
+  const tag = el.tagName.toLowerCase();
+  const have = tag === 'meta' ? el.getAttribute('content') : tag === 'img' ? (el.getAttribute('alt') || el.getAttribute('src')) : tag === 'link' ? el.getAttribute('href') : el.textContent;
+  return norm(have).startsWith(want);
+}
+
+/* The element an issue points at. The selector comes first; when an earlier change moved things (a retagged
+   heading shifts the nth-of-type of the ones after it), the element with the same tag and text is used instead,
+   and only when exactly one matches. */
+function resolve(doc, issue) {
+  const element = issue.element;
+  if (!doc || !element) return null;
+  const first = find(doc, element.selector);
+  if (looksRight(first, element)) return first;
+  if (!norm(element.text) || !element.tag) return null;
+  let matches = [];
+  try {
+    matches = Array.from(doc.querySelectorAll(element.tag)).filter((el) => !el.closest('[data-rs]') && looksRight(el, element));
+  } catch (_err) {
+    return null;
+  }
+  return matches.length === 1 ? matches[0] : null;
 }
 
 const pinnable = (issue) => issue.element && issue.element.selector && !HEAD_ONLY.test(issue.element.selector);
@@ -72,13 +109,15 @@ function fragment(doc, html) {
 /* Applies one issue's suggestion to the element in the draft. Returns true when the draft changed. */
 export function applySuggestion(ctx, issue) {
   if (!canApply(issue)) return false;
-  const { selector, attr } = issue.element;
+  const { attr } = issue.element;
   const text = issue.suggestion;
-  if (issue.action === 'text') return ctx.replaceText(selector, text);
   return ctx.edit((doc) => {
-    const el = find(doc, selector);
+    const el = resolve(doc, issue);
     if (!el) return false;
-    if (issue.action === 'attr') el.setAttribute(attr, text);
+    if (issue.action === 'text') {
+      const leaf = el.children.length ? Array.from(el.querySelectorAll('*')).find((node) => !node.children.length && norm(node.textContent) === norm(el.textContent)) : null;
+      (leaf || el).textContent = text; // keeps a link or span the text sits in
+    } else if (issue.action === 'attr') el.setAttribute(attr, text);
     else if (issue.action === 'retag') {
       const next = doc.createElement(text);
       for (const item of Array.from(el.attributes)) if (!item.name.startsWith('data-rs')) next.setAttribute(item.name, item.value);
@@ -128,8 +167,8 @@ export function drawPins(ctx) {
   const taken = new Map();
   let drawn = 0;
   list.forEach((issue, index) => {
-    if (!pinnable(issue) || STATE.applied.has(issue.id)) return;
-    const el = find(doc, issue.element.selector);
+    if (!pinnable(issue) || isApplied(ctx, issue)) return;
+    const el = resolve(doc, issue);
     if (!el) return;
     const box = el.getBoundingClientRect();
     if (box.width < 1 && box.height < 1) return;
@@ -158,8 +197,14 @@ export function drawPins(ctx) {
 
 function activate(ctx, issue, { scroll = true } = {}) {
   STATE.active = issue.id;
-  if (pinnable(issue)) ctx.select(issue.element.selector, { scroll });
-  drawPins(ctx);
+  const doc = ctx.doc();
+  const el = pinnable(issue) ? resolve(doc, issue) : null;
+  drawPins(ctx); // marks the active element data-rs-annotations="active"
+  if (el) {
+    doc.querySelectorAll('[data-rs-annotations="active"]').forEach((node) => { if (node !== el) node.removeAttribute('data-rs-annotations'); });
+    el.setAttribute('data-rs-annotations', 'active');
+    ctx.select('[data-rs-annotations="active"]', { scroll });
+  } else ctx.select(null);
   ctx.repaint();
   const item = document.querySelector(`.annot-item[data-issue="${CSS.escape(issue.id)}"]`);
   if (item) item.scrollIntoView({ block: 'nearest' });
@@ -181,7 +226,7 @@ function wire(ctx) {
 
 function item(ctx, issue, index) {
   const open = STATE.active === issue.id;
-  const applied = STATE.applied.has(issue.id);
+  const applied = isApplied(ctx, issue);
   const head = h('button', { class: 'annot-head', type: 'button', 'aria-expanded': String(open), onClick: () => (open ? (STATE.active = null, ctx.repaint(), drawPins(ctx)) : activate(ctx, issue)) },
     h('span', { class: `annot-num ${issue.severity}`, text: String(index + 1) }),
     h('span', { class: 'annot-title', text: issue.title }),
@@ -197,7 +242,7 @@ function item(ctx, issue, index) {
         type: 'button',
         onClick: () => {
           if (applySuggestion(ctx, issue)) {
-            STATE.applied.add(issue.id);
+            STATE.applied.set(appliedKey(ctx, issue), ctx.draft);
             toast('Suggestion applied. Test the change before you publish.');
           } else toast('That element is no longer on the page.');
           ctx.repaint();
@@ -205,7 +250,7 @@ function item(ctx, issue, index) {
         },
       }, icon('check'), 'Apply suggestion') : null,
       issue.suggestion && !canApply(issue) ? h('button', { class: 'btn', type: 'button', onClick: () => copy(issue.action === 'retag' ? `<${issue.suggestion}>` : issue.suggestion) }, icon('doc'), 'Copy') : null,
-      pinnable(issue) ? h('button', { class: 'btn btn-plain', type: 'button', onClick: () => ctx.select(issue.element.selector, { scroll: true }) }, icon('eye'), 'Show on page') : null),
+      pinnable(issue) ? h('button', { class: 'btn btn-plain', type: 'button', onClick: () => activate(ctx, issue) }, icon('eye'), 'Show on page') : null),
     issue.suggestion && /<script/i.test(issue.suggestion) ? h('p', { class: 'annot-note', text: 'The editor leaves scripts out of the page, so add this in your site\'s head.' }) : null) : null;
   return h('li', { class: `annot-item${open ? ' open' : ''}`, dataset: { issue: issue.id } }, head, body);
 }
@@ -228,18 +273,43 @@ registerEditorPanel({
 
 /* ------------------------------------------------------------------ events */
 
+/* The element to focus: a Fix in editor click (a one-time token the Issues screen leaves), else the focus param of
+   an address opened directly (a reload, a pasted link), once per address. */
+function pendingFocus(ctx) {
+  const focus = S.params.get('focus');
+  if (!focus) return null;
+  let token = null;
+  try {
+    token = JSON.parse(sessionStorage.getItem(FOCUS_KEY) || 'null');
+  } catch (_err) {
+    token = null;
+  }
+  if (token && token.selector === focus && looseKey(token.page || '') === looseKey(ctx.page)) return { focus, token: true };
+  return STATE.focused === location.href ? null : { focus, token: false };
+}
+
 on('editor-ready', (ctx) => {
   if (!ctx) return;
   STATE.ctx = ctx;
-  const focus = S.params.get('focus');
-  const key = `${ctx.page}|${focus}`;
-  if (focus && STATE.focused !== key && ctx.doc()) {
-    const match = issuesFor(ctx).find((issue) => issue.element && issue.element.selector === focus);
-    if (match) STATE.active = match.id;
-    if (ctx.select(focus, { scroll: true })) STATE.focused = key;
-    ctx.repaint();
-  }
   wire(ctx);
+  const want = ctx.doc() ? pendingFocus(ctx) : null;
+  if (want) {
+    const match = issuesFor(ctx).find((issue) => issue.element && issue.element.selector === want.focus);
+    STATE.focused = location.href;
+    if (want.token) {
+      try {
+        sessionStorage.removeItem(FOCUS_KEY);
+      } catch (_err) {
+        // storage can be off; the address check above still stops a repeat
+      }
+    }
+    if (match) {
+      drawPins(ctx);
+      activate(ctx, match);
+      return;
+    }
+    if (ctx.select(want.focus, { scroll: true })) ctx.repaint();
+  }
   drawPins(ctx);
 });
 
@@ -249,7 +319,6 @@ on('draft-changed', (ctx) => {
 });
 
 on('report-loaded', () => {
-  STATE.applied.clear();
-  STATE.active = null;
+  STATE.active = null; // applied suggestions stay with their drafts (isApplied checks the draft)
 });
 

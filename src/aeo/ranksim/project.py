@@ -1424,7 +1424,9 @@ def _google_step(project, settings, previous, pull_id, depth, skip_google, serp_
     if not skip_google:
         provider, reason = _google_provider(settings, serp_provider)
     if provider is not None and budget is not None:
-        refusal = budget.refusal(project.searches, by_previous)  # None, or why no paid request may be made now
+        # a search the provider replays from a paused job's checkpoint costs nothing, so it never needs budget
+        paid = [search for search in project.searches if _replayed(provider, search, depth) is None]
+        refusal = budget.refusal(paid, by_previous)  # None, or why no paid request may be made now
         if refusal:
             closer = getattr(provider, "close", None)
             if callable(closer) and serp_provider is None:
@@ -1574,7 +1576,10 @@ def _pull_google(project, provider, by_previous, depth, emit, budget=None, reuse
         stamp = datetime.now(timezone.utc).isoformat(timespec="seconds")
         earlier = by_previous.get(search)
         features: dict = {}
-        if budget is not None:
+        replay = _replayed(provider, search, depth)  # None, or when a checkpointed answer was really fetched
+        if replay:
+            stamp = replay
+        if budget is not None and replay is None:
             try:
                 verdict = budget.claim(search, earlier)  # "reuse", "call" (counted), or a refusal sentence
             except Exception as exc:  # noqa: BLE001 - fail closed for this search, never for the whole pull
@@ -1599,14 +1604,14 @@ def _pull_google(project, provider, by_previous, depth, emit, budget=None, reuse
                 hits = provider.search(search, depth)
         except Exception as exc:  # noqa: BLE001 - one failed search must not end the pull
             error = _safe_error(exc)
-            if budget is not None:
+            if budget is not None and replay is None:
                 _record(budget, ok=False, error=error)
             if earlier is not None and earlier.results:
                 kept = copy.deepcopy(earlier)
                 kept.error = f"fresh pull failed ({error}); kept the earlier REAL results pulled {earlier.pulled_label}"
                 return kept
             return SearchResults(search=search, results=[], source=provider.name, provider=provider.name, pulled_at=None, error=f"pull failed: {error}")
-        if budget is not None:
+        if budget is not None and replay is None:
             _record(budget, ok=True)
         results = []
         seen: set[str] = set()
@@ -1639,6 +1644,20 @@ def _pull_google(project, provider, by_previous, depth, emit, budget=None, reuse
                 done += 1
                 emit("google", f"{item.search}: {len(item.results)} REAL results", done, len(project.searches))
     return [found[search] for search in project.searches]
+
+
+def _replayed(provider, search: str, depth: int) -> str | None:
+    """A provider that replays answers (api.sites._CheckpointedSerp for a resumed job) may say so: replayed(query,
+    count) returns when that answer was really fetched (an ISO time, or "" when unknown), or None when it would ask
+    Google now. Other providers have no such method and every search is a real request."""
+    probe = getattr(provider, "replayed", None)
+    if not callable(probe):
+        return None
+    try:
+        value = probe(search, depth)
+    except Exception:  # noqa: BLE001 - when in doubt it is a real request, so it is counted
+        return None
+    return None if value is None else str(value)
 
 
 def _record(budget, **kwargs) -> None:

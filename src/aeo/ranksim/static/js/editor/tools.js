@@ -307,6 +307,14 @@ function outlinePanel(ctx) {
     return tile;
   }
   const live = !!ctx.doc();
+  // siblings in the heading tree, for the move up and down buttons (drag does not work on touch screens)
+  const { roots } = outline(doc);
+  const siblings = new Map();
+  const walk = (items) => items.forEach((item, k) => {
+    siblings.set(item.el, { prev: items[k - 1] || null, next: items[k + 1] || null });
+    walk(item.children);
+  });
+  walk(roots);
   const list = h('ol', { class: 'outline-list' });
   let dragging = -1;
   flat.forEach((item, index) => {
@@ -327,7 +335,8 @@ function outlinePanel(ctx) {
         placeCaret(el);
         refreshBlock();
       },
-    }, h('span', { class: 'lvl', text: `H${item.level}` }), h('span', { class: 'txt', text: item.text })));
+    }, h('span', { class: 'lvl', text: `H${item.level}` }), h('span', { class: 'txt', text: item.text })),
+    live ? moveButtons(item, siblings.get(item.el), flat) : null);
     if (live) {
       row.addEventListener('dragstart', (event) => {
         dragging = index;
@@ -359,8 +368,22 @@ function outlinePanel(ctx) {
     list.append(row);
   });
   tile.append(list);
-  if (live) tile.append(h('p', { class: 'tile-sub', text: 'Drag a heading to move its whole section.' }));
+  if (live) tile.append(h('p', { class: 'tile-sub', text: 'Drag a heading, or use its arrows, to move its whole section.' }));
   return tile;
+}
+
+function moveButtons(item, sib, flat) {
+  if (!sib || (!sib.prev && !sib.next)) return null; // nothing to move past
+  const indexOf = (other) => flat.findIndex((entry) => entry.el === other.el);
+  const button = (dir, other) => h('button', {
+    type: 'button',
+    class: 'outline-move',
+    'aria-label': `Move ${item.text} ${dir}`,
+    title: `Move this section ${dir}`,
+    disabled: !other,
+    onClick: () => other && moveByIndex(indexOf(item), indexOf(other), dir === 'up' ? 'before' : 'after'),
+  }, icon(dir === 'up' ? 'up' : 'down'));
+  return h('span', { class: 'outline-moves' }, button('up', sib && sib.prev), button('down', sib && sib.next));
 }
 
 /* Moves the section under heading `from` before or after the section of heading `to` (outline indexes). */

@@ -1,16 +1,18 @@
 """A project's report, cached on disk until anything it is built from changes.
 
 Building a report parses stored pages, runs the audit and the competitor profiles, and loads the engine (LightGBM).
-That is seconds on a real project, and every new serverless instance would pay it again, because those caches live in
-process memory. This cache keeps the finished report as JSON in the project folder
-(<project>/plugins/reportcache/report.json), so it travels with the project in cloud storage, and a job precomputes
-it at the end of every pull and analysis (api/sites.py), so a GET normally never builds.
+That is tens of seconds on a real project, and every new serverless instance would pay it again, because those caches
+live in process memory. This cache keeps the finished report as JSON in the project folder
+(<project>/plugins/reportcache/report.json), so it travels with the project in cloud storage. Jobs precompute it at
+the end of every pull and analysis, and a GET that misses builds it as a job whose save carries it to every instance
+(api/projects.py).
 
-The key is a content signature, the same on every instance: sha256 of every file in the project folder and in the
-workspace plugin folder (<projects root>/_plugins, e.g. Search Console data), cheap row counts and newest stamps of
-the shared rank database tables, whether Google results are connected, which plugins are loaded, and the UTC date (so
-nothing in a report can be more than a day older than its data). Anything else changing makes a new key and a fresh
-build. The cache's own folder and the page-facts cache are left out of the signature.
+The key is a content signature, the same on every instance: the sha256 of every file in the project folder and in the
+workspace plugin folder (<projects root>/_plugins), cheap row counts and newest stamps of the shared rank database
+tables, whether Google results are connected, and which plugins are loaded. Hashes come from the cache cloud storage
+fills when it writes or saves a file, so on a hosted instance the key costs a stat per file, not a read. Derived caches
+that a report build itself writes (this file, page facts, discover sections) are left out, so saving them never
+invalidates the report.
 """
 
 from __future__ import annotations
@@ -21,27 +23,30 @@ import os
 import secrets
 import sqlite3
 import threading
-from datetime import datetime, timezone
 from pathlib import Path
 
 VERSION = 1
 FEATURE = "reportcache"
 SKIP_PARTS = {"llm-cache", "__pycache__"}
 SKIP_PLUGIN_DIRS = {"reportcache", "pagefacts"}
+SKIP_FILES = {"plugins/discover/sections.json"}  # competitors.report_sections' cache, written by the build itself
 TABLES = ("rs_pages", "rs_serp", "rs_keywords", "rs_rank_checks", "rs_test_runs", "rs_predictions", "rs_outcomes", "rs_weights")
 
 _hashes: dict[tuple, str] = {}
 _lock = threading.Lock()
 
 
-def _file_hash(path: Path) -> str | None:
+def _file_hash(path: Path, shared: dict | None = None) -> str | None:
+    """sha256 of a file, from cloud storage's hash cache (same key layout) or ours, read only when neither has it."""
     try:
         stat = path.stat()
     except FileNotFoundError:
         return None
-    key = (str(path), stat.st_size, stat.st_mtime_ns, stat.st_ino)
-    with _lock:
-        found = _hashes.get(key)
+    key = (str(path), stat.st_size, stat.st_mtime_ns, stat.st_ino, stat.st_ctime_ns)
+    found = shared.get(key) if shared is not None else None
+    if found is None:
+        with _lock:
+            found = _hashes.get(key)
     if found is None:
         try:
             found = hashlib.sha256(path.read_bytes()).hexdigest()
@@ -51,10 +56,12 @@ def _file_hash(path: Path) -> str | None:
             if len(_hashes) > 50_000:
                 _hashes.clear()
             _hashes[key] = found
+        if shared is not None:
+            shared[key] = found
     return found
 
 
-def _folder(digest, root: Path, label: str) -> None:
+def _folder(digest, root: Path, label: str, shared: dict | None = None) -> None:
     if not root.is_dir():
         return
     for path in sorted(root.rglob("*")):
@@ -66,7 +73,9 @@ def _folder(digest, root: Path, label: str) -> None:
             continue
         if len(parts) > 1 and parts[0] == "plugins" and parts[1] in SKIP_PLUGIN_DIRS:
             continue
-        found = _file_hash(path)
+        if rel.as_posix() in SKIP_FILES:
+            continue
+        found = _file_hash(path, shared)
         if found is not None:
             digest.update(f"{label}/{rel.as_posix()}={found}\n".encode())
 
@@ -98,13 +107,15 @@ def _database(digest, database: str) -> bool:
 def signature(ui, project, *, google_ready: bool) -> str | None:
     """The report's cache key, or None when it cannot be computed (then the report is simply built)."""
     try:
-        digest = hashlib.sha256(f"v{VERSION}|{datetime.now(timezone.utc).date().isoformat()}|google={google_ready}".encode())
+        digest = hashlib.sha256(f"v{VERSION}|google={google_ready}".encode())
         digest.update(f"|public={bool(getattr(ui, 'public_demo', False))}|slug={project.slug}\n".encode())
         from aeo.ranksim import plugins
 
         digest.update(("plugins=" + ",".join(plugins.names()) + "\n").encode())
-        _folder(digest, Path(project.dir), "p")
-        _folder(digest, Path(ui.root) / "_plugins", "w")
+        cloud = getattr(ui, "cloud", None)
+        shared = cloud._hash_cache if cloud is not None and getattr(cloud, "enabled", False) and hasattr(cloud, "_hash_cache") else None
+        _folder(digest, Path(project.dir), "p", shared)
+        _folder(digest, Path(ui.root) / "_plugins", "w", shared)
         if not _database(digest, str(ui.database or "")):
             return None
         return digest.hexdigest()

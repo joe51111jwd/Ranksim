@@ -935,6 +935,11 @@ def _merge_files(local: _Scope, base: dict, theirs_dir: Path, theirs: dict, cach
             temp = target.with_name(f".ranksim-tmp-{secrets.token_hex(4)}")
             shutil.copyfile(source, temp)  # a fresh mtime: copy2 would keep the tar's whole-second one
             os.replace(temp, target)
+            try:  # we know this file's hash: later manifests (and the report cache's key) need not read it again
+                stat = target.stat()
+                cache[(str(target), stat.st_size, stat.st_mtime_ns, stat.st_ino, stat.st_ctime_ns)] = t
+            except OSError:
+                pass
         changed = True
     return changed
 

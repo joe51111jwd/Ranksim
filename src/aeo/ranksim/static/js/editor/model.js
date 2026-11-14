@@ -43,29 +43,47 @@ const STASH = 'data-rs-a';
 
 export function stash(el, name, value) {
   const saved = JSON.parse(el.getAttribute(STASH) || '{}');
+  if (!saved['\u0000order']) saved['\u0000order'] = Array.from(el.attributes).map((a) => a.name);
   if (!(name in saved)) saved[name] = el.hasAttribute(name) ? el.getAttribute(name) : null;
   el.setAttribute(STASH, JSON.stringify(saved));
   if (value === null) el.removeAttribute(name);
   else el.setAttribute(name, value);
 }
 
+/* Puts stashed attributes back, in their original order, so an untouched element serializes exactly as before. */
 export function unstash(root) {
   for (const el of root.querySelectorAll(`[${STASH}]`)) {
     const saved = JSON.parse(el.getAttribute(STASH) || '{}');
+    const order = saved['\u0000order'] || [];
+    delete saved['\u0000order'];
+    el.removeAttribute(STASH);
     for (const [name, value] of Object.entries(saved)) {
       if (value === null) el.removeAttribute(name);
       else el.setAttribute(name, value);
     }
-    el.removeAttribute(STASH);
+    const now = Array.from(el.attributes).map((a) => [a.name, a.value]);
+    const rank = new Map(order.map((name, k) => [name, k]));
+    const sorted = now.slice().sort((p, q) => (rank.has(p[0]) ? rank.get(p[0]) : 1e6) - (rank.has(q[0]) ? rank.get(q[0]) : 1e6));
+    if (sorted.some((pair, k) => pair[0] !== now[k][0])) {
+      for (const [name] of now) el.removeAttribute(name);
+      for (const [name, value] of sorted) el.setAttribute(name, value);
+    }
   }
 }
 
-/* The draft held by a live preview document: preview-only nodes removed, stashed attributes restored. */
+/* Attributes the draft keeps: the source ids and the inserted FAQ markers. Every other data-rs-* attribute belongs to
+   the preview or a plugin and is dropped. */
+const KEEP = new Set([ID, 'data-rs-faq', 'data-rs-faq-ld']);
+
+/* The draft held by a live preview document (or any parsed copy): preview-only nodes removed, stashed attributes
+   restored, plugin attributes dropped, ids kept. */
 export function serializeDraft(doc) {
   const root = doc.documentElement.cloneNode(true);
   root.querySelectorAll('[data-rs]').forEach((node) => node.remove());
-  root.querySelectorAll('[data-rs-reveal]').forEach((node) => node.removeAttribute('data-rs-reveal'));
   unstash(root);
+  for (const el of [root, ...root.querySelectorAll('*')]) {
+    for (const attr of Array.from(el.attributes)) if (attr.name.startsWith('data-rs-') && !KEEP.has(attr.name)) el.removeAttribute(attr.name);
+  }
   return `${doctypeOf(doc)}${root.outerHTML}`;
 }
 

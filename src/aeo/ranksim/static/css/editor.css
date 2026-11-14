@@ -81,3 +81,57 @@
 @media (max-width: 720px) {
   .browser { height: 520px; min-height: 0; }
 }
+
+/* editor tools: undo and redo, block type, insert menu */
+.ed-group { display: inline-flex; gap: 2px; padding: 2px; border-radius: 12px; background: var(--tile); }
+.ed-group .icon-btn { width: 34px; height: 34px; }
+.ed-group .icon-btn:disabled { opacity: 0.35; cursor: default; background: transparent; }
+.ed-insert { position: relative; }
+.btn-sm { height: 36px; padding: 0 12px; font-size: 13.5px; gap: 6px; }
+.btn-sm svg { width: 15px; height: 15px; }
+.ed-menu { position: absolute; z-index: 30; top: calc(100% + 6px); right: 0; width: 248px; display: grid; gap: 2px; padding: 6px; border-radius: 16px; background: var(--card); box-shadow: var(--shadow-lift); }
+.ed-menu button { display: grid; gap: 1px; text-align: left; padding: 9px 11px; border: 0; border-radius: 11px; background: transparent; color: var(--ink); }
+.ed-menu button:hover, .ed-menu button:focus-visible { background: var(--tile); outline: none; }
+.ed-menu strong { font-size: 14px; font-weight: 600; }
+.ed-menu span { font-size: 12.5px; color: var(--ink-3); }
+@media (max-width: 640px) { .ed-menu { right: auto; left: 0; width: min(248px, calc(100vw - 32px)); } }
+
+/* outline */
+.outline-list { list-style: none; margin: 10px 0 0; padding: 0; display: grid; gap: 2px; }
+.outline-list li { display: flex; align-items: center; gap: 4px; border-radius: 10px; }
+.outline-list li.depth-1 { padding-left: 14px; }
+.outline-list li.depth-2 { padding-left: 28px; }
+.outline-list li.depth-3 { padding-left: 42px; }
+.outline-list li.dragging { opacity: 0.4; }
+.outline-list li.drop-before { box-shadow: inset 0 2px 0 var(--blue); }
+.outline-list li.drop-after { box-shadow: inset 0 -2px 0 var(--blue); }
+.outline-list .grip { display: inline-grid; place-items: center; width: 16px; color: var(--ink-3); cursor: grab; flex: none; }
+.outline-list .grip svg { width: 14px; height: 14px; }
+.outline-row { flex: 1; min-width: 0; display: flex; align-items: baseline; gap: 8px; padding: 6px 8px; border: 0; border-radius: 9px; background: transparent; color: var(--ink); text-align: left; font-size: 13.5px; }
+.outline-row:hover { background: var(--card); }
+.outline-row .lvl { flex: none; font: 600 11px/1 var(--mono); color: var(--ink-3); }
+.outline-row .txt { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* changes */
+.change-peek { margin: 8px 0 0; padding-left: 18px; font-size: 13px; color: var(--ink-2); display: grid; gap: 2px; }
+.change-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+.change { padding: 12px 14px; border-radius: var(--r-card); background: var(--tile); }
+.change-k { font-size: 12.5px; font-weight: 600; color: var(--ink-2); }
+.change .words { margin: 4px 0 0; font-size: 14.5px; line-height: 1.55; overflow-wrap: anywhere; }
+.change ins { text-decoration: none; background: rgba(51, 88, 235, 0.14); color: var(--ink); border-radius: 4px; padding: 0 2px; }
+.change del { color: var(--ink-3); text-decoration: line-through; }
+.check-row { display: flex; gap: 12px; align-items: flex-start; font-size: 14px; }
+.check-row input { margin-top: 3px; width: 18px; height: 18px; accent-color: var(--blue); flex: none; }
+.check-row > span { display: grid; gap: 2px; }
+.muted { color: var(--ink-3); font-size: 13px; }
+
+/* versions */
+.version-form { display: flex; gap: 8px; margin-top: 10px; }
+.version-form .field { flex: 1; min-width: 0; }
+.version-list { list-style: none; margin: 10px 0 0; padding: 0; display: grid; gap: 2px; }
+.version-list li { display: flex; align-items: center; gap: 4px; }
+.link-btn { flex: 1; min-width: 0; display: grid; gap: 1px; text-align: left; padding: 7px 8px; border: 0; border-radius: 9px; background: transparent; color: var(--ink); }
+.link-btn:hover { background: var(--card); }
+.link-btn .v-name { font-size: 13.5px; font-weight: 550; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.version-list .icon-btn { width: 30px; height: 30px; }
+.version-list .icon-btn svg { width: 14px; height: 14px; }

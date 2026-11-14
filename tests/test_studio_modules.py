@@ -90,7 +90,7 @@ OWNER = {
     "app.js": "shell", "core.js": "shell", "hooks.js": "shell", "screens/overview.js": "shell", "screens/settings.js": "shell",
     "screens/searches.js": "discover", "screens/competitors.js": "discover", "screens/issues.js": "audit",
     "editor/editor.js": "editor", "editor/preview.js": "editor", "editor/roundtrip.js": "editor", "editor/model.js": "editor",
-    "editor/history.js": "editor", "editor/diff.js": "editor", "editor/blocks.js": "editor", "editor/test.js": "predict", "editor/publish.js": "publish",
+    "editor/history.js": "editor", "editor/diff.js": "editor", "editor/blocks.js": "editor", "editor/tools.js": "editor", "editor/test.js": "predict", "editor/publish.js": "publish",
 }
 # The names core modules owned by different sessions import from each other (hooks.js "frozen module exports").
 FROZEN = {

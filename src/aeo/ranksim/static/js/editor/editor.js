@@ -5,13 +5,239 @@
 
 import {
   S, api, h, icon, clear, main, enc, debounce, hostOf, pathOf, looseKey, initial, go, navigate, page, footer,
-  reduceMotion,
+  reduceMotion, toast,
 } from '../core.js';
 import { call, editorPanels, editorTools, registerEditorPanel, registerEditorTool, registerScreen, renderAll, renderEntry } from '../hooks.js';
-import { cleanDoc, facts, frameSource, normalize, pick, revealHidden, serialize } from './preview.js';
+import { asHtml, cleanDoc, cleanParsed, facts, frameSource, normalize as cleanNormalize, pick, revealHidden, serialize } from './preview.js';
 import { renderResult, runTest } from './test.js';
+import { exportHtml, stripRs } from './roundtrip.js';
+import { draftFromHtml, makeBase, serializeDraft } from './model.js';
+import { History, undoKey } from './history.js';
+import { diffBlocks } from './diff.js';
+import { syncFaq } from './blocks.js';
+import './tools.js';
 
-export { normalize };
+/* ------------------------------------------------------------------ round trip
+
+   draft.text stays what it always was: the cleaned page, no editor attributes, for panels, plugins and tests.
+   draft.rs holds the round trip (roundtrip.js): source (the page as fetched, scripts and all), base (source with
+   data-rs-id markers, cleaned) and text (base plus edits, the same markers). The preview shows rs.text, so every
+   element carries its marker, and the export puts the edits back into the source. */
+
+const SOURCES = new Map(); // cleaned page -> the HTML it came from (a few recent pages)
+
+/* The cleaned page, as before. Remembers what it came from, so the editor can export edits onto the original. */
+export function normalize(html) {
+  const text = cleanNormalize(html);
+  SOURCES.delete(text);
+  SOURCES.set(text, asHtml(String(html || '')));
+  while (SOURCES.size > 12) SOURCES.delete(SOURCES.keys().next().value);
+  return text;
+}
+
+/* The round trip state of a draft, made on first use. Null before the page has loaded. */
+export function modelOf(draft) {
+  if (!draft || !draft.text) return null;
+  const key = draft.base || '';
+  if (draft.rs && draft.rs.key === key) return draft.rs;
+  const source = SOURCES.get(key) || SOURCES.get(draft.text) || asHtml(draft.base || draft.text);
+  let base;
+  try {
+    base = makeBase(source, cleanParsed);
+  } catch (err) {
+    console.error('Ranksim: the page could not be prepared for round trip editing', err);
+    return null;
+  }
+  let text = base;
+  if (draft.text !== draft.base) {
+    try {
+      text = draftFromHtml(base, draft.text, cleanParsed);
+    } catch (_err) {
+      text = base;
+    }
+  }
+  const history = new History();
+  history.reset(text);
+  draft.rs = { key, source, base, text, history };
+  restoreAutosave(draft);
+  return draft.rs;
+}
+
+/* Saves new draft markup (with markers). `group` merges quick typing into one undo step. */
+function commit(draft, text, { group = null, record = true } = {}) {
+  const rs = modelOf(draft);
+  if (rs) {
+    syncFaqText(rs, text);
+    rs.text = rs.pendingText || text;
+    rs.pendingText = null;
+    if (record) rs.history.record(rs.text, { group });
+    draft.text = stripRs(rs.text);
+  } else {
+    draft.text = text;
+  }
+  draft.touched = true;
+  autosave(draft);
+}
+
+function syncFaqText(rs, text) {
+  if (!/data-rs-faq-ld=/.test(text)) return;
+  const doc = new DOMParser().parseFromString(text, 'text/html');
+  if (syncFaq(doc)) rs.pendingText = serializeDraft(doc);
+}
+
+/* The page with every edit, scripts and all: what a download or a publish should hold. */
+export function exportOf(draft) {
+  const rs = modelOf(draft);
+  if (!rs) return draft.text || '';
+  return exportHtml(rs.source, rs.base, rs.text);
+}
+
+/* Plain words diff against the page as loaded (diff.js). */
+export function diffOf(draft) {
+  const rs = modelOf(draft);
+  if (!rs) return { changes: [], counts: { changed: 0, added: 0, removed: 0, moved: 0 }, total: 0 };
+  return diffBlocks(rs.base, rs.text);
+}
+
+/* ------------------------------------------------------------------ undo and redo */
+
+export function canUndo(draft) {
+  const rs = modelOf(draft);
+  return !!rs && rs.history.canUndo;
+}
+
+export function canRedo(draft) {
+  const rs = modelOf(draft);
+  return !!rs && rs.history.canRedo;
+}
+
+export function undo() {
+  return step('undo');
+}
+
+export function redo() {
+  return step('redo');
+}
+
+function step(which) {
+  if (!ED.refs) return false;
+  const draft = draftFor(ED.refs.page);
+  syncFromFrame();
+  const rs = modelOf(draft);
+  if (!rs) return false;
+  const text = which === 'undo' ? rs.history.undo() : rs.history.redo();
+  if (text === null) return false;
+  showText(draft, text);
+  changed(which);
+  return true;
+}
+
+/* Puts a whole draft on screen without recording it (undo, redo, a loaded version). */
+export function showText(draft, text) {
+  const rs = modelOf(draft);
+  if (!rs) return;
+  rs.text = text;
+  draft.text = stripRs(text);
+  draft.touched = true;
+  autosave(draft);
+  if (ED.mode === 'html' && ED.code) {
+    ED.code.value = tidy(draft.text);
+    ED.codeSeen = ED.code.value;
+  } else if (!morph(text, draft)) {
+    paintFrame();
+  }
+  paintSide();
+}
+
+/* Updates the live preview in place to show `text`, keeping the scroll position and the loaded styles. Returns false
+   when the head changed in ways only a fresh preview shows. */
+function morph(text, draft) {
+  const doc = liveDoc();
+  if (!doc) return false;
+  const fresh = new DOMParser().parseFromString(frameSource(text, draft.url), 'text/html');
+  const headKey = (head) => Array.from(head.children).filter((el) => !el.hasAttribute('data-rs') && !/^(TITLE|META|SCRIPT)$/.test(el.tagName)).map((el) => el.outerHTML).join('');
+  if (headKey(doc.head) !== headKey(fresh.head)) return false;
+  const dataOf = (head) => Array.from(head.children).filter((el) => !el.hasAttribute('data-rs') && /^(TITLE|META|SCRIPT)$/.test(el.tagName));
+  const now = dataOf(doc.head);
+  const want = dataOf(fresh.head);
+  if (now.length !== want.length) return false; // a title or description added or removed: repaint
+  now.forEach((el, k) => { if (el.outerHTML !== want[k].outerHTML) el.replaceWith(doc.importNode(want[k], true)); });
+  const win = doc.defaultView;
+  const y = win ? win.scrollY : 0;
+  doc.body.replaceWith(doc.importNode(fresh.body, true));
+  revealHidden(doc);
+  if (win) win.scrollTo(0, y);
+  ED.caret = null;
+  return true;
+}
+
+function handleUndoKey(event) {
+  const which = undoKey(event);
+  if (!which || !ED.refs) return false;
+  event.preventDefault();
+  if (which === 'undo') undo();
+  else redo();
+  return true;
+}
+
+document.addEventListener('keydown', (event) => {
+  if (S.screen !== 'editor' || !ED.refs) return;
+  const target = event.target;
+  const typing = target && (TYPING.has(target.tagName) || target.isContentEditable) && target !== ED.code;
+  if (!typing) handleUndoKey(event);
+});
+
+/* ------------------------------------------------------------------ autosave (this browser only)
+
+   The latest draft of each page is kept in localStorage, so a refresh never loses work. It is restored only onto the
+   same page as it was loaded (same base), and saved versions on the server are separate (tools.js). */
+
+const AUTOSAVE = 'ranksim:draft:';
+
+function hashOf(text) {
+  let a = 0x811c9dc5;
+  let b = 0x01000193;
+  for (let k = 0; k < text.length; k += 1) {
+    const c = text.charCodeAt(k);
+    a = Math.imul(a ^ c, 16777619) >>> 0;
+    b = Math.imul(b ^ c, 2246822519) >>> 0;
+  }
+  return `${a.toString(36)}${b.toString(36)}${text.length.toString(36)}`;
+}
+
+const pendingSaves = new Map();
+
+function autosave(draft) {
+  const url = draft.url;
+  if (!url || pendingSaves.has(url)) return;
+  pendingSaves.set(url, setTimeout(() => {
+    pendingSaves.delete(url);
+    const rs = draft.rs;
+    if (!rs) return;
+    try {
+      if (rs.text === rs.base) localStorage.removeItem(AUTOSAVE + url);
+      else localStorage.setItem(AUTOSAVE + url, JSON.stringify({ h: hashOf(rs.base), text: rs.text, at: Date.now() }));
+    } catch (_err) {
+      // private mode or full storage: autosave is a convenience, saved versions still work
+    }
+  }, 800));
+}
+
+function restoreAutosave(draft) {
+  const rs = draft.rs;
+  let saved = null;
+  try {
+    saved = JSON.parse(localStorage.getItem(AUTOSAVE + draft.url) || 'null');
+  } catch (_err) {
+    saved = null;
+  }
+  if (!saved || typeof saved.text !== 'string' || saved.h !== hashOf(rs.base) || saved.text === rs.text || draft.text !== draft.base) return;
+  rs.text = saved.text;
+  rs.history.record(saved.text);
+  draft.text = stripRs(saved.text);
+  draft.touched = true;
+  setTimeout(() => toast('Your edits to this page were restored. Undo to start over.'), 0);
+}
 
 /* ------------------------------------------------------------------ drafts and page data */
 
@@ -42,7 +268,7 @@ export async function getCompare(q) {
 }
 
 /* The editor's view state. refs holds the painted screen: { viewport, side, result, address, hint, page, q }. */
-export const ED = { mode: 'visual', device: 'desktop', frame: null, code: null, refs: null, ready: null };
+export const ED = { mode: 'visual', device: 'desktop', frame: null, code: null, refs: null, ready: null, caret: null, codeSeen: null };
 
 function tokens(text) {
   return new Set(String(text || '').toLowerCase().replace(/[^a-z0-9 ]+/g, ' ').split(/\s+/).filter((w) => w.length > 2 && !['and', 'the', 'for', 'with', 'your', 'you'].includes(w)));
@@ -147,14 +373,17 @@ export function editorCtx(extra) {
     if (!here()) return false;
     const live = liveDoc();
     if (!live) syncFromFrame();
-    const doc = live || cleanDoc(draft.text);
+    const rs = modelOf(draft);
+    const doc = live || (rs ? new DOMParser().parseFromString(rs.text, 'text/html') : cleanDoc(draft.text));
     if (fn(doc) === false) return false;
-    draft.text = serialize(doc);
+    if (rs) syncFaq(doc);
+    commit(draft, rs ? serializeDraft(doc) : serialize(doc));
     if (!live) {
-      if (ED.mode === 'html' && ED.code) ED.code.value = tidy(draft.text);
-      else paintFrame();
+      if (ED.mode === 'html' && ED.code) {
+        ED.code.value = tidy(draft.text);
+        ED.codeSeen = ED.code.value;
+      } else paintFrame();
     }
-    draft.touched = true;
     paintSide();
     changed('api');
     return true;
@@ -190,10 +419,12 @@ export function editorCtx(extra) {
     },
     setHtml(html) {
       if (!here()) return false;
-      draft.text = normalize(String(html || ''));
-      draft.touched = true;
-      if (ED.mode === 'html' && ED.code) ED.code.value = tidy(draft.text);
-      else paintFrame();
+      const rs = modelOf(draft);
+      commit(draft, rs ? draftFromHtml(rs.text, String(html || ''), cleanParsed) : normalize(String(html || '')));
+      if (ED.mode === 'html' && ED.code) {
+        ED.code.value = tidy(draft.text);
+        ED.codeSeen = ED.code.value;
+      } else paintFrame();
       paintSide();
       changed('api');
       return true;
@@ -235,6 +466,22 @@ export function editorCtx(extra) {
     },
     repaint: () => paintSide(),
     test: () => runTest(),
+    exportHtml() {
+      if (here()) syncFromFrame();
+      return exportOf(draft);
+    },
+    diff() {
+      if (here()) syncFromFrame();
+      return diffOf(draft);
+    },
+    undo: () => (here() ? undo() : false),
+    redo: () => (here() ? redo() : false),
+    get canUndo() {
+      return canUndo(draft);
+    },
+    get canRedo() {
+      return canRedo(draft);
+    },
   };
   return extra ? Object.assign(ctx, extra) : ctx;
 }
@@ -323,10 +570,31 @@ export function syncFromFrame() {
   if (!ED.refs) return;
   const draft = draftFor(ED.refs.page);
   if (ED.mode === 'visual' && ED.frame && ED.ready === ED.frame && ED.frame.contentDocument && ED.frame.contentDocument.body && draft.touched) {
-    draft.text = serialize(ED.frame.contentDocument);
-  } else if (ED.mode === 'html' && ED.code) {
-    draft.text = ED.code.value;
+    const doc = ED.frame.contentDocument;
+    const rs = modelOf(draft);
+    if (rs) {
+      syncFaq(doc);
+      const text = serializeDraft(doc);
+      if (text !== rs.text) commit(draft, text, { group: 'visual' });
+    } else {
+      draft.text = serialize(doc);
+    }
+  } else if (ED.mode === 'html' && ED.code && ED.code.value !== ED.codeSeen) {
+    readCode(draft);
   }
+}
+
+/* HTML mode: what the person typed becomes the draft, with the markers put back by alignment (roundtrip.js). */
+function readCode(draft) {
+  const typed = ED.code.value;
+  ED.codeSeen = typed;
+  const rs = modelOf(draft);
+  if (!rs) {
+    draft.text = typed;
+    draft.touched = true;
+    return;
+  }
+  commit(draft, draftFromHtml(rs.text, typed, cleanParsed), { group: 'html' });
 }
 
 export function paintFrame() {
@@ -346,12 +614,18 @@ export function paintFrame() {
   }
   if (ED.mode === 'html') {
     const code = h('textarea', { class: 'code', spellcheck: 'false', 'aria-label': 'Page HTML', value: tidy(draft.text) });
-    code.addEventListener('input', () => {
-      draft.text = code.value;
-      draft.touched = true;
-      debouncedSide();
+    ED.codeSeen = code.value;
+    const readSoon = debounce(() => {
+      if (ED.code !== code) return;
+      readCode(draft);
+      paintSide();
       changed('html');
+    }, 400);
+    code.addEventListener('input', () => {
+      draft.touched = true;
+      readSoon();
     });
+    code.addEventListener('keydown', (event) => handleUndoKey(event));
     viewport.append(code);
     ED.code = code;
     queueMicrotask(() => {
@@ -360,7 +634,8 @@ export function paintFrame() {
     return;
   }
   const frame = h('iframe', { sandbox: 'allow-same-origin', title: 'Editable page', referrerpolicy: 'no-referrer' });
-  frame.srcdoc = frameSource(draft.text, draft.url);
+  const rs = modelOf(draft);
+  frame.srcdoc = frameSource(rs ? rs.text : draft.text, draft.url);
   frame.addEventListener('load', () => {
     const doc = frame.contentDocument;
     if (!doc || !doc.body) return;
@@ -370,16 +645,38 @@ export function paintFrame() {
       ED.refs.hint.title = revealed ? 'The live site builds its look with scripts, which never run here. This is the HTML Google and Ranksim score. Click any text to edit it.' : '';
     }
     doc.designMode = 'on';
+    try {
+      doc.execCommand('styleWithCSS', false, false); // no inline styles from the browser's own editing
+      doc.execCommand('defaultParagraphSeparator', false, 'p');
+    } catch (_err) {
+      // older engines: the defaults are fine
+    }
     doc.addEventListener('input', debounce(() => {
-      draft.text = serialize(doc);
+      if (ED.frame !== frame) return;
       draft.touched = true;
+      syncFromFrame();
       paintSide();
       changed('visual');
     }, 250));
     doc.addEventListener('keydown', (event) => {
+      if (handleUndoKey(event)) return;
       if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
         event.preventDefault();
         runTest();
+      }
+    });
+    doc.addEventListener('beforeinput', (event) => { // Edit menu undo would desync the draft: use ours
+      if (event.inputType === 'historyUndo' || event.inputType === 'historyRedo') {
+        event.preventDefault();
+        if (event.inputType === 'historyUndo') undo();
+        else redo();
+      }
+    });
+    doc.addEventListener('selectionchange', () => {
+      const sel = doc.getSelection();
+      if (sel && sel.anchorNode && doc.body.contains(sel.anchorNode)) {
+        ED.caret = sel.anchorNode;
+        call('editor-caret', editorCtx());
       }
     });
     if (ED.frame === frame) {
@@ -404,7 +701,8 @@ function setHead(field, value) {
   const draft = draftFor(ED.refs.page);
   if (draft.touched) syncFromFrame();
   const live = ED.mode === 'visual' && ED.frame && ED.ready === ED.frame && ED.frame.contentDocument && ED.frame.contentDocument.head;
-  const target = live ? ED.frame.contentDocument : cleanDoc(draft.text);
+  const rs = modelOf(draft);
+  const target = live ? ED.frame.contentDocument : (rs ? new DOMParser().parseFromString(rs.text, 'text/html') : cleanDoc(draft.text));
   if (field === 'title') {
     let el = target.querySelector('title');
     if (!el) {
@@ -421,9 +719,11 @@ function setHead(field, value) {
     }
     el.setAttribute('content', value);
   }
-  draft.text = serialize(target);
-  draft.touched = true;
-  if (ED.mode === 'html' && ED.code) ED.code.value = tidy(draft.text);
+  commit(draft, rs ? serializeDraft(target) : serialize(target), { group: field });
+  if (ED.mode === 'html' && ED.code) {
+    ED.code.value = tidy(draft.text);
+    ED.codeSeen = ED.code.value;
+  }
   changed(field);
 }
 

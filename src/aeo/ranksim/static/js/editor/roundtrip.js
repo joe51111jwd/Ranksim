@@ -23,26 +23,26 @@ export const isSpace = (text) => WS.test(text);
 /* ------------------------------------------------------------------ entities */
 
 const NAMED = {
-  amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ', copy: '©', reg: '®', trade: '™',
-  hellip: '…', mdash: '—', ndash: '–', lsquo: '‘', rsquo: '’', sbquo: '‚', ldquo: '“',
-  rdquo: '”', bdquo: '„', bull: '•', middot: '·', laquo: '«', raquo: '»', lsaquo: '‹',
-  rsaquo: '›', times: '×', divide: '÷', deg: '°', euro: '€', pound: '£', yen: '¥',
-  cent: '¢', sect: '§', para: '¶', plusmn: '±', frac12: '½', frac14: '¼', frac34: '¾',
-  sup1: '¹', sup2: '²', sup3: '³', micro: 'µ', iexcl: '¡', iquest: '¿', shy: '­',
-  ensp: ' ', emsp: ' ', thinsp: ' ', zwj: '‍', zwnj: '‌', lrm: '‎', rlm: '‏',
-  larr: '←', rarr: '→', uarr: '↑', darr: '↓', harr: '↔', rArr: '⇒', lArr: '⇐',
-  hearts: '♥', check: '✓', star: '☆', starf: '★', prime: '′', Prime: '″', dagger: '†',
-  Dagger: '‡', permil: '‰', minus: '−', le: '≤', ge: '≥', ne: '≠', asymp: '≈',
-  infin: '∞', not: '¬', ordf: 'ª', ordm: 'º', acute: '´', cedil: '¸', uml: '¨',
-  macr: '¯', brvbar: '¦', curren: '¤', szlig: 'ß', aacute: 'á', Aacute: 'Á',
-  agrave: 'à', Agrave: 'À', acirc: 'â', auml: 'ä', Auml: 'Ä', atilde: 'ã', aring: 'å',
-  aelig: 'æ', ccedil: 'ç', Ccedil: 'Ç', eacute: 'é', Eacute: 'É', egrave: 'è',
-  Egrave: 'È', ecirc: 'ê', euml: 'ë', iacute: 'í', Iacute: 'Í', igrave: 'ì', icirc: 'î',
-  iuml: 'ï', ntilde: 'ñ', Ntilde: 'Ñ', oacute: 'ó', Oacute: 'Ó', ograve: 'ò', ocirc: 'ô',
-  ouml: 'ö', Ouml: 'Ö', otilde: 'õ', oslash: 'ø', Oslash: 'Ø', uacute: 'ú', Uacute: 'Ú',
-  ugrave: 'ù', ucirc: 'û', uuml: 'ü', Uuml: 'Ü', yacute: 'ý', yuml: 'ÿ', oelig: 'œ',
-  scaron: 'š', Scaron: 'Š', zcaron: 'ž', fnof: 'ƒ', circ: 'ˆ', tilde: '˜', alpha: 'α',
-  beta: 'β', gamma: 'γ', delta: 'δ', pi: 'π', sigma: 'σ', mu: 'μ', Omega: 'Ω',
+  amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: '\u00a0', copy: '\u00a9', reg: '\u00ae', trade: '\u2122',
+  hellip: '\u2026', mdash: '\u2014', ndash: '\u2013', lsquo: '\u2018', rsquo: '\u2019', sbquo: '\u201a', ldquo: '\u201c',
+  rdquo: '\u201d', bdquo: '\u201e', bull: '\u2022', middot: '\u00b7', laquo: '\u00ab', raquo: '\u00bb', lsaquo: '\u2039',
+  rsaquo: '\u203a', times: '\u00d7', divide: '\u00f7', deg: '\u00b0', euro: '\u20ac', pound: '\u00a3', yen: '\u00a5',
+  cent: '\u00a2', sect: '\u00a7', para: '\u00b6', plusmn: '\u00b1', frac12: '\u00bd', frac14: '\u00bc', frac34: '\u00be',
+  sup1: '\u00b9', sup2: '\u00b2', sup3: '\u00b3', micro: '\u00b5', iexcl: '\u00a1', iquest: '\u00bf', shy: '\u00ad',
+  ensp: '\u2002', emsp: '\u2003', thinsp: '\u2009', zwj: '\u200d', zwnj: '\u200c', lrm: '\u200e', rlm: '\u200f',
+  larr: '\u2190', rarr: '\u2192', uarr: '\u2191', darr: '\u2193', harr: '\u2194', rArr: '\u21d2', lArr: '\u21d0',
+  hearts: '\u2665', check: '\u2713', star: '\u2606', starf: '\u2605', prime: '\u2032', Prime: '\u2033', dagger: '\u2020',
+  Dagger: '\u2021', permil: '\u2030', minus: '\u2212', le: '\u2264', ge: '\u2265', ne: '\u2260', asymp: '\u2248',
+  infin: '\u221e', not: '\u00ac', ordf: '\u00aa', ordm: '\u00ba', acute: '\u00b4', cedil: '\u00b8', uml: '\u00a8',
+  macr: '\u00af', brvbar: '\u00a6', curren: '\u00a4', szlig: '\u00df', aacute: '\u00e1', Aacute: '\u00c1',
+  agrave: '\u00e0', Agrave: '\u00c0', acirc: '\u00e2', auml: '\u00e4', Auml: '\u00c4', atilde: '\u00e3', aring: '\u00e5',
+  aelig: '\u00e6', ccedil: '\u00e7', Ccedil: '\u00c7', eacute: '\u00e9', Eacute: '\u00c9', egrave: '\u00e8',
+  Egrave: '\u00c8', ecirc: '\u00ea', euml: '\u00eb', iacute: '\u00ed', Iacute: '\u00cd', igrave: '\u00ec', icirc: '\u00ee',
+  iuml: '\u00ef', ntilde: '\u00f1', Ntilde: '\u00d1', oacute: '\u00f3', Oacute: '\u00d3', ograve: '\u00f2', ocirc: '\u00f4',
+  ouml: '\u00f6', Ouml: '\u00d6', otilde: '\u00f5', oslash: '\u00f8', Oslash: '\u00d8', uacute: '\u00fa', Uacute: '\u00da',
+  ugrave: '\u00f9', ucirc: '\u00fb', uuml: '\u00fc', Uuml: '\u00dc', yacute: '\u00fd', yuml: '\u00ff', oelig: '\u0153',
+  scaron: '\u0161', Scaron: '\u0160', zcaron: '\u017e', fnof: '\u0192', circ: '\u02c6', tilde: '\u02dc', alpha: '\u03b1',
+  beta: '\u03b2', gamma: '\u03b3', delta: '\u03b4', pi: '\u03c0', sigma: '\u03c3', mu: '\u03bc', Omega: '\u03a9',
   colon: ':', comma: ',', period: '.', excl: '!', quest: '?', num: '#', dollar: '$', percnt: '%', lpar: '(', rpar: ')',
   ast: '*', plus: '+', sol: '/', bsol: '\\', semi: ';', equals: '=', lowbar: '_', verbar: '|', vert: '|', lbrace: '{',
   rbrace: '}', lsqb: '[', rsqb: ']', lbrack: '[', rbrack: ']', grave: '`', Hat: '^', commat: '@', NewLine: '\n', Tab: '\t',
@@ -72,18 +72,18 @@ export function decode(text) {
     }
     let code = dec ? parseInt(dec, 10) : parseInt(hex, 16);
     if (C1[code]) code = C1[code];
-    if (code === 0 || code > 0x10ffff || (code >= 0xd800 && code <= 0xdfff)) return '�';
+    if (code === 0 || code > 0x10ffff || (code >= 0xd800 && code <= 0xdfff)) return '\ufffd';
     return String.fromCodePoint(code);
   });
   return out;
 }
 
 export function escapeText(text) {
-  return String(text).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/ /g, '&nbsp;');
+  return String(text).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\u00a0/g, '&nbsp;');
 }
 
 export function escapeAttr(text) {
-  return String(text).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/ /g, '&nbsp;');
+  return String(text).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/\u00a0/g, '&nbsp;');
 }
 
 /* ------------------------------------------------------------------ lite nodes */

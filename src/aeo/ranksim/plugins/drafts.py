@@ -55,7 +55,9 @@ class DraftError(ValueError):
 
 
 def root_of(project) -> Path:
-    return Path(project.dir) / "plugins" / "drafts"
+    from aeo.ranksim.plugins import data_dir
+
+    return data_dir(project, "drafts")
 
 
 def page_key(url: str) -> str:

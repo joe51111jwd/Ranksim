@@ -1065,6 +1065,7 @@ def digest_row(ui, project, base_url: str = "", now: datetime | None = None) -> 
         "source": data["source"],
         "demo": bool(data["data"].get("demo")),
         "google_date": data["google_date"],
+        "checked": bool(data["search_data"]),
         "page_one": {"now": data["kpis"].get("top10") or 0, "of": data["kpis"].get("checked") or 0, "week_ago": then, "week_ago_date": then_date},
         "biggest_move": weekly["moves"][0] if weekly["moves"] else None,
         "fixed": sum(1 for row in recent if row["kind"] == "issue"),
@@ -1112,7 +1113,10 @@ def build_digest(ui, base_url: str = "", now: datetime | None = None) -> dict:
         move = row["biggest_move"]
         move_text = f'"{move["q"]}" {_place(move.get("from"))} to {_place(move.get("to"))} ({_move_words(move)})' if move else "none"
         publish = f"{row['last_publish']['summary']} ({_day(row['last_publish']['date'])})" if row["last_publish"] else "none yet"
-        checked = f"{row['source']} checked {row['google_date']}" if row["google_date"] else f"{row['source']} check date not recorded"
+        if row["google_date"]:
+            checked = f"{row['source']} checked {row['google_date']}"
+        else:
+            checked = f"{row['source']} check date not recorded" if row["checked"] else "not checked on Google yet"
         facts = [
             f"Page one of Google: {p1['now']} of {p1['of']} searches now ({checked}), {then}",
             f"Biggest move this week: {move_text}",

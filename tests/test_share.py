@@ -977,6 +977,7 @@ def test_digest_lists_every_client_and_isolates_each_clients_email(env, monkeypa
     assert row["report_url"] == f"http://testserver{demo_link['path']}"
     assert by_slug[env["other"]]["last_publish"]["summary"] == "BRAVO-ONLY published /widgets"
     assert "Monday digest" in data["text"] and "(demo data)" in data["text"] and OTHER_NAME in data["text"]
+    assert by_slug[env["other"]]["checked"] is False and "not checked on Google yet" in data["text"]
 
     updates = {item["slug"]: item for item in data["updates"]}
     alpha, bravo = updates[env["demo"]], updates[env["other"]]

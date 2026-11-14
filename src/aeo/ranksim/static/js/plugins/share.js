@@ -319,7 +319,7 @@ function digestSection() {
       body.append(h('div', { class: 'share-row share-digest-row' },
         h('div', { class: 'share-row-main' },
           h('div', { class: 'share-row-top' }, h('strong', { text: row.name }), row.demo ? h('span', { class: 'chip chip-gray', text: 'Demo data' }) : null),
-          h('span', { class: 'tile-sub', text: row.google_date ? `${row.source} checked ${row.google_date}` : `${row.source} check date not recorded` }),
+          h('span', { class: 'tile-sub', text: row.google_date ? `${row.source} checked ${row.google_date}` : row.checked ? `${row.source} check date not recorded` : 'Not checked on Google yet' }),
           h('div', { class: 'share-digest-facts' },
             fact('Page one now', `${p1.now} of ${p1.of}`),
             fact('A week ago', then),

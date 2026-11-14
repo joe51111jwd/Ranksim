@@ -11,7 +11,7 @@ from html import escape
 from urllib.parse import urlsplit
 
 from aeo.crawl.urls import domain_of
-from aeo.ranksim.competitors import share_of_top10
+from aeo.ranksim.competitors import report_sections, share_of_top10
 from aeo.ranksim.discovery import _clean
 from aeo.ranksim.keywords import Keyword, build_keywords, gap_summary, page_gaps
 from aeo.ranksim.site import SitePage, page_facts
@@ -309,6 +309,7 @@ def build_report(project, meta, database: str, *, ctx=None, google_ready: bool =
             for page in own_pages
         ],
     }
+    report.update(report_sections(project, meta, database, report, pages=readable))  # discovery, competitor_profiles, gaps
     plugins.extend("extend_report", report, project=project, meta=meta, database=database, ctx=ctx, ui=ui)
     return report
 

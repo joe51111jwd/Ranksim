@@ -10,8 +10,8 @@ from test_autopilot import _lines, _site_pages, _token
 from test_project import SITE, TODAY, FakeCrawler
 
 from aeo.ranksim import autopilot
-from aeo.ranksim import competitor_profiles as cp
-from aeo.ranksim import discovery_next as dn
+from aeo.ranksim import competitors as cp
+from aeo.ranksim import discovery as dn
 from aeo.ranksim.project import GoogleSnapshot, SearchResults, SerpResult, load_project
 from aeo.ranksim.serve import create_app
 from tests.test_hosted import FakeGoogle
@@ -91,10 +91,10 @@ EXTRAS = {
 }
 
 GSC = [
-    {"q": "dirt work management software", "weight": 1200, "source": "gsc"},
-    {"q": "smartcrew login", "weight": 900, "source": "gsc"},
-    {"q": "smart crew app", "weight": 400, "source": "gsc"},
-    {"q": "heavy civil field management software", "weight": 35, "source": "gsc"},
+    {"q": "dirt work management software", "weight": 5.0, "source": "gsc", "impressions": 1200},
+    {"q": "smartcrew login", "weight": 4.0, "source": "gsc", "impressions": 900},
+    {"q": "smart crew app", "weight": 3.5, "source": "gsc", "impressions": 400},
+    {"q": "heavy civil field management software", "weight": 2.6, "source": "gsc", "impressions": 35},
 ]
 
 
@@ -170,7 +170,7 @@ def test_intent_rules(phrase, intent):
 
 def test_sources_merge_score_and_stay_labeled():
     pages = _smartcrew_pages()
-    found = dn.discover(pages, "SmartCrew", host=SC, google=_google(), extras=EXTRAS, plugin_rows=GSC)
+    found = dn.discover(pages, "SmartCrew", host=SC, google=_google(), serp_features=EXTRAS, extra=GSC)
     data = found.to_dict()
     by_q = {item["q"]: item for item in data["searches"]}
     # related searches on topic come in; off topic and branded ones do not
@@ -206,7 +206,7 @@ def test_near_duplicates_merge_into_one_search():
         {"q": "all in 1 dirt work software", "weight": 50, "source": "gsc"},
         {"q": "best all in one dirtwork software", "weight": 10, "source": "gsc"},
     ]
-    found = dn.discover(_smartcrew_pages(), "SmartCrew", host=SC, plugin_rows=rows)
+    found = dn.discover(_smartcrew_pages(), "SmartCrew", host=SC, extra=rows)
     merged = [item for item in found.searches if dn.same_search(item.q, "all in one dirt work software")]
     assert len(merged) == 1
     assert "gsc" in merged[0].sources and merged[0].variants
@@ -214,10 +214,10 @@ def test_near_duplicates_merge_into_one_search():
 
 def test_the_list_is_capped_and_the_rest_is_reported():
     rows = [{"q": f"excavation {word} software", "weight": 100, "source": "gsc"} for word in ("trench", "grading", "hauling", "paving", "utility", "demolition", "site", "pipe", "septic", "pond", "land", "road", "drainage", "fill", "stump", "rock", "concrete", "asphalt", "survey", "erosion", "foundation", "basement")]
-    found = dn.discover(_smartcrew_pages(), "SmartCrew", host=SC, plugin_rows=rows)
+    found = dn.discover(_smartcrew_pages(), "SmartCrew", host=SC, extra=rows)
     assert len(found.searches) == dn.MAX_SEARCHES
     assert any(item["reason"] == "over the limit" for item in found.dropped)
-    assert len(dn.discover(_smartcrew_pages(), "SmartCrew", host=SC, plugin_rows=rows, limit=5).searches) == 5
+    assert len(dn.discover(_smartcrew_pages(), "SmartCrew", host=SC, extra=rows, limit=5).searches) == 5
 
 
 def test_discovery_degrades_without_google_or_extras():
@@ -229,8 +229,8 @@ def test_discovery_degrades_without_google_or_extras():
     assert dn.serp_extras(stored) == {"a": {"related": ["b c"], "paa": ["what is d?"]}}
     assert dn.discover_searches(pages, "SmartCrew", host=SC) == plain.queries
     assert dn.discover([], "SmartCrew", host=SC).queries == []
-    bad = dn.discover(pages, "SmartCrew", host=SC, plugin_rows=[{"q": "excavation pond software", "weight": "lots"}, {"weight": 3}])
-    assert "excavation pond software" in bad.queries
+    bad = dn.discover(pages, "SmartCrew", host=SC, extra=[{"q": "excavation pond software", "weight": "lots"}, {"weight": 3}, "text row"])
+    assert "excavation pond software" not in bad.queries and bad.queries == plain.queries  # invalid rows are dropped
 
 
 def test_slugs_read_as_words():
@@ -259,7 +259,7 @@ def test_competitors_are_businesses_and_directories_are_their_own_group():
     assert "g2.com" not in picked and "reddit.com" not in picked and SC not in picked
     vis = {row["domain"]: row["visibility"] for row in rows}
     assert vis["mitti.example"] == pytest.approx((11 - 2) / 10 + (11 - 2) / 10 + (11 - 2) / 10)
-    share = cp.share_rows(_google(), SC)
+    share = cp.share_of_top10(_google(), SC)
     assert share[0]["slots"] >= share[-1]["slots"] and {"domain", "slots", "searches", "best", "average", "you", "platform", "kind", "reason"} <= set(share[0])
     assert cp.classify_domains(None, SC) == [] and cp.pick_competitors(None, SC) == []
 
@@ -371,7 +371,10 @@ def test_report_sections_read_the_store(tmp_path):
     report = client.get(f"/api/v1/projects/{done['slug']}/report").json()
     project = load_project(done["slug"], root=tmp_path / "projects")
     pages = autopilot.stored_site_pages(project, settings.ranksim_database_url)
-    sections = cp.report_sections(project, None, settings.ranksim_database_url, report["rankings"], pages=pages, plugin_rows=[{"q": "grading crew software", "weight": 10, "source": "gsc"}])
+    # the API report already carries the sections
+    assert {"discovery", "competitor_profiles", "gaps"} <= set(report) and report["discovery"]["searches"]
+    dn.save_rows(project, [{"q": "grading crew software", "weight": 10, "source": "gsc"}, "junk"])
+    sections = cp.report_sections(project, None, settings.ranksim_database_url, report, pages=pages)
     assert {"discovery", "competitor_profiles", "gaps"} <= set(sections)
     queries = {item["q"]: item for item in sections["discovery"]["searches"]}
     assert "dirt work software" in queries and queries["dirt work software"]["tracked"]
@@ -407,7 +410,7 @@ def test_real_searches_are_not_mistaken_for_labels_or_taglines():
         ["Contact center software | Acme", "All season tires | Acme", "Browser testing tool | Acme", "Power washing services | Acme",
          "Work order software | Acme", "Austin Plumber / Drain Cleaning | Acme", "Klempner München | Acme"],
         "Acme", "acme.com",
-        plugin_rows=[{"q": "plumber near me", "weight": 50}, {"q": "us immigration lawyer", "weight": 50}, "24 hour plumber", 5, None],
+        extra=[{"q": "plumber near me", "weight": 50}, {"q": "us immigration lawyer", "weight": 50}, {"q": "24 hour plumber"}, 5, None],
     ).queries)
     assert {"contact center software", "all season tires", "browser testing tool", "power washing services", "work order software",
             "austin plumber", "drain cleaning", "klempner munchen", "plumber near me", "us immigration lawyer", "24 hour plumber"} <= kept
@@ -436,7 +439,7 @@ def test_dedupe_keeps_direction_and_place_names():
 
 def test_bad_inputs_do_not_crash_discovery():
     google = GoogleSnapshot("p", "", "import", [SearchResults("q", [SerpResult(1, "http://[bad/x", "", "Bad title here")], "import", "csv", None)])
-    assert dn.discover(_smartcrew_pages(), "SmartCrew", host=SC, google=google, extras=["not", "a", "dict"], plugin_rows=["excavation pond software", 3, None]).queries
+    assert dn.discover(_smartcrew_pages(), "SmartCrew", host=SC, google=google, serp_features=["not", "a", "dict"], extra=["excavation pond software", 3, None]).queries
     assert dn.serp_extras(["x"]) == {} and dn.serp_extras({"searches": ["x", None]}) == {}
     assert dn.slug_phrase("https://x.com/en-gb/") is None and dn.slug_phrase("https://x.com/p/3f2b9c1e-ab12-cd34/") is None
 
@@ -500,3 +503,43 @@ def test_one_bad_page_never_breaks_the_report():
         profile = cp.page_profile("https://bad.example/", f"<html><head>{html}</head><body><h1>x</h1></body></html>")
         assert isinstance(profile["schema"], list)
     json.dumps(cp.competitor_profiles(_google(), SC, {"https://mitti.example/excavation": deep}), default=list)
+
+
+def test_serp_features_in_the_tracking_shape_are_read():
+    stored = {"searches": [
+        {"search": "excavation software", "results": [], "features": {
+            "related_searches": ["excavation contractor software", "excavation estimating software"],
+            "people_also_ask": [{"question": "What is the best software for excavation contractors?", "snippet": "x", "url": "https://a.example/"}],
+        }},
+        {"search": "hcss alternative", "results": [], "features": {"related_searches": [], "people_also_ask": []}},
+        {"search": "old", "related_searches": ["old shape"]},
+    ]}
+    features = dn.serp_extras(stored)
+    assert features["excavation software"]["related"] == ["excavation contractor software", "excavation estimating software"]
+    assert features["excavation software"]["paa"] == ["What is the best software for excavation contractors?"]
+    assert "hcss alternative" not in features and features["old"]["related"] == ["old shape"]
+    found = dn.discover(_smartcrew_pages(), "SmartCrew", host=SC, serp_features=features)
+    assert "excavation contractor software" in found.queries
+
+
+def test_plugin_rows_use_the_shared_scale():
+    pages = _smartcrew_pages()
+    base = dn.discover_searches(pages, "SmartCrew", host=SC)
+    assert "grading estimates" not in dn.discover_searches(pages, "SmartCrew", host=SC, extra=[{"q": "grading estimates", "weight": 2.0}])
+    assert "grading estimates" in dn.discover_searches(pages, "SmartCrew", host=SC, extra=[{"q": "grading estimates", "weight": 2.5}])
+    assert "grading estimates" in dn.discover_searches(pages, "SmartCrew", host=SC, extra=[{"q": "grading estimates"}])  # 3.0 by default
+    row = next(item for item in dn.discover(pages, "SmartCrew", host=SC, extra=[{"q": "grading estimates", "source": "gsc", "impressions": 40}]).to_dict()["searches"] if item["q"] == "grading estimates")
+    assert row["source"] == "gsc" and "impressions 40" in row["sources"][0]["detail"][0]
+    assert dn.discover_searches(pages, "SmartCrew", host=SC, extra=[]) == base
+
+
+def test_discover_with_plugins_keeps_rows_for_the_report(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    monkeypatch.setattr(dn, "plugin_rows", lambda project, pages, ui: [{"q": "grading crew software", "weight": 4.0, "source": "gsc"}])
+    project = SimpleNamespace(dir=tmp_path / "p", domain=SC)
+    (tmp_path / "p").mkdir()
+    found = dn.discover_with_plugins(_smartcrew_pages(), "SmartCrew", host=SC, project=project)
+    assert "grading crew software" in found
+    assert dn.load_rows(project) == [{"q": "grading crew software", "weight": 4.0, "source": "gsc", "detail": "weight 4"}]
+    assert dn.discover_with_plugins(_smartcrew_pages(), "SmartCrew", host=SC) == found  # no project: nothing stored, same list

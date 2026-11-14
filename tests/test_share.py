@@ -323,16 +323,20 @@ def test_nothing_private_leaks_into_the_client_report(env, monkeypatch):
         assert value not in blob or (value == "<!doctype" and texts[0].count("<!doctype") == 1 and value not in "\n".join(texts[1:])), value
     data = client.get(path + "/data").json()
     assert set(data) == {
-        "preview", "agency", "name", "site", "report_date", "google_date", "data", "search_data", "predictions",
+        "preview", "agency", "name", "site", "report_date", "google_date", "source", "data", "search_data", "predictions",
         "kpis", "rankings", "issues", "share", "competitors", "changes", "notes",
     }
     summaries = [row["summary"] for row in data["changes"]]
-    assert "Public note for the client" in summaries and 'Page change tested for "vinyl fence installation cost"' in summaries
+    assert "Public note for the client" in summaries
+    assert not any(summary.startswith("Page change tested") for summary in summaries)  # tests stay with the owner
+    owner = share.changelog(project)
+    assert any(row["summary"] == 'Page change tested for "vinyl fence installation cost"' and not row["public"] for row in owner)
     assert all(set(row) == {"at", "date", "kind", "label", "summary"} for row in data["changes"])
     for issue in data["issues"]:
         assert set(issue) == {"id", "severity", "title", "comment", "fix", "page", "search", "status", "status_label", "plan"}
     for row in data["rankings"]:
-        assert set(row) == {"q", "position", "url", "checked", "predicted", "top"}
+        assert set(row) == {"q", "position", "url", "checked", "date", "predicted", "top"}
+        assert row["position"] or row["url"] is None  # no guessed page beside a search the site does not rank for
         if row["predicted"]:
             assert row["predicted"]["label"] == "PREDICTED"
     assert any("PREDICTED" in note for note in data["notes"]) and any("Google" in note for note in data["notes"])
@@ -340,11 +344,13 @@ def test_nothing_private_leaks_into_the_client_report(env, monkeypatch):
 
 def test_the_client_report_labels_every_number(env):
     data = env["client"].get(_link(env)["path"] + "/data").json()
-    assert data["google_date"]
+    # the demo is labeled as demo, never as Google data, and an unrecorded date is not shown as a date
+    assert data["source"] == "Demo" and data["data"]["demo"] is True
+    assert data["google_date"] == "" and "not recorded" in data["notes"][0] and "Google results" not in data["notes"][0]
     assert data["predictions"] is True
     assert all(row["predicted"] is None or row["predicted"]["label"] == "PREDICTED" for row in data["rankings"])
     js = (share.SHARE_STATIC / "share.js").read_text(encoding="utf-8")
-    for label in ("PREDICTED", "Google data ", "Report date ", "Google positions from "):
+    for label in ("PREDICTED", ' data "', "Report date ", ' position"', "date not recorded"):
         assert label in js
 
 
@@ -356,8 +362,11 @@ def test_rate_limit(env):
     state["bad"] = share.RateLimiter(3)
     for _ in range(3):
         assert client.get(f"/r/{'q' * 24}.{'w' * 22}/data").status_code == 404
-    blocked = client.get(link["path"] + "/data")
+    blocked = client.get(f"/r/{'q' * 24}.{'w' * 22}/data")
     assert blocked.status_code == 429 and blocked.headers["retry-after"] == "60"
+    assert client.get("/r/whatever/else").status_code == 429
+    # bad guesses never lock a client out of a live link
+    assert client.get(link["path"] + "/data").status_code == 200
     state["bad"] = share.RateLimiter(100)
     state["requests"] = share.RateLimiter(2)
     assert client.get(link["path"] + "/data").status_code == 200
@@ -463,7 +472,7 @@ def test_csv_exports(env):
     assert rankings.status_code == 200 and rankings.headers["content-type"].startswith("text/csv")
     assert rankings.headers["content-disposition"].startswith("attachment;") and "rankings" in rankings.headers["content-disposition"]
     lines = rankings.text.lstrip("﻿").splitlines()
-    assert lines[0] == "Search,Google position,Google data date,Page,PREDICTED position,PREDICTED of,Google #1"
+    assert lines[0] == "Search,Demo position,Demo data date,Page,PREDICTED position,PREDICTED of,Demo #1"
     assert len(lines) == 1 + len(data["rankings"])
     assert any(line.startswith("vinyl fence installation cost,5,") for line in lines)
     issues = client.get(link["path"] + "/issues.csv").text.lstrip("﻿")
@@ -508,8 +517,10 @@ def test_change_log_helper_hook_and_merge(env):
     published = next(row for row in entries if row["summary"] == "Edits published to /pricing")
     assert published["detail"] == "Webhook 200" and published["label"] == "Published"
 
-    note = client.post(f"/api/v1/projects/{env['other']}/changelog", json={"summary": "Kickoff call", "public": False}, headers=env["headers"])
-    assert note.status_code == 200
+    for body in ({"summary": "Kickoff call", "public": False}, {"summary": "Kickoff call", "public": "false"}, {"summary": "Kickoff call"}):
+        assert client.post(f"/api/v1/projects/{env['other']}/changelog", json=body, headers=env["headers"]).status_code == 200
+    assert client.post(f"/api/v1/projects/{env['other']}/changelog", json={"summary": "Shared note", "public": True}, headers=env["headers"]).status_code == 200
+    assert "Shared note" in [row["summary"] for row in share.changelog(project, public_only=True)]
     assert client.post(f"/api/v1/projects/{env['other']}/changelog", json={"summary": ""}, headers=env["headers"]).status_code == 400
     public = share.changelog(project, public_only=True)
     assert "Kickoff call" not in [row["summary"] for row in public]
@@ -554,3 +565,37 @@ def test_links_persist_across_restarts(env):
     assert env["client"].get(link["path"] + "/data").status_code == 200
     key_file = env["root"] / "_plugins" / "share" / "secret.key"
     assert re.match(r"^[0-9a-f]{64}$", key_file.read_text())
+
+
+def test_a_replaced_key_file_is_picked_up_and_reads_never_mint_a_key(env, tmp_path, monkeypatch):
+    import os
+
+    monkeypatch.delenv("RANKSIM_SECRET", raising=False)
+    link = _link(env)
+    key_file = env["root"] / "_plugins" / "share" / "secret.key"
+    original = key_file.read_text()
+    try:
+        key_file.write_text("0" * 64)  # a cloud refresh installs another instance's key
+        os.utime(key_file, ns=(1, 1))
+        assert env["client"].get(link["path"] + "/data").status_code == 404
+    finally:
+        key_file.write_text(original)
+    assert env["client"].get(link["path"] + "/data").status_code == 200
+    assert share.signing_key(tmp_path / "empty", create=False) is None
+    assert not (tmp_path / "empty").exists()
+    monkeypatch.setenv("RANKSIM_SECRET", "shared-secret")
+    assert share.signing_key(tmp_path / "empty", create=False) == share.signing_key(env["root"], create=False)
+
+
+def test_rows_carry_their_own_pull_date(env, monkeypatch):
+    project = env["ui"].project(env["demo"])
+    rows = share.client_report(env["ui"], project)["rankings"]
+    searches = [row["q"] for row in rows if row["checked"]]
+    fake = {searches[0]: ("2026-10-01T00:00:00", "Oct 1, 2026"), searches[1]: ("2026-11-09T00:00:00", "Nov 9, 2026")}
+    monkeypatch.setattr(share, "_search_dates", lambda project: fake)
+    data = share.client_report(env["ui"], project)
+    assert data["google_date"] == "Oct 1, 2026 to Nov 9, 2026"
+    by_q = {row["q"]: row for row in data["rankings"]}
+    assert by_q[searches[0]]["date"] == "Oct 1, 2026" and by_q[searches[1]]["date"] == "Nov 9, 2026"
+    lines = share.rankings_csv(data).splitlines()
+    assert any(line.startswith(searches[0] + ",") and "Oct 1, 2026" in line for line in lines)

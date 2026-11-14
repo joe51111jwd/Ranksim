@@ -301,7 +301,7 @@ export async function openSite(slug, { keepDrafts = false } = {}) {
   S.report = null;
   S.project = null;
   shell.renderBar();
-  if (!keepDrafts) clear(main).append(h('div', { class: 'boot' }, h('span', { class: 'spinner', 'aria-hidden': 'true' })));
+  if (!keepDrafts) clear(main).append(skeleton());
   const [report, project] = await Promise.all([api.get(`/api/v1/projects/${enc(slug)}/report`), api.get(`/api/v1/projects/${enc(slug)}`)]);
   S.report = report;
   S.project = project;
@@ -486,6 +486,21 @@ export function serpList(items, opts = {}) {
       title: 'Open in editor',
       'aria-label': `Open ${item.domain} in the editor`,
     }, q ? { page: item.url, q } : { page: item.url })) : null)));
+}
+
+/* A placeholder in the bento's shape while a site loads: gray blocks, no spinner wall. Still under reduced motion. */
+export function skeleton() {
+  const tile = (cls) => h('div', { class: `tile ${cls || ''}` }, h('span', { class: 'sk sk-line' }), h('span', { class: 'sk sk-big' }), h('span', { class: 'sk sk-block' }));
+  return h('div', { class: 'wrap screen skeleton', 'aria-busy': 'true', 'aria-label': 'Loading' },
+    h('div', { class: 'head' }, h('div', null, h('span', { class: 'sk sk-big' }), h('span', { class: 'sk sk-line' }))),
+    h('div', { class: 'bento' }, tile('white span-2'), tile('black'), tile(), tile('span-2 tall'), tile('white span-2 tall')),
+    h('span', { class: 'sr-only', role: 'status', text: 'Loading' }));
+}
+
+/* A centered empty or error state: a short title, one sentence, and the buttons for the next step. */
+export function emptyState(title, text, ...actions) {
+  return h('div', { class: 'empty-state' }, h('h2', { text: title }), text ? h('p', { text }) : null,
+    actions.length ? h('div', { class: 'form-actions' }, actions) : null);
 }
 
 /* The spinner shown while a screen loads. */

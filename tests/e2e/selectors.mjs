@@ -8,7 +8,8 @@ export const SEL = {
 
   homeInput: '.composer input',
   homeSubmit: '.composer button[type=submit]',
-  homeDemo: 'button:has-text("open the demo")',
+  homeDemo: '.demo-entry',
+  homeError: '.home-error:not([hidden])',
   siteCard: '.site-card',
 
   progress: '.progress-tile',
@@ -18,6 +19,12 @@ export const SEL = {
   navLink: (label) => `nav[aria-label="Sections"] a:has-text("${label}")`,
   tile: '.bento .tile',
   chart: 'svg.rc',
+  chartTitle: 'svg.rc > title',
+  opportunity: 'button.opp',
+  serpYou: '.serp .rowcard.you',
+  serpEdit: '.serp .rowcard a[aria-label*="in the editor"]',
+  loading: 'main .boot, main .skeleton',
+  offline: '.offline',
 
   issueRow: '.rowcard',
   sheet: '.sheet[role=dialog]',

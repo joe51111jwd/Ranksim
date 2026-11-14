@@ -87,7 +87,7 @@ async function audit(page, name) {
 
 async function goto(page, path) {
   await page.goto(BASE + path, { waitUntil: 'domcontentloaded' });
-  await page.waitForFunction(() => !document.querySelector('main .boot'), null, { timeout: SLOW });
+  await page.waitForFunction((sel) => !document.querySelector(sel), SEL.loading, { timeout: SLOW });
 }
 
 const browser = await chromium.launch();
@@ -136,6 +136,14 @@ try {
     expect(first.outline !== 'none' || first.shadow !== 'none', 'focused element shows a focus ring');
   });
 
+  await step('home-validation', async () => {
+    expect(await page.isVisible(SEL.homeDemo), 'a demo entry shows when there is no demo yet');
+    await page.fill(SEL.homeInput, 'not an address');
+    await page.click(SEL.homeSubmit);
+    await page.waitForSelector(SEL.homeError);
+    expect(new URL(page.url()).pathname === '/', 'a bad address stays on home');
+  });
+
   await step('open-url', async () => {
     await page.fill(SEL.homeInput, SITE);
     await page.click(SEL.homeSubmit);
@@ -167,7 +175,21 @@ try {
     expect((await page.locator(SEL.tile).count()) >= 4, 'overview shows its tiles');
     const body = await page.innerText('main');
     expect(/#4/.test(body), 'overview shows the #4 ranking from the fake Google');
+    const charts = await page.$$eval(SEL.chart, (list) => list.map((svg) => ({
+      role: svg.getAttribute('role'), title: (svg.querySelector('title') || {}).textContent, desc: (svg.querySelector('desc') || {}).textContent, w: svg.getBoundingClientRect().width,
+    })));
+    expect(charts.length >= 3, `overview draws its charts, got ${charts.length}`);
+    for (const c of charts) expect(c.role === 'img' && c.title && c.desc && c.w > 100, `chart is labeled and sized: ${JSON.stringify(c)}`);
+    const titles = charts.map((c) => c.title).join('|');
+    expect(/Where you rank/.test(titles) && /Who takes the top 10/.test(titles) && /Position distribution/.test(titles), `chart titles: ${titles}`);
     await audit(page, 'desktop-06-overview');
+    await page.locator(SEL.opportunity).filter({ hasText: SEARCHES[0] }).click();
+    await page.waitForSelector(SEL.sheet);
+    await page.waitForSelector(`${SEL.sheet} ${SEL.serpYou}`);
+    expect((await page.locator(`${SEL.sheet} ${SEL.serpEdit}`).count()) >= 5, 'every result opens in the editor');
+    await audit(page, 'desktop-06b-serp-sheet');
+    await page.keyboard.press('Escape');
+    await page.waitForSelector(SEL.sheet, { state: 'detached' });
   });
 
   await step('issues', async () => {
@@ -190,6 +212,7 @@ try {
     await page.locator(SEL.searchRow).filter({ hasText: SEARCHES[0] }).click();
     await page.waitForSelector(SEL.serpRow);
     expect((await page.locator(SEL.serpRow).count()) >= 5, 'the top 10 is listed');
+    expect((await page.locator(SEL.serpYou).count()) === 1, 'your page is highlighted in the top 10');
     await audit(page, 'desktop-09-searches');
   });
 
@@ -218,6 +241,35 @@ try {
     const body = await page.innerText('main');
     expect(/predict/i.test(body), 'the result says it is a prediction');
     await audit(page, 'desktop-11-editor-result');
+  });
+
+  await step('offline', async () => {
+    await desk.setOffline(true);
+    await page.evaluate(() => window.dispatchEvent(new Event('offline')));
+    await page.waitForSelector(SEL.offline);
+    await audit(page, 'desktop-12-offline');
+    await desk.setOffline(false);
+    await page.evaluate(() => window.dispatchEvent(new Event('online')));
+    await page.waitForSelector(SEL.offline, { state: 'detached' });
+  });
+
+  await step('demo', async () => {
+    await goto(page, '/');
+    await page.click(SEL.homeDemo);
+    await page.waitForURL(/\/app\//, { timeout: SLOW });
+    await page.waitForSelector(SEL.chart, { timeout: SLOW });
+    await audit(page, 'desktop-13-demo-overview');
+    await goto(page, '/');
+    expect((await page.locator(SEL.siteCard).count()) >= 2, 'recent sites lists both sites');
+    expect(!(await page.isVisible(SEL.homeDemo)), 'the demo entry is a site card once it exists');
+  });
+
+  await step('tablet', async () => {
+    await page.setViewportSize({ width: 820, height: 1180 });
+    await goto(page, `/app/${encodeURIComponent(slug)}`);
+    await page.waitForSelector(SEL.chart);
+    await audit(page, 'tablet-overview');
+    await page.setViewportSize({ width: 1280, height: 900 });
   });
 
   state = await desk.storageState();

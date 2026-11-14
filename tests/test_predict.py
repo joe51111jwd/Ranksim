@@ -337,3 +337,39 @@ def test_summary_and_table_use_the_same_whole_place_moves():
     summary = predict_service._summary(rows)
     assert summary["down"] == 1 and summary["same"] == 1
     assert predict_service._places(0.5) == 1 and predict_service._places(-1.4) == -1
+
+
+def test_a_ranking_page_never_gets_a_re_ranked_forecast():
+    from aeo.ranksim.report import ranking_prediction
+
+    view = SimpleNamespace(your_predicted=7, scored=9, confidence="CLEARER", confidence_note="gap", query_pairwise=0.55, query_pairs=40)
+    row = ranking_prediction(3, view)
+    assert row["position"] is None and row["method"] == "persistence" and row["google_position"] == 3
+    assert row["confidence"] == "CLEARER" and row["query_pairs"] == 40 and row["label"] == "PREDICTED"
+    assert "coin flip" in row["reason"]
+    odd = ranking_prediction(5, SimpleNamespace(scored=4, confidence="n/a"))
+    assert odd["confidence"] == "UNSURE" and odd["query_pairwise"] is None
+
+
+def test_report_rows_carry_confidence_and_no_misleading_position():
+    from tests.test_studio import _csrf, create_app, make_settings  # noqa: F401
+    import tempfile
+    from fastapi.testclient import TestClient
+
+    with tempfile.TemporaryDirectory() as tmp:
+        from pathlib import Path
+
+        settings = make_settings(Path(tmp))
+        app = create_app(settings=settings, database=settings.ranksim_database_url, projects_root=Path(tmp) / "projects", public_demo=False)
+        client = TestClient(app)
+        token = _csrf(client)
+        client.post("/api/v1/demo", json={}, headers={"x-ranksim-csrf": token})
+        from aeo.ranksim import workspace as ws
+
+        rows = client.get(f"/api/v1/projects/{ws.DEMO_SLUG}/report").json()["rankings"]
+        with_pred = [row for row in rows if row.get("predicted")]
+        assert with_pred
+        for row in with_pred:
+            pred = row["predicted"]
+            assert pred["position"] is None and pred["method"] == "persistence"
+            assert pred["confidence"] in {"CLEARER", "UNSURE"} and "query_pairs" in pred

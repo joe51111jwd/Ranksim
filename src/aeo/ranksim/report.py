@@ -260,7 +260,7 @@ def build_report(project, meta, database: str, *, ctx=None, google_ready: bool =
                 from aeo.ranksim import workspace as ws
 
                 view = ws.compare_search(ctx, search, meta)
-                predicted = {"position": view.your_predicted, "of": view.scored}
+                predicted = ranking_prediction(mine.position, view)
             except Exception:  # noqa: BLE001 - the report never fails on one search
                 predicted = None
         rankings.append(
@@ -329,3 +329,38 @@ def _best_page(search: str, pages: list[SitePage]) -> str | None:
     from aeo.ranksim.discovery import best_page  # discover: word forms, compounds and the page address count
 
     return best_page(search, pages)
+
+
+# -- rankings[].predicted (owned by the predict workstream) ------------------------------------------------------
+
+PERSISTENCE_REASON = (
+    "This page ranks today, so Ranksim keeps its real Google position as the forecast (persistence). Re-ranking it "
+    "from page content is close to a coin flip on held-out searches, so no other number is shown. Use Test changes "
+    "to see how an edit would move it."
+)
+
+
+def ranking_prediction(google_position, view) -> dict:
+    """What rankings[].predicted means. Every row a page ranks on today carries the confidence fields.
+
+    A page that already ranks gets no re-ranked position: the content re-rank is near chance on held-out searches,
+    and "Google #3, PREDICTED #7" reads like a forecast of a drop. ``position`` is None with a plain reason, and
+    ``method`` is "persistence" (the real position stands). Screens show a PREDICTED number only when ``position``
+    is not None, so nothing here can look more certain than it is.
+    """
+    confidence = str(getattr(view, "confidence", "") or "UNSURE")
+    if confidence not in {"CLEARER", "UNSURE"}:
+        confidence = "UNSURE"
+    return {
+        "position": None,
+        "of": getattr(view, "scored", None),
+        "label": "PREDICTED",
+        "method": "persistence",
+        "google_position": google_position,
+        "reason": PERSISTENCE_REASON,
+        "confidence": confidence,
+        "confidence_note": str(getattr(view, "confidence_note", "") or ""),
+        "query_pairwise": getattr(view, "query_pairwise", None),
+        "query_pairs": getattr(view, "query_pairs", None),
+    }
+

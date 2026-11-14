@@ -29,3 +29,12 @@
   .predict-table th, .predict-table td { padding: 8px 4px; font-size: 13px; }
   .predict-table thead th:nth-child(2), .predict-table tbody td:nth-child(2) { display: none; }
 }
+
+/* UNSURE results never look more certain than they are: smaller, lighter numbers, no blue emphasis. */
+.predict-unsure .rank-box .n { font-size: 32px; font-weight: 450; color: var(--ink-2); }
+.predict-unsure .rank-box.after .n { color: var(--ink-2); }
+.predict-unsure .verdict { font-size: 22px; font-weight: 500; color: var(--ink-2); }
+.predict-unsure .verdict.up, .predict-unsure .verdict.down { color: var(--ink-2); }
+.predict-table tr.is-unsure .predict-after { font-weight: 450; color: var(--ink-2); }
+.predict-table tr.is-unsure .move.up, .predict-table tr.is-unsure .move.down { opacity: 0.75; }
+

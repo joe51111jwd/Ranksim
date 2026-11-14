@@ -408,6 +408,7 @@ def test_searches(
                 slot_now=None,
                 slot_with_edit=None,
                 move=None,
+                move_places=None,
                 above=[],
                 guidance=[],
             )
@@ -464,6 +465,7 @@ def test_searches(
             row["move"] = round(row["now"] - row["with_edit"], 1)  # positive: PREDICTED higher
         else:
             row["move"] = None
+        row["move_places"] = _places(row["move"])
         target = row["with_edit"] or 1.0
         above = sorted(
             [(signals, item) for signals, item in other_signals if item.position < target and item.doc is not None and _domain(item.url) != own_domain],
@@ -480,6 +482,8 @@ def test_searches(
         )
         out_rows.append(row)
     notes = list(predictor.notes)
+    if out_rows and all(row.get("method") == "not placed" for row in out_rows):
+        notes.append("Not placed on any search yet. Use the words of a search in the title and text to get a PREDICTED position.")
     if predictor.families < 2:
         notes = [ONE_FAMILY_TEXT]
     if not any(row[1] == own_domain for row in predictor.site_rows):
@@ -500,8 +504,16 @@ def test_searches(
     }
 
 
+def _places(move: float | None) -> int | None:
+    """Whole places moved, rounded half away from zero. The table and the summary both use this."""
+    if move is None:
+        return None
+    places = int(abs(move) + 0.5)
+    return places if move > 0 else -places
+
+
 def _summary(rows: list[dict]) -> dict:
-    """Counts for the one-line header. A move under half a place counts as the same."""
+    """Counts for the one-line header, from the same whole-place moves the table shows."""
     out = {"searches": len(rows), "up": 0, "down": 0, "same": 0, "not_placed": 0, "unsure": 0, "new": 0}
     for row in rows:
         if row["confidence"]["label"] == UNSURE:
@@ -510,9 +522,9 @@ def _summary(rows: list[dict]) -> dict:
             out["not_placed"] += 1
         elif row.get("move") is None:
             out["new"] += 1
-        elif row["move"] >= 0.5:
+        elif row["move_places"] > 0:
             out["up"] += 1
-        elif row["move"] <= -0.5:
+        elif row["move_places"] < 0:
             out["down"] += 1
         else:
             out["same"] += 1

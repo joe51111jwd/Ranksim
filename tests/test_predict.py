@@ -319,3 +319,21 @@ def test_predictor_is_cached_on_disk_per_pull(tmp_path):
     predict_service.test_searches(ctx, draft, "https://ours.example/new", searches=SEARCHES)
     names = [path.name for path in (tmp_path / "plugins" / "predict").glob("predictor-*.json")]
     assert len(names) == 1 and names[0].startswith("predictor-pull-2-")
+
+
+def test_guidance_text_agrees_with_one_page_above():
+    model = fit_pairwise([Group("q", [{"has_table": 1.0, "words": 7.0}, {"has_table": 0.0, "words": 5.0}], [1, 2])], ["has_table", "words"])
+    items = guidance(model, {"has_table": 0.0, "words": 5.0}, [{"has_table": 1.0, "words": 7.0}], raw_draft={"word_count": 150})
+    texts = " ".join(item["text"] for item in items)
+    assert "The page above has" in texts
+    assert "1 page" not in texts and "pages above have" not in texts
+
+
+def test_summary_and_table_use_the_same_whole_place_moves():
+    rows = [
+        {"confidence": {"label": UNSURE}, "with_edit": 5.5, "move": -0.5, "move_places": predict_service._places(-0.5)},
+        {"confidence": {"label": UNSURE}, "with_edit": 5.0, "move": 0.4, "move_places": predict_service._places(0.4)},
+    ]
+    summary = predict_service._summary(rows)
+    assert summary["down"] == 1 and summary["same"] == 1
+    assert predict_service._places(0.5) == 1 and predict_service._places(-1.4) == -1

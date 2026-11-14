@@ -418,37 +418,34 @@ def _display(name: str, value: float, raw: dict | None, raw_list: list[dict] | N
 
 def _advice(name: str, mine: float, target: float, count: int, values: list[float], raw: dict | None, raw_list: list[dict] | None) -> str:
     have = sum(1 for value in values if value >= 0.5)
-    pages = f"{count} page{'s' if count != 1 else ''} above"
+    one = count == 1
+    them = "The page above" if one else f"The {count} pages above"
+    match, cover, do, has = ("matches", "covers", "does", "has") if one else ("match", "cover", "do", "have")
+    of_them = ("The page above has" if have else "The page above does not") if one else f"{have} of the {count} pages above have"
     if name == "title_match":
-        return f"Put the search words in the title. The {pages} match more of them."
+        return f"Put the search words in the title. {them} {match} more of them."
     if name == "h1_match":
-        return f"Put the search words in the H1. The {pages} match more of them."
+        return f"Put the search words in the H1. {them} {match} more of them."
     if name == "url_match":
-        return f"Use the search words in the URL. The {pages} match more of them."
+        return f"Use the search words in the URL. {them} {match} more of them."
     if name == "heading_match":
-        return f"Use the search words in a subheading. The {pages} do more often."
+        return f"Use the search words in a subheading. {them} {do} more often."
     if name == "body_match":
-        return f"Use every search word in the body text. The {pages} cover more of them."
+        return f"Use every search word in the body text. {them} {cover} more of them."
     if name == "term_coverage":
-        return f"Cover the terms the ranking pages share. The {pages} cover more of them."
-    if name == "words":
-        yours = _display("words", mine, raw)
-        theirs = _display("words", target, None)
-        return f"Add depth. You have {yours} words. The {pages} have about {theirs}."
-    if name == "headings":
-        yours = _display("headings", mine, raw)
-        theirs = _display("headings", target, None)
-        return f"Break the page into sections. You have {yours} subheadings. The {pages} have about {theirs}."
+        return f"Cover the terms the ranking pages share. {them} {cover} more of them."
+    if name in {"words", "headings", "links"}:
+        yours = _display(name, mine, raw)
+        theirs = _display(name, target, None)
+        lead = {"words": "Add depth", "headings": "Break the page into sections", "links": "Link to more related pages"}[name]
+        unit = {"words": "words", "headings": "subheadings", "links": "links"}[name]
+        return f"{lead}. You have {yours} {unit}. {them} {has} about {theirs}."
     if name == "has_table":
-        return f"Add a table. {have} of the {pages} have one."
+        return f"Add a table. {of_them} one." if not one else f"Add a table. {of_them}{' one' if have else ''}."
     if name == "has_faq":
-        return f"Add an FAQ section. {have} of the {pages} have one."
+        return f"Add an FAQ section. {of_them} one." if not one else f"Add an FAQ section. {of_them}{' one' if have else ''}."
     if name == "schema":
-        return f"Add structured data (schema.org JSON-LD). {have} of the {pages} have it."
-    if name == "links":
-        yours = _display("links", mine, raw)
-        theirs = _display("links", target, None)
-        return f"Link to more related pages. You have {yours} links. The {pages} have about {theirs}."
+        return f"Add structured data (schema.org JSON-LD). {of_them} it." if not one else f"Add structured data (schema.org JSON-LD). {of_them}{' it' if have else ''}."
     return f"Close the gap on {FEATURE_TEXT.get(name, name)}."
 
 

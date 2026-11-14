@@ -754,6 +754,36 @@ def report_section(ui, project) -> dict:
     return data
 
 
+PAGE_QUERIES = 10
+
+
+def page_key(url: str) -> str:
+    """A page address compared loosely: no scheme, no www, no query or fragment, no trailing slash, lowercase host."""
+    parts = urlsplit(str(url or "").strip())
+    host = (parts.hostname or "").lower().removeprefix("www.")
+    path = parts.path.rstrip("/") or "/"
+    return f"{host}{path}"
+
+
+def page_data(ui, project, url: str) -> dict:
+    """Search Console numbers for one page and its top searches, from the stored snapshot (no network)."""
+    data = project_state(ui, project)
+    data["url"] = url
+    snapshot = load_snapshot(project)
+    if "range" not in data or not snapshot:
+        return data
+    key = page_key(url)
+    row = next((item for item in snapshot.get("pages") or [] if page_key(item["page"]) == key), None)
+    queries = sorted(
+        ({k: pair[k] for k in ("q", "clicks", "impressions", "ctr", "position")} for pair in snapshot.get("query_pages") or [] if page_key(pair["page"]) == key),
+        key=lambda item: (-item["impressions"], -item["clicks"], item["q"]),
+    )
+    data["page"] = {k: row[k] for k in ("page", "clicks", "impressions", "ctr", "position")} if row else None
+    data["page_queries"] = queries[:PAGE_QUERIES]
+    data["page_query_count"] = len(queries)
+    return data
+
+
 NEAR_MIN, NEAR_MAX = 8.0, 20.0
 OPPORTUNITY_LIMIT = 25
 # A rough typical click rate by position on page one (organic, desktop and mobile mixed). A benchmark for spotting
@@ -1061,6 +1091,13 @@ def register(app, ui) -> None:
         if project is None:
             return common._error(404, "No such project.")
         return JSONResponse(status_payload(request, project))
+
+    @app.get("/api/v1/gsc/projects/{slug}/page")
+    def gsc_page(slug: str, url: str = "") -> JSONResponse:
+        project = project_or_404(slug)
+        if project is None:
+            return common._error(404, "No such project.")
+        return JSONResponse(page_data(ui, project, url[:2000]))
 
     @app.get("/api/v1/gsc/projects/{slug}/properties")
     async def gsc_properties(slug: str) -> JSONResponse:

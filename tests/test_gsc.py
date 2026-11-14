@@ -883,3 +883,22 @@ def test_discovery_skips_rarely_seen_queries(tmp_path, env):
     rows = gsc.discovery_sources(project=_project(box), pages=[], ui=box.ui)
     assert [row["q"] for row in rows] == ["big search", "fifty search"]  # 1% of 5,000 is 50
     assert gsc.discovery_min_impressions(300) == 10 and gsc.discovery_min_impressions(5000) == 50 and gsc.discovery_min_impressions(5001) == 51
+
+
+def test_page_data_for_the_editor_panel(tmp_path, env):
+    box = _app(tmp_path)
+    _sign_in(box)
+    slug = box.project.slug
+    off = box.client.get(f"/api/v1/gsc/projects/{slug}/page", params={"url": "https://www.dirtcrew.example/pricing"}).json()
+    assert off["state"] == "off" and "page" not in off
+    query = _connect(box)
+    _callback(box, {"code": "good-code", "state": query["state"]})
+    data = box.client.get(f"/api/v1/gsc/projects/{slug}/page", params={"url": "http://dirtcrew.example/pricing/?utm=x#top"}).json()
+    assert data["state"] == "ready" and data["range"]["days"] == 28 and data["label"] == gsc.LABEL
+    assert data["page"] == {"page": "https://www.dirtcrew.example/pricing", "clicks": 50, "impressions": 900, "ctr": 0.0556, "position": 6.2}
+    assert [row["q"] for row in data["page_queries"]] == ["dirt work software", "heavy civil software"]
+    home = box.client.get(f"/api/v1/gsc/projects/{slug}/page", params={"url": "https://www.dirtcrew.example"}).json()
+    assert home["page"]["clicks"] == 70 and home["page_queries"][0]["q"] == "heavy civil software"
+    none = box.client.get(f"/api/v1/gsc/projects/{slug}/page", params={"url": "https://www.dirtcrew.example/new-page"}).json()
+    assert none["page"] is None and none["page_queries"] == []
+    assert gsc.page_key("HTTPS://WWW.Example.com/A/") == "example.com/A" and gsc.page_key("https://example.com") == "example.com/"

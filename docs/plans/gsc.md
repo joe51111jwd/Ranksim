@@ -192,6 +192,11 @@ phone width (390 px, no horizontal scroll), disconnect. No console errors.
   Google data). Automatic matching (first analysis, new projects) never picks a parent domain property; a project
   with no match is rechecked once a day. Parked first-analysis data older than an hour is deleted.
 
+- **Editor panel** (`registerEditorPanel`, key `gsc-page`, order 35): clicks, impressions, CTR, average position and
+  the top 10 searches for the page being edited, from `GET /api/v1/gsc/projects/{slug}/page?url=` (stored snapshot,
+  no network; pages matched without scheme, www, query or trailing slash). Labeled Google Search Console data with
+  the date range. Hidden when GSC is not ready.
+
 ## Known gaps
 
 - One Google account per Ranksim. A client whose property lives under a different Google account must add James's

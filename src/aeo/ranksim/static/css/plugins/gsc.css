@@ -49,3 +49,9 @@
 .gsc-details summary { cursor: pointer; font-size: 13.5px; font-weight: 550; color: var(--blue); }
 .gsc-details[open] summary { margin-bottom: 10px; }
 .gsc-details .gsc-uri-row { margin-top: 10px; }
+
+/* Editor panel */
+.gsc-panel-k { margin-bottom: 10px; }
+.gsc-panel-stats { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.gsc-panel-stats .gsc-stat b { font-size: 16px; }
+.gsc-panel-q { margin-top: 6px; }

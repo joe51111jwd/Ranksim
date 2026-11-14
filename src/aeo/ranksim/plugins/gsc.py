@@ -438,7 +438,7 @@ def revoke(ui) -> bool:
             break  # revoking either token ends the whole grant
     delete_account(ui)
     _ACCESS.clear()
-    shutil.rmtree(_pending_path(ui, "x").parent, ignore_errors=True)  # parked first-analysis data goes with the grant
+    shutil.rmtree(Path(ui.root) / "_plugins" / NAME / "pending", ignore_errors=True)  # parked first-analysis data goes with the grant
     return revoked
 
 
@@ -951,7 +951,7 @@ def _pending_path(ui, host: str) -> Path:
 
 def _prune_pending(ui) -> None:
     """Parked first-analysis data older than PENDING_SECONDS is deleted (an analysis that stopped never adopts it)."""
-    folder = _pending_path(ui, "x").parent
+    folder = Path(ui.root) / "_plugins" / NAME / "pending"  # read only: never creates the folder
     if not folder.is_dir():
         return
     for path in folder.glob("*.json"):
@@ -1051,7 +1051,7 @@ def discovery_sources(*, project, pages=None, ui=None) -> list[dict]:
     site's first analysis (no project yet), when Google is connected and a property covers the site."""
     if ui is None:
         return []
-    if not getattr(ui, "public_demo", False):
+    if not getattr(ui, "public_demo", False) and getattr(ui, "root", None):
         _prune_pending(ui)
     if project is None:
         snapshot = _first_analysis_snapshot(ui, pages)

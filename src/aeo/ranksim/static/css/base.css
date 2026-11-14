@@ -418,3 +418,4 @@ ol.serp { list-style: none; margin: 0; padding: 0; }
   .tile-head:has(> div:last-child:not(:first-child)) > h2 { flex: 1 1 100%; }
 }
 .backtest-quiet .tile-sub { font-size: 13px; line-height: 1.5; }
+.skeleton .sk-building { margin: -6px 2px 14px; font-size: 14px; color: var(--ink-2); }

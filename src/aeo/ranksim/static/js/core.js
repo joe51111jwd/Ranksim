@@ -2,7 +2,7 @@
    building blocks every screen uses. No screen code lives here. Every number on screen comes from /api/v1.
    Predicted positions are model estimates among stored pages, never a Google rank. */
 
-import { call, screen } from './hooks.js';
+import { call, screen, screenNotices, renderAll } from './hooks.js';
 
 export const CSRF = (document.getElementById('csrf') || {}).value || '';
 export const MODE = document.documentElement.dataset.mode || 'local';
@@ -453,10 +453,13 @@ export function footer() {
 
 /* The standard screen: a heading, an optional line under it, optional actions on the right, then the body. */
 export function page(title, sub, actions, ...body) {
+  const key = S.screen || '';
+  const notices = renderAll(screenNotices(key), { screen: key, report: S.report, project: S.project, slug: S.slug });
   return h('div', { class: 'wrap screen' },
     h('div', { class: 'head' },
       h('div', null, h('h1', { text: title }), sub ? h('p', { class: 'sub', text: sub }) : null),
       actions ? h('div', { class: 'actions' }, actions) : null),
+    notices.length ? h('div', { class: 'notices', role: 'status' }, notices) : null,
     body);
 }
 

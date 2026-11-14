@@ -54,3 +54,22 @@ test('the same key in different registries never collides', async () => {
   const seen = warnings(() => H.registerOverviewTile({ key: 'share', order: 60, render: () => null }));
   assert.deepEqual(seen, []);
 });
+
+test('screen notices: per screen and for every screen, in order, and a throwing render is skipped', async () => {
+  const H = await fresh();
+  H.registerScreenNotice({ key: 'moved', screen: 'searches', order: 20, render: (ctx) => `moved on ${ctx.screen}` });
+  H.registerScreenNotice({ key: 'everywhere', order: 10, render: () => 'all screens' });
+  H.registerScreenNotice({ key: 'broken', screen: 'searches', order: 30, render: () => { throw new Error('boom'); } });
+  assert.deepEqual(H.screenNotices('searches').map((n) => n.key), ['everywhere', 'moved', 'broken']);
+  assert.deepEqual(H.screenNotices('overview').map((n) => n.key), ['everywhere']);
+  const keep = console.error;
+  const errors = [];
+  console.error = (...args) => errors.push(args.join(' '));
+  try {
+    assert.deepEqual(H.renderAll(H.screenNotices('searches'), { screen: 'searches' }), ['all screens', 'moved on searches']);
+  } finally {
+    console.error = keep;
+  }
+  assert.equal(errors.length, 1);
+  assert.match(errors[0], /broken render failed/);
+});

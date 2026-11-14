@@ -114,6 +114,12 @@
      Optional when(report): the column shows only when it returns true. A false or throwing when() hides the column
      (use it for data that may not exist yet, for example Search Console before it is connected).
 
+   registerScreenNotice({ key, order, screen, render(ctx) })
+     Adds a short notice at the top of a screen, under its heading (for example "2 searches moved up since your last
+     visit" on Searches). `screen` is a screen key ('searches', 'overview', a plugin screen...), or '*' for every
+     screen. render(ctx) returns a Node (use <div class="callout info">), an array, or null for nothing.
+     ctx = { screen, report, project, slug }. Notices show on every screen built with page() from core.js.
+
    ---------------------------------------------------------------- events
 
    on(name, fn) listens and returns a function that stops listening. call(name, ctx) runs every listener and returns
@@ -127,6 +133,8 @@
      'editor-caret'   editor ctx  when the cursor moves in the preview (the block toolbar follows it).
      'test-finished'  { run, search, url, page, html, editor }  after Test changes returns. run is the API answer;
                       editor is the editor ctx, or null if the person already left the editor.
+     'publish-fixes'  collect('publish-fixes', editorCtx) -> [{ id, title }], the issues fixed in this draft,
+                      answered by the audit plugin and read by the Publish sheet.
 
    ---------------------------------------------------------------- frozen module exports
 
@@ -237,7 +245,8 @@ const PANELS = registry('editor panel');
 const TOOLS = registry('editor tool');
 const SECTIONS = registry('settings section');
 const COLUMNS = registry('search column');
-const REGISTRIES = [SCREENS, TILES, PANELS, TOOLS, SECTIONS, COLUMNS];
+const NOTICES = registry('screen notice');
+const REGISTRIES = [SCREENS, TILES, PANELS, TOOLS, SECTIONS, COLUMNS, NOTICES];
 
 export function registerScreen(key, { label, nav = true, order = 100, render }) {
   if (!/^[a-z0-9][a-z0-9_-]{0,39}$/.test(String(key))) {
@@ -269,7 +278,13 @@ export function registerSearchColumn(spec) {
   return COLUMNS.add(spec);
 }
 
+export function registerScreenNotice(spec) {
+  return NOTICES.add({ screen: '*', ...spec });
+}
+
 export const screens = () => SCREENS.list();
+/* The notices for one screen key, in order: those registered for that screen and those for every screen ('*'). */
+export const screenNotices = (key) => NOTICES.list().filter((entry) => entry.screen === '*' || entry.screen === key);
 export const screen = (key) => SCREENS.get(key);
 export const overviewTiles = () => TILES.list();
 export const editorPanels = () => PANELS.list();

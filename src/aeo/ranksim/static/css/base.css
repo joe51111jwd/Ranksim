@@ -404,3 +404,6 @@ ol.serp { list-style: none; margin: 0; padding: 0; }
   .bar-inner > span:empty { display: none; }
 }
 @media (prefers-reduced-motion: reduce) { .skeleton .sk-row { animation: none; } }
+
+/* screen notices (registerScreenNotice): short lines under a screen's heading */
+.notices { display: grid; gap: 8px; margin: 0 0 14px; }

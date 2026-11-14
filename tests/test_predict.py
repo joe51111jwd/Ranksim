@@ -184,7 +184,7 @@ def test_confidence_labels():
     clearer = confidence(0.7, 40)
     assert clearer["label"] == CLEARER and clearer["backtest_pairs"] == 40
     for case in (near, clearer):
-        assert "accura" not in case["text"].lower()
+        assert "accura" not in case["text"].lower().replace("not accuracy", "")
         assert "backtest" in case["text"].lower()
 
 
@@ -207,7 +207,7 @@ def test_nothing_in_the_test_output_calls_a_backtest_accuracy(ctx):
         lowered = text.lower().replace("not accuracy", "")
         assert "accuracy" not in lowered, path
         assert "—" not in text and "–" not in text, path  # no em or en dashes
-    assert "Not accuracy" in out["backtest_note"]
+    assert "not accuracy" in out["backtest_note"].lower()
 
 
 def test_committed_eval_never_labels_training_as_accuracy():
@@ -373,3 +373,14 @@ def test_report_rows_carry_confidence_and_no_misleading_position():
             pred = row["predicted"]
             assert pred["position"] is None and pred["method"] == "persistence"
             assert pred["confidence"] in {"CLEARER", "UNSURE"} and "query_pairs" in pred
+
+
+def test_a_search_with_no_stored_pages_gets_no_estimate(ctx):
+    by = ctx.google.by_search()
+    by["hcss alternative"] = SimpleNamespace(results=[])  # never checked
+    ctx.pages = {url: doc for url, doc in ctx.pages.items() if "site" not in url or "-1/" not in url}
+    out = predict_service.test_searches(ctx, page("hcss alternative", "hcss alternative", 300, body_terms="hcss alternative"), "https://ours.example/new", searches=["hcss alternative"])
+    row = out["searches"][0]
+    assert row["method"] == "no estimate" and row["with_edit"] is None and row["slot_with_edit"] is None
+    assert "not been checked" in row["method_text"]
+    assert row["confidence"]["label"] == UNSURE

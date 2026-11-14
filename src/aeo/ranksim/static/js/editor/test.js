@@ -29,10 +29,12 @@ function testTile(ctx) {
     history.replaceState({}, '', pathFor('editor', { page: ED.refs.page, q: qSelect.value }));
     renderEditor();
   });
-  const row = R.rankings.find((item) => item.q === q) || {};
-  const mine = row.url && looseKey(row.url) === looseKey(draft.url);
+  let row = R.rankings.find((item) => item.q === q) || {};
+  const self = (row.top || []).find((item) => looseKey(item.url) === looseKey(draft.url));
+  const mine = !!self || (row.url && looseKey(row.url) === looseKey(draft.url));
+  if (self && !(row.url && looseKey(row.url) === looseKey(draft.url))) row = Object.assign({}, row, { position: self.position, url: self.url, predicted: null });
   const standing = !row.checked ? 'No Google results for this search yet.'
-    : mine && row.position ? `This page is #${row.position} on Google${row.predicted && row.predicted.position ? `; the model puts it #${row.predicted.position} of ${row.predicted.of}` : ''}.`
+    : mine && row.position ? `This page is #${row.position} on Google${row.predicted && row.predicted.position ? `. PREDICTED #${row.predicted.position} of ${row.predicted.of} (${row.predicted.confidence || 'UNSURE'})` : ''}.`
       : row.position ? `${R.name} is #${row.position} with ${pathOf(row.url)}. This page is tested as a new entry.` : 'Not in the top 10 yet. This page is tested against the pages that are.';
   const testBtn = h('button', { class: 'btn btn-primary btn-large btn-block', type: 'button', id: 'test-btn', disabled: testing || !draft.text || draft.loading, onClick: runTest }, testing ? [h('span', { class: 'spinner', 'aria-hidden': 'true' }), 'Testing'] : 'Test changes');
   tile.append(h('div', { class: 'tile-k', text: 'Test against the search' }), h('label', { class: 'select select-block' }, qSelect, icon('chevron', 'chev')), h('p', { class: 'tile-sub', text: standing }),
@@ -146,8 +148,8 @@ export function renderResult(run, animate) {
     h('h2', { class: `verdict ${verdict.cls}`, text: verdict.text }));
   if (after.position != null) {
     const ranks = h('div', { class: 'ranks' });
-    if (before && before.position != null) ranks.append(h('div', { class: 'rank-box before' }, h('span', { class: 'k', text: 'Now' }), h('span', { class: 'n', text: `#${before.position}` }), h('span', { class: 'of', text: `of ${before.of}` })), icon('arrow', 'arrow'));
-    ranks.append(h('div', { class: 'rank-box after' }, h('span', { class: 'k', text: 'With your edit' }), h('span', { class: 'n', text: `#${after.position}` }), h('span', { class: 'of', text: `of ${after.of}` })));
+    if (before && before.position != null) ranks.append(h('div', { class: 'rank-box before' }, h('span', { class: 'k', text: before.google ? 'Now on Google' : 'Now, PREDICTED' }), h('span', { class: 'n', text: `#${before.position}` }), h('span', { class: 'of', text: `of ${before.of}` })), icon('arrow', 'arrow'));
+    ranks.append(h('div', { class: 'rank-box after' }, h('span', { class: 'k', text: 'With your edit, PREDICTED' }), h('span', { class: 'n', text: `#${after.position}` }), h('span', { class: 'of', text: `of ${after.of}` })));
     head.append(ranks);
   }
   head.append(h('p', { class: 'reason', text: reasonOf(run) }), h('p', { class: 'caveat', text: 'Among the pages that rank for this search today. A prediction, not a Google ranking.' }));
@@ -238,7 +240,7 @@ function detailsTile(run) {
     fb ? h('thead', null, h('tr', null, h('th', { text: '' }), h('th', { text: 'Now' }), h('th', { text: 'Edit' }))) : null,
     h('tbody', null, rows.map(([label, key]) => h('tr', null, h('th', { text: label }), fb ? h('td', { text: fmt(fb[key]) }) : null, h('td', { class: fb && fmt(fa[key]) !== fmt(fb[key]) ? 'changed' : null, text: fmt(fa[key]) })))));
   const notes = h('div', { class: 'note-list' });
-  if (run.query_pairwise != null) notes.append(h('p', { text: `On this search the model ordered ${pct(run.query_pairwise)} of ${plural(run.query_pairs || 0, 'page pair')} right when held out. 50% is a coin flip.` }));
+  if (run.query_pairwise != null) notes.append(h('p', { class: 'caveat', text: `Backtest on this snapshot, not accuracy: ${pct(run.query_pairwise)} of ${plural(run.query_pairs || 0, 'page pair')} in order on this search when it was held out. 50% is a coin flip.` }));
   if (run.topic_after && run.topic_after.missing && run.topic_after.missing.length) notes.append(h('p', { text: `Words the ranking pages use that yours doesn't: ${run.topic_after.missing.join(', ')}.` }));
   for (const note of run.notes || []) notes.append(h('p', { text: note }));
   notes.append(h('p', { text: run.saved ? 'Saved to this site\'s test history.' : 'Not saved.' }));

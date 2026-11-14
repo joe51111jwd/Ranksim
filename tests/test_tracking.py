@@ -136,7 +136,7 @@ def test_counter_counts_calls_and_persists_in_the_projects_folder(tmp_path):
     assert budget.claim("b") == "call"
     again = tracking.Budget(tmp_path, cap=3, clock=Clock())  # a new process reads the same file
     assert again.used() == 2 and again.remaining() == 1
-    assert (tmp_path / "usage.json").is_file()
+    assert again.own_path().is_file() and again.own_path().parent == tmp_path / "usage" / "2026-11"
     assert again.claim("c") == "call"
     verdict = again.claim("d")
     assert verdict.startswith("monthly search cap reached: 3 of 3 searches used in November 2026")
@@ -305,8 +305,10 @@ def test_counter_errors_never_sink_a_pull(tmp_path):
     assert google.calls == []  # fails closed: no paid request without a working counter
     assert all("search counter could not be read" in item.error for item in proj.latest_google(project).searches)
     budget = tracking.Budget(tmp_path / "junk", cap=5, clock=Clock())
-    budget.path.parent.mkdir(parents=True)
-    budget.path.write_text(json.dumps({"months": {"2026-11": {"searches": "lots", "reused": None}}}))
+    budget.legacy_path.parent.mkdir(parents=True)
+    budget.legacy_path.write_text(json.dumps({"months": {"2026-11": {"searches": "lots", "reused": None}}}))
+    budget.month_dir().mkdir(parents=True)
+    (budget.month_dir() / "other.json").write_text("{not json")
     assert budget.used() == 0 and budget.claim("x") == "call"
 
 
@@ -314,10 +316,49 @@ def test_counter_never_goes_back_when_storage_swaps_in_an_older_file(tmp_path):
     budget = tracking.Budget(tmp_path, cap=10, clock=Clock())
     for _ in range(3):
         budget.claim("x")
-    budget.path.write_text(json.dumps({"months": {"2026-11": {"searches": 1}}}))  # an older cloud version
+    budget.own_path().write_text(json.dumps({"searches": 1}))  # an older cloud version of this instance's own file
     assert budget.used() == 3
     budget.claim("y")
-    assert json.loads(budget.path.read_text())["months"]["2026-11"]["searches"] == 4
+    assert json.loads(budget.own_path().read_text())["searches"] == 4
+
+
+def test_two_instances_never_undercount_and_the_cap_sees_both(tmp_path):
+    a = tracking.Budget(tmp_path, cap=5, clock=Clock(), instance="aaaa")
+    b = tracking.Budget(tmp_path, cap=5, clock=Clock(), instance="bbbb")
+    assert a.claim("x") == "call" and a.claim("y") == "call"
+    assert b.claim("x") == "call" and b.claim("y") == "call"
+    assert a.used() == 4 and b.used() == 4
+    assert a.claim("z") == "call"
+    assert b.claim("z").startswith("monthly search cap reached: 5 of 5")
+    files = sorted(path.name for path in (tmp_path / "usage" / "2026-11").iterdir())
+    assert files == ["aaaa.json", "bbbb.json"]  # each instance writes only its own file, so a file merge keeps both
+    assert json.loads((tmp_path / "usage" / "2026-11" / "aaaa.json").read_text())["searches"] == 3
+    assert json.loads((tmp_path / "usage" / "2026-11" / "bbbb.json").read_text())["capped"] == 1
+
+
+def test_phase_b_usage_file_still_counts_and_health_takes_the_newest(tmp_path):
+    (tmp_path / "usage.json").write_text(json.dumps({"months": {"2026-11": {"searches": 7}, "2026-10": {"searches": 99}}, "last_ok_at": "2026-11-01T00:00:00+00:00"}))
+    clock = Clock()
+    a = tracking.Budget(tmp_path, cap=50, clock=clock, instance="aaaa")
+    b = tracking.Budget(tmp_path, cap=50, clock=clock, instance="bbbb")
+    a.claim("x")
+    assert a.used() == 8  # 7 from the old single file plus this instance; October does not count in November
+    clock.moment = NOW + timedelta(minutes=1)
+    b.record(ok=False, error="HTTP 429")
+    data = a.usage()
+    assert data["last_error"] == "HTTP 429" and tracking._healthy(data) is False
+    clock.moment = NOW + timedelta(minutes=2)
+    a.record(ok=True)
+    assert tracking._healthy(b.usage()) is True
+
+
+def test_old_month_folders_are_pruned(tmp_path):
+    for month in range(1, 13):
+        (tmp_path / "usage" / f"2025-{month:02d}").mkdir(parents=True)
+    (tmp_path / "usage" / "notes").mkdir()
+    tracking.Budget(tmp_path, cap=5, clock=Clock()).claim("x")
+    kept = sorted(path.name for path in (tmp_path / "usage").iterdir())
+    assert kept == ["2025-12", "2026-11", "notes"]  # a year back is dropped; other names are left alone
 
 
 def test_pull_over_cap_carries_or_refuses(tmp_path):
@@ -884,7 +925,7 @@ def test_cron_is_login_exempt_in_the_real_app_and_nothing_else_is(tmp_path, monk
 
 def test_budget_lives_in_the_workspace_plugin_folder(tmp_path):
     client, ui = _client(tmp_path)
-    assert ui.pull_options["budget"].path == ui.root / "_plugins" / "tracking" / "usage.json"
+    assert ui.pull_options["budget"].folder == ui.root / "_plugins" / "tracking"
 
 
 def test_synthetic_demo_history_is_never_called_real(tmp_path):
@@ -908,21 +949,28 @@ def test_trend_rows_are_dated_by_their_checks_not_the_file(tmp_path):
     assert history["last_at"][:10] == "2026-11-10" and history["first_at"][:10] == "2026-10-01"
 
 
-def test_after_pull_saves_the_counter_once_when_it_changed(tmp_path, monkeypatch):
-    from aeo.ranksim import plugins
-
+def test_after_pull_saves_only_the_counter_object_once_when_it_changed(tmp_path, monkeypatch):
     ui = _ui(tmp_path)
     budget = tracking.install_budget(ui)
-    saves: list[int] = []
-    monkeypatch.setattr(plugins, "save", lambda ui_: saves.append(1) or True)
+    saves: list[str] = []
+    ui.cloud = SimpleNamespace(enabled=True, save=lambda: saves.append("everything"), save_project=lambda slug: saves.append(slug))
     monkeypatch.setattr(tracking, "_SAVED_USAGE_MTIME", None)
     tracking.after_pull(project=None, report=None, ui=ui)
     assert saves == []  # nothing counted yet
     budget.claim("x")
     tracking.after_pull(project=None, report=None, ui=ui)
     tracking.after_pull(project=None, report=None, ui=ui)
-    assert saves == [1]
+    assert saves == ["_plugins"]  # one small object; the Studio pull's own save then finds it unchanged
     ui.public_demo = True
     budget.claim("y")
     tracking.after_pull(project=None, report=None, ui=ui)
-    assert saves == [1]
+    assert saves == ["_plugins"]
+
+
+def test_recheck_saves_only_what_it_touched(tmp_path):
+    ui = _ui(tmp_path, serper_api_key="fake-serper")
+    saves: list[str] = []
+    ui.cloud = SimpleNamespace(enabled=True, refresh=lambda force=False: None, save=lambda: saves.append("everything"), save_project=lambda slug: saves.append(slug))
+    _project(ui.root, slug="p", searches=["one"])
+    tracking.recheck(ui, now=NOW, run_pull=lambda *_: {}, limit_seconds=600)
+    assert saves == ["p", "p", "_plugins"]  # the attempt marker before paying, then the result and the counter

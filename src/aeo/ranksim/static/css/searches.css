@@ -11,6 +11,8 @@
 .srow .c-num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .srow .p { font-size: 17px; font-weight: 650; letter-spacing: -0.03em; }
 .srow .pred { font-size: 14px; font-weight: 550; color: var(--blue); }
+.srow .pred.unsure { font-size: 12px; font-weight: 550; color: var(--ink-3); letter-spacing: 0.02em; }
+.sgrid .num.unsure { font-size: 22px; color: var(--ink-3); }
 .srow .none { font-size: 13px; font-weight: 500; color: var(--ink-3); letter-spacing: 0; }
 .srow .c-source, .srow .c-page { font-size: 13px; color: var(--ink-2); white-space: nowrap; }
 .srow .c-page { min-width: 0; }

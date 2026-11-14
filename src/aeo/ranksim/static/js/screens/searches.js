@@ -57,6 +57,28 @@ function pageCell(row, report) {
   return h('span', { class: 'c-page one-line', role: 'cell', title: best.fromGsc ? `${best.url} (from Search Console)` : best.url, text: pathOf(best.url) });
 }
 
+/* How to show a row's PREDICTED position honestly. A prediction marked anything but CLEARER shows as UNSURE in gray;
+   the backtest pair count goes in the tooltip; a missing prediction (null) shows nothing. Works with and without the
+   confidence fields. */
+export function predictionView(row) {
+  const p = row && row.predicted;
+  if (!p || p.position == null) {
+    return { text: '', unsure: false, tip: '', sub: row && row.position ? 'Already ranks: no prediction needed' : 'Needs a trained model' };
+  }
+  const graded = typeof p.confidence === 'string';
+  const unsure = graded && p.confidence.toUpperCase() !== 'CLEARER';
+  const pairs = Number.isFinite(p.query_pairs) ? p.query_pairs : null;
+  const acc = Number.isFinite(p.query_pairwise) ? `${Math.round(p.query_pairwise * 100)}%` : null;
+  const backtest = pairs != null ? `Backtest: ${acc ? `${acc} of ` : ''}${plural(pairs, 'pair')} ordered right` : '';
+  const tip = [`PREDICTED #${p.position}${p.of ? ` of ${p.of}` : ''}`, unsure ? 'UNSURE' : null, backtest || null, p.method ? `Method: ${p.method}` : null].filter(Boolean).join('. ');
+  return {
+    text: unsure ? 'UNSURE' : `#${p.position}`,
+    unsure,
+    tip,
+    sub: unsure ? `Guess #${p.position}${p.of ? ` of ${p.of}` : ''}, not reliable yet` : (p.of ? `of ${p.of} stored pages` : 'PREDICTED'),
+  };
+}
+
 function openInEditor(row) {
   closeSheet(true);
   const best = bestPage(row, S.report);
@@ -89,12 +111,12 @@ export function renderSearches() {
   const rows = R.rankings.slice().sort((a, b) => (a.position || 99) - (b.position || 99) || a.q.localeCompare(b.q));
   for (const row of rows) {
     const item = known.get(row.q);
-    const predicted = row.predicted && row.predicted.position != null ? `#${row.predicted.position}` : '';
+    const pv = predictionView(row);
     table.append(h('div', { class: 'srow', role: 'row' },
       h('button', { class: 'c-q qrow', type: 'button', role: 'cell', onClick: () => openSearch(row) }, h('span', { class: 'q', text: row.q })),
       h('span', { class: `c-num p${row.position ? '' : ' none'}`, role: 'cell', text: row.position ? `#${row.position}` : row.checked ? 'Not top 10' : 'Not checked' }),
       columns.map((column) => columnCell(column, row)),
-      h('span', { class: `c-num pred${predicted ? '' : ' none'}`, role: 'cell', title: predicted ? `PREDICTED of ${row.predicted.of}` : '', text: predicted || '' }),
+      h('span', { class: `c-num pred${pv.text ? '' : ' none'}${pv.unsure ? ' unsure' : ''}`, role: 'cell', title: pv.tip, text: pv.text }),
       h('span', { class: 'c-intent', role: 'cell' }, intentChip(item)),
       h('span', { class: 'c-source', role: 'cell', text: sourceText(item) }),
       pageCell(row, R),
@@ -153,10 +175,10 @@ export function openSearch(row) {
     const sub = [item ? INTENT_LABEL[item.intent] : null, item ? sourceText(item) : null].filter(Boolean).join(' · ');
     sheet.append(h('div', { class: 'sheet-head' }, h('div', null, h('h2', { text: row.q }), sub ? h('div', { class: 'sub', text: sub }) : null), closeBtn));
     const body = h('div', { class: 'sheet-body' });
-    const predicted = row.predicted && row.predicted.position != null ? row.predicted : null;
+    const pv = predictionView(row);
     body.append(h('div', { class: 'sgrid' },
       h('div', { class: 'tile white' }, h('div', { class: 'tile-k', text: 'Google' }), h('div', { class: 'num', text: row.position ? `#${row.position}` : '-' }), h('div', { class: 'tile-sub', text: row.position ? 'Your position' : row.checked ? 'Not in the top 10' : 'Not checked yet' })),
-      h('div', { class: 'tile white' }, h('div', { class: 'tile-k', text: 'PREDICTED' }), h('div', { class: 'num', text: predicted ? `#${predicted.position}` : '-' }), h('div', { class: 'tile-sub', text: predicted ? `of ${predicted.of} stored pages` : 'Needs a trained model' }))));
+      h('div', { class: 'tile white' }, h('div', { class: 'tile-k', text: 'PREDICTED' }), h('div', { class: `num${pv.unsure ? ' unsure' : ''}`, text: pv.text || '-' }), h('div', { class: 'tile-sub', text: pv.sub }))));
     const best = bestPage(row, S.report);
     if (best.url) body.append(h('p', { class: 'reason', text: best.fromGsc ? `Best page: ${pathOf(best.url)} (from Search Console)` : `Best page: ${pathOf(best.url)}` }));
     if (row.top && row.top.length) body.append(h('div', { class: 'tile' }, h('div', { class: 'tile-head' }, h('h2', { text: 'Top 10 on Google' })), serpList(row.top)));

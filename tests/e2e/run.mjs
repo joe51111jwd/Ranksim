@@ -413,6 +413,82 @@ try {
     await audit(page, 'desktop-11c-applied');
   });
 
+  await step('audit-details', async () => {
+    const issues = `/app/${encodeURIComponent(slug)}/issues`;
+    await goto(page, issues);
+    await page.waitForSelector('.issue-controls');
+    await page.locator('.issue-controls .seg button').filter({ hasText: 'High' }).click();
+    const dots = await page.$$eval('.rowcard .dot', (list) => list.map((d) => d.className));
+    expect(dots.length && dots.every((c) => /high/.test(c)), `High shows only high issues: ${dots.join(',')}`);
+    await page.locator('.issue-controls .seg button').filter({ hasText: 'All' }).click();
+    await page.locator('.issue-controls button').filter({ hasText: 'By search' }).click();
+    const heads = await page.$$eval('.bento section.tile h2', (list) => list.map((el) => el.textContent.trim()));
+    expect(heads.length && heads.every((t) => /^["\u201c]/.test(t) || /Not tied to a search/.test(t)), `By search headings: ${heads.join(' | ')}`);
+    await page.locator('.issue-controls button').filter({ hasText: 'By page' }).click();
+    // 2. the sheet for an issue with an element
+    const h1Row = () => page.locator(SEL.issueRow).filter({ has: page.locator('.issue-tag', { hasText: '<h1>' }) }).first();
+    await h1Row().click();
+    await page.waitForSelector('.sheet.open .issue-element code.issue-selector');
+    const sheetText = await page.innerText('.sheet.open');
+    expect(/What to do/.test(sheetText), 'the issue sheet says what to do');
+    const title = (await page.innerText('.sheet.open .sheet-head h2')).trim();
+    // 3 and 4. Fix in editor, open another comment, come back and Fix in editor again
+    for (let round = 0; round < 2; round += 1) {
+      await page.click(SEL.fixInEditor);
+      await page.waitForURL(/focus=/);
+      await page.waitForSelector('.annot-item.open', { timeout: SLOW });
+      const frame = page.frameLocator(SEL.editorFrame);
+      await frame.locator('[data-rs-pick]').first().waitFor({ timeout: SLOW });
+      expect((await frame.locator('[data-rs-annotations="active"]').count()) === 1, 'exactly one active element');
+      expect((await frame.locator('[data-rs-pin]').count()) >= 1, 'pins are drawn');
+      expect((await page.innerText('.annot-item.open .annot-title')).trim() === title, 'the open comment is the issue');
+      if (round === 0) {
+        await page.locator('.annot-item:not(.open) .annot-head').first().click();
+        await page.click(SEL.navLink('Issues'));
+        await page.waitForSelector(SEL.issueRow);
+        await h1Row().click();
+        await page.waitForSelector(SEL.fixInEditor);
+      }
+    }
+    // 5. mode toggle closes comments and draws pins again
+    await page.locator('.annot-item.open .annot-head').click();
+    await page.locator('button:has-text("HTML")').first().click();
+    // 7. nothing leaks into the code view
+    const code = await page.locator('textarea.code').first().inputValue();
+    expect(!/data-rs/.test(code), 'the HTML view has no data-rs');
+    await page.locator('button:has-text("Visual")').first().click();
+    await page.frameLocator(SEL.editorFrame).locator('[data-rs-pin]').first().waitFor({ timeout: SLOW });
+    expect((await page.locator('.annot-item.open').count()) === 0, 'no comment is open after a mode change');
+    await audit(page, 'desktop-11d-audit-editor');
+  });
+
+  await step('audit-fix-top', async () => {
+    await goto(page, `/app/${encodeURIComponent(slug)}/issues`);
+    const button = page.locator('button.fix-top').first();
+    await button.waitFor();
+    const n = Number(((await button.innerText()).match(/\d+/) || ['0'])[0]);
+    await button.click();
+    await page.waitForSelector('.fix-list');
+    const rows = await page.locator('.fix-row').count();
+    expect(n && rows === n, `the review lists ${n} changes, got ${rows}`);
+    if (rows > 1) {
+      await page.locator('.fix-row input[type=checkbox]').last().uncheck();
+      const label = (await page.innerText('.fix-actions button')).trim();
+      expect(new RegExp(`${rows - 1} change`).test(label), `the apply button counts the checked rows: ${label}`);
+    }
+    await audit(page, 'desktop-07c-fix-top-review');
+    const tests = [];
+    const onRequest = (r) => { if (/\/api\/v1\/projects\/[^/]+\/test$/.test(r.url()) && r.method() === 'POST') tests.push(r.postData() || ''); };
+    page.on('request', onRequest);
+    await page.locator('.fix-actions button').click();
+    await page.waitForSelector('.sheet', { state: 'detached', timeout: SLOW });
+    await page.waitForSelector('.result, .verdict', { timeout: SLOW });
+    page.off('request', onRequest);
+    expect((await page.locator('.annot-done').count()) === Math.max(1, rows - 1), 'the applied comments are marked Applied');
+    expect(tests.length && tests.every((body) => !/data-rs/.test(body)), 'the Test changes draft has no data-rs');
+    await audit(page, 'desktop-11e-fix-top-result');
+  });
+
   await step('editor-test', async () => {
     const pageUrl = `https://${SITE}/dirt-work-software/`;
     await goto(page, `/app/${encodeURIComponent(slug)}/editor?page=${encodeURIComponent(pageUrl)}&q=${encodeURIComponent(SEARCHES[0])}`);
@@ -447,7 +523,7 @@ try {
     expect(/Up|Down|New|Lost|Changes show|Positions show/.test(text), `Rank changes tile has content: ${text.slice(0, 120)}`);
     await goto(page, `/app/${encodeURIComponent(slug)}/searches`);
     await page.waitForSelector(SEL.searchRow);
-    expect(/Trend|Since last visit/.test(await page.innerText('main')), 'the Searches list has the track column');
+    expect(/Since last visit|Trend/.test(await page.innerText('main')), 'the Searches list has the rank history column');
     expect((await page.locator('.history-cell').count()) >= 1, 'a sparkline cell per checked search');
     await goto(page, `/app/${encodeURIComponent(slug)}/track-history`);
     await page.waitForSelector(SEL.historyRow);
@@ -685,6 +761,19 @@ try {
       }
     });
   }
+
+  await step('phone-issue-sheet', async () => {
+    for (const width of [390, 360]) {
+      await mobile.setViewportSize({ width, height: 844 });
+      await goto(mobile, `/app/${encodeURIComponent(slug)}/issues`);
+      await mobile.waitForSelector(SEL.issueRow);
+      await mobile.locator(SEL.issueRow).first().click();
+      await mobile.waitForSelector('.sheet.open');
+      await audit(mobile, `phone-${width}-issue-sheet`);
+      await mobile.keyboard.press('Escape');
+    }
+    await mobile.setViewportSize({ width: 390, height: 844 });
+  });
 
   await step('phone-test-changes', async () => {
     const pageUrl = `https://${SITE}/dirt-work-software/`;

@@ -72,6 +72,8 @@ GRAPH_PATH = Path("smartcrew/linkgraph.json")
 MAX_UPLOAD_BYTES = 5 * 1024 * 1024
 FORM_OVERHEAD_BYTES = 64 * 1024
 MAX_URL_CHARS = 2048
+SECRET_ENV = ("RANKSIM_PASSWORD", "RANKSIM_SECRET", "BLOB_READ_WRITE_TOKEN", "GOOGLE_OAUTH_CLIENT_SECRET", "CRON_SECRET")
+WRITE_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})  # GuardMiddleware caps their bodies and refuses them cross-site
 MAX_SEARCHES = 200
 JOB_KEEP = 200
 SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,59}$")
@@ -460,9 +462,14 @@ class UiState:
         self._legacy_factory = legacy_factory
         self._legacy_lock = threading.Lock()
         self._contexts: dict[str, tuple[tuple, object]] = {}
+        self._demo_checked = False
         self._context_locks: dict[str, threading.Lock] = {}
         self._lock = threading.Lock()
         self._secrets = [str(getattr(settings, name)) for name in SECRET_FIELDS if getattr(settings, name, None)]
+        # Hosting secrets that are not provider settings: never echoed in an error, a job message or a log line either.
+        import os
+
+        self._secrets += [os.environ[name].strip() for name in SECRET_ENV if os.environ.get(name, "").strip()]
 
     # secrets never leave the process
     def scrub(self, text: str) -> str:
@@ -516,6 +523,28 @@ class UiState:
     def forget(self, slug: str) -> None:
         with self._lock:
             self._contexts.pop(slug, None)
+
+    def ensure_demo(self) -> None:
+        """Public demo only: build the synthetic demo the first time a request needs it, once per process.
+
+        Not at start, so a cold start that serves the shell, the session or an asset never trains (or imports
+        LightGBM). Concurrent first requests wait on the demo's project lock; one builds, the rest find it ready.
+        A failed build is logged and not retried automatically (as at start before); the demo button still can."""
+        if not self.public_demo or self._demo_checked:
+            return
+        from aeo.ranksim import workspace as ws
+
+        with self.jobs.project_lock(ws.DEMO_SLUG):
+            if self._demo_checked:
+                return
+            try:
+                if not ws.demo_ready(self.root):
+                    ws.load_synthetic_demo(self.root, self.settings, self.database)
+                    self.forget(ws.DEMO_SLUG)
+            except Exception as exc:  # noqa: BLE001 - the home page still offers the button
+                print(f"ranksim: synthetic demo not built: {type(exc).__name__}: {exc}", file=sys.stderr, flush=True)
+            finally:
+                self._demo_checked = True
 
     def llm_ready(self) -> bool:
         from aeo.ranksim.llm import openrouter_key
@@ -579,7 +608,14 @@ class GuardMiddleware:
                 message["headers"] = own + extra
             await send(message)
 
-        if scope.get("method") in {"POST", "PUT", "PATCH"}:
+        method = scope.get("method")
+        if method in WRITE_METHODS and headers.get(b"sec-fetch-site", b"").strip().lower() == b"cross-site":
+            # A browser marks a request another site started. The CSRF token every write checks is the same for every
+            # visitor (it is in the shell, which needs no login), so this refuses cross-site forms outright instead
+            # of relying on the SameSite cookie alone. Servers (a cron, a webhook) send no Sec-Fetch-Site header.
+            await _send_plain(send_with_headers, 403, "Cross-site requests are refused.")
+            return
+        if method in WRITE_METHODS:
             length = headers.get(b"content-length")
             if length is not None:
                 try:
@@ -744,6 +780,17 @@ def create_app(
     from aeo.ranksim import workspace_ui
 
     if ui.public_demo:
+        from aeo.ranksim.studio import NO_STATE_PREFIX, OPEN_EXACT, OPEN_PREFIX
+
+        @app.middleware("http")
+        async def _demo_on_first_use(request: Request, call_next):
+            # Every public instance builds its own copy of the synthetic demo, on the first request that may read it.
+            # The shell, the session and the assets never do, so a cold start answers them without training.
+            path = request.url.path
+            if not ui._demo_checked and not (path in OPEN_EXACT or path.startswith(OPEN_PREFIX + NO_STATE_PREFIX)):
+                await run_in_threadpool(ui.ensure_demo)
+            return await call_next(request)
+
         public_blocked = re.compile(r"^/(api/jobs|p/[^/]+/(advanced|test|results|versions|compare|engines|jobs|searches|import|pull)(/|$|\.))")
 
         @app.middleware("http")
@@ -757,15 +804,6 @@ def create_app(
 
     studio.register(app, ui)  # the Studio owns / and /app; the classic screens keep their paths
     workspace_ui.register(app, ui)
-    if ui.public_demo:
-        # Every public instance builds its own copy of the synthetic demo, so any instance can serve it.
-        from aeo.ranksim import workspace as ws
-
-        if not ws.demo_ready(ui.root):
-            try:
-                ws.load_synthetic_demo(ui.root, ui.settings, ui.database)
-            except Exception as exc:  # noqa: BLE001 - the home page still offers the button
-                print(f"ranksim: synthetic demo not built at start: {type(exc).__name__}: {exc}", file=sys.stderr, flush=True)
 
     # -- the full project page (pull log, keys, page tester), kept as Advanced ---------
 

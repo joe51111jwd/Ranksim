@@ -75,16 +75,26 @@ export function unstash(root) {
    the preview or a plugin and is dropped. */
 const KEEP = new Set([ID, 'data-rs-faq', 'data-rs-faq-ld']);
 
+/* The data-rs-* attribute names the page itself uses (a site may have its own data-rs-slide). Passed to
+   serializeDraft, they stay on the page's elements. */
+export function ownRsAttrs(base) {
+  const names = new Set();
+  for (const m of base.matchAll(/\s(data-rs-[a-z0-9_.:-]+)=/gi)) if (!KEEP.has(m[1].toLowerCase())) names.add(m[1].toLowerCase());
+  return names;
+}
+
 /* The draft held by a live preview document (or any parsed copy): preview-only nodes removed, stashed attributes
-   restored, plugin attributes dropped, ids kept. */
-export function serializeDraft(doc) {
+   restored, plugin attributes dropped (except the page's own, `own`), ids kept. */
+export function serializeDraft(doc, own = null) {
   const root = doc.documentElement.cloneNode(true);
   // Nodes the preview or a plugin added carry data-rs and no id; a page's own element that happens to use a data-rs
   // attribute has an id, and stays.
   root.querySelectorAll(`[data-rs]:not([${ID}])`).forEach((node) => node.remove());
   unstash(root);
   for (const el of [root, ...root.querySelectorAll('*')]) {
-    for (const attr of Array.from(el.attributes)) if (attr.name.startsWith('data-rs-') && !KEEP.has(attr.name)) el.removeAttribute(attr.name);
+    for (const attr of Array.from(el.attributes)) {
+      if (attr.name.startsWith('data-rs-') && !KEEP.has(attr.name) && !(own && own.has(attr.name) && el.hasAttribute(ID))) el.removeAttribute(attr.name);
+    }
   }
   return `${doctypeOf(doc)}${root.outerHTML}`;
 }

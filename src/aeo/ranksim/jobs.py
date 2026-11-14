@@ -56,8 +56,11 @@ _ID_RE = re.compile(r"^[A-Za-z0-9]{16,64}$")
 _ID_ALPHABET = string.ascii_letters + string.digits
 
 
-class JobPaused(Exception):
-    """Raised by work to stop at a checkpoint. The job becomes "paused" and resume() continues it."""
+class JobPaused(BaseException):
+    """Raised by work to stop at a checkpoint. The job becomes "paused" and resume() continues it.
+
+    A BaseException on purpose: crawl code catches Exception per host so one failing host never ends a pull, and a
+    pause must pass through that and stop the whole pull (pages fetched so far are already stored)."""
 
 
 def valid_job_id(job_id: object) -> bool:

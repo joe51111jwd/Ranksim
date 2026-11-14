@@ -1,0 +1,50 @@
+{
+ "escapedScript": {
+  "src": "<div id=w><p>one</p><script><!--\ndocument.write('<script src=\"a.js\"></script>');\ndocument.write('<span>x</span>');\n//--></script><p id=two>two</p></div>",
+  "base": "<html data-rs-id=\"x1\"><head data-rs-id=\"x2\"></head><body data-rs-id=\"x3\"><div data-rs-id=\"1\" id=\"w\"><p data-rs-id=\"2\">one</p><p data-rs-id=\"4\" id=\"two\">two</p></div></body></html>"
+ },
+ "headNoscript": {
+  "src": "<!doctype html><html><head><meta charset=utf-8><noscript><iframe src=\"https://www.googletagmanager.com/ns.html\"></iframe></noscript><title>My Title</title><meta name=description content=\"Desc\"><link rel=canonical href=\"https://x.test/\"></head><body><section id=a>A</section><section id=b>B</section></body></html>",
+  "base": "<!DOCTYPE html>\n<html data-rs-id=\"1\"><head data-rs-id=\"2\"><meta data-rs-id=\"3\" charset=\"utf-8\"><title data-rs-id=\"5\">My Title</title><meta data-rs-id=\"6\" name=\"description\" content=\"Desc\"><link data-rs-id=\"7\" rel=\"canonical\" href=\"https://x.test/\"></head><body data-rs-id=\"8\"><section data-rs-id=\"9\" id=\"a\">A</section><section data-rs-id=\"10\" id=\"b\">B</section></body></html>"
+ },
+ "misnested": {
+  "src": "<div id=w><b>1<p id=p>2</b>3</p></div>",
+  "base": "<html data-rs-id=\"x1\"><head data-rs-id=\"x2\"></head><body data-rs-id=\"x3\"><div data-rs-id=\"1\" id=\"w\"><b data-rs-id=\"2\">1</b><p data-rs-id=\"3\" id=\"p\"><b data-rs-id=\"2\">2</b>3</p></div></body></html>"
+ },
+ "foster": {
+  "src": "<div id=w><p id=p1>x</p><table id=t><tr><td>a</td></tr>Note:<tr><td>b</td></tr></table></div>",
+  "base": "<html data-rs-id=\"x1\"><head data-rs-id=\"x2\"></head><body data-rs-id=\"x3\"><div data-rs-id=\"1\" id=\"w\"><p data-rs-id=\"2\" id=\"p1\">x</p>Note:<table data-rs-id=\"3\" id=\"t\"><tbody data-rs-id=\"x4\"><tr data-rs-id=\"4\"><td data-rs-id=\"5\">a</td></tr><tr data-rs-id=\"6\"><td data-rs-id=\"7\">b</td></tr></tbody></table></div></body></html>"
+ },
+ "afterBody": {
+  "src": "<html><body><div id=a>A</div><div id=b>B</div>\n</body>\n</html>\nTrailing text\n",
+  "base": "<html data-rs-id=\"1\"><head data-rs-id=\"x1\"></head><body data-rs-id=\"2\"><div data-rs-id=\"3\" id=\"a\">A</div><div data-rs-id=\"4\" id=\"b\">B</div>\n\n\nTrailing text\n</body></html>"
+ },
+ "button": {
+  "src": "<div><button id=b1>a<button id=b2>b</button>c</button></div>",
+  "base": "<html data-rs-id=\"x1\"><head data-rs-id=\"x2\"></head><body data-rs-id=\"x3\"><div data-rs-id=\"1\"><button data-rs-id=\"2\" id=\"b1\">a<button data-rs-id=\"3\" id=\"b2\">b</button>c</button></div></body></html>"
+ },
+ "emptyTd": {
+  "src": "<table><tr><td><td>x</table>",
+  "base": "<html data-rs-id=\"x1\"><head data-rs-id=\"x2\"></head><body data-rs-id=\"x3\"><table data-rs-id=\"1\"><tbody data-rs-id=\"x4\"><tr data-rs-id=\"2\"><td data-rs-id=\"3\"></td><td data-rs-id=\"4\">x</td></tr></tbody></table></body></html>"
+ },
+ "jsHref": {
+  "src": "<a href=\"javascript:void(0)\" onclick=\"go()\">Buy</a>",
+  "base": "<html data-rs-id=\"x1\"><head data-rs-id=\"x2\"></head><body data-rs-id=\"x3\"><a data-rs-id=\"1\">Buy</a></body></html>"
+ },
+ "glued": {
+  "src": "<a id=one class=\"c\"href=\"/x\">L</a>",
+  "base": "<html data-rs-id=\"x1\"><head data-rs-id=\"x2\"></head><body data-rs-id=\"x3\"><a data-rs-id=\"1\" id=\"one\" class=\"c\" href=\"/x\">L</a></body></html>"
+ },
+ "streamed": {
+  "src": "<main><h1>H</h1><template id=\"P:1\"></template><p>after</p></main><div hidden id=\"S:1\">Loose <b>text</b></div>",
+  "base": "<html data-rs-id=\"x1\"><head data-rs-id=\"x2\"></head><body data-rs-id=\"x3\"><main data-rs-id=\"1\"><h1 data-rs-id=\"2\">H</h1>Loose <b data-rs-id=\"6\">text</b><p data-rs-id=\"4\">after</p></main></body></html>"
+ },
+ "strayP": {
+  "src": "<!doctype html><html><head><title>t</title></head><body><div><p>Hi</p></p><p>Bye</p></div></body></html>",
+  "base": "<!DOCTYPE html>\n<html data-rs-id=\"1\"><head data-rs-id=\"2\"><title data-rs-id=\"3\">t</title></head><body data-rs-id=\"4\"><div data-rs-id=\"5\"><p data-rs-id=\"6\">Hi</p><p data-rs-id=\"x1\"></p><p data-rs-id=\"7\">Bye</p></div></body></html>"
+ },
+ "quirks": {
+  "src": "<html><body><p>x<table><tr><td>y</td></tr></table></body></html>",
+  "base": "<html data-rs-id=\"1\"><head data-rs-id=\"x1\"></head><body data-rs-id=\"2\"><p data-rs-id=\"3\">x<table data-rs-id=\"4\"><tbody data-rs-id=\"x2\"><tr data-rs-id=\"5\"><td data-rs-id=\"6\">y</td></tr></tbody></table></p></body></html>"
+ }
+}

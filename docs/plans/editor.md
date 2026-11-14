@@ -85,3 +85,22 @@ ctx.diff()                 block diff vs the original
 - Parser edge cases (misnested tags, foreign content). Mitigation: fidelity is by construction for untouched
   regions; property test that an untouched export equals the source on real pages.
 - Very large pages: LCS is per changed parent, trimmed to the changed middle, with a capped fallback.
+
+## Verification so far (phase A)
+
+- Untouched export is byte for byte on 18 real pages (SmartCrew, Mitti, HCSS, Wikipedia, MDN, BBC, Stripe, Vercel,
+  NYT, Apple, WordPress, Shopify, Webflow, Procore and others), in Chromium with the app cleaner.
+- Random edit fuzz in Chromium (text, attributes, remove, insert, move, rename, title) on those pages: 216 trials per
+  seed, four seeds, every export reads back as exactly the draft's content with all scripts kept.
+- An adversarial review found 22 real bugs, all fixed with tests (`tests/js/editor/browser-cases.test.mjs`, bases
+  made by Chromium): document.write scripts with nested script tags, head `<noscript>` tracking iframes, foster
+  parented table text, text after `</body>`, nested buttons, implied empty cells, hidden `javascript:` links,
+  attributes without spaces, streamed React text, stray `</p>`, pasted copies, HTML mode moves and deletes, quirks
+  mode doctypes, draft store races and ordering, FAQ answers typed as bare text, insertion point, svg headings.
+
+## Known gaps
+
+- Misnested legacy formatting (`<b>1<p>2</b>3</p>`): editing the text after the misnest keeps the words but they
+  can pick up the bold or link of the copied formatting element.
+- Attribute edits on an `<html>` or `<body>` that the page never wrote (browser invented) are not exported.
+- Editing the parent of a React streaming boundary moves the streamed content into place in the export.

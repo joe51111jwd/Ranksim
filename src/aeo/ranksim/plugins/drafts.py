@@ -28,6 +28,7 @@ import json
 import os
 import re
 import secrets
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -39,6 +40,7 @@ MAX_DRAFT = 2 * 1024 * 1024
 MAX_BLOB = 3 * 1024 * 1024
 MAX_VERSIONS = 30
 MAX_NAME = 80
+BLOB_GRACE_SECONDS = 3600  # a blob uploaded for a save that is still on its way is never collected
 ID_RE = re.compile(r"^[0-9a-f]{12}-[0-9a-f]{10}$")
 SHA_RE = re.compile(r"^[0-9a-f]{64}$")
 
@@ -93,7 +95,12 @@ def put_blob(project, text) -> str:
         raise DraftError("That page is over 3 MB, so it can't be saved as a version.", 413)
     sha = sha_of(text)
     path = root_of(project) / "blobs" / f"{sha}.html"
-    if not path.is_file():
+    if path.is_file():
+        try:
+            os.utime(path)  # fresh again, so collection leaves it alone while the save that needs it lands
+        except OSError:
+            pass
+    else:
         _write(path, text)
     return sha
 
@@ -111,6 +118,10 @@ def _meta(data: dict) -> dict:
     return {key: data.get(key) for key in ("id", "name", "url", "created", "size")}
 
 
+def _order(data: dict) -> tuple:
+    return (int(data.get("seq") or 0), data.get("created") or "", data.get("id") or "")
+
+
 def list_versions(project, url) -> list[dict]:
     url = _check_url(url)
     folder = root_of(project) / "pages" / page_key(url)
@@ -121,9 +132,9 @@ def list_versions(project, url) -> list[dict]:
                 continue
             data = _read_json(path)
             if data and data.get("url") == url and ID_RE.match(str(data.get("id", ""))):
-                out.append(_meta(data))
-    out.sort(key=lambda item: (item.get("created") or "", item.get("id") or ""), reverse=True)
-    return out
+                out.append((_order(data), _meta(data)))
+    out.sort(key=lambda pair: pair[0], reverse=True)
+    return [meta for _, meta in out]
 
 
 def save_version(project, url, name, source, base, draft, *, now: datetime | None = None) -> dict:
@@ -147,6 +158,7 @@ def save_version(project, url, name, source, base, draft, *, now: datetime | Non
         "url": url,
         "created": stamp.isoformat(timespec="seconds"),
         "size": len(draft),
+        "seq": time.time_ns(),
         "source": source,
         "base": base,
         "draft": draft,
@@ -179,14 +191,15 @@ def load_version(project, version_id: str) -> dict:
 
 def delete_version(project, version_id: str) -> None:
     path = _version_path(project, version_id)
-    if not path.is_file():
-        raise DraftError("No such version.", 404)
-    path.unlink()
+    try:
+        path.unlink()
+    except FileNotFoundError:
+        raise DraftError("No such version.", 404) from None
     collect_garbage(project)
 
 
-def collect_garbage(project) -> int:
-    """Removes blobs no version refers to. Returns how many went."""
+def collect_garbage(project, *, grace: float = BLOB_GRACE_SECONDS) -> int:
+    """Removes blobs no version refers to and nobody touched in the last `grace` seconds. Returns how many went."""
     root = root_of(project)
     used = set()
     for path in (root / "pages").glob("*/*.json"):
@@ -195,8 +208,13 @@ def collect_garbage(project) -> int:
         data = _read_json(path) or {}
         used.update(str(data.get(field) or "") for field in ("source", "base"))
     gone = 0
+    cutoff = time.time() - grace
     for blob in (root / "blobs").glob("*.html"):
-        if blob.stem not in used:
+        try:
+            fresh = blob.stat().st_mtime > cutoff
+        except OSError:
+            continue
+        if blob.stem not in used and not fresh:
             blob.unlink(missing_ok=True)
             gone += 1
     return gone

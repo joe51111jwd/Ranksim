@@ -49,7 +49,9 @@ def test_save_list_load_delete_round_trip(project):
     assert len(list((folder / "blobs").glob("*.html"))) == 2
     drafts.delete_version(project, saved["id"])
     assert drafts.list_versions(project, URL) == []
-    assert list((folder / "blobs").glob("*.html")) == [], "unused page copies go with the last version"
+    assert len(list((folder / "blobs").glob("*.html"))) == 2, "fresh uploads are kept for a save on its way"
+    assert drafts.collect_garbage(project, grace=-1) == 2
+    assert list((folder / "blobs").glob("*.html")) == [], "unused page copies go once they are stale"
 
 
 def test_blobs_are_stored_once(project):
@@ -69,6 +71,22 @@ def test_versions_are_newest_first_and_capped(project):
     assert len(listed) == drafts.MAX_VERSIONS
     assert listed[0]["name"] == f"v{drafts.MAX_VERSIONS + 2}"
     assert listed[-1]["name"] == "v3", "the oldest were dropped"
+
+
+def test_same_second_saves_stay_in_order(project):
+    stamp = datetime(2026, 11, 14, 12, tzinfo=timezone.utc)
+    names = [f"n{k}" for k in range(8)]
+    for name in names:
+        _save(project, name, now=stamp)
+    assert [item["name"] for item in drafts.list_versions(project, URL)] == list(reversed(names))
+
+
+def test_collection_never_takes_a_blob_a_save_is_about_to_use(project):
+    sha = drafts.put_blob(project, SOURCE)
+    base = drafts.put_blob(project, BASE)
+    assert drafts.collect_garbage(project) == 0  # a delete elsewhere runs collection between upload and save
+    saved = drafts.save_version(project, URL, "x", sha, base, DRAFT)
+    assert drafts.load_version(project, saved["id"])["source"] == SOURCE
 
 
 def test_names_are_trimmed_and_defaulted(project):

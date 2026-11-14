@@ -297,6 +297,10 @@ export function parse(src, opts = {}) {
       const k = findOpen(closers, new Set(['table', 'html', 'template']));
       if (k > 0) popTo(k, at);
     }
+    if (tag === 'button') {
+      const k = findOpen(new Set(['button']), new Set(['html', 'table', 'td', 'th', 'template']));
+      if (k > 0) popTo(k, at);
+    }
     if (tag === 'a') {
       const k = findOpen(new Set(['a']), new Set(['html', 'table', 'td', 'th', 'template']));
       if (k > 0) popTo(k, at);
@@ -425,11 +429,13 @@ export function parse(src, opts = {}) {
       continue;
     }
     stack.push(el);
-    const raw = !foreign && (RAW.has(name) || RCDATA.has(name) || name === 'plaintext');
+    // A browser runs scripts, so <noscript> is raw text to it; the source is read the way a visitor's browser reads it.
+    const raw = !foreign && (RAW.has(name) || RCDATA.has(name) || name === 'plaintext' || (name === 'noscript' && !strict));
     if (raw) {
-      el.raw = RAW.has(name) || name === 'plaintext';
+      el.raw = !RCDATA.has(name);
       let close = -1;
-      if (name !== 'plaintext') {
+      if (name === 'script') close = scriptEnd(src, i);
+      else if (name !== 'plaintext') {
         const re = new RegExp(`</${name}[\\t\\n\\f\\r />]`, 'ig');
         re.lastIndex = i;
         const found = re.exec(src);
@@ -455,15 +461,49 @@ export function parse(src, opts = {}) {
   return root;
 }
 
-/* The source with data-rs-id="N" added to every start tag, in the same order parse() numbers them. */
+/* Where a script element ends. Inside a script, '<!--' starts an escaped run in which '<script' nests and its
+   '</script>' does not end the outer one (old document.write snippets rely on this). */
+function scriptEnd(src, from) {
+  const re = /<!--|-->|<\/?script(?=[\t\n\f\r />])/gi;
+  re.lastIndex = from;
+  let state = 0; // 0 data, 1 escaped, 2 double escaped
+  for (let m = re.exec(src); m; m = re.exec(src)) {
+    const t = m[0].toLowerCase();
+    if (t === '<!--') {
+      if (state === 0) {
+        state = 1;
+        if (src[re.lastIndex] === '>') state = 0; // <!-->
+        else if (src.startsWith('->', re.lastIndex)) { state = 0; re.lastIndex += 2; } // <!--->
+      }
+    } else if (t === '-->') {
+      state = 0;
+    } else if (t === '</script') {
+      if (state === 2) state = 1;
+      else return m.index;
+    } else if (state === 1) {
+      state = 2;
+    }
+  }
+  return -1;
+}
+
+/* The source with data-rs-id="N" added to every start tag, in the same order parse() numbers them, for the browser
+   to parse. The browser half parses without scripting, so <noscript> contents are left out: a visitor's browser
+   never builds them, and a tracking iframe in a head <noscript> would otherwise push the rest of the head into the
+   body. */
 export function annotate(source) {
   const tree = parse(source);
   const out = [];
   let at = 0;
   for (const el of tree.elements) {
     const cut = el.start + 1 + el.rawName.length;
+    if (cut < at) continue;
     out.push(source.slice(at, cut), ` ${ID}="${el.rsid}"`);
     at = cut;
+    if (el.tag === 'noscript' && el.raw && el.children.length) {
+      out.push(source.slice(at, el.children[0].start));
+      at = el.children[el.children.length - 1].end;
+    }
   }
   out.push(source.slice(at));
   return out.join('');
@@ -541,29 +581,63 @@ export function longestIncreasing(pairs) {
 /* ------------------------------------------------------------------ the model: base vs draft */
 
 const isXid = (id) => typeof id === 'string' && id.charCodeAt(0) === 120; // 'x'
+const NUMERIC = /^[0-9]+$/;
+
+/* The nearest ancestor with a source id, or '' for the top. */
+function ownerOf(el) {
+  for (let up = el.parent; up; up = up.parent) if (up.type === 'element' && up.rsid && NUMERIC.test(up.rsid)) return up.rsid;
+  return '';
+}
+
+function prevRealSibling(el) {
+  for (let node = el.previousSibling; node; node = node.previousSibling) if (node.type === 'element' && node.rsid && NUMERIC.test(node.rsid) && node.rsid !== el.rsid) return node.rsid;
+  return '';
+}
 
 /* Indexes a strict parse of base or draft. Elements are real (map to a source element), see-through (made up by the
-   parser, like an implied tbody: their children belong to the parent) or new (no id: typed or inserted by the user). */
-function indexTree(tree, srcIds, baseCounts) {
+   parser, like an implied tbody: their children belong to the parent) or new (no id: typed, inserted or pasted).
+   `B` is the base index when indexing a draft. */
+function indexTree(tree, srcIds, B) {
   const real = new Map();
   const seen = new Map();
   const kind = new Map();
+  const groups = new Map();
   for (const el of tree.elements) {
     const id = el.rsid;
-    if (id === null || id === undefined) { kind.set(el, 'new'); continue; }
-    if (isXid(id)) { kind.set(el, 'see'); continue; }
-    if (!srcIds.has(id)) { kind.set(el, 'new'); continue; }
-    const k = (seen.get(id) || 0) + 1;
-    seen.set(id, k);
-    if (k === 1) {
-      kind.set(el, 'real');
-      real.set(id, el);
-    } else if (baseCounts && k > (baseCounts.get(id) || 1)) {
-      kind.set(el, 'new'); // a copy the user pasted
-    } else {
-      kind.set(el, 'see'); // a copy the parser made (misnested formatting); see-through on both sides
+    if (id === null || id === undefined || (!isXid(id) && !srcIds.has(id))) { kind.set(el, 'new'); continue; }
+    if (isXid(id)) {
+      // an empty element the parser made (a stray </p>) that the user filled is the user's own
+      const filled = B && B.xEmpty.has(id) && el.children.length > 0;
+      kind.set(el, filled ? 'new' : 'see');
+      continue;
+    }
+    if (!groups.has(id)) groups.set(id, []);
+    groups.get(id).push(el);
+  }
+  for (const [id, list] of groups) {
+    seen.set(id, list.length);
+    let pick = list[0];
+    if (B && list.length > (B.seen.get(id) || 1)) {
+      // the user pasted a copy: the original is the one that sits where the base had it
+      const bEl = B.real.get(id);
+      const want = bEl ? [ownerOf(bEl), prevRealSibling(bEl), bEl.textContent] : ['', '', ''];
+      let best = -1;
+      for (const el of list) {
+        const score = (el.textContent === want[2] ? 4 : 0) + (ownerOf(el) === want[0] ? 2 : 0) + (prevRealSibling(el) === want[1] ? 1 : 0);
+        if (score > best) { best = score; pick = el; }
+      }
+    }
+    real.set(id, pick);
+    const copies = B ? Math.max(0, (B.seen.get(id) || 1) - 1) : Infinity;
+    let made = 0;
+    for (const el of list) {
+      if (el === pick) kind.set(el, 'real');
+      else if (made < copies) { kind.set(el, 'see'); made += 1; } // a copy the parser made (misnested formatting)
+      else kind.set(el, 'new');
     }
   }
+  const xEmpty = new Set();
+  if (!B) for (const el of tree.elements) if (isXid(el.rsid) && !el.children.length) xEmpty.add(el.rsid);
   const lists = new Map();
   const parentOf = new Map();
   const visit = (node, owner, list, rawParent) => {
@@ -592,7 +666,7 @@ function indexTree(tree, srcIds, baseCounts) {
   const top = [];
   lists.set('', top);
   visit(tree, '', top, false);
-  return { tree, real, kind, lists, parentOf, seen };
+  return { tree, real, kind, lists, parentOf, seen, xEmpty };
 }
 
 /* Text of a node as the DOM holds it. A browser drops one newline right after <pre>, <textarea> and <listing>. */
@@ -621,26 +695,83 @@ function sameKeys(a, b) {
   return true;
 }
 
+const eqKey = (x, y) => x !== null && x === y;
+
+/* The visible children of a source node, keyed like the base lists: text (decoded) and elements the base has. */
+function sourceItems(srcNode, B) {
+  const items = [];
+  srcNode.children.forEach((child, s) => {
+    if (child.type === 'text') {
+      if (srcNode.raw) items.push({ s, node: child, key: `t${child.text}` });
+      else if (!isSpace(child.text)) items.push({ s, node: child, key: `t${decodeText(child)}` });
+    } else if (child.type === 'element' && B.real.has(child.rsid)) {
+      items.push({ s, node: child, key: `#${child.rsid}` });
+    }
+  });
+  return items;
+}
+
+/* Where the browser and our parser disagree (foster parented table text, text after </body>, streamed content,
+   misnested formatting), a text sits under one parent in the source and another in the base. Pair those up, so an
+   edit on either side changes the one copy that the export holds. */
+function accountTexts(src, B) {
+  const exported = []; // source text nodes the base holds under a different parent, in source order
+  const imported = []; // base text items with no source text under the same parent
+  const align = new Map(); // id -> {pairs, sItems}
+  const visit = (node, id) => {
+    const inBase = id === '' || B.real.has(id);
+    const sItems = sourceItems(node, B);
+    if (inBase) {
+      const bList = B.lists.get(id) || [];
+      const pairs = lcs(sItems.map((it) => it.key), bList.map((it) => it.key), eqKey);
+      align.set(id, { pairs, sItems });
+      const sMatched = new Set(pairs.map(([x]) => x));
+      const bMatched = new Set(pairs.map(([, y]) => y));
+      sItems.forEach((it, x) => { if (!sMatched.has(x) && it.node.type === 'text' && !node.raw) exported.push(it); });
+      bList.forEach((it, y) => { if (!bMatched.has(y) && it.node.type === 'text' && !it.raw) imported.push(it); });
+    } else if (!node.raw) {
+      for (const it of sItems) if (it.node.type === 'text') exported.push(it);
+    }
+    for (const child of node.children) if (child.type === 'element') visit(child, child.rsid);
+  };
+  visit(src, '');
+  const pool = new Map();
+  for (const it of exported) {
+    if (!pool.has(it.key)) pool.set(it.key, []);
+    pool.get(it.key).push(it.node);
+  }
+  const home = new Map(); // base text node -> source text node
+  for (const it of imported) {
+    const list = pool.get(it.key);
+    if (list && list.length) home.set(it.node, list.shift());
+  }
+  return { align, home };
+}
+
 /* The original page with the draft's edits applied. */
 export function exportHtml(source, base, draft) {
   const src = parse(source);
   const srcIds = new Map(src.elements.map((el) => [el.rsid, el]));
   const B = indexTree(parse(base, { strict: true }), srcIds, null);
-  const E = indexTree(parse(draft, { strict: true }), srcIds, B.seen);
+  const E = indexTree(parse(draft, { strict: true }), srcIds, B);
   const changed = new Set();
   for (const [id, list] of E.lists) if (id === '' || B.real.has(id)) if (!sameKeys(B.lists.get(id), list)) changed.add(id);
 
-  // Ids that the draft places somewhere new; the source walk skips them where they used to be.
-  const placed = new Set();
+  const acct = changed.size ? accountTexts(src, B) : { align: new Map(), home: new Map() };
+  acct.after = new Map(); // source node -> draft items to emit right after it, wherever it is emitted
+  acct.before = new Map();
+  B.srcIds = srcIds;
+  const placed = new Set(); // ids the draft puts somewhere new; the source walk skips them where they were
+  const suppressed = new Set(); // source text nodes the user deleted or rewrote where the base shows them
   const plans = new Map();
   for (const id of changed) {
-    const plan = planMerge(id === '' ? src : srcIds.get(id), id, B, E);
+    const plan = planMerge(id === '' ? src : srcIds.get(id), id, B, E, acct, suppressed);
     plans.set(id, plan);
     for (const item of plan.inserts) markPlaced(item.node, E, placed);
   }
 
   const out = [];
-  const ctx = { source, draft, src, srcIds, B, E, changed, plans, placed, out };
+  const ctx = { source, draft, src, srcIds, B, E, changed, plans, placed, suppressed, out, acct };
   if (changed.has('')) emitMerge(src, '', ctx);
   else emitWalk(src, ctx);
   return out.join('');
@@ -653,45 +784,77 @@ function markPlaced(node, E, placed) {
   for (const child of node.children) markPlaced(child, E, placed);
 }
 
-function planMerge(srcNode, id, B, E) {
+/* How to rebuild one changed parent: source children are matched to base items, base items to draft items. */
+function planMerge(srcNode, id, B, E, acct, suppressed) {
   const kids = srcNode.children;
-  const vis = [];
-  kids.forEach((child, s) => {
-    if (child.type === 'text') {
-      if (srcNode.raw) vis.push({ s, key: `t${child.text}` });
-      else if (!isSpace(child.text)) vis.push({ s, key: `t${decodeText(child)}` });
-    } else if (child.type === 'element' && B.real.has(child.rsid) && B.parentOf.get(child.rsid) === id) {
-      vis.push({ s, key: `#${child.rsid}` });
+  const { pairs: sbPairs, sItems } = acct.align.get(id) || { pairs: [], sItems: sourceItems(srcNode, B) };
+  const bList = B.lists.get(id) || [];
+  const items = E.lists.get(id) || [];
+  const bOfS = new Map(sbPairs.map(([x, y]) => [x, y]));
+  const sOfB = new Map(sbPairs.map(([x, y]) => [y, x]));
+  const bePairs = lcs(bList.map((it) => it.key), items.map((it) => it.key), eqKey);
+  const eOfB = new Map(bePairs.map(([y, e]) => [y, e]));
+  const bOfE = new Map(bePairs.map(([y, e]) => [e, y]));
+  // base texts that live elsewhere in the source and are gone from the draft: drop them at home
+  bList.forEach((it, y) => {
+    if (sOfB.has(y) || eOfB.has(y) || it.node.type !== 'text') return;
+    const home = acct.home.get(it.node);
+    if (home) suppressed.add(home);
+  });
+  const matchOf = new Map(); // source child index -> draft item
+  const sOfE = new Map();
+  const visible = new Set(); // source child indexes the base shows under this parent
+  sItems.forEach((it, x) => {
+    if (!bOfS.has(x)) return; // shown elsewhere: emitted as it was (or dropped there)
+    visible.add(it.s);
+    const e = eOfB.get(bOfS.get(x));
+    if (e !== undefined) {
+      matchOf.set(it.s, items[e]);
+      sOfE.set(e, it.s);
     }
   });
-  const items = E.lists.get(id) || [];
-  const pairs = lcs(vis.map((v) => v.key), items.map((it) => it.key), (x, y) => x !== null && x === y);
-  const matchOf = new Map(); // source index -> draft item
-  const matchedItems = new Set();
-  for (const [v, e] of pairs) {
-    matchOf.set(vis[v].s, items[e]);
-    matchedItems.add(e);
-  }
-  const visible = new Set(vis.map((v) => v.s));
-  // Each run of unmatched draft items takes the place of the first deleted source item between the same neighbours,
-  // or goes right after the previous match, or right before the next one.
-  const sOfItem = new Map(pairs.map(([v, e]) => [e, vis[v].s]));
+  // Draft items with no base item are new here. Each run takes the place of the first deleted source item between
+  // the same neighbours, or goes right after the previous match, or right before the next one. Draft items that the
+  // base shows here but the source holds elsewhere stay where the source has them.
   const beforeS = new Map();
   const afterS = new Map();
   const tail = [];
   const inserts = [];
   const put = (map, s, run) => { if (!map.has(s)) map.set(s, []); map.get(s).push(...run); };
-  let e = 0;
+  // A neighbour the base shows here but the source holds elsewhere is an anchor too: the run then follows it home.
+  const homeOf = (e) => {
+    const b = bOfE.get(e);
+    if (b === undefined || sOfE.has(e)) return null;
+    const it = bList[b];
+    return it.node.type === 'text' ? acct.home.get(it.node) || null : B.srcIds.get(it.node.rsid) || null;
+  };
   let prevS = -1;
+  let prevHome = null;
+  let e = 0;
   while (e < items.length) {
-    if (matchedItems.has(e)) { prevS = sOfItem.get(e); e += 1; continue; }
+    if (bOfE.has(e)) {
+      if (sOfE.has(e)) { prevS = sOfE.get(e); prevHome = null; } else prevHome = homeOf(e) || prevHome;
+      e += 1;
+      continue;
+    }
     const run = [];
-    while (e < items.length && !matchedItems.has(e)) { run.push(items[e]); e += 1; }
+    while (e < items.length && !bOfE.has(e)) { run.push(items[e]); e += 1; }
     inserts.push(...run);
-    const nextS = e < items.length ? sOfItem.get(e) : kids.length;
-    const gone = vis.find((v) => v.s > prevS && v.s < nextS && !matchOf.has(v.s));
-    if (gone) put(beforeS, gone.s, run);
+    if (prevHome) {
+      put(acct.after, prevHome, run);
+      continue;
+    }
+    let nextS = kids.length;
+    let nextHome = null;
+    for (let k = e; k < items.length; k += 1) {
+      if (sOfE.has(k)) { nextS = sOfE.get(k); break; }
+      if (!nextHome && bOfE.has(k)) nextHome = homeOf(k);
+    }
+    let gone = null;
+    for (const s of visible) if (s > prevS && s < nextS && !matchOf.has(s) && (gone === null || s < gone)) gone = s;
+    if (gone !== null) put(beforeS, gone, run);
     else if (prevS >= 0) put(afterS, prevS, run);
+    else if (nextHome) put(acct.before, nextHome, run);
     else if (nextS < kids.length) put(beforeS, nextS, run);
     else tail.push(...run);
   }
@@ -703,8 +866,16 @@ function emitWalk(srcNode, ctx) {
 }
 
 function emitAnchored(node, ctx) {
+  const before = ctx.acct.before.get(node);
+  if (before) for (const item of before) emitDraftNode(item.node, ctx);
+  emitAnchoredNode(node, ctx);
+  const after = ctx.acct.after.get(node);
+  if (after) for (const item of after) emitDraftNode(item.node, ctx);
+}
+
+function emitAnchoredNode(node, ctx) {
   if (node.type !== 'element') {
-    ctx.out.push(ctx.source.slice(node.start, node.end));
+    if (!ctx.suppressed.has(node)) ctx.out.push(ctx.source.slice(node.start, node.end));
     return;
   }
   const id = node.rsid;
@@ -726,8 +897,8 @@ function emitMerge(srcNode, id, ctx) {
       if (item) {
         if (child.type === 'element') emitNode(child, item.node, ctx);
         else ctx.out.push(ctx.source.slice(child.start, child.end));
-        emitRun(plan.afterS.get(s));
       }
+      emitRun(plan.afterS.get(s));
       return; // unmatched visible source items were deleted or moved
     }
     emitAnchored(child, ctx);
@@ -737,25 +908,15 @@ function emitMerge(srcNode, id, ctx) {
 
 /* A draft item with no place in the source: a moved element, a new element, or new text. */
 function emitDraftItem(item, ctx) {
-  const node = item.node;
-  if (node.type === 'text') {
-    ctx.out.push(ctx.draft.slice(node.start, node.end)); // already escaped by the browser serializer
-    return;
-  }
-  emitDraftNode(node, ctx);
+  emitDraftNode(item.node, ctx);
 }
 
 function emitDraftNode(node, ctx) {
-  if (node.type === 'text') {
-    ctx.out.push(ctx.draft.slice(node.start, node.end));
+  if (node.type !== 'element') {
+    ctx.out.push(ctx.draft.slice(node.start, node.end)); // already escaped by the browser serializer
     return;
   }
-  if (node.type === 'comment' || node.type === 'other') {
-    ctx.out.push(ctx.draft.slice(node.start, node.end));
-    return;
-  }
-  const k = ctx.E.kind.get(node);
-  if (k === 'real') {
+  if (ctx.E.kind.get(node) === 'real') {
     emitNode(ctx.srcIds.get(node.rsid), node, ctx);
     return;
   }
@@ -774,11 +935,13 @@ function startTag(rawName, attrs) {
   return `${out}>`;
 }
 
+const isLeaf = (el) => (VOID.has(el.tag) && !el.foreign) || (el.foreign && el.selfClosing);
+
 /* One source element with its draft counterpart (or null when the cleaner hid it). */
 function emitNode(srcEl, draftEl, ctx) {
   const { source, out } = ctx;
   if (!draftEl) { // hidden by the cleaner: tags as they were, but edits to anything inside still apply
-    if (srcEl.raw || !srcEl.children.some((child) => child.type === 'element')) {
+    if (srcEl.raw || !srcEl.children.some((child) => child.type === 'element' || (child.type === 'text' && ctx.suppressed.has(child)))) {
       out.push(source.slice(srcEl.start, srcEl.end));
       return;
     }
@@ -795,7 +958,7 @@ function emitNode(srcEl, draftEl, ctx) {
   const dAttrs = attrMap(draftEl);
   if (!renamed && sameAttrs(bAttrs, dAttrs)) out.push(source.slice(srcEl.start, srcEl.startEnd));
   else out.push(patchStart(srcEl, newName, bAttrs, dAttrs, source));
-  if (srcEl.startEnd === srcEl.end && !srcEl.hasEnd) { // void or self-closed
+  if (isLeaf(srcEl)) {
     if (renamed && !VOID.has(draftEl.tag)) {
       if (ctx.changed.has(id)) emitMerge(srcEl, id, ctx);
       out.push(`</${newName}>`);
@@ -812,26 +975,30 @@ function emitNode(srcEl, draftEl, ctx) {
 }
 
 /* A start tag with changed attributes. Untouched attributes keep their exact source text; attributes the cleaner
-   removed (event handlers) are kept; changed values are rewritten; new ones are appended. */
+   removed (event handlers) are kept unless the user set them; changed values are rewritten; new ones are appended. */
 function patchStart(srcEl, name, bAttrs, dAttrs, source) {
   let out = `<${name}`;
   const done = new Set();
-  let last = srcEl.start + 1 + srcEl.rawName.length;
+  const spaced = (piece) => (/^[\t\n\f\r ]/.test(piece) ? piece : ` ${piece}`);
   for (const a of srcEl.attrs) {
-    const piece = source.slice(a.start, a.end);
-    last = a.end;
-    if (a.name.startsWith('data-rs') || done.has(a.name) || !bAttrs.has(a.name)) {
-      if (!a.name.startsWith('data-rs')) out += piece; // hidden or duplicate: as it was
+    if (a.name.startsWith('data-rs')) continue;
+    const piece = spaced(source.slice(a.start, a.end));
+    if (done.has(a.name)) { // a duplicate the browser ignores: as it was
+      out += piece;
       continue;
     }
     done.add(a.name);
+    if (!bAttrs.has(a.name)) { // hidden by the cleaner: kept, unless the user set it
+      out += dAttrs.has(a.name) ? ` ${a.name}="${escapeAttr(dAttrs.get(a.name))}"` : piece;
+      continue;
+    }
     if (!dAttrs.has(a.name)) continue;
     const value = dAttrs.get(a.name);
-    if (value === bAttrs.get(a.name)) out += piece;
-    else out += ` ${a.name}="${escapeAttr(value)}"`;
+    out += value === bAttrs.get(a.name) ? piece : ` ${a.name}="${escapeAttr(value)}"`;
   }
-  for (const [k, v] of dAttrs) if (!bAttrs.has(k)) out += v === '' ? ` ${k}` : ` ${k}="${escapeAttr(v)}"`;
-  return out + source.slice(last, srcEl.startEnd); // whitespace, an optional slash and the closing bracket
+  for (const [k, v] of dAttrs) if (!done.has(k)) out += v === '' ? ` ${k}` : ` ${k}="${escapeAttr(v)}"`;
+  const last = srcEl.attrs.length ? srcEl.attrs[srcEl.attrs.length - 1].end : srcEl.start + 1 + srcEl.rawName.length;
+  return out + source.slice(last, srcEl.startEnd).replace(/[^\t\n\f\r />]/g, ''); // whitespace, a slash, the bracket
 }
 
 /* ------------------------------------------------------------------ helpers for the editor */
@@ -853,30 +1020,64 @@ export function stripRs(html) {
 }
 
 function signature(el) {
+  return `${shape(el)}|${el.textContent.replace(/\s+/g, ' ').trim().slice(0, 400)}`;
+}
+
+function shape(el) {
   const attrs = (el.attrs || []).filter((a) => !a.name.startsWith('data-rs')).map((a) => `${a.name}=${a.value}`).sort().join('&');
-  return `${el.tag}|${attrs}|${el.textContent.replace(/\s+/g, ' ').trim().slice(0, 400)}`;
+  return `${el.tag}|${attrs}`;
 }
 
 /* Puts ids back on an edited copy of the draft (HTML mode). `edited` is a browser serialization without ids;
-   `previous` is the draft before the edit. Elements are matched in document order, exact signature first, then by tag
-   between the anchors. Returns the edited HTML with data-rs-id attributes. */
+   `previous` is the draft before the edit. Elements are matched in document order: exact (tag, attributes, text)
+   first; then, between those anchors, same tag and attributes; then same tag where a stretch kept its shape; and
+   last, an unmatched element identical to an unmatched old one elsewhere (a move). Anything left is new, which is
+   always safe: the export then writes it from the draft. Returns the edited HTML with data-rs-id attributes. */
 export function reattachIds(previous, edited) {
   const before = parse(previous, { strict: true }).elements.filter((el) => el.rsid !== null && el.rsid !== undefined);
   const after = parse(edited, { strict: true });
   const now = after.elements;
   const ids = new Array(now.length).fill(null);
+  const usedBefore = new Set();
+  const take = (x, y) => { ids[y] = before[x].rsid; usedBefore.add(x); };
   const exact = lcs(before.map(signature), now.map(signature));
-  for (const [x, y] of exact) ids[y] = before[x].rsid;
-  // between anchors, match by tag
-  const anchors = [[-1, -1], ...exact, [before.length, now.length]];
-  for (let k = 0; k + 1 < anchors.length; k += 1) {
-    const [x0, y0] = anchors[k];
-    const [x1, y1] = anchors[k + 1];
-    if (x1 - x0 <= 1 || y1 - y0 <= 1) continue;
-    const a = before.slice(x0 + 1, x1);
-    const b = now.slice(y0 + 1, y1);
-    for (const [x, y] of lcs(a.map((el) => el.tag), b.map((el) => el.tag))) ids[y0 + 1 + y] = a[x].rsid;
+  for (const [x, y] of exact) take(x, y);
+  const gaps = (pairs) => {
+    const anchors = [[-1, -1], ...pairs.sort((p, q) => p[0] - q[0]), [before.length, now.length]];
+    const out = [];
+    for (let k = 0; k + 1 < anchors.length; k += 1) {
+      const [x0, y0] = anchors[k];
+      const [x1, y1] = anchors[k + 1];
+      if (x1 - x0 > 1 && y1 - y0 > 1) out.push([x0 + 1, x1, y0 + 1, y1]);
+    }
+    return out;
+  };
+  let matched = [...exact];
+  for (const [xa, xb, ya, yb] of gaps(matched)) {
+    for (const [x, y] of lcs(before.slice(xa, xb).map(shape), now.slice(ya, yb).map(shape))) {
+      take(xa + x, ya + y);
+      matched.push([xa + x, ya + y]);
+    }
   }
+  for (const [xa, xb, ya, yb] of gaps(matched)) {
+    const a = before.slice(xa, xb);
+    const b = now.slice(ya, yb);
+    if (a.length === b.length && a.every((el, k) => el.tag === b[k].tag)) a.forEach((el, k) => take(xa + k, ya + k));
+  }
+  const left = new Map();
+  before.forEach((el, x) => {
+    if (usedBefore.has(x)) return;
+    const sig = signature(el);
+    left.set(sig, left.has(sig) ? -1 : x);
+  });
+  now.forEach((el, y) => {
+    if (ids[y] !== null) return;
+    const x = left.get(signature(el));
+    if (x !== undefined && x >= 0) {
+      take(x, y);
+      left.set(signature(el), -1);
+    }
+  });
   const edits = []; // [at, skipTo, insert]
   now.forEach((el, k) => {
     for (const a of el.attrs) if (a.name === ID) edits.push([a.start, a.end, '']); // pasted ids: the alignment decides

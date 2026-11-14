@@ -9,6 +9,7 @@ Routes (every write route checks the CSRF header; no route ever returns a creden
     POST   /api/v1/projects/{slug}/publish/ownership/reset             {site} -> a new token (unverifies)
     GET    /api/v1/projects/{slug}/publish/connections
     POST   /api/v1/projects/{slug}/publish/connections                 {kind, site, label, settings, secret}
+    POST   /api/v1/projects/{slug}/publish/connections/check           {kind, settings, secret, url} -> steps, saves nothing
     DELETE /api/v1/projects/{slug}/publish/connections/{id}
     POST   /api/v1/projects/{slug}/publish/plan                        {url, html, connection_id?}
     POST   /api/v1/projects/{slug}/publish                             {url, html, connection_id, confirm, options}
@@ -186,6 +187,17 @@ def register(app, ui) -> None:
             settings=settings,
             secret=secret,
         )
+
+    @app.post("/api/v1/projects/{slug}/publish/connections/check")
+    async def publish_connect_check(slug: str, request: Request):
+        """The guided connect flow's live check. Tests what was typed, step by step. Saves nothing, returns no secret."""
+        body = await body_of(request)
+        pub, blocked = guard(slug)
+        if blocked:
+            return blocked
+        settings = body.get("settings") if isinstance(body.get("settings"), dict) else {}
+        secret = body.get("secret") if isinstance(body.get("secret"), dict) else {}
+        return await run(pub.check_connection, kind=text(body.get("kind"), 20), settings=settings, secret=secret, url=text(body.get("url")))
 
     @app.delete("/api/v1/projects/{slug}/publish/connections/{connection_id}")
     async def publish_disconnect(slug: str, connection_id: str, request: Request):

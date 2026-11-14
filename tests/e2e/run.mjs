@@ -48,8 +48,12 @@ function expect(cond, message) {
 
 function watch(page, label) {
   page.on('console', (msg) => {
-    if (msg.type() !== 'error') return;
     const text = msg.text();
+    if (msg.type() === 'warning' && /replaces the built-in/.test(text)) {
+      consoleErrors.push({ page: label, phase, text: `plugin key collision: ${text}` });
+      return;
+    }
+    if (msg.type() !== 'error') return;
     if (allowed.some((a) => a.phase === phase && a.pattern.test(text))) return;
     consoleErrors.push({ page: label, phase, text });
   });

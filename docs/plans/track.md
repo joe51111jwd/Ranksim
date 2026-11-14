@@ -207,3 +207,9 @@ call on the same day spends nothing.
   put while we fell is not counted (that is our drop). Searches without a check a week earlier, or none this week,
   are left out and counted in `skipped`. Shape: `{ready, days, from, to, compared, skipped, gained, lost, moves,
   moves_total, up, down, passed, reason?}`.
+- No search data key (owner only, never on the public demo or the client report, which loads no plugin): one
+  notice per screen, "Google rankings are off. Add a search data key in Vercel to turn them on.", with the steps in
+  a disclosure. Overview: replaces the built-in `search-data` slot (`replace: true`), which still shows the shell's
+  callout when a key is set. History: top of the screen. Settings: section `tracking-key`. When Search Console has
+  positions, the notice names them as the fallback. Searches has no notice hook yet (`registerScreenNotice` from
+  shell would cover it, and could also absorb core `noSearchData()`).

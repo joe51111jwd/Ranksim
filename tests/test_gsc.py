@@ -361,7 +361,8 @@ def test_full_flow_connect_pick_fetch_report_refresh_disconnect(tmp_path, env):
     sources = gsc.discovery_sources(project=_project(box), pages=[], ui=box.ui)
     assert [row["q"] for row in sources] == ["heavy civil software", "dirt work software", "dirt crew login"]
     assert sources[0]["weight"] == 5.0 and sources[1]["weight"] == gsc.discovery_weight(900, 3000) and all(row["source"] == "gsc" for row in sources)
-    assert sources[2]["weight"] < 2.5  # 100 impressions out of 3000: only counts when the site also uses the phrase
+    assert sources[1]["weight"] == 3.25 and sources[2]["weight"] == round(2.5 + 2.5 * 100 / 3000, 3)
+    assert all(2.5 <= row["weight"] <= 5.0 for row in sources)  # every GSC query clears discovery's 2.5 bar
     calls_before = len(box.google.calls)
     gsc.after_pull(project=_project(box), report=None, ui=box.ui)
     assert len(box.google.calls) == calls_before  # fresh data is not fetched again
@@ -702,4 +703,11 @@ def test_discovery_merges_gsc_queries(tmp_path, env):
     _callback(box, {"code": "good-code", "state": query["state"]})
     found = discovery.discover_with_plugins([], "Dirt Crew", host="www.dirtcrew.example", project=_project(box), ui=box.ui)
     assert found[:2] == ["heavy civil software", "dirt work software"]
-    assert "dirt crew login" not in found  # branded, and below the bar on its own
+    assert "dirt crew login" not in found  # branded, so discovery drops it
+
+
+def test_discovery_weight_range():
+    assert gsc.discovery_weight(3000, 3000) == 5.0
+    assert gsc.discovery_weight(1, 100000) >= 2.5
+    assert gsc.discovery_weight(0, 0) == 2.5
+    assert all(2.5 <= gsc.discovery_weight(n, 500) <= 5.0 for n in (0, 1, 250, 500, 9999))

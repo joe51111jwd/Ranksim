@@ -1745,3 +1745,28 @@ def test_check_can_save_when_only_the_page_is_missing(app_env):
     body = {"kind": "wordpress", "url": "https://acme.com/nowhere", "settings": {"base_url": "https://acme.com", "username": "james"}, "secret": {"app_password": "pw"}}
     answer = client.post("/api/v1/projects/acme/publish/connections/check", json=body, headers=H).json()
     assert answer["ok"] is False and answer["can_save"] is True
+
+
+# ---------------------------------------------------------------------------
+# Body changes are shown where they happened
+# ---------------------------------------------------------------------------
+
+
+def test_body_rows_show_the_changed_words_not_the_page_start(tmp_path):
+    from aeo.ranksim.publishing.htmlparts import excerpt_pair
+
+    nav = "<nav>" + " ".join(f"<a>Menu item {i}</a>" for i in range(60)) + "</nav>"
+    old = page(region="x", body="<p>Intro text stays.</p><p>Our crews finish jobs on time.</p>").replace("<header>Menu</header>", nav)
+    new = old.replace("finish jobs on time", "finish every job on time and on budget")
+    web, router = Web(), Router()
+    web.pages["https://acme.com/about"] = old
+    pub = make_publisher(tmp_path, web, router)
+    body = next(c for c in pub.plan("https://acme.com/about", new)["changes"] if c["field"] == "body")
+    assert "finish jobs on time" in body["before"] and "finish every job on time and on budget" in body["after"]
+    assert "Menu item 0 " not in body["before"] and body["before"].startswith("...")
+    before, after, places = excerpt_pair("a b c " * 50 + "one", "a b c " * 50 + "two")
+    assert places == 1 and before.endswith("one") and after.endswith("two")
+    words = " ".join(f"w{i}" for i in range(200))
+    changed = words.replace("w20 ", "X ").replace("w100 ", "Y ").replace("w140 ", "Z ").replace("w190 ", "Q ")
+    _b, a, places = excerpt_pair(words, changed)
+    assert places == 4 and "X" in a and "Y" in a and "Z" in a and "Q" not in a  # three places shown, the count says more

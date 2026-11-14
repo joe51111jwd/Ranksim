@@ -36,11 +36,25 @@ merges only what the old instance changed since the import (against ranksim/v2/l
 newer edits on the new side are kept, and importing the same tarball twice changes nothing. Old objects are never
 deleted, so going back to an older deployment still finds them.
 
+Disk. Vercel's /tmp holds 512 MB for everything. The working folder keeps the projects, the rank database and its
+base copy (.cloud/base.db, the last state every instance agreed on: deltas are made against it and merges use it as
+the common ancestor). A sync or save adds at most one more full database copy: catch-up reads each save straight from
+the store's stream in one pass (the object never lands on disk), a cold sync streams each save it needs to one file
+that is deleted once used, only the members needed are unpacked, files are moved into place rather than copied, the
+base copy is replaced by a rename, deltas are read from the working database directly, and SQLite sorts in memory.
+All temp files live in .cloud/tmp, are removed on every failure path, and whatever a killed process left is removed
+at the next process's first storage call. One sync or save runs at a time per working folder. A full disk is handled
+by removing temp files and retrying; if it is still full, the local copy is dropped and loaded again from storage
+once. Measured with a 70 MB database and 30 MB of projects: about 175 MB at rest and during a cold sync or a delta,
+246 MB while a full snapshot is made or merged (tests/test_disk.py).
+
 Nothing here runs unless BLOB_READ_WRITE_TOKEN is set (or a store is passed in, as the tests do).
 """
 
 from __future__ import annotations
 
+import contextlib
+import errno
 import gzip
 import hashlib
 import io
@@ -146,6 +160,7 @@ class CloudState:
     def __post_init__(self) -> None:
         self.data_dir = Path(self.data_dir)
         self.db_file = Path(self.db_file)
+        self._lock = _dir_lock(self.data_dir)  # one sync or save at a time per working folder, across instances
         if self.enabled and self.store is None:
             self.store = BlobStore()
         if self.clock is None:
@@ -170,6 +185,55 @@ class CloudState:
     @property
     def _base_db(self) -> Path:
         return self._meta_dir / "base.db"
+
+    @property
+    def _tmp_dir(self) -> Path:
+        """Every temp file of a sync or save lives here, so a crash leaves nothing anywhere else."""
+        return self._meta_dir / "tmp"
+
+    def _temp(self, label: str, suffix: str = "") -> Path:
+        self._tmp_dir.mkdir(parents=True, exist_ok=True)
+        return self._tmp_dir / f"{label}-{secrets.token_hex(4)}{suffix}"
+
+    def _sweep(self) -> None:
+        """Remove temp files a killed or crashed process left behind (and the folders older versions unpacked next to
+        the working folder). Temp files are only in use while self._lock is held, by the holder, so this runs under
+        the lock: at the first storage call of a process, and when the disk is full."""
+        shutil.rmtree(self._tmp_dir, ignore_errors=True)
+        spots = [
+            (self.data_dir.parent, f".{self.data_dir.name}-incoming-*"),
+            (self.data_dir.parent, f".{self.data_dir.name}-legacy-*"),
+            (self._meta_dir, ".*"),  # .base.db.<hex>.tmp, .state-*.json, and older .snap-/.minus-/.plus-/.refs- temps
+            (self.db_file.parent, f".{self.db_file.name}.*.tmp"),
+        ]
+        for folder, pattern in spots:
+            if not folder.is_dir():
+                continue
+            for path in folder.glob(pattern):
+                try:
+                    if path.is_dir() and not path.is_symlink():
+                        shutil.rmtree(path, ignore_errors=True)
+                    else:
+                        path.unlink(missing_ok=True)
+                except OSError:
+                    pass
+
+    def _wipe(self) -> None:
+        """Forget the local copy entirely (the disk is full even after the sweep): the next sync is a cold one."""
+        _dispose_engines(self.db_file)
+        if self.data_dir.is_dir():
+            for path in self.data_dir.iterdir():
+                if path.is_dir() and not path.is_symlink():
+                    shutil.rmtree(path, ignore_errors=True)
+                else:
+                    path.unlink(missing_ok=True)
+        for suffix in ("", "-wal", "-shm", "-journal"):
+            Path(f"{self.db_file}{suffix}").unlink(missing_ok=True)
+        self._sweep()
+        self.projects_dir.mkdir(parents=True, exist_ok=True)
+        self._seq, self._version, self._manifest = 0, None, _empty_manifest()
+        self._installed, self._db, self._db_clean = {}, {"snapshot": None, "applied": []}, None
+        self._hash_cache.clear()
 
     @property
     def stamp(self) -> int:
@@ -197,6 +261,10 @@ class CloudState:
         if self._loaded:
             return
         self._loaded = True
+        key = str(self.data_dir.resolve())
+        if key not in _SWEPT:  # once per process: what a previous process left when it was killed mid-sync
+            _SWEPT.add(key)
+            self._sweep()
         try:
             data = json.loads((self._meta_dir / "state.json").read_text("utf-8"))
         except (OSError, ValueError):
@@ -241,7 +309,7 @@ class CloudState:
             if not force and now - self._failed_at < FAILURE_BACKOFF_SECONDS:
                 raise CloudError(self.last_error or "Could not read storage.")  # tried a moment ago: no storage call
             try:
-                changed = self._sync(now)
+                changed = self._sync_recovering(now)
             except (StoreError, KeyError, OSError, ValueError, tarfile.TarError, sqlite3.Error) as exc:
                 self._failed_at = now
                 self.last_error = f"Could not read storage: {type(exc).__name__}."
@@ -254,6 +322,26 @@ class CloudState:
                     callback()
             return changed
 
+    def _sync_recovering(self, now: float) -> bool:
+        """_sync, and when the disk is full: remove temp files and try again; still full: drop the local copy and
+        load it again from storage, once. (Unsaved local changes cannot be saved on a full disk either.)"""
+        try:
+            return self._sync(now)
+        except Exception as exc:  # noqa: BLE001 - only a full disk is handled here
+            if not _disk_full(exc):
+                raise
+            print(f"ranksim: the disk is full while reading storage ({str(exc)[:120]}); removing temp files.", flush=True)
+        self._sweep()
+        try:
+            return self._sync(now)
+        except Exception as exc:  # noqa: BLE001
+            if not _disk_full(exc):
+                raise
+            print("ranksim: the disk is still full; clearing the local copy and loading it again from storage.", flush=True)
+        self._wipe()
+        self._sync(now)
+        return True
+
     def _sync(self, now: float) -> bool:
         if self._seq == 0:
             changed = self._cold_sync()
@@ -264,21 +352,17 @@ class CloudState:
         self._save_meta()
         return changed
 
-    def _get_save(self, seq: int) -> bytes | None:
-        try:
-            return self.store.get(chain_name(seq))
-        except KeyError:
-            return None
-
     def _catch_up(self, *, verify: bool = False) -> bool:
         """Apply every save after ours, one by one. verify: also read the pointer, in case saves we never saw were
         pruned while this instance slept (then the newest manifest is installed instead)."""
         changed = False
         while True:
-            body = self._get_save(self._seq + 1)
-            if body is None:
-                break
-            changed |= self._apply_save(self._seq + 1, body)
+            with contextlib.ExitStack() as stack, _Saves(self) as saves:
+                try:
+                    stream = stack.enter_context(self.store.open(chain_name(self._seq + 1)))
+                except KeyError:
+                    break
+                changed |= self._apply_save(self._seq + 1, stream, saves)
         if verify:
             pointed = self._read_pointer()
             if pointed > self._seq + 1:
@@ -309,56 +393,82 @@ class CloudState:
         newest = self._newest(max(pointed, self._seq))
         if newest <= self._seq:
             return False
-        body = self._get_save(newest)
-        if body is None:
-            raise KeyError(chain_name(newest))
-        with _Unpacked(self.data_dir, body) as folder:
-            manifest = json.loads((folder / MANIFEST_FILE).read_text("utf-8"))
-        bodies = {newest: body}
         changed = False
-        for slug, seq in sorted((manifest.get("projects") or {}).items()):
-            if SLUG_RE.match(slug) and self._installed.get(slug, {}).get("seq") != seq:
-                if seq not in bodies:  # fetch each save object once (setdefault would fetch every time)
-                    bodies[seq] = self._get_save(seq)
-                if bodies[seq] is None:
-                    raise KeyError(chain_name(seq))
-                changed |= self._install_project(slug, seq, bodies[seq])
-        db = manifest.get("db") or {}
-        if db.get("snapshot") and (db["snapshot"] != self._db.get("snapshot") or any(d not in self._db.get("applied", []) for d in db.get("deltas") or [])):
-            self._apply_db(db, bodies)
-            changed = True
+        with _Saves(self) as saves:
+            manifest = _read_manifest(saves.path(newest))
+            wanted: dict[int, list[str]] = {}
+            for slug, seq in sorted((manifest.get("projects") or {}).items()):
+                if SLUG_RE.match(slug) and self._installed.get(slug, {}).get("seq") != seq:
+                    wanted.setdefault(int(seq), []).append(slug)
+            for seq, slugs in sorted(wanted.items()):
+                # One pass over each save object, unpacking only the folders of the projects taken from it.
+                prefixes = tuple(f"p/{slug}/" for slug in slugs)
+                staging = self._temp("projects")
+                try:
+                    _unpack(saves.path(seq), staging, lambda name: name.startswith(prefixes))
+                    for slug in slugs:
+                        changed |= self._merge_project(slug, seq, staging / "p" / slug, saves)
+                finally:
+                    shutil.rmtree(staging, ignore_errors=True)
+            db = manifest.get("db") or {}
+            needs_db = db.get("snapshot") and (db["snapshot"] != self._db.get("snapshot") or any(d not in self._db.get("applied", []) for d in db.get("deltas") or []))
+            keep = ({int(db["snapshot"])} | {int(d) for d in db.get("deltas") or []}) if needs_db else set()
+            for seq in list(saves.paths):
+                if seq not in keep:
+                    saves.drop(seq)  # projects are done: free the disk before the database is unpacked
+            if needs_db:
+                self._apply_db(db, saves)
+                changed = True
         self._manifest, self._seq = manifest, newest
         self._version = chain_name(newest)
         return changed
 
-    def _apply_save(self, seq: int, body: bytes) -> bool:
-        """One save after ours: its projects, its database part, its manifest."""
+    def _apply_save(self, seq: int, stream, saves: "_Saves") -> bool:
+        """One save after ours: its projects, its database part, its manifest. The save is read once, straight from
+        the store's stream (the object itself is never written to disk): changed project files go to a staging
+        folder and are moved into place, the database part goes to its own temp file. Each is deleted once used."""
         changed = False
-        with _Unpacked(self.data_dir, body) as folder:
-            manifest = json.loads((folder / MANIFEST_FILE).read_text("utf-8"))
-            projects = folder / "p"
+        manifest = None
+        staging = self._temp("projects")
+        parts = {"db.full": self._temp("full", ".db"), "db.minus": self._temp("minus", ".db"), "db.plus": self._temp("plus", ".db")}
+        found: set[str] = set()
+        try:
+            with tarfile.open(fileobj=stream, mode="r|gz") as archive:
+                for member in archive:
+                    if member.name == MANIFEST_FILE and member.isfile():
+                        manifest = json.loads(archive.extractfile(member).read().decode("utf-8"))
+                    elif member.name.startswith("p/") and (member.isfile() or member.isdir()):
+                        archive.extract(member, staging, filter="data")
+                    elif member.name in parts and member.isfile():
+                        with open(parts[member.name], "wb") as out:
+                            shutil.copyfileobj(archive.extractfile(member), out, 1 << 20)
+                        found.add(member.name)
+            if manifest is None:
+                raise KeyError(f"{chain_name(seq)} has no manifest")
+            projects = staging / "p"
             if projects.is_dir():
-                for path in sorted(projects.iterdir()):
-                    if path.is_dir() and SLUG_RE.match(path.name):
-                        changed |= self._merge_project(path.name, seq, path)
-            full, minus, plus = folder / "db.full", folder / "db.minus", folder / "db.plus"
-            if full.is_file():
-                self._merge_full(full)
+                for folder in sorted(projects.iterdir()):
+                    if folder.is_dir() and SLUG_RE.match(folder.name):
+                        changed |= self._merge_project(folder.name, seq, folder, saves)
+            shutil.rmtree(staging, ignore_errors=True)
+            if "db.full" in found:
+                self._merge_full(parts["db.full"])
                 self._db = {"snapshot": seq, "applied": []}
                 changed = True
-            elif minus.is_file() and plus.is_file():
-                self._apply_delta(minus, plus)
+            elif "db.minus" in found and "db.plus" in found:
+                self._apply_delta(parts["db.minus"], parts["db.plus"])
                 self._db.setdefault("applied", []).append(seq)
                 changed = True
+        finally:
+            shutil.rmtree(staging, ignore_errors=True)
+            for part in parts.values():
+                _unlink_db(part)
         self._manifest, self._seq = manifest, seq
         self._version = chain_name(seq)
         return changed
 
-    def _install_project(self, slug: str, seq: int, body: bytes) -> bool:
-        with _Unpacked(self.data_dir, body) as folder:
-            return self._merge_project(slug, seq, folder / "p" / slug)
-
-    def _merge_project(self, slug: str, seq: int, folder: Path) -> bool:
+    def _merge_project(self, slug: str, seq: int, folder: Path, saves: "_Saves") -> bool:
+        """Merge one project folder unpacked from save seq. folder is ours to consume: files are moved, not copied."""
         meta_file = folder / VERSION_FILE
         if not meta_file.is_file():
             raise KeyError(f"{slug} missing from save {seq}")
@@ -366,56 +476,57 @@ class CloudState:
         files = meta.get("files", {})
         at = {rel: int(meta.get("at", {}).get(rel, seq)) for rel in files}  # which save holds each file's bytes
         base = self._installed.get(slug, {}).get("files", {})
-        staging = self._meta_dir / f".refs-{secrets.token_hex(4)}"
-        bodies: dict[int, bytes | None] = {}
+        staged: dict[int, Path] = {}
 
         def source_of(rel: str) -> Path | None:
-            """A file this save did not pack because it was unchanged: read it from the save that holds it."""
+            """A file this save did not pack because it was unchanged: read it from the save that holds it (that
+            project's folder is unpacked from it once, in one pass)."""
             holder = at.get(rel)
             if holder is None or holder == seq:
                 return None
-            if holder not in bodies:
-                bodies[holder] = self._get_save(holder)
-            data = _member(bodies[holder], f"p/{slug}/{rel}")
-            if data is None:
-                return None
-            target = staging / rel
-            target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_bytes(data)
-            return target
+            if holder not in staged:
+                staged[holder] = self._temp(f"refs-{holder}")
+                _unpack(saves.path(holder), staged[holder], lambda name: name.startswith(f"p/{slug}/"))
+            target = staged[holder] / "p" / slug / rel
+            return target if target.is_file() else None
 
         try:
-            changed = _merge_files(self._scope(slug), base, folder, files, self._hash_cache, source_of)
+            changed = _merge_files(self._scope(slug), base, folder, files, self._hash_cache, source_of, move=True)
         finally:
-            shutil.rmtree(staging, ignore_errors=True)
+            for path in staged.values():
+                shutil.rmtree(path, ignore_errors=True)
         self._installed[slug] = {"seq": seq, "files": files, "deleted": bool(meta.get("deleted")), "at": at}
         if meta.get("deleted"):
             _remove_if_empty(self._scope(slug).path)
         return changed
 
-    def _apply_db(self, db: dict, bodies: dict) -> None:
-        """Snapshot (when it changed), then each delta not applied yet."""
+    def _apply_db(self, db: dict, saves: "_Saves") -> None:
+        """Snapshot (when it changed), then each delta not applied yet. Each save object is deleted as soon as its
+        database part is unpacked, and each unpacked part as soon as it is applied."""
         snapshot = db.get("snapshot")
         if snapshot != self._db.get("snapshot"):
-            if snapshot not in bodies:  # fetch each save object once (setdefault would fetch every time)
-                bodies[snapshot] = self._get_save(snapshot)
-            if bodies[snapshot] is None:
-                raise KeyError(chain_name(snapshot))
-            with _Unpacked(self.data_dir, bodies[snapshot]) as folder:
-                if not (folder / "db.full").is_file():
+            theirs = self._temp("full", ".db")
+            try:
+                found = _unpack_files(saves.path(snapshot), {"db.full": theirs})
+                saves.drop(snapshot)
+                if "db.full" not in found:
                     raise KeyError(f"no database in save {snapshot}")
-                self._merge_full(folder / "db.full")
+                self._merge_full(theirs)
+            finally:
+                _unlink_db(theirs)
             self._db = {"snapshot": snapshot, "applied": []}
         for seq in db.get("deltas") or []:
             if seq in self._db["applied"]:
                 continue
-            if seq not in bodies:  # fetch each save object once (setdefault would fetch every time)
-                bodies[seq] = self._get_save(seq)
-            if bodies[seq] is None:
-                raise KeyError(chain_name(seq))
-            with _Unpacked(self.data_dir, bodies[seq]) as folder:
-                if (folder / "db.plus").is_file() and (folder / "db.minus").is_file():
-                    self._apply_delta(folder / "db.minus", folder / "db.plus")
+            parts = {"db.minus": self._temp("minus", ".db"), "db.plus": self._temp("plus", ".db")}
+            try:
+                found = _unpack_files(saves.path(seq), parts)
+                saves.drop(seq)
+                if len(found) == 2:
+                    self._apply_delta(parts["db.minus"], parts["db.plus"])
+            finally:
+                for part in parts.values():
+                    _unlink_db(part)
             self._db["applied"].append(seq)
 
     def _apply_delta(self, minus: Path, plus: Path) -> None:
@@ -435,7 +546,14 @@ class CloudState:
         return self._db.get("snapshot") is not None and _stat_sig(self.db_file) == self._db_clean
 
     def _merge_full(self, theirs: Path) -> None:
-        """Three-way merge of a full database snapshot into the local db (local unsaved rows are kept)."""
+        """Three-way merge of a full database snapshot into the local db (local unsaved rows are kept). theirs is a
+        temp file of ours: it becomes the new base copy by a rename, so no third full copy is written.
+
+        Why two full copies (the working db and base.db) stay on disk: base.db is the last state every instance
+        agreed on. Saves upload the row-level difference between the working db and base.db (a few KB instead of the
+        whole file, which the Blob budget needs), and merges use it as the common ancestor, so a row deleted on one
+        side is deleted on the other instead of coming back. The working db changes under the app at any time, so it
+        cannot stand in for it."""
         self._meta_dir.mkdir(parents=True, exist_ok=True)
         self.db_file.parent.mkdir(parents=True, exist_ok=True)
         if not self.db_file.is_file() or self.db_file.stat().st_size == 0 or _no_rows(self.db_file):
@@ -447,8 +565,16 @@ class CloudState:
             base = self._base_db if self._base_db.is_file() else None
             _dispose_engines(self.db_file)  # idle pooled connections must not hold a lock while rows are merged
             merge_sqlite(self.db_file, base, theirs)
-        _copy_db(theirs, self._base_db)
+        self._install_base(theirs)
         self._db_clean = _stat_sig(self.db_file) if clean else None
+
+    def _install_base(self, source: Path) -> None:
+        """Make source (a temp database file of ours, on the same disk) the base copy: a rename, not a copy."""
+        _checkpoint(source)
+        for suffix in ("-wal", "-shm", "-journal"):
+            Path(f"{self._base_db}{suffix}").unlink(missing_ok=True)
+            Path(f"{source}{suffix}").unlink(missing_ok=True)
+        os.replace(source, self._base_db)
 
     # -- writing ---------------------------------------------------------------------------------
 
@@ -464,7 +590,14 @@ class CloudState:
                 if not self._dirty():
                     self.save_failed_at = None
                     return None
-                name = self._commit()
+                try:
+                    name = self._commit()
+                except Exception as exc:  # noqa: BLE001 - only a full disk is retried here
+                    if not _disk_full(exc):
+                        raise
+                    print(f"ranksim: the disk is full while saving ({str(exc)[:120]}); removing temp files and trying again.", flush=True)
+                    self._sweep()
+                    name = self._commit()
                 self.save_failed_at = None
                 return name
             except (StoreError, KeyError, OSError, ValueError, tarfile.TarError, sqlite3.Error) as exc:
@@ -538,25 +671,27 @@ class CloudState:
         """Pack and create save number seq. Returns its name, or None when the number was taken first."""
         projects = self._projects_changed()
         name = chain_name(seq)
-        self._meta_dir.mkdir(parents=True, exist_ok=True)
-        snap = self._meta_dir / f".snap-{secrets.token_hex(4)}.db"
-        minus = self._meta_dir / f".minus-{secrets.token_hex(4)}.db"
-        plus = self._meta_dir / f".plus-{secrets.token_hex(4)}.db"
+        snap, minus, plus = self._temp("snap", ".db"), self._temp("minus", ".db"), self._temp("plus", ".db")
         db_kind, sig_before = None, None
         try:
             manifest = json.loads(json.dumps(self._manifest))
             db = manifest.setdefault("db", {"snapshot": None, "deltas": [], "sizes": {}})
             if self.db_file.is_file() and not self._db_is_clean():
                 sig_before = _stat_sig(self.db_file)
-                _sqlite_copy(self.db_file, snap)
                 if not self._db.get("snapshot") or not self._base_db.is_file():
                     db_kind = "full"
-                elif make_delta(snap, self._base_db, minus, plus):
+                elif make_delta(self.db_file, self._base_db, minus, plus):
+                    # The delta is read from the working db in one read transaction (a consistent view, no third full
+                    # copy on disk). After the upload, base.db takes it exactly as every reader applies it.
                     delta_size = minus.stat().st_size + plus.stat().st_size
                     sizes = db.get("sizes") or {}
                     total = sum(int(sizes.get(str(d), 0)) for d in db.get("deltas") or []) + delta_size
                     snapshot_size = max(COMPACT_FLOOR_BYTES, int(sizes.get(str(db.get("snapshot")), 0)))
                     db_kind = "full" if len(db.get("deltas") or []) >= COMPACT_DELTAS or total > COMPACT_RATIO * snapshot_size else "delta"
+                if db_kind == "full":
+                    _unlink_db(minus)
+                    _unlink_db(plus)
+                    _sqlite_copy(self.db_file, snap)
             if not projects and db_kind is None and not self._extra:
                 if sig_before is not None:
                     self._db_clean = sig_before  # same rows as the base: nothing to upload
@@ -624,8 +759,11 @@ class CloudState:
             # Ours now. Record it locally exactly as a reader of this save would.
             for slug, (files, meta) in projects.items():
                 self._installed[slug] = {"seq": seq, "files": files, "deleted": meta["deleted"], "at": dict(meta.get("at") or {})}
+            if db_kind == "full":
+                self._install_base(snap)
+            elif db_kind == "delta":
+                merge_sqlite(self._base_db, minus, plus)
             if db_kind is not None:
-                _copy_db(snap, self._base_db)
                 self._db_clean = sig_before
                 if db_kind == "full":
                     self._db = {"snapshot": seq, "applied": []}
@@ -646,7 +784,7 @@ class CloudState:
             return name
         finally:
             for path in (snap, minus, plus):
-                path.unlink(missing_ok=True)
+                _unlink_db(path)
 
     def _prunable(self, manifest: dict, seq: int) -> list[int]:
         """Saves old enough to delete: more than KEEP_CHAIN behind and referenced by nobody. Deletes cost nothing,
@@ -717,19 +855,21 @@ class CloudState:
         """Merge one old-format tarball in. The first import takes everything (local files win); a later one, written
         by an old instance still running during the rollout, is merged against what the first import brought, so
         only what the old instance changed since then is applied. Running it twice changes nothing."""
-        body = self.store.get(name)
         bases: dict = {}
         if not first:
             try:
                 bases = json.loads(self.store.get(LEGACY_BASE).decode("utf-8"))
             except KeyError:
                 bases = {}
-        staging = self.data_dir.parent / f".{self.data_dir.name}-legacy-{secrets.token_hex(4)}"
+        staging = self._temp("legacy")
         staging.mkdir(parents=True)
+        download = self._temp("legacy", ".tgz")
         seen: dict = {}
         try:
-            with tarfile.open(fileobj=io.BytesIO(body), mode="r:gz") as archive:
+            self.store.fetch(name, download)
+            with tarfile.open(download, mode="r:gz") as archive:
                 archive.extractall(staging, filter="data")
+            download.unlink(missing_ok=True)
             incoming = staging / "projects"
             if incoming.is_dir():
                 self.projects_dir.mkdir(parents=True, exist_ok=True)
@@ -752,6 +892,7 @@ class CloudState:
                 self._db_clean = None
         finally:
             shutil.rmtree(staging, ignore_errors=True)
+            download.unlink(missing_ok=True)
         self.store.put(LEGACY_BASE, json.dumps(seen).encode("utf-8"), overwrite=True, content_type="application/json")
         print(f"ranksim: imported the old storage format ({name.rsplit('/', 1)[-1]}).", flush=True)
         return True
@@ -902,30 +1043,137 @@ def _sha_file(path: Path) -> str:
     return digest.hexdigest()
 
 
-class _Unpacked:
-    """Extract an object to a private staging folder; yields the folder and cleans up."""
+class _Saves:
+    """Save objects downloaded during one sync, each streamed to a file in the temp folder (never held in memory),
+    fetched at most once, deleted as soon as the caller is done with it, and always when the sync ends."""
 
-    def __init__(self, data_dir: Path, body: bytes) -> None:
-        self.data_dir, self.body = data_dir, body
-        self.folder: Path | None = None
+    def __init__(self, state: "CloudState") -> None:
+        self.state = state
+        self.paths: dict[int, Path] = {}
 
-    def __enter__(self) -> Path:
-        self.folder = self.data_dir.parent / f".{self.data_dir.name}-incoming-{secrets.token_hex(4)}"
-        self.folder.mkdir(parents=True)
-        with tarfile.open(fileobj=io.BytesIO(self.body), mode="r:gz") as archive:
-            archive.extractall(self.folder, filter="data")
-        return self.folder
+    def path(self, seq: int) -> Path:
+        """The save's file; KeyError when the store does not have it."""
+        seq = int(seq)
+        if seq not in self.paths:
+            target = self.state._temp(f"save-{seq}", ".tgz")
+            try:
+                self.state.store.fetch(chain_name(seq), target)
+            except BaseException:
+                target.unlink(missing_ok=True)
+                raise
+            self.paths[seq] = target
+        return self.paths[seq]
 
-    def __exit__(self, *_exc):
-        shutil.rmtree(self.folder, ignore_errors=True)
+    def get(self, seq: int) -> Path | None:
+        try:
+            return self.path(seq)
+        except KeyError:
+            return None
+
+    def drop(self, seq: int) -> None:
+        path = self.paths.pop(int(seq), None)
+        if path is not None:
+            path.unlink(missing_ok=True)
+
+    def __enter__(self) -> "_Saves":
+        return self
+
+    def __exit__(self, *_exc) -> None:
+        for seq in list(self.paths):
+            self.drop(seq)
 
 
-def _merge_files(local: _Scope, base: dict, theirs_dir: Path, theirs: dict, cache: dict, source_of=None) -> bool:
+def _read_manifest(archive_path: Path) -> dict:
+    """The manifest of a save file (its first member, so this reads only the start of the file)."""
+    with tarfile.open(archive_path, mode="r:gz") as archive:
+        for member in archive:
+            if member.name == MANIFEST_FILE and member.isfile():
+                handle = archive.extractfile(member)
+                if handle is not None:
+                    return json.loads(handle.read().decode("utf-8"))
+    raise KeyError(f"{archive_path.name} has no manifest")
+
+
+def _unpack(archive_path: Path, dest: Path, want) -> None:
+    """Extract, in one pass, only the members whose name want(name) accepts."""
+    dest.mkdir(parents=True, exist_ok=True)
+    with tarfile.open(archive_path, mode="r:gz") as archive:
+        for member in archive:
+            if (member.isfile() or member.isdir()) and want(member.name):
+                archive.extract(member, dest, filter="data")
+
+
+def _unpack_files(archive_path: Path, targets: dict[str, Path]) -> set[str]:
+    """Stream the named members straight to their target files, in one pass. Returns the names found."""
+    found: set[str] = set()
+    with tarfile.open(archive_path, mode="r:gz") as archive:
+        for member in archive:
+            target = targets.get(member.name)
+            if target is None or not member.isfile():
+                continue
+            handle = archive.extractfile(member)
+            if handle is None:
+                continue
+            target.parent.mkdir(parents=True, exist_ok=True)
+            with open(target, "wb") as out:
+                shutil.copyfileobj(handle, out, 1 << 20)
+            found.add(member.name)
+            if len(found) == len(targets):
+                break
+    return found
+
+
+def _unlink_db(path: Path) -> None:
+    for suffix in ("", "-wal", "-shm", "-journal"):
+        Path(f"{path}{suffix}").unlink(missing_ok=True)
+
+
+def _checkpoint(path: Path) -> None:
+    """Fold a database's -wal file back in and truncate it, so a large merge does not leave a large -wal behind."""
+    if not Path(f"{path}-wal").exists():
+        return
+    try:
+        conn = sqlite3.connect(str(path), timeout=10)
+        try:
+            conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        finally:
+            conn.close()
+    except sqlite3.Error:
+        pass
+
+
+def _disk_full(exc: BaseException | None) -> bool:
+    """True when exc (or what caused it) says the disk is full: ENOSPC, or SQLite's "database or disk is full"."""
+    seen: set[int] = set()
+    while exc is not None and id(exc) not in seen:
+        seen.add(id(exc))
+        if isinstance(exc, OSError) and exc.errno in (errno.ENOSPC, errno.EDQUOT):
+            return True
+        if isinstance(exc, sqlite3.Error) and (getattr(exc, "sqlite_errorcode", None) == 13 or "disk is full" in str(exc).lower()):
+            return True
+        exc = exc.__cause__ or exc.__context__
+    return False
+
+
+_SWEPT: set[str] = set()  # working folders already swept for leftover temp files by this process
+_DIR_LOCKS: dict[str, threading.RLock] = {}
+_DIR_LOCKS_GUARD = threading.Lock()
+
+
+def _dir_lock(data_dir: Path) -> threading.RLock:
+    """One lock per working folder for the whole process, however many CloudState objects point at it."""
+    key = str(Path(data_dir).resolve())
+    with _DIR_LOCKS_GUARD:
+        return _DIR_LOCKS.setdefault(key, threading.RLock())
+
+
+def _merge_files(local: _Scope, base: dict, theirs_dir: Path, theirs: dict, cache: dict, source_of=None, move: bool = False) -> bool:
     """Three-way merge at file level into the local folder. Returns True when a local file changed.
 
     For each path: if theirs did not change it since base, keep local. If local did not change it since base, take
     theirs (copy, or delete when theirs removed it). If both changed it differently, local wins: it is the newer,
-    unsaved work of this instance, and it will be saved next.
+    unsaved work of this instance, and it will be saved next. move: theirs_dir (and what source_of returns) are temp
+    files of ours, moved into place instead of copied, so a merge never holds two copies of the incoming files.
     """
     mine = _manifest(local, cache)
     changed = False
@@ -946,9 +1194,13 @@ def _merge_files(local: _Scope, base: dict, theirs_dir: Path, theirs: dict, cach
                 if source is None or not source.is_file():
                     raise KeyError(f"{local.path.name}/{rel} is missing from storage")
             target.parent.mkdir(parents=True, exist_ok=True)
-            temp = target.with_name(f".ranksim-tmp-{secrets.token_hex(4)}")
-            shutil.copyfile(source, temp)  # a fresh mtime: copy2 would keep the tar's whole-second one
-            os.replace(temp, target)
+            if move:
+                os.utime(source)  # a fresh mtime, not the tar's whole-second one
+                os.replace(source, target)
+            else:
+                temp = target.with_name(f".ranksim-tmp-{secrets.token_hex(4)}")
+                shutil.copyfile(source, temp)  # a fresh mtime: copy2 would keep the tar's whole-second one
+                os.replace(temp, target)
             try:  # we know this file's hash: later manifests (and the report cache's key) need not read it again
                 stat = target.stat()
                 cache[(str(target), stat.st_size, stat.st_mtime_ns, stat.st_ino, stat.st_ctime_ns)] = t
@@ -956,21 +1208,6 @@ def _merge_files(local: _Scope, base: dict, theirs_dir: Path, theirs: dict, cach
                 pass
         changed = True
     return changed
-
-
-def _member(body: bytes | None, name: str) -> bytes | None:
-    """One file from a save object, or None."""
-    if body is None:
-        return None
-    with tarfile.open(fileobj=io.BytesIO(body), mode="r:gz") as archive:
-        try:
-            member = archive.getmember(name)
-        except KeyError:
-            return None
-        if not member.isfile():
-            return None
-        handle = archive.extractfile(member)
-        return handle.read() if handle is not None else None
 
 
 def _remove_if_empty(folder: Path) -> None:
@@ -1033,6 +1270,7 @@ def merge_sqlite(ours: Path, base: Path | None, theirs: Path) -> dict:
       not have are re-chained after them, so verify() still sees one unbroken chain.
     """
     conn = sqlite3.connect(str(ours), timeout=10, isolation_level=None)
+    conn.execute("PRAGMA temp_store=MEMORY")  # sorts and EXCEPTs in memory: SQLite's temp files would fill /tmp
     counts: dict[str, int] = {}
     try:
         conn.execute("ATTACH DATABASE ? AS t", (str(theirs),))
@@ -1054,6 +1292,10 @@ def merge_sqlite(ours: Path, base: Path | None, theirs: Path) -> dict:
                 conn.execute(_in_schema(sql, table, "b"))  # an empty base table keeps every query uniform
             counts[table] = _merge_table(conn, table)
         conn.execute("COMMIT")
+        try:
+            conn.execute("PRAGMA main.wal_checkpoint(TRUNCATE)")  # a large merge must not leave a large -wal file
+        except sqlite3.Error:
+            pass
     except BaseException:
         if conn.in_transaction:
             conn.execute("ROLLBACK")
@@ -1267,6 +1509,7 @@ def make_delta(new: Path, base: Path | None, minus: Path, plus: Path) -> int:
     for path in (minus, plus):
         path.unlink(missing_ok=True)
     conn = sqlite3.connect(str(new), timeout=30)
+    conn.execute("PRAGMA temp_store=MEMORY")
     total = 0
     try:
         conn.execute("ATTACH DATABASE ? AS m", (str(minus),))

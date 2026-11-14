@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import re
 import time
@@ -245,6 +246,15 @@ class FakeBlob:
         self.calls.append(f"get {name}")
         return SimpleNamespace(body=self.items[name])
 
+    def stream_blob(self, name, *, access):
+        """The SDK's streaming download: a context manager yielding chunks (counted as the same get)."""
+        assert access == "private"
+        self.calls.append(f"get {name}")
+        if name not in self.items:
+            raise self.BlobNotFoundError(name)
+        body = self.items[name]
+        return contextlib.nullcontext(body[i : i + 65536] for i in range(0, len(body), 65536))
+
     def delete_blob(self, names, **_):
         for name in [names] if isinstance(names, str) else names:
             self.items.pop(name, None)
@@ -256,7 +266,7 @@ def fake_blob(monkeypatch):
     from vercel.blob import sync
 
     fake = FakeBlob()
-    for name in ("put_blob", "head_blob", "query_blobs", "get_blob", "delete_blob", "BlobError", "BlobNotFoundError"):
+    for name in ("put_blob", "head_blob", "query_blobs", "get_blob", "stream_blob", "delete_blob", "BlobError", "BlobNotFoundError"):
         monkeypatch.setattr(sync, name, getattr(fake, name))
     return fake
 

@@ -27,6 +27,20 @@ export const SEL = {
   offline: '.offline',
   skeleton: (kind) => `main .skeleton.sk-${kind}`,
 
+  rankChanges: 'section.tile:has(h2:text-is("Rank changes"))',
+  trendCell: '.history-cell svg, .history-cell',
+  historyRow: '.history-row-btn',
+  schedule: '[aria-label="Re-check schedule"] button',
+
+  publishOpen: '.side-stack button:text-is("Publish"), button.btn-block:text-is("Publish")',
+  publishSheet: '.sheet[role=dialog]:has(h2:has-text("Publish to"))',
+  proofCode: '.publish-code code',
+  proofCheck: '.sheet button:text-is("Check")',
+  platform: (kind) => `[aria-label="Platform"] button[data-kind="${kind}"]`,
+  connect: '.sheet button:text-is("Connect")',
+  publishGo: '.sheet button.btn-primary.btn-large',
+  rollBack: '.sheet button:text-is("Roll back")',
+
   gscSection: 'section.tile:has(h2:text-is("Google Search Console"))',
   gscTile: '[data-gsc="overview"]',
 

@@ -319,6 +319,74 @@ try {
     await audit(page, 'desktop-11-editor-result');
   });
 
+  await step('track', async () => {
+    await goto(page, `/app/${encodeURIComponent(slug)}`);
+    const tile = page.locator(SEL.rankChanges);
+    await tile.waitFor();
+    const text = await tile.innerText();
+    expect(/Up|Down|New|Lost|Changes show|Positions show/.test(text), `Rank changes tile has content: ${text.slice(0, 120)}`);
+    await goto(page, `/app/${encodeURIComponent(slug)}/searches`);
+    await page.waitForSelector(SEL.searchRow);
+    expect(/Trend/.test(await page.innerText('main')), 'the Searches list has the Trend column');
+    expect((await page.locator('.history-cell').count()) >= 1, 'a sparkline cell per checked search');
+    await goto(page, `/app/${encodeURIComponent(slug)}/track-history`);
+    await page.waitForSelector(SEL.historyRow);
+    await audit(page, 'desktop-14-history');
+    await page.locator(SEL.historyRow).first().click();
+    await page.waitForSelector(SEL.sheet);
+    await audit(page, 'desktop-15-history-sheet');
+    await page.keyboard.press('Escape');
+    await page.waitForSelector(SEL.sheet, { state: 'detached' });
+    await goto(page, `/app/${encodeURIComponent(slug)}/settings`);
+    await page.waitForSelector(SEL.schedule);
+    const off = page.locator(`${SEL.schedule}[aria-pressed="false"]`).first();
+    const label = (await off.innerText()).trim();
+    await off.click();
+    await page.waitForFunction(([sel, want]) => [...document.querySelectorAll(sel)].some((b) => b.getAttribute('aria-pressed') === 'true' && b.textContent.trim() === want), [SEL.schedule, label]);
+    await audit(page, 'desktop-16-settings-tracking');
+  });
+
+  await step('publish', async () => {
+    page.on('dialog', (dialog) => dialog.accept());
+    const wp = 'https://www.dirtcrew.example/wp-about/';
+    await goto(page, `/app/${encodeURIComponent(slug)}/editor?page=${encodeURIComponent(wp)}&q=${encodeURIComponent(SEARCHES[0])}`);
+    const heading = page.frameLocator(SEL.editorFrame).locator('h1').first();
+    await heading.waitFor({ timeout: SLOW });
+    await heading.click();
+    await page.keyboard.press('End');
+    await page.keyboard.type(' and our crews');
+    await page.waitForTimeout(500);
+    await page.locator(SEL.publishOpen).first().click();
+    await page.waitForSelector(SEL.publishSheet);
+    await page.waitForSelector(SEL.proofCode, { timeout: SLOW });
+    await audit(page, 'desktop-17-publish-sheet');
+    const tag = (await page.innerText(SEL.proofCode)).trim();
+    expect(/ranksim/i.test(tag), `a proof tag: ${tag}`);
+    // The owner adds the tag to their home page (the fake live web), then checks.
+    const html = `<!doctype html><html><head><title>DirtCrew</title>${tag}</head><body><h1>DirtCrew</h1></body></html>`;
+    await page.evaluate(async ([html]) => {
+      const csrf = document.getElementById('csrf').value;
+      await fetch('/__e2e/web', { method: 'POST', headers: { 'content-type': 'application/json', 'x-ranksim-csrf': csrf }, body: JSON.stringify({ url: 'https://www.dirtcrew.example/', html }) });
+    }, [html]);
+    await page.click(SEL.proofCheck);
+    await page.waitForSelector(`${SEL.publishSheet} :text("Proven")`, { timeout: SLOW });
+    await page.click(SEL.platform('wordpress'));
+    await page.fill('.sheet input[name="username"]', 'e2e');
+    await page.fill('.sheet input[name="app_password"]', 'abcd efgh ijkl mnop');
+    await page.click(SEL.connect);
+    await page.waitForSelector(`${SEL.publishGo}:not([disabled])`, { timeout: SLOW });
+    await audit(page, 'desktop-18-publish-ready');
+    await page.click(SEL.publishGo);
+    await page.waitForSelector(SEL.rollBack, { timeout: SLOW });
+    const sheetText = await page.innerText(SEL.publishSheet);
+    expect(/live|confirmed|published/i.test(sheetText), `the live check reports: ${sheetText.slice(0, 200)}`);
+    await audit(page, 'desktop-19-published');
+    await page.click(SEL.rollBack);
+    await page.waitForFunction((sel) => /rolled back|restored/i.test(document.querySelector(sel).innerText), SEL.publishSheet, { timeout: SLOW });
+    await audit(page, 'desktop-20-rolled-back');
+    await page.keyboard.press('Escape');
+  });
+
   await step('offline', async () => {
     await desk.setOffline(true);
     await page.evaluate(() => window.dispatchEvent(new Event('offline')));

@@ -1458,3 +1458,82 @@ def test_check_route_saves_nothing_and_needs_csrf(app_env):
     steps = {s["key"]: s for s in answer.json()["steps"]}
     assert steps["seo"]["detail"].startswith("Yoast found")
     assert client.get("/api/v1/projects/acme/publish/connections").json()["connections"] == []
+
+
+# ---------------------------------------------------------------------------
+# Publish from Issues
+# ---------------------------------------------------------------------------
+
+
+def test_clean_fixes_keeps_only_issue_shaped_rows():
+    from aeo.ranksim.publishing.service import clean_fixes
+
+    rows = clean_fixes([{"id": "title-long-about", "title": "Title  too long"}, {"id": "Bad ID"}, "x", {"id": "title-long-about"}, {"id": "../x"}])
+    assert rows == [{"id": "title-long-about", "title": "Title too long"}]
+
+
+def _owned_routes(client, web):
+    record = client.post("/api/v1/projects/acme/publish/ownership", json={"site": "acme.com"}, headers=H).json()
+    web.pages["https://acme.com/"] = page(extra=f'<meta name="ranksim-verification" content="{record["token"]}">')
+    client.post("/api/v1/projects/acme/publish/ownership/verify", json={"site": "acme.com"}, headers=H)
+
+
+def test_live_publish_marks_fixed_issues_done_and_rollback_reopens(app_env):
+    from aeo.ranksim.plugins import share
+
+    client, web, router, ui = app_env
+    project = ui.project("acme")
+    share.set_issue_plan(project, "meta-missing-about", "planned", plan="Write a description", title="No meta description")
+    url = "https://acme.com/about"
+    web.pages[url] = page()
+    router.on("POST", r"hooks", lambda r, m: httpx.Response(200))
+    _owned_routes(client, web)
+    conn = client.post("/api/v1/projects/acme/publish/connections", json={"kind": "webhook", "site": "acme.com", "settings": {"url": "https://hooks.acme.test/x"}, "secret": {"signing_secret": "k" * 20}}, headers=H).json()
+    fixes = [{"id": "meta-missing-about", "title": "No meta description"}, {"id": "h1-weak-about", "title": "Weak heading"}, {"id": "NOT VALID"}]
+    entry = client.post("/api/v1/projects/acme/publish", json={"url": url, "html": page(h1="New", desc="Better."), "connection_id": conn["id"], "fixes": fixes}, headers=H).json()
+    assert [f["id"] for f in entry["fixes"]] == ["meta-missing-about", "h1-weak-about"]
+    assert entry["fixes_marked"] == "done"
+    plans = share.issue_plans(project)
+    assert plans["meta-missing-about"]["status"] == "done" and plans["meta-missing-about"]["plan"] == "Write a description"
+    assert plans["h1-weak-about"]["status"] == "done"
+    assert any(row["summary"] == "Fixed: Weak heading" for row in share.changelog(project))
+    share.set_issue_plan(project, "h1-weak-about", "doing", title="Weak heading")  # the owner changed it since
+    client.post(f"/api/v1/projects/acme/publish/history/{entry['id']}/rollback", headers=H)
+    plans = share.issue_plans(project)
+    assert plans["meta-missing-about"]["status"] == "open" and plans["h1-weak-about"]["status"] == "doing"
+
+
+def test_pull_request_marks_issues_only_once_merged_and_live(app_env):
+    from aeo.ranksim.plugins import share
+
+    client, web, router, ui = app_env
+    project = ui.project("acme")
+    url = "https://acme.com/about"
+    old = page()
+    web.pages[url] = old
+    gh, state = gh_router({"about.html": old})
+    router.routes.extend(gh.routes)
+    _owned_routes(client, web)
+    conn = client.post("/api/v1/projects/acme/publish/connections", json={"kind": "github", "site": "acme.com", "settings": {"repo": "acme/site"}, "secret": {"token": "ghp_x"}}, headers=H).json()
+    new = page(desc="Fixed description.")
+    entry = client.post("/api/v1/projects/acme/publish", json={"url": url, "html": new, "connection_id": conn["id"], "fixes": [{"id": "meta-short-about", "title": "Short description"}]}, headers=H).json()
+    assert entry["status"] == "pull_request" and "fixes_marked" not in entry
+    assert "meta-short-about" not in share.issue_plans(project)
+    state["merged"] = True
+    web.pages[url] = new
+    checked = client.post(f"/api/v1/projects/acme/publish/history/{entry['id']}/verify", headers=H).json()
+    assert checked["fixes_marked"] == "done" and share.issue_plans(project)["meta-short-about"]["status"] == "done"
+    again = client.post(f"/api/v1/projects/acme/publish/history/{entry['id']}/verify", headers=H).json()
+    assert sum(1 for row in share.changelog(project) if row["summary"] == "Fixed: Short description") == 1 and again["fixes_marked"] == "done"
+
+
+def test_fix_sync_never_breaks_a_publish_without_share(app_env, monkeypatch):
+    client, web, router, ui = app_env
+    monkeypatch.setitem(sys.modules, "aeo.ranksim.plugins.share", None)
+    url = "https://acme.com/about"
+    web.pages[url] = page()
+    router.on("POST", r"hooks", lambda r, m: httpx.Response(200))
+    _owned_routes(client, web)
+    conn = client.post("/api/v1/projects/acme/publish/connections", json={"kind": "webhook", "site": "acme.com", "settings": {"url": "https://hooks.acme.test/x"}, "secret": {"signing_secret": "k" * 20}}, headers=H).json()
+    done = client.post("/api/v1/projects/acme/publish", json={"url": url, "html": page(h1="New"), "connection_id": conn["id"], "fixes": [{"id": "a-b", "title": "x"}]}, headers=H)
+    assert done.status_code == 200 and done.json()["status"] == "live"

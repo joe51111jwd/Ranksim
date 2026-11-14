@@ -77,6 +77,15 @@ KINDS = {
     "share": "Report",
     "note": "Note",
 }
+CLIENT_KINDS = {
+    "analysis": "Site check",
+    "google": "Google check",
+    "test": "Test",
+    "publish": "Site update",
+    "issue": "Fixed",
+    "share": "Report",
+    "note": "Note",
+}
 STATUSES = {"open": "Not started", "planned": "Planned", "doing": "In progress", "done": "Done"}
 SEVERITIES = ("high", "medium", "low")
 CONTROL_RE = re.compile(r"[\x00-\x08\x0b-\x1f\x7f]")
@@ -491,13 +500,13 @@ def log_change(project, kind: str, summary: str, *, detail: str = "", public: bo
 def _pull_entry(pull_id: str, google_kind: str, with_results, when) -> dict:
     count = _int(with_results) or 0
     if google_kind == "api":
-        kind, summary = "google", f"Google data refreshed for {count} search{'es' if count != 1 else ''}"
+        kind, summary = "google", f"Checked Google for {count} search{'es' if count != 1 else ''}"
     elif google_kind == "import":
-        kind, summary = "analysis", f"Search positions imported for {count} search{'es' if count != 1 else ''}"
+        kind, summary = "analysis", f"Loaded positions for {count} search{'es' if count != 1 else ''}"
     elif google_kind == "carried":
-        kind, summary = "analysis", "Site pages read again"
+        kind, summary = "analysis", "Checked the site's pages again"
     else:
-        kind, summary = "analysis", "Site analysis run"
+        kind, summary = "analysis", "Checked the site"
     return {"kind": kind, "summary": summary, "detail": f"Pull {pull_id}", "key": f"pull:{pull_id}", "when": when}
 
 
@@ -552,7 +561,7 @@ def changelog(project, *, public_only: bool = False, limit: int = 100) -> list[d
         if public_only and not row.get("public"):
             continue
         kind = row.get("kind") if row.get("kind") in KINDS else "note"
-        entry = {"at": row.get("at"), "date": str(row.get("at") or "")[:10], "kind": kind, "label": KINDS[kind], "summary": _text(row.get("summary"), 200)}
+        entry = {"at": row.get("at"), "date": str(row.get("at") or "")[:10], "kind": kind, "label": (CLIENT_KINDS if public_only else KINDS)[kind], "summary": _text(row.get("summary"), 200)}
         if not public_only:
             entry.update({"id": row.get("id"), "detail": row.get("detail") or "", "public": bool(row.get("public"))})
         out.append(entry)
@@ -604,7 +613,7 @@ def set_issue_plan(project, issue_id: str, status: str, plan: str = "", title: s
         _write_json(_plans_path(project), plans)
     if status == "done" and before != "done":
         name = _text(title, 160) or "an issue"
-        log_change(project, "issue", f"Issue resolved: {name}", detail=f"Issue {issue_id}")
+        log_change(project, "issue", f"Fixed: {name}", detail=f"Issue {issue_id}")
     return row
 
 
@@ -687,6 +696,115 @@ def _search_dates(project) -> dict[str, tuple[str, str]]:
     return out
 
 
+WEEK_DAYS = 7
+MAX_PULLS_FOR_MOVES = 40
+NEXT_RANK = {"doing": 0, "planned": 1, "open": 2}
+SEVERITY_RANK = {"high": 0, "medium": 1, "low": 2}
+
+
+def _observations(project) -> dict[str, list[tuple[datetime, int | None]]]:
+    """search -> [(pulled at, your Google position or None when not in the top 10)] from every stored pull.
+    Only dated REAL results count; an entry carried into a later pull keeps its own date, so it is counted once."""
+    from aeo.ranksim.project import GoogleSnapshot, list_pulls
+
+    seen: dict[str, dict[str, tuple[datetime, int | None]]] = {}
+    for info in list_pulls(project)[-MAX_PULLS_FOR_MOVES:]:
+        data = _read_json(Path(project.dir) / "pulls" / info.pull_id / "google.json", None)
+        if not data:
+            continue
+        try:
+            snapshot = GoogleSnapshot.from_dict(data)
+        except Exception:  # noqa: BLE001 - one bad file never breaks the report
+            continue
+        for entry in snapshot.searches:
+            moment = _parse_time(entry.pulled_at)
+            if moment is None or not entry.results:
+                continue
+            top = sorted((item for item in entry.results if 1 <= item.position <= 10), key=lambda item: item.position)
+            mine = next((item.position for item in top if project.is_our_url(item.url)), None)
+            seen.setdefault(entry.search, {})[_iso(moment)] = (moment, mine)
+    return {search: sorted(points.values(), key=lambda point: point[0]) for search, points in seen.items()}
+
+
+def _history_observations(history) -> dict[str, list[tuple[datetime, int | None]]]:
+    """The same shape from report["history"] (rank tracking), when it has
+    {"searches": [{"q": str, "points": [{"date" or "at": str, "position": int | None}]}]}."""
+    out: dict[str, list[tuple[datetime, int | None]]] = {}
+    rows = history.get("searches") if isinstance(history, dict) else None
+    for row in rows if isinstance(rows, list) else []:
+        if not isinstance(row, dict) or not isinstance(row.get("points"), list):
+            continue
+        points = []
+        for point in row["points"]:
+            if not isinstance(point, dict):
+                continue
+            moment = _parse_time(point.get("date") or point.get("at"))
+            if moment is not None:
+                points.append((moment, _int(point.get("position"))))
+        if points:
+            out[_text(row.get("q"), 200)] = sorted(points, key=lambda point: point[0])
+    return out
+
+
+def _moves(observations, searches, now: datetime) -> list[dict]:
+    """Rank moves over the last week: the newest check against the newest check at least six days before it."""
+    moves = []
+    for search in searches:
+        points = observations.get(search) or []
+        if not points:
+            continue
+        latest_at, latest = points[-1]
+        if (now - latest_at).days > WEEK_DAYS * 2:
+            continue  # nothing checked recently enough to call it this week
+        earlier = [point for point in points if (latest_at - point[0]).days >= WEEK_DAYS - 1]
+        if not earlier:
+            continue
+        before_at, before = earlier[-1]
+        if before == latest:
+            continue
+        moves.append({"q": _text(search, 200), "from": before, "to": latest, "from_date": _iso(before_at)[:10], "to_date": _iso(latest_at)[:10]})
+
+    def size(move):
+        old, new = move["from"] or 11, move["to"] or 11
+        return -abs(old - new)
+
+    return sorted(moves, key=size)[:8]
+
+
+def weekly_summary(project, report: dict, issues: list[dict], changes: list[dict], now: datetime | None = None) -> dict:
+    """What changed in the last week and what is next, for the client. Every item comes from stored data."""
+    now = now or _now()
+    since = now - timedelta(days=WEEK_DAYS)
+    history = _history_observations(report.get("history"))
+    try:
+        observations = history or _observations(project)
+    except Exception:  # noqa: BLE001
+        observations = {}
+    searches = [str(row.get("q") or "") for row in report.get("rankings") or [] if isinstance(row, dict)]
+    moves = _moves(observations, searches, now)
+    tracked = any(len(points) > 1 for points in observations.values())
+    recent = [row for row in changes if (_parse_time(row.get("at")) or now) >= since]
+    done = [{"date": row["date"], "label": row["label"], "summary": row["summary"]} for row in recent if row["kind"] in {"issue", "publish", "note"}]
+    checks = sum(1 for row in recent if row["kind"] in {"google", "analysis"})
+    upcoming = sorted(
+        (issue for issue in issues if issue["status"] in {"planned", "doing"} or (issue["status"] == "open" and issue["severity"] == "high")),
+        key=lambda issue: (NEXT_RANK.get(issue["status"], 3), SEVERITY_RANK.get(issue["severity"], 3)),
+    )
+    return {
+        "since": _iso(since)[:10],
+        "moves": moves,
+        "moves_note": "" if moves else (
+            "No position changed this week." if tracked else "Position changes show here once Google has been checked twice, a week apart."
+        ),
+        "done": done[:10],
+        "checks": checks,
+        "next": [
+            {"title": issue["title"], "severity": issue["severity"], "status": issue["status"], "status_label": issue["status_label"], "plan": issue["plan"]}
+            for issue in upcoming[:5]
+        ],
+    }
+
+
 def client_report(ui, project, *, preview: bool = False) -> dict:
     report = owner_report(ui, project.slug)
     plans = issue_plans(project)
@@ -766,6 +884,7 @@ def client_report(ui, project, *, preview: bool = False) -> dict:
     ]
     demo = kind == "synthetic"
     source = "Demo" if demo else "Google"
+    changes = changelog(project, public_only=True, limit=40)
     if google_date:
         date_note = f"{source} positions are from results pulled {google_date}."
     elif report.get("search_data"):
@@ -793,7 +912,8 @@ def client_report(ui, project, *, preview: bool = False) -> dict:
         "issues": issues,
         "share": share,
         "competitors": [domain for domain in (_domain(item) for item in (report.get("competitors") or [])[:20]) if domain],
-        "changes": changelog(project, public_only=True, limit=15),
+        "changes": changes[:15],
+        "weekly": weekly_summary(project, report, issues, changes),
         "notes": [
             date_note,
             "PREDICTED positions are Ranksim's estimate among the stored pages for that search. They are not Google ranks.",

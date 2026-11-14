@@ -43,6 +43,13 @@ function columnCell(column, row) {
   return h('span', { class: 'qcol', role: 'cell', 'data-label': column.header || '' }, out);
 }
 
+/* True when the site's positions are the synthetic demo's, never Google's. */
+export function isDemo() {
+  return Boolean((S.report && S.report.data && S.report.data.kind === 'synthetic') || (S.slug && S.slug === S.demoSlug) || (S.project && S.project.dataset === 'synthetic'));
+}
+
+const engine = () => (isDemo() ? 'Demo' : 'Google');
+
 /* The page for a search: the one Google ranks or that targets it, else the page Search Console reports for it. */
 export function bestPage(row, report) {
   if (row.url) return { url: row.url, fromGsc: false };
@@ -63,7 +70,9 @@ function pageCell(row, report) {
 export function predictionView(row) {
   const p = row && row.predicted;
   if (!p || p.position == null) {
-    return { text: '', unsure: false, tip: '', sub: row && row.position ? 'Already ranks: no prediction needed' : 'Needs a trained model' };
+    const reason = p && typeof p.reason === 'string' && p.reason ? p.reason : '';
+    const sub = reason || (row && row.position ? 'Already ranks: no prediction needed' : 'Needs a trained model');
+    return { text: p || (row && row.position) ? '-' : '', unsure: true, tip: sub, sub };
   }
   const graded = typeof p.confidence === 'string';
   const unsure = graded && p.confidence.toUpperCase() !== 'CLEARER';
@@ -127,40 +136,68 @@ export function renderSearches() {
   const tracked = h('section', { class: 'tile span-4' },
     h('div', { class: 'tile-head' }, h('h2', { text: 'Your searches' }), h('span', { class: 'aside', text: `${R.kpis.top10} in top 10` })), table);
   const callout = noSearchData();
-  clear(main).append(page('Searches', 'Found from your pages, Google and your competitors.', null,
+  clear(main).append(page('Searches', isDemo() ? 'Demo data, not Google results.' : 'Found from your pages, Google and your competitors.', null,
     h('div', { class: 'bento' }, callout, tracked, suggestions(R)), footer()));
 }
 
-/* Searches discovery found that the site does not track yet, with Add. */
+/* Searches discovery found that the site does not track yet, with Add. Adds queue up: the clicked button says
+   Adding, later clicks say Queued, and they are saved together. */
+const SHOWN = 12;
+const adding = { queue: [], busy: false, showAll: false };
+
+function addButton(item) {
+  const state = adding.busy && adding.queue.includes(item.q) ? 'queued' : adding.current === item.q || (adding.inFlight || []).includes(item.q) ? 'adding' : 'idle';
+  const button = h('button', { class: 'btn add', type: 'button', disabled: state !== 'idle' || null, 'aria-live': 'polite' },
+    state === 'adding' ? [h('span', { class: 'spinner spinner-sm', 'aria-hidden': 'true' }), 'Adding'] : state === 'queued' ? 'Queued' : [icon('plus'), 'Add']);
+  button.addEventListener('click', () => queueAdd(item.q));
+  return button;
+}
+
+async function queueAdd(q) {
+  if (!adding.queue.includes(q)) adding.queue.push(q);
+  if (adding.busy) {
+    renderSearches();
+    return;
+  }
+  adding.busy = true;
+  let added = 0;
+  try {
+    while (adding.queue.length) {
+      const batch = adding.queue.splice(0);
+      adding.inFlight = batch;
+      renderSearches();
+      const current = S.project && Array.isArray(S.project.queries) ? S.project.queries.map((entry) => entry.q) : S.report.rankings.map((row) => row.q);
+      const fresh = batch.filter((item) => !current.includes(item));
+      if (fresh.length) await api.post(`/api/v1/projects/${enc(S.slug)}/settings`, { queries: current.concat(fresh) });
+      await reloadSite();
+      added += fresh.length;
+    }
+    toast(added ? `Added ${plural(added, 'search', 'searches')}. Refresh in Settings to get ${isDemo() ? 'their results' : 'their Google results'}.` : 'Already tracked.');
+  } catch (err) {
+    toast(err.message);
+  } finally {
+    adding.busy = false;
+    adding.inFlight = [];
+    adding.queue = [];
+    renderSearches();
+  }
+}
+
 function suggestions(R) {
   const data = R.discovery;
   const fresh = ((data && data.searches) || []).filter((item) => !item.tracked && !R.rankings.some((row) => row.q === item.q));
   if (!fresh.length) return null;
   const list = h('div', { class: 'rows' });
-  const setBusy = (busy) => list.querySelectorAll('button.add').forEach((button) => { button.disabled = busy; });
-  for (const item of fresh.slice(0, 12)) {
-    const add = S.publicDemo ? null : h('button', {
-      class: 'btn add',
-      type: 'button',
-      onClick: async () => {
-        setBusy(true);  // one change at a time, so a second Add never sends a list without the first
-        try {
-          const current = S.project && Array.isArray(S.project.queries) ? S.project.queries.map((entry) => entry.q) : S.report.rankings.map((row) => row.q);
-          if (!current.includes(item.q)) await api.post(`/api/v1/projects/${enc(S.slug)}/settings`, { queries: current.concat([item.q]) });
-          await reloadSite();
-          toast('Added. Refresh in Settings to get its Google results.');
-          renderSearches();
-        } catch (err) {
-          toast(err.message);
-          setBusy(false);
-        }
-      },
-    }, icon('plus'), 'Add');
+  const shown = adding.showAll ? fresh : fresh.slice(0, SHOWN);
+  for (const item of shown) {
     list.append(h('div', { class: 'rowcard' },
       h('div', { class: 'body' },
         h('div', { class: 't', text: item.q }),
         h('div', { class: 'm' }, intentChip(item), h('span', { text: sourceText(item) }))),
-      add ? h('div', { class: 'right' }, add) : null));
+      S.publicDemo ? null : h('div', { class: 'right' }, addButton(item))));
+  }
+  if (fresh.length > shown.length) {
+    list.append(h('button', { class: 'btn btn-plain', type: 'button', onClick: () => { adding.showAll = true; renderSearches(); } }, `Show ${fresh.length - shown.length} more`));
   }
   return h('section', { class: 'tile span-4' },
     h('div', { class: 'tile-head' }, h('h2', { text: 'Found, not tracked' }), h('span', { class: 'aside', text: plural(fresh.length, 'search', 'searches') })), list);
@@ -177,12 +214,12 @@ export function openSearch(row) {
     const body = h('div', { class: 'sheet-body' });
     const pv = predictionView(row);
     body.append(h('div', { class: 'sgrid' },
-      h('div', { class: 'tile white' }, h('div', { class: 'tile-k', text: 'Google' }), h('div', { class: 'num', text: row.position ? `#${row.position}` : '-' }), h('div', { class: 'tile-sub', text: row.position ? 'Your position' : row.checked ? 'Not in the top 10' : 'Not checked yet' })),
+      h('div', { class: 'tile white' }, h('div', { class: 'tile-k', text: engine() }), h('div', { class: 'num', text: row.position ? `#${row.position}` : '-' }), h('div', { class: 'tile-sub', text: row.position ? 'Your position' : row.checked ? 'Not in the top 10' : 'Not checked yet' })),
       h('div', { class: 'tile white' }, h('div', { class: 'tile-k', text: 'PREDICTED' }), h('div', { class: `num${pv.unsure ? ' unsure' : ''}`, text: pv.text || '-' }), h('div', { class: 'tile-sub', text: pv.sub }))));
     const best = bestPage(row, S.report);
     if (best.url) body.append(h('p', { class: 'reason', text: best.fromGsc ? `Best page: ${pathOf(best.url)} (from Search Console)` : `Best page: ${pathOf(best.url)}` }));
-    if (row.top && row.top.length) body.append(h('div', { class: 'tile' }, h('div', { class: 'tile-head' }, h('h2', { text: 'Top 10 on Google' })), serpList(row.top)));
-    else body.append(h('div', { class: 'empty-note', text: 'No Google results for this search yet.' }));
+    if (row.top && row.top.length) body.append(h('div', { class: 'tile' }, h('div', { class: 'tile-head' }, h('h2', { text: isDemo() ? 'Demo top 10' : 'Top 10 on Google' })), serpList(row.top)));
+    else body.append(h('div', { class: 'empty-note', text: isDemo() ? 'No demo results for this search.' : 'No Google results for this search yet.' }));
     const brief = R.briefs && R.briefs[row.q];
     if (brief && !brief.note && (brief.sections.length || brief.questions.length)) body.append(briefTile(brief, row));
     if (gap) body.append(gapTile(gap));

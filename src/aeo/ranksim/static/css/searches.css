@@ -13,6 +13,7 @@
 .srow .pred { font-size: 14px; font-weight: 550; color: var(--blue); }
 .srow .pred.unsure { font-size: 12px; font-weight: 550; color: var(--ink-3); letter-spacing: 0.02em; }
 .sgrid .num.unsure { font-size: 22px; color: var(--ink-3); }
+.btn.add .spinner-sm { width: 14px; height: 14px; border-width: 2px; }
 .srow .none { font-size: 13px; font-weight: 500; color: var(--ink-3); letter-spacing: 0; }
 .srow .c-source, .srow .c-page { font-size: 13px; color: var(--ink-2); white-space: nowrap; }
 .srow .c-page { min-width: 0; }

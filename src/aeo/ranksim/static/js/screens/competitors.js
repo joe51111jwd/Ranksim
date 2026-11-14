@@ -3,7 +3,7 @@
 
 import { S, api, h, icon, clear, main, enc, plural, initial, bar, toast, page, footer, noSearchData, reloadSite, openSheet, closeSheet, pathOf } from '../core.js';
 import { registerScreen } from '../hooks.js';
-import { hostPath, openSearch } from './searches.js';
+import { hostPath, openSearch, isDemo } from './searches.js';
 
 const SECOND_LEVEL = new Set(['co', 'com', 'org', 'net', 'ac', 'gov', 'edu', 'ne', 'or', 'go', 'gob']);
 const KIND_LABEL = { directory: 'Directory', marketplace: 'Marketplace', forum: 'Forum', social: 'Social', video: 'Video', platform: 'Platform', publisher: 'Publisher', service: 'Service business', software: 'Software vendor', other: 'Other', help: 'Help center' };
@@ -118,7 +118,7 @@ export function renderCompetitors() {
           icon('next', 'go'));
       }))));
   }
-  clear(main).append(page('Competitors', 'Who takes the top 10 for your searches.', null, h('div', { class: 'bento' }, tiles)), footer());
+  clear(main).append(page('Competitors', isDemo() ? 'Who takes the demo top 10. Demo data, not Google results.' : 'Who takes the top 10 for your searches.', null, h('div', { class: 'bento' }, tiles)), footer());
 }
 
 /* Reports from before profiles existed: the share list. */
@@ -129,7 +129,7 @@ function renderShare(R, callout) {
     h('div', { class: 'body' }, h('div', { class: 't', text: row.you ? `${row.domain} (you)` : row.domain }), stats(row), h('div', { class: 'barwrap' }, bar(row.slots / most, 'gray'))),
     row.you || row.platform ? null : h('div', { class: 'right' }, trackButton(row.domain)))));
   if (!R.share.length) rows.append(h('div', { class: 'empty-note', text: 'Competitors appear once rankings are pulled.' }));
-  clear(main).append(page('Competitors', 'Who takes the top 10 for your searches.', null, h('div', { class: 'bento' }, callout, h('section', { class: 'tile span-4' }, rows))), footer());
+  clear(main).append(page('Competitors', isDemo() ? 'Who takes the demo top 10. Demo data, not Google results.' : 'Who takes the top 10 for your searches.', null, h('div', { class: 'bento' }, callout, h('section', { class: 'tile span-4' }, rows))), footer());
 }
 
 function pct(value) {

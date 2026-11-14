@@ -383,6 +383,42 @@ registerEditorPanel({
   },
 });
 
+/* ------------------------------------------------------------------ what a draft fixes (for Publish) */
+
+/* Whether an applied suggestion is still in this document (the person may have edited it away since). */
+export function stillApplied(doc, issue) {
+  if (!doc || !issue.element) return false;
+  const tag = issue.element.tag || '*';
+  const all = (name) => {
+    try {
+      return Array.from(doc.querySelectorAll(name)).filter((el) => !el.closest('[data-rs]'));
+    } catch (_err) {
+      return [];
+    }
+  };
+  const want = norm(issue.suggestion);
+  if (issue.action === 'text') return all(tag).some((el) => norm(el.textContent) === want);
+  if (issue.action === 'attr') return all(tag).some((el) => norm(el.getAttribute(issue.element.attr)) === want);
+  if (issue.action === 'retag') return all(issue.suggestion).some((el) => norm(el.textContent).startsWith(norm(issue.element.text)));
+  const made = fragment(doc, issue.suggestion).firstElementChild;
+  if (!made) return false;
+  const key = ['name', 'property', 'rel', 'href', 'content'].find((name) => made.hasAttribute(name));
+  return all(made.tagName.toLowerCase()).some((el) => (key ? el.getAttribute(key) === made.getAttribute(key) : norm(el.textContent) === norm(made.textContent)));
+}
+
+/* The issues this draft fixes: applied here, and the change is still in the draft. The Publish sheet sends their
+   ids (the report's issue ids) so a live publish marks them Done in the client report. */
+export function draftFixes(ctx) {
+  if (!ctx || !ctx.draft || !ctx.draft.touched) return [];
+  const applied = issuesFor(ctx).filter((issue) => isApplied(ctx, issue));
+  if (!applied.length) return [];
+  const html = ctx.getHtml();
+  const doc = html ? new DOMParser().parseFromString(html, 'text/html') : null;
+  return applied.filter((issue) => stillApplied(doc, issue)).map((issue) => ({ id: issue.id, title: issue.title }));
+}
+
+on('publish-fixes', (ctx) => draftFixes(ctx));
+
 /* ------------------------------------------------------------------ events */
 
 /* The element to focus: a Fix in editor click (a one-time token the Issues screen leaves), else the focus param of

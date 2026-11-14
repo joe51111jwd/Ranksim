@@ -210,6 +210,28 @@
       ])]) : h("p", { class: "muted", text: "No searches yet." }),
     ]));
 
+    var sc = d.search_console; // gsc session, flagged edit: Search Console data, never mixed with Google positions
+    if (sc) {
+      var t = sc.totals || {};
+      root.appendChild(tile("", [
+        head("Google Search Console", sc.label + ", " + sc.range + ". " + sc.note),
+        h("div", { class: "stats" }, [
+          stat("Clicks", (t.clicks || 0).toLocaleString("en-US"), "From Google Search"),
+          stat("Impressions", (t.impressions || 0).toLocaleString("en-US"), "Times the site was shown"),
+        ]),
+        (sc.positions || []).length ? h("div", { class: "table-wrap" }, [h("table", { class: "stack" }, [
+          h("thead", {}, [h("tr", {}, [h("th", { text: "Search" }), h("th", { class: "num", text: "Search Console average position" }), h("th", { class: "num", text: "Impressions" })])]),
+          h("tbody", {}, sc.positions.map(function (p) {
+            return h("tr", {}, [
+              h("td", { class: "q", "data-label": "Search" }, [h("span", { text: p.q }), p.page ? h("span", { class: "muted small", text: "Page: " + p.page }) : null]),
+              h("td", { class: "num", "data-label": "Search Console average position", text: "avg #" + p.position }),
+              h("td", { class: "num", "data-label": "Impressions", text: (p.impressions || 0).toLocaleString("en-US") }),
+            ]);
+          })),
+        ])]) : null,
+      ]));
+    }
+
     var issues = d.issues || [];
     root.appendChild(tile("", [
       head("What we found and what we are doing", issues.length ? issues.length + " things to fix on the site, most important first." : "Nothing to fix right now."),

@@ -6,7 +6,7 @@ import { registerScreen } from '../hooks.js';
 import { hostPath, openSearch } from './searches.js';
 
 const SECOND_LEVEL = new Set(['co', 'com', 'org', 'net', 'ac', 'gov', 'edu', 'ne', 'or', 'go', 'gob']);
-const KIND_LABEL = { directory: 'Directory', marketplace: 'Marketplace', forum: 'Forum', social: 'Social', video: 'Video', platform: 'Platform', publisher: 'Publisher' };
+const KIND_LABEL = { directory: 'Directory', marketplace: 'Marketplace', forum: 'Forum', social: 'Social', video: 'Video', platform: 'Platform', publisher: 'Publisher', service: 'Service business', software: 'Software vendor', other: 'Other', help: 'Help center' };
 
 /* The registrable domain, as the server groups it: help.hcss.com gives hcss.com. */
 export function baseDomain(domain) {
@@ -54,6 +54,7 @@ function trackButton(domain) {
 
 function stats(row) {
   return h('div', { class: 'm' },
+    row.slots != null ? h('span', { text: plural(row.slots, 'top 10 spot') }) : null,
     h('span', { text: plural(row.searches, 'search', 'searches') }),
     h('span', { text: `avg #${row.average}` }),
     h('span', { text: `best #${row.best}` }));
@@ -66,7 +67,7 @@ function profileCard(row, most) {
     h('button', { class: 'body linkish', type: 'button', onClick: () => openProfile(row) },
       h('div', { class: 't' }, h('span', { text: row.domain }), tracked ? h('span', { class: 'label label-you', text: 'Tracked' }) : null),
       stats(row),
-      h('div', { class: 'barwrap' }, bar(row.visibility / most, tracked ? 'dark' : 'gray'))),
+      h('div', { class: 'barwrap' }, bar((row.slots || 0) / most, tracked ? 'dark' : 'gray'))),
     h('div', { class: 'right' }, trackButton(row.domain)));
 }
 
@@ -85,7 +86,7 @@ export function renderCompetitors() {
   const callout = noSearchData();
   if (!profiles) return renderShare(R, callout);
   const comps = profiles.competitors || [];
-  const most = Math.max(1, ...comps.map((row) => row.visibility || 0));
+  const most = Math.max(1, ...comps.map((row) => row.slots || 0));
   const you = (R.share || []).find((row) => row.you);
   const tiles = [callout];
   tiles.push(h('section', { class: 'tile span-4' },
@@ -104,14 +105,14 @@ export function renderCompetitors() {
       h('div', { class: 'tile-head' }, h('h2', { text: 'Other sites in the top 10' })),
       h('div', { class: 'rows' }, others.map(siteRow))));
   }
-  const size = (gap) => (gap.topics || []).length * 3 + (gap.terms || []).length + (gap.schema || []).length;
+  const size = (gap) => (gap.elements || []).length * 3 + (gap.topics || []).length * 3 + (gap.terms || []).length + (gap.schema || []).length;
   const gaps = (R.gaps || []).filter((gap) => size(gap) > 0).sort((a, b) => size(b) - size(a)).slice(0, 10);
   if (gaps.length) {
     tiles.push(h('section', { class: 'tile span-4' },
       h('div', { class: 'tile-head' }, h('h2', { text: 'Content gaps' }), h('span', { class: 'aside', text: 'What the pages above you have' })),
       h('div', { class: 'rows' }, gaps.map((gap) => {
         const row = R.rankings.find((item) => item.q === gap.q);
-        const parts = [gap.topics.length ? plural(gap.topics.length, 'section') : null, gap.terms.length ? plural(gap.terms.length, 'word') : null, gap.schema.length ? plural(gap.schema.length, 'data type') : null].filter(Boolean);
+        const parts = [(gap.elements || []).length ? (gap.elements || []).map((item) => item.label.replace(/^(an?|numbered) /, '')).join(', ') : null, gap.topics.length ? plural(gap.topics.length, 'section') : null, gap.terms.length ? plural(gap.terms.length, 'word') : null, gap.schema.length ? plural(gap.schema.length, 'data type') : null].filter(Boolean);
         return h('button', { class: 'rowcard', type: 'button', onClick: () => (row ? openSearch(row) : null) },
           h('div', { class: 'body' }, h('div', { class: 't', text: gap.q }), h('div', { class: 'm' }, h('span', { text: parts.join(', ') }), gap.page ? h('span', { text: pathOf(gap.page) }) : null)),
           icon('next', 'go'));

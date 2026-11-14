@@ -187,7 +187,9 @@ def _fmt_pos(value) -> str:
 # -- the Studio report ----------------------------------------------------------------------------
 
 
-def stored_site_pages(project, database: str, limit: int = 80) -> list[SitePage]:
+def stored_site_pages(project, database: str, limit: int = 80, *, facts=None) -> list[SitePage]:
+    from aeo.ranksim.pagefacts import cached_page_facts
+
     session = open_session(database)
     try:
         rows = session.query(RsPage).filter(RsPage.domain.in_([project.domain, "www." + project.domain.removeprefix("www.")])).limit(limit * 2).all()
@@ -195,14 +197,15 @@ def stored_site_pages(project, database: str, limit: int = 80) -> list[SitePage]
         for row in rows:
             if not project.is_our_url(row.url):
                 continue
-            pages.append(page_facts(row.url, row.raw_html or "", row.status or "error", row.error or "", row.fetch_ms))
+            pages.append(cached_page_facts(row.url, row.raw_html or "", row.status or "error", row.error or "", row.fetch_ms, cache=facts))
     finally:
         session.close()
     pages.sort(key=lambda page: (urlsplit(page.url).path.strip("/").count("/"), page.url))
     return pages[:limit]
 
 
-def _pages_for(database: str, urls: list[str]) -> dict[str, SitePage]:
+def _pages_for(database: str, urls: list[str], *, facts=None) -> dict[str, SitePage]:
+    from aeo.ranksim.pagefacts import cached_page_facts
     from aeo.ranksim.project import loose_key
 
     if not urls:
@@ -214,7 +217,7 @@ def _pages_for(database: str, urls: list[str]) -> dict[str, SitePage]:
         found = {}
         for row in rows:
             if row.status == "fetched" and (row.raw_html or "").strip():
-                found[loose_key(row.url)] = page_facts(row.url, row.raw_html)
+                found[loose_key(row.url)] = cached_page_facts(row.url, row.raw_html, cache=facts)
     finally:
         session.close()
     return {url: found[loose_key(url)] for url in urls if loose_key(url) in found}
@@ -233,12 +236,16 @@ def build_report(project, meta, database: str, *, ctx=None, google_ready: bool =
     from aeo.ranksim.audit import audit
     from aeo.ranksim.project import latest_google
 
+    from aeo.ranksim.pagefacts import ProjectFacts
+
     google = latest_google(project)
-    own_pages = stored_site_pages(project, database)
+    facts = ProjectFacts(project)  # parsed page facts by content hash, so only new or changed pages are parsed
+    own_pages = stored_site_pages(project, database, facts=facts)
     readable = [page for page in own_pages if page.status == "fetched"]
     by_search = google.by_search() if google is not None else {}
     result_urls = [item.url for entry in (google.searches if google else []) for item in entry.results if 1 <= item.position <= 10]
-    docs = _pages_for(database, result_urls)
+    docs = _pages_for(database, result_urls, facts=facts)
+    facts.save()
     competitors = set(meta.competitors or [])
 
     rankings = []
@@ -319,11 +326,6 @@ def _tokens(text: str) -> set[str]:
 
 
 def _best_page(search: str, pages: list[SitePage]) -> str | None:
-    want = _tokens(search)
-    best, score = None, 0.0
-    for page in pages:
-        have = _tokens(f"{page.title} {page.h1}")
-        overlap = len(want & have) / len(want) if want else 0.0
-        if overlap > score:
-            best, score = page.url, overlap
-    return best if score >= 0.6 and len(want) >= 2 else None
+    from aeo.ranksim.discovery import best_page  # discover: word forms, compounds and the page address count
+
+    return best_page(search, pages)

@@ -557,6 +557,7 @@ class GuardMiddleware:
         path = scope.get("path") or ""
         csp = csp_for(path)
         started = {"value": False}
+        secure_request = scope.get("scheme") == "https" or headers.get(b"x-forwarded-proto", b"").decode("latin-1").lower() == "https"
 
         async def send_with_headers(message):
             if message["type"] == "http.response.start":
@@ -566,7 +567,11 @@ class GuardMiddleware:
                     (b"x-content-type-options", b"nosniff"),
                     (b"referrer-policy", b"no-referrer"),
                     (b"x-frame-options", b"DENY"),
+                    (b"permissions-policy", b"camera=(), microphone=(), geolocation=(), payment=(), usb=()"),
+                    (b"cross-origin-opener-policy", b"same-origin"),
                 ]
+                if secure_request:
+                    extra.append((b"strict-transport-security", b"max-age=31536000; includeSubDomains"))
                 own = list(message.get("headers") or [])
                 if not any(key.lower() == b"cache-control" for key, _value in own):
                     extra.append((b"cache-control", b"no-store"))  # a route that set its own (Studio assets) keeps it

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+import time
 import sqlite3
 from types import SimpleNamespace
 
@@ -12,7 +13,7 @@ from fastapi.testclient import TestClient
 from test_project import SEARCHES, SITE, TODAY, FakeCrawler, _results, page_html
 
 from aeo.ranksim.access import COOKIE, Access
-from aeo.ranksim.cloud import POINTER, PREFIX, CloudState
+from aeo.ranksim.cloud import LEGACY_PREFIX, MIGRATED, POINTER, PROJECTS_PREFIX, CloudState, merge_sqlite
 from aeo.ranksim.serp import SerpHit
 from aeo.ranksim.serve import create_app
 from tests.test_serve_project import make_settings
@@ -270,14 +271,24 @@ def _make_state(folder):
     return db
 
 
+def _instance(folder):
+    return CloudState(data_dir=folder, db_file=folder / "rank.db", enabled=True)
+
+
+def _versions(fake, slug=None):
+    prefix = PROJECTS_PREFIX + (f"{slug}/v/" if slug else "")
+    return sorted(name for name in fake.items if name.startswith(prefix) and name.endswith(".tgz"))
+
+
 def test_state_saves_and_a_second_instance_picks_it_up(tmp_path, fake_blob):
     one_dir, two_dir = tmp_path / "one", tmp_path / "two"
     db_one = _make_state(one_dir)
-    one = CloudState(data_dir=one_dir, db_file=db_one, enabled=True)
-    two = CloudState(data_dir=two_dir, db_file=two_dir / "rank.db", enabled=True)
+    one = _instance(one_dir)
+    two = _instance(two_dir)
     assert two.refresh(force=True) is False  # nothing saved yet
     first = one.save()
-    assert first.startswith(PREFIX) and fake_blob.items[POINTER] == first.encode()
+    assert first and POINTER in fake_blob.items
+    assert _versions(fake_blob, "demo") and any(name.startswith("ranksim/v2/db/v/") for name in fake_blob.items)
     changed = []
     two.on_change.append(lambda: changed.append(True))
     assert two.refresh(force=True) is True and changed == [True]
@@ -293,23 +304,297 @@ def test_state_saves_and_a_second_instance_picks_it_up(tmp_path, fake_blob):
     (two_dir / "projects" / "demo" / "new.json").write_text("{}")
     for _ in range(4):
         two.save()
-    versions = [name for name in fake_blob.items if name.startswith(PREFIX)]
-    assert len(versions) <= 3  # old versions are pruned
+    assert len(_versions(fake_blob, "demo")) <= 4  # unchanged saves write nothing
     assert one.refresh(force=True) is True
     assert (one_dir / "projects" / "demo" / "new.json").is_file()
     with sqlite3.connect(db_one) as conn:
         assert [row[0] for row in conn.execute("select v from t")] == ["first", "second"]
 
 
-def test_pack_skips_caches_and_never_writes_outside_the_folder(tmp_path):
-    db = _make_state(tmp_path / "data")
-    (tmp_path / "data" / "projects" / "demo" / "llm-cache").mkdir()
-    (tmp_path / "data" / "projects" / "demo" / "llm-cache" / "x.json").write_text("{}")
-    state = CloudState(data_dir=tmp_path / "data", db_file=db, enabled=True)
+def test_a_save_with_nothing_changed_uploads_nothing(tmp_path, fake_blob):
+    one = _instance(tmp_path / "one")
+    _make_state(tmp_path / "one")
+    one.save()
+    fake_blob.calls.clear()
+    assert one.save() is None
+    assert not [call for call in fake_blob.calls if call.startswith("put")]
+    (tmp_path / "one" / "projects" / "other").mkdir()
+    (tmp_path / "one" / "projects" / "other" / "project.json").write_text("{}")
+    fake_blob.calls.clear()
+    one.save()
+    puts = [call for call in fake_blob.calls if call.startswith("put") and call.endswith((".tgz", ".gz"))]
+    assert len(puts) == 1 and "/other/" in puts[0]  # only the changed project is uploaded, not the demo or the db
+
+
+def test_concurrent_saves_on_two_projects_never_clobber(tmp_path, fake_blob):
+    seed = _instance(tmp_path / "seed")
+    _make_state(tmp_path / "seed")
+    (tmp_path / "seed" / "projects" / "other").mkdir()
+    (tmp_path / "seed" / "projects" / "other" / "project.json").write_text('{"name": "Other"}')
+    seed.save()
+    a, b = _instance(tmp_path / "a"), _instance(tmp_path / "b")
+    a.refresh(force=True)
+    b.refresh(force=True)
+    # Both instances work at the same time, from the same starting state, on different projects.
+    (tmp_path / "a" / "projects" / "demo" / "notes.json").write_text('{"by": "a"}')
+    (tmp_path / "b" / "projects" / "other" / "notes.json").write_text('{"by": "b"}')
+    a.save()
+    b.save()  # the old design would replace a's work here
+    reader = _instance(tmp_path / "reader")
+    reader.refresh(force=True)
+    assert (tmp_path / "reader" / "projects" / "demo" / "notes.json").read_text() == '{"by": "a"}'
+    assert (tmp_path / "reader" / "projects" / "other" / "notes.json").read_text() == '{"by": "b"}'
+    a.refresh(force=True)
+    assert (tmp_path / "a" / "projects" / "other" / "notes.json").is_file()
+
+
+def test_two_writers_on_one_project_keep_both_files_and_the_newest_edit(tmp_path, fake_blob):
+    seed = _instance(tmp_path / "seed")
+    _make_state(tmp_path / "seed")
+    seed.save()
+    a, b = _instance(tmp_path / "a"), _instance(tmp_path / "b")
+    a.refresh(force=True)
+    b.refresh(force=True)
+    demo_a, demo_b = tmp_path / "a" / "projects" / "demo", tmp_path / "b" / "projects" / "demo"
+    (demo_a / "draft-a.html").write_text("a")
+    (demo_b / "draft-b.html").write_text("b")
+    (demo_a / "project.json").write_text('{"name": "A"}')
+    (demo_b / "project.json").write_text('{"name": "B"}')
+    a.save()
+    b.save()  # merges a's version first: a's new file survives, and b's edit of project.json is the newest
+    reader = _instance(tmp_path / "reader")
+    reader.refresh(force=True)
+    folder = tmp_path / "reader" / "projects" / "demo"
+    assert (folder / "draft-a.html").read_text() == "a" and (folder / "draft-b.html").read_text() == "b"
+    assert (folder / "project.json").read_text() == '{"name": "B"}'
+
+
+def test_a_deleted_project_is_deleted_everywhere(tmp_path, fake_blob):
+    import shutil
+
+    a, b = _instance(tmp_path / "a"), _instance(tmp_path / "b")
+    _make_state(tmp_path / "a")
+    a.save()
+    b.refresh(force=True)
+    assert (tmp_path / "b" / "projects" / "demo").is_dir()
+    shutil.rmtree(tmp_path / "a" / "projects" / "demo")
+    a.save()
+    assert b.refresh(force=True) is True
+    assert not (tmp_path / "b" / "projects" / "demo").exists()
+    c = _instance(tmp_path / "c")
+    c.refresh(force=True)
+    assert not (tmp_path / "c" / "projects" / "demo").exists()
+
+
+def _rank_db(folder):
+    from aeo import db
+    from aeo.ranksim import store
+
+    db._register_sqlite_pragmas()  # WAL mode, as in the app: writes land in rank.db-wal before the main file
+    folder.mkdir(parents=True, exist_ok=True)
+    url = f"sqlite:///{folder / 'rank.db'}"
+    store.session_factory(url)  # creates every table, including the ledger
+    return url
+
+
+def test_database_rows_from_two_instances_are_merged(tmp_path, fake_blob):
+    from aeo.ranksim import store
+    from aeo.ranksim.ledger import Call, record_prediction, verify_ledger
+    from aeo.ranksim.store import RsPage, open_session, replace_serp
+
+    def predict(session, query):
+        record_prediction(
+            session, kind="draft", query=query, subject_url="https://a.example/", subject_html="<p>x</p>", predicted_rank=1,
+            predicted_of=2, candidates=[], calls=[Call("https://b.example/", "above", 0.1, "UNSURE")], confidence="UNSURE",
+            calibration_note="", provenance={}, project_slug="demo",
+        )
+
+    hit = lambda url: SerpHit(position=1, url=url, title="t", snippet="", provider="fake", synthetic=False, is_google=True)
+    seed_url = _rank_db(tmp_path / "seed")
+    session = open_session(seed_url)
+    session.add(RsPage(url="https://shared.example/", raw_html="<p>old</p>"))
+    replace_serp(session, "dirt work software", [hit("https://old.example/")])
+    predict(session, "seed query")
+    session.commit()
+    session.close()
+    seed = _instance(tmp_path / "seed")
+    seed.save()
+
+    a, b = _instance(tmp_path / "a"), _instance(tmp_path / "b")
+    a.refresh(force=True)
+    b.refresh(force=True)
+    for folder, page, query in ((tmp_path / "a", "https://from-a.example/", "a query"), (tmp_path / "b", "https://from-b.example/", "b query")):
+        session = open_session(f"sqlite:///{folder / 'rank.db'}")
+        session.add(RsPage(url=page, raw_html="<p>new</p>"))
+        predict(session, query)
+        session.commit()
+        session.close()
+    session = open_session(f"sqlite:///{tmp_path / 'b' / 'rank.db'}")
+    replace_serp(session, "dirt work software", [hit("https://new-1.example/"), hit("https://new-2.example/")])
+    session.commit()
+    session.close()
+    a.save()
+    b.save()
+
+    reader = _instance(tmp_path / "reader")
+    reader.refresh(force=True)
+    session = open_session(f"sqlite:///{tmp_path / 'reader' / 'rank.db'}")
+    try:
+        urls = {row.url for row in session.query(RsPage)}
+        assert {"https://shared.example/", "https://from-a.example/", "https://from-b.example/"} <= urls
+        serp = [row.url for row in session.query(store.RsSerp).filter(store.RsSerp.query == "dirt work software")]
+        assert sorted(serp) == ["https://new-1.example/", "https://new-2.example/"]  # replaced as a group, no leftovers
+        ok, message = verify_ledger(session)
+        assert ok, message
+        from aeo.ranksim.ledger import RsPrediction
+
+        assert sorted(row.query for row in session.query(RsPrediction)) == ["a query", "b query", "seed query"]
+    finally:
+        session.close()
+
+
+def test_merge_sqlite_keyed_rows_newest_wins(tmp_path):
+    def make(path, rows):
+        with sqlite3.connect(path) as conn:
+            conn.execute("create table pages (url text primary key, html text, fetched_at text)")
+            conn.executemany("insert into pages values (?, ?, ?)", rows)
+
+    make(tmp_path / "base.db", [("u1", "base", "2026-01-01"), ("u2", "base", "2026-01-01")])
+    make(tmp_path / "ours.db", [("u1", "ours", "2026-01-03"), ("u2", "base", "2026-01-01"), ("u3", "ours", "2026-01-03")])
+    make(tmp_path / "theirs.db", [("u1", "theirs", "2026-01-02"), ("u4", "theirs", "2026-01-02")])  # theirs removed u2
+    merge_sqlite(tmp_path / "ours.db", tmp_path / "base.db", tmp_path / "theirs.db")
+    with sqlite3.connect(tmp_path / "ours.db") as conn:
+        rows = dict(conn.execute("select url, html from pages"))
+    assert rows == {"u1": "ours", "u3": "ours", "u4": "theirs"}
+
+
+def _legacy_tarball(folder) -> bytes:
     import io
     import tarfile
 
-    names = tarfile.open(fileobj=io.BytesIO(state.pack()), mode="r:gz").getnames()
-    assert "rank.db" in names and "projects/demo/project.json" in names
+    buffer = io.BytesIO()
+    with tarfile.open(fileobj=buffer, mode="w:gz") as archive:
+        for path in sorted((folder / "projects").rglob("*")):
+            if path.is_file():
+                archive.add(path, arcname=str(path.relative_to(folder)), recursive=False)
+        archive.add(folder / "rank.db", arcname="rank.db")
+    return buffer.getvalue()
+
+
+def test_the_old_single_tarball_is_migrated_once_and_kept(tmp_path, fake_blob):
+    old = tmp_path / "old"
+    _make_state(old)
+    (old / "projects" / "second").mkdir()
+    (old / "projects" / "second" / "project.json").write_text('{"name": "Second"}')
+    legacy_name = f"{LEGACY_PREFIX}00000000000000000001-abc.tgz"
+    fake_blob.put_blob(legacy_name, _legacy_tarball(old), access="private")
+    fake_blob.put_blob("ranksim/HEAD", legacy_name.encode(), access="private")
+
+    fresh = _instance(tmp_path / "fresh")
+    assert fresh.refresh(force=True) is True
+    assert (tmp_path / "fresh" / "projects" / "second" / "project.json").read_text() == '{"name": "Second"}'
+    with sqlite3.connect(tmp_path / "fresh" / "rank.db") as conn:
+        assert conn.execute("select v from t").fetchall() == [("first",)]
+    assert fake_blob.items[MIGRATED] == legacy_name.encode()
+    assert _versions(fake_blob, "demo") and _versions(fake_blob, "second")
+    assert legacy_name in fake_blob.items  # the old tarball is never deleted
+
+    fake_blob.calls.clear()
+    other = _instance(tmp_path / "other")
+    assert other.refresh(force=True) is True
+    assert (tmp_path / "other" / "projects" / "demo" / "project.json").is_file()
+    assert not any(call.startswith(f"get {LEGACY_PREFIX}") for call in fake_blob.calls)  # migrated once only
+
+
+def test_versions_skip_caches_and_never_write_outside_the_folder(tmp_path, fake_blob):
+    import io
+    import tarfile
+
+    _make_state(tmp_path / "data")
+    (tmp_path / "data" / "projects" / "demo" / "llm-cache").mkdir()
+    (tmp_path / "data" / "projects" / "demo" / "llm-cache" / "x.json").write_text("{}")
+    state = _instance(tmp_path / "data")
+    state.save()
+    names = tarfile.open(fileobj=io.BytesIO(fake_blob.items[_versions(fake_blob, "demo")[-1]]), mode="r:gz").getnames()
+    assert "project.json" in names and ".ranksim-version.json" in names
     assert not any("llm-cache" in name for name in names)
     assert not any(name.startswith(("/", "..")) for name in names)
+
+
+def test_storage_errors_surface_as_cloud_errors(tmp_path, fake_blob, monkeypatch):
+    from aeo.ranksim.cloud import CloudError
+
+    state = _instance(tmp_path / "data")
+    _make_state(tmp_path / "data")
+
+    def broken(*_args, **_kwargs):
+        raise fake_blob.BlobError("down")
+
+    from vercel.blob import sync
+
+    monkeypatch.setattr(sync, "query_blobs", broken)
+    monkeypatch.setattr("aeo.ranksim.objects.time.sleep", lambda _s: None)
+    with pytest.raises(CloudError):
+        state.refresh(force=True)
+    with pytest.raises(CloudError):
+        state.save()
+
+
+def test_workspace_plugin_data_is_its_own_object(tmp_path, fake_blob):
+    a, b = _instance(tmp_path / "a"), _instance(tmp_path / "b")
+    _make_state(tmp_path / "a")
+    shared = tmp_path / "a" / "projects" / "_plugins" / "gsc"
+    shared.mkdir(parents=True)
+    (shared / "token.json").write_text('{"connected": true}')
+    (tmp_path / "a" / "projects" / ".hidden").mkdir()
+    (tmp_path / "a" / "projects" / ".hidden" / "x").write_text("no")
+    a.save()
+    assert _versions(fake_blob, "_plugins") and not _versions(fake_blob, ".hidden")
+    b.refresh(force=True)
+    assert (tmp_path / "b" / "projects" / "_plugins" / "gsc" / "token.json").read_text() == '{"connected": true}'
+    assert not (tmp_path / "b" / "projects" / ".hidden").exists()
+    # plugins.save(ui) still calls cloud.save(): a change to workspace data alone is uploaded alone
+    (shared / "usage.json").write_text("{}")
+    fake_blob.calls.clear()
+    a.save()
+    puts = [call for call in fake_blob.calls if call.startswith("put") and call.endswith(".tgz")]
+    assert len(puts) == 1 and "/_plugins/" in puts[0]
+
+
+def test_login_limit_is_per_client_and_says_when_to_retry(hosted, monkeypatch):
+    import aeo.ranksim.access as access_module
+
+    monkeypatch.setattr(access_module, "FAILURE_DELAY_SECONDS", 0)
+    monkeypatch.setattr("aeo.ranksim.access.time.sleep", lambda _s: None)
+    client, token = hosted["client"], hosted["token"]
+    for _ in range(access_module.MAX_CLIENT_FAILURES_PER_MINUTE):
+        assert client.post("/api/v1/login", json={"password": "nope"}, headers={"x-ranksim-csrf": token, "x-real-ip": "203.0.113.9"}).status_code == 401
+    refused = client.post("/api/v1/login", json={"password": PASSWORD}, headers={"x-ranksim-csrf": token, "x-real-ip": "203.0.113.9"})
+    assert refused.status_code == 429 and int(refused.headers["retry-after"]) >= 1
+    other = client.post("/api/v1/login", json={"password": PASSWORD}, headers={"x-ranksim-csrf": token, "x-real-ip": "198.51.100.7"})
+    assert other.status_code == 200  # another client is not locked out by the first one's failures
+
+
+def test_sign_out_everywhere_revokes_every_session(hosted):
+    client, token = hosted["client"], hosted["token"]
+    _sign_in(hosted)
+    stolen = client.cookies.get(COOKIE)
+    assert client.get("/api/v1/projects").status_code == 200
+    out = client.post("/api/v1/logout", json={"everywhere": True}, headers={"x-ranksim-csrf": token})
+    assert out.status_code == 200 and out.json()["everywhere"] is True
+    client.cookies.clear()
+    client.cookies.set(COOKIE, stolen)  # a copy of the old cookie no longer works
+    assert client.get("/api/v1/projects").status_code == 401
+    client.cookies.clear()
+    time.sleep(0.01)  # a cookie issued in the revocation's own millisecond is refused by design
+    _sign_in(hosted)
+    assert client.get("/api/v1/projects").status_code == 200  # signing in again works
+
+
+def test_security_headers(hosted):
+    client = hosted["client"]
+    plain = client.get("/")
+    assert "camera=()" in plain.headers["permissions-policy"] and plain.headers["cross-origin-opener-policy"] == "same-origin"
+    assert "strict-transport-security" not in plain.headers  # only over https
+    secure = client.get("/", headers={"x-forwarded-proto": "https"})
+    assert secure.headers["strict-transport-security"].startswith("max-age=")

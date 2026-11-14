@@ -849,3 +849,14 @@ def test_schema_gap_counts_one_search_and_skips_breadcrumbs_on_the_home_page():
     gaps = only(run(pages, rankings=rows, docs=docs), "schema-gap")
     assert [issue["page"] for issue in gaps] == [other]
     assert "3 of the 3 top pages we compared" in gaps[0]["comment"]
+
+
+def test_streamed_content_counts_and_files_from_the_sitemap_are_not_pages():
+    streamed = (
+        "<main><template id='B:0'></template><div>Loading</div></main>"
+        "<div hidden id='S:0'><h1>Dirt work software</h1><p>" + FILLER + "</p></div>"
+    )
+    url = f"{SITE}/streamed/"
+    issues = A.audit_html([A.PageDoc(url, page(body=streamed).replace("{url}", url)), A.PageDoc(f"{SITE}/uploads/logo.webp", "", status="error", error="Unsupported content type image/webp")])
+    assert "thin" not in kinds(issues, url) and "script-built" not in kinds(issues, url)
+    assert not [issue for issue in issues if "logo.webp" in (issue.get("page") or "")]

@@ -13,6 +13,10 @@ export const SEL = {
   siteCard: '.site-card',
 
   progress: '.progress-tile',
+  openAsk: '.open-ask',
+  openAnalyze: '.open-ask .open-analyze',
+  openJustEdit: '.open-ask .open-just-edit',
+  openEditing: '.open-editing',
   progressStep: '.progress-tile .step',
 
   nav: 'nav[aria-label="Sections"]',

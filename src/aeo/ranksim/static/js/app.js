@@ -291,7 +291,23 @@ const STEPS = [
   ['report', 'Writing your report'],
 ];
 
-/* Open any page: the live page is editable at once; the site's analysis runs beside it. */
+/* Domains the person chose to just edit in this tab, so another page of the same site does not ask again. */
+const JUST_EDIT = new Set();
+
+/* Shows the question in the side panel and resolves with 'analyze' or 'edit'. */
+function askToAnalyze() {
+  return new Promise((resolve) => {
+    S.open.state = 'ask';
+    S.open.answer = (choice) => {
+      if (!S.open || S.open.state !== 'ask') return;
+      S.open.answer = null;
+      resolve(choice);
+    };
+    paintSide();
+  });
+}
+
+/* Open any page: the live page is editable at once. A client site is analyzed beside it; any other page just edits. */
 async function openUrl(raw) {
   let url = (raw || '').trim();
   if (!url) {
@@ -328,12 +344,32 @@ async function openUrl(raw) {
     paintFrame();
     paintSide();
   }
-  const known = found && found.project ? S.projects.find((p) => p.slug === found.project) : null;
+  const known = (found && found.project ? S.projects.find((p) => p.slug === found.project) : null)
+    || S.projects.find((p) => hostOf(/^https?:/.test(p.site) ? p.site : `https://${p.site}`) === domain) || null;
   if (known && known.built) {
     await finishOpen(known.slug, url);
     return;
   }
+  /* Any page opens in the editor, but analysis is for client sites: it creates a site and spends Google searches.
+     A domain that is not a site yet gets one question, inline, and "Just edit" never creates or analyzes anything. */
+  if (!known && S.open && S.open.url === url) {
+    const choice = JUST_EDIT.has(domain) ? 'edit' : await askToAnalyze();
+    if (!S.open || S.open.url !== url) return;
+    if (choice !== 'analyze') {
+      JUST_EDIT.add(domain);
+      S.open.state = 'editing';
+      paintSide();
+      return;
+    }
+    JUST_EDIT.delete(domain);
+  }
+  await runAnalysis(url);
+}
+
+/* The analysis half of opening a page: run it (posting again after a pause), then switch to the site. */
+async function runAnalysis(url) {
   S.open.state = 'analyzing';
+  S.open.started = Date.now();
   paintSide();
   let result = null;
   for (let wait = 0; wait < 40; wait += 1) {
@@ -416,6 +452,24 @@ async function finishOpen(slug, url) {
 
 function progressTile() {
   const O = S.open;
+  if (O.state === 'reading') {
+    return h('section', { class: 'tile progress-tile' }, h('div', { class: 'tile-head' }, h('h2', { text: `Opening ${O.domain}` })),
+      h('p', { class: 'tile-sub', text: 'The live page shows here in a moment.' }));
+  }
+  if (O.state === 'ask') {
+    return h('section', { class: 'tile white progress-tile open-ask', role: 'group', 'aria-labelledby': 'open-ask-q' },
+      h('h2', { id: 'open-ask-q', text: `Analyze ${O.domain} as a client site?` }),
+      h('p', { class: 'tile-sub', text: 'Analysis finds its searches, rankings, competitors and issues. It adds the site to your sites and uses Google searches.' }),
+      h('div', { class: 'result-actions' },
+        h('button', { class: 'btn btn-primary open-analyze', type: 'button', onClick: () => O.answer && O.answer('analyze') }, 'Analyze'),
+        h('button', { class: 'btn open-just-edit', type: 'button', onClick: () => O.answer && O.answer('edit') }, 'Just edit')));
+  }
+  if (O.state === 'editing') {
+    return h('section', { class: 'tile progress-tile open-editing' },
+      h('div', { class: 'tile-k', text: 'Just editing' }),
+      h('p', { class: 'tile-sub', text: `${O.domain} is not one of your sites, so nothing is saved or analyzed. Testing needs an analyzed site.` }),
+      h('div', { class: 'result-actions' }, h('button', { class: 'btn btn-plain open-analyze', type: 'button', onClick: () => { JUST_EDIT.delete(O.domain); runAnalysis(O.url); } }, `Analyze ${O.domain} as a client`)));
+  }
   const tile = h('section', { class: 'tile progress-tile' });
   const timer = Math.round((Date.now() - O.started) / 1000);
   tile.append(h('div', { class: 'tile-head' }, h('h2', { text: O.state === 'failed' ? `Couldn't finish ${O.domain}` : `Analyzing ${O.domain}` }), h('span', { class: 'aside num', text: O.state === 'failed' ? '' : `${timer} s` })));

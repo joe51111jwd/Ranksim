@@ -36,3 +36,6 @@
 /* the open-a-page progress panel (app.js progressTile) */
 .progress-tile .open-overall { margin: 10px 0 12px; }
 .progress-tile .found { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+/* the one question before a new domain is analyzed (app.js progressTile, state 'ask') */
+.open-ask h2 { font-size: 16px; font-weight: 600; letter-spacing: -0.015em; line-height: 1.35; }
+.open-ask .tile-sub { margin-top: 6px; }

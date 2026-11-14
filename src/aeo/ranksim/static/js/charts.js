@@ -123,22 +123,29 @@ export function predictionText(pred) {
 /* rows: [{q, position (1..10 or null), checked, predicted: {position, of} | null}]
    One line per search. x is the Google position 1 to 10, with a column at the right for "not in top 10".
    Real positions are solid dots; PREDICTED positions, where the model scored the page, are open rings. */
-export function rankDots(rows, { width = 560, rowHeight = 30, labelWidth } = {}) {
+/* Below this width a label gets its own line above its row, so phone screens show the whole search. */
+export const STACK_BELOW = 460;
+
+/* source names where positions come from: 'Google', or 'Demo' for the synthetic demo (never call demo data Google). */
+export function rankDots(rows, { width = 560, rowHeight, labelWidth, source = 'Google' } = {}) {
   const title = 'Where you rank per search';
   const list = (rows || []).filter((row) => row && row.q);
   if (!list.length) return empty(width, title, 'No searches yet');
   const sorted = list.slice().sort((a, b) => (a.position || 99) - (b.position || 99) || String(a.q).localeCompare(String(b.q)));
-  const label = labelWidth || Math.min(220, Math.max(96, Math.round(width * 0.36)));
+  const stacked = !labelWidth && width < STACK_BELOW;
+  const rowH = rowHeight || (stacked ? 46 : 30);
+  const label = stacked ? width - 4 : labelWidth || Math.min(220, Math.max(96, Math.round(width * 0.36)));
   const top = 24;
   const right = 12;
   const outW = 44;
-  const plotX = label + 12;
+  const plotX = stacked ? 8 : label + 12;
   const plotW = Math.max(80, width - plotX - right - outW);
   const x = (pos) => plotX + ((pos - 1) / 9) * plotW;
   const outX = plotX + plotW + outW / 2 + 6;
-  const height = top + sorted.length * rowHeight + 8;
+  const height = top + sorted.length * rowH + 8;
   const kids = [];
 
+  if (!stacked) kids.push(el('text', { class: 'rc-muted', x: label, y: 12, 'text-anchor': 'end' }, text(`${source} position`)));
   for (const pos of [1, 3, 10]) {
     kids.push(el('line', { class: 'rc-grid', x1: crisp(x(pos)), x2: crisp(x(pos)), y1: top - 6, y2: height - 6 }));
     kids.push(el('text', { class: 'rc-muted', x: r1(x(pos)), y: 12, 'text-anchor': 'middle' }, text(`#${pos}`)));
@@ -149,14 +156,16 @@ export function rankDots(rows, { width = 560, rowHeight = 30, labelWidth } = {})
   let withPrediction = 0;
   let unsure = 0;
   sorted.forEach((row, index) => {
-    const cy = top + index * rowHeight + rowHeight / 2;
+    const cy = stacked ? top + index * rowH + 30 : top + index * rowH + rowH / 2;
     const real = row.position && row.position >= 1 && row.position <= 10 ? row.position : null;
     const prediction = predictionOf(row);
     const pred = prediction ? prediction.position : null;
     if (real) ranked += 1;
     const g = [];
-    g.push(el('title', null, text(`${row.q}: ${real ? `#${real} on Google` : row.checked === false ? 'not checked yet' : 'not in the top 10'}${prediction ? `, ${predictionText(prediction)}` : ''}`)));
-    g.push(el('text', { class: 'rc-text', x: label, y: r1(cy + 4), 'text-anchor': 'end' }, text(clip(row.q, label))));
+    g.push(el('title', null, text(`${row.q}: ${real ? `#${real} ${source === 'Google' ? 'on Google' : 'in the demo data'}` : row.checked === false ? 'not checked yet' : 'not in the top 10'}${prediction ? `, ${predictionText(prediction)}` : ''}`)));
+    g.push(stacked
+      ? el('text', { class: 'rc-text', x: 0, y: r1(cy - 14), 'text-anchor': 'start' }, text(clip(`${row.q}${real ? `  #${real}` : ''}`, label)))
+      : el('text', { class: 'rc-text', x: label, y: r1(cy + 4), 'text-anchor': 'end' }, text(clip(row.q, label))));
     g.push(el('line', { class: 'rc-track', x1: r1(x(1)), x2: r1(x(10)), y1: crisp(cy), y2: crisp(cy) }));
     if (prediction) {
       if (prediction.unsure) unsure += 1;
@@ -172,7 +181,7 @@ export function rankDots(rows, { width = 560, rowHeight = 30, labelWidth } = {})
     kids.push(el('g', { class: 'rc-row' }, g));
   });
 
-  const desc = `${plural(sorted.length, 'search', 'searches')}. You rank in the top 10 for ${ranked}.`
+  const desc = `${plural(sorted.length, 'search', 'searches')}. You rank in the ${source === 'Google' ? '' : `${source} `}top 10 for ${ranked}.`
     + (withPrediction ? ` Open rings are PREDICTED positions for ${plural(withPrediction, 'search', 'searches')}.` : '')
     + (unsure ? ` Dashed rings are PREDICTED but unsure, for ${plural(unsure, 'search', 'searches')}.` : '');
   return frame(width, height, title, desc, kids, 'rc-dots');
@@ -229,7 +238,7 @@ export function positionColumns(rows, { width = 360, height = 180 } = {}) {
 /* ------------------------------------------------------------------ 3. who takes the top 10 */
 
 /* share: [{domain, slots, searches, average, you, competitor, platform}] */
-export function shareBars(share, { width = 560, limit = 8, rowHeight = 28, labelWidth } = {}) {
+export function shareBars(share, { width = 560, limit = 8, rowHeight, labelWidth } = {}) {
   const title = 'Who takes the top 10';
   const list = (share || []).filter((row) => row && row.domain && row.slots > 0);
   if (!list.length) return empty(width, title, 'No rankings pulled yet');
@@ -238,23 +247,28 @@ export function shareBars(share, { width = 560, limit = 8, rowHeight = 28, label
   if (mine && !shown.includes(mine)) shown = shown.slice(0, limit - 1).concat([mine]);
   const most = Math.max(1, ...shown.map((row) => row.slots));
   const total = list.reduce((sum, row) => sum + row.slots, 0);
-  const label = labelWidth || Math.min(200, Math.max(96, Math.round(width * 0.32)));
-  const valueW = 64;
-  const plotX = label + 12;
+  const stacked = !labelWidth && width < STACK_BELOW;
+  const rowH = rowHeight || (stacked ? 40 : 28);
+  const label = stacked ? width - 4 : labelWidth || Math.min(200, Math.max(96, Math.round(width * 0.32)));
+  const valueW = 104;
+  const plotX = stacked ? 0 : label + 12;
   const plotW = Math.max(60, width - plotX - valueW);
-  const height = shown.length * rowHeight + 4;
+  const height = shown.length * rowH + 4;
   const kids = [];
   shown.forEach((row, index) => {
-    const y = index * rowHeight;
+    const y = index * rowH;
+    const barY = stacked ? y + 22 : y + rowH / 2 - 6;
     const barW = Math.max(3, (row.slots / most) * plotW);
     const cls = row.you ? 'rc-you' : row.competitor ? 'rc-rival' : 'rc-other';
     const name = row.you ? `${row.domain} (you)` : row.domain;
     const part = total ? Math.round((row.slots / total) * 100) : 0;
     kids.push(el('g', { class: `rc-row${row.you ? ' rc-is-you' : ''}` },
       el('title', null, text(`${name}: ${plural(row.slots, 'top 10 spot')}, ${part}% of all spots${row.average != null ? `, average #${row.average}` : ''}`)),
-      el('text', { class: row.you ? 'rc-text rc-bold' : 'rc-text', x: label, y: r1(y + rowHeight / 2 + 4), 'text-anchor': 'end' }, text(clip(row.domain, label))),
-      el('rect', { class: cls, x: plotX, y: r1(y + rowHeight / 2 - 6), width: r1(barW), height: 12, rx: 6 }),
-      el('text', { class: 'rc-value', x: r1(plotX + barW + 8), y: r1(y + rowHeight / 2 + 4) }, text(`${row.slots} · ${part}%`))));
+      stacked
+        ? el('text', { class: row.you ? 'rc-text rc-bold' : 'rc-text', x: 0, y: r1(y + 14), 'text-anchor': 'start' }, text(clip(row.domain, label)))
+        : el('text', { class: row.you ? 'rc-text rc-bold' : 'rc-text', x: label, y: r1(y + rowH / 2 + 4), 'text-anchor': 'end' }, text(clip(row.domain, label))),
+      el('rect', { class: cls, x: plotX, y: r1(barY), width: r1(barW), height: 12, rx: 6 }),
+      el('text', { class: 'rc-value', x: r1(plotX + barW + 8), y: r1(barY + 10) }, text(`${plural(row.slots, 'spot')}, ${part}%`))));
   });
   const desc = shown.map((row) => `${row.domain}${row.you ? ' (you)' : ''} ${row.slots}`).join(', ') + `. ${plural(total, 'spot')} in all.`;
   return frame(width, height, title, desc, kids, 'rc-share');

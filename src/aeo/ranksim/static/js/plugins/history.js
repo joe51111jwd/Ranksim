@@ -38,6 +38,13 @@ function chartWidth() {
   return window.innerWidth && window.innerWidth < 720 ? 360 : 640;
 }
 
+/* A next check date in the past means the scheduled run has not happened (no CRON_SECRET, or it failed). */
+function nextText(iso) {
+  const when = new Date(iso);
+  if (!Number.isNaN(when.getTime()) && when.getTime() < Date.now()) return 'Re-check overdue';
+  return `Next check ${day(iso)}`;
+}
+
 function rankText(position) {
   return position ? `#${position}` : 'Not in top 10';
 }
@@ -73,6 +80,25 @@ function changeChip(row) {
 
 /* ------------------------------------------------------------------ charts */
 
+/* Puts the tooltip beside the point, inside the chart: right of it when it fits, else left, never past an edge. */
+function placeTip(wrap, tip, share) {
+  const width = wrap.clientWidth || 1;
+  const px = share * width;
+  const tipWidth = tip.offsetWidth;
+  let left = px + 12;
+  if (left + tipWidth > width) left = px - 12 - tipWidth;
+  left = Math.max(0, Math.min(left, width - tipWidth));
+  tip.style.left = `${Math.round(left)}px`;
+  tip.style.transform = 'none';
+}
+
+/* A tap shows a tooltip (touch has no hover), so it stays until the next tap somewhere else. */
+document.addEventListener('pointerdown', (event) => {
+  for (const chart of document.querySelectorAll('.history-chart')) {
+    if (!chart.contains(event.target) && typeof chart.historyHide === 'function') chart.historyHide();
+  }
+});
+
 /* A small line with no axes. Lower position numbers sit higher. Gaps are checks where the site was not in the top 10. */
 function sparkline(values, label) {
   const W = 84;
@@ -90,8 +116,11 @@ function sparkline(values, label) {
     path += `${path && values[i - 1] != null ? 'L' : 'M'}${x(i).toFixed(1)},${y(v).toFixed(1)}`;
   });
   if (path) svg.append(s('path', { class: 'history-spark-line', d: path }));
-  const last = values[n - 1];
-  if (last != null) svg.append(s('circle', { class: 'history-spark-dot', cx: x(n - 1), cy: y(last), r: 2.5 }));
+  values.forEach((v, i) => {
+    // a check with no ranked neighbour draws no line, so give it a dot; the last check always gets one
+    const alone = v != null && values[i - 1] == null && values[i + 1] == null;
+    if (v != null && (alone || i === n - 1)) svg.append(s('circle', { class: 'history-spark-dot', cx: x(i), cy: y(v), r: 2.5 }));
+  });
   return svg;
 }
 
@@ -119,7 +148,7 @@ function lineChart(series, { yLabel = 'Position', height = 220, values = 'positi
   }
   const every = Math.max(1, Math.ceil(n / 6));
   dates.forEach((at, i) => {
-    if (i % every && i !== n - 1) return;
+    if (i !== n - 1 && (i % every || (i > 0 && n - 1 - i < every))) return; // keep the last date clear of its neighbour
     const label = s('text', { class: 'history-axis', x: x(i), y: H - 8, 'text-anchor': n === 1 ? 'middle' : i === 0 ? 'start' : i === n - 1 ? 'end' : 'middle' });
     label.textContent = day(at);
     svg.append(label);
@@ -161,17 +190,16 @@ function lineChart(series, { yLabel = 'Position', height = 220, values = 'positi
         h('i', { class: `history-key ${one.cls}`, 'aria-hidden': 'true' }),
         h('span', { text: one.name }),
         h('b', { text: format(lookup[k].get(at)) }))));
-    tip.hidden = false;
-    const share = x(best) / W;
-    tip.style.left = `${Math.round(share * 100)}%`;
-    tip.style.transform = share > 0.6 ? 'translateX(calc(-100% - 12px))' : 'translateX(12px)';
+    placeTip(wrap, tip, x(best) / W);
+  };
+  const hide = () => {
+    tip.hidden = true;
+    cross.setAttribute('visibility', 'hidden');
   };
   hit.addEventListener('pointermove', show);
   hit.addEventListener('pointerdown', show);
-  hit.addEventListener('pointerleave', () => {
-    tip.hidden = true;
-    cross.setAttribute('visibility', 'hidden');
-  });
+  hit.addEventListener('pointerleave', (event) => { if (event.pointerType === 'mouse') hide(); });
+  wrap.historyHide = hide;
   svg.append(hit);
   wrap.append(svg, tip);
   return wrap;
@@ -213,16 +241,14 @@ function firstPageBars(trend) {
       tip.replaceChildren(h('div', { class: 'history-tip-k', text: day(row.at) }),
         h('div', { text: `${ranked} of ${plural(row.searches || 0, 'search', 'searches')} on the first page` }),
         h('div', { class: 'history-tip-k', text: `${top3} in the top 3` }));
-      tip.hidden = false;
-      const share = cx / W;
-      tip.style.left = `${Math.round(share * 100)}%`;
-      tip.style.transform = share > 0.6 ? 'translateX(calc(-100% - 12px))' : 'translateX(12px)';
+      placeTip(wrap, tip, cx / W);
     };
     hit.addEventListener('pointerenter', show);
     hit.addEventListener('pointerdown', show);
-    hit.addEventListener('pointerleave', () => { tip.hidden = true; });
+    hit.addEventListener('pointerleave', (event) => { if (event.pointerType === 'mouse') tip.hidden = true; });
     svg.append(group, value, label, hit);
   });
+  wrap.historyHide = () => { tip.hidden = true; };
   wrap.append(svg, tip, h('div', { class: 'history-legend' },
     h('span', null, h('i', { class: 'history-key history-key-top', 'aria-hidden': 'true' }), 'Top 3'),
     h('span', null, h('i', { class: 'history-key history-key-on', 'aria-hidden': 'true' }), 'Top 10')));
@@ -256,7 +282,7 @@ registerOverviewTile({
     if (!H) return null;
     const C = H.changes || {};
     const tile = h('section', { class: 'tile white span-2 history-tile' },
-      h('div', { class: 'tile-head' }, h('h2', { text: 'Rank changes' }), h('span', { class: 'aside', text: H.last_at ? `Last check ${day(H.last_at)}` : 'Not checked yet' })));
+      h('div', { class: 'tile-head' }, h('h2', { text: 'Rank changes' }), h('span', { class: 'aside', text: H.real === false ? 'Demo data, not Google results' : H.last_at ? `Last check ${day(H.last_at)}` : 'Not checked yet' })));
     const stat = (cls, label, value) => h('div', { class: `history-stat ${cls}` }, h('b', { text: String(value || 0) }), h('span', { text: label }));
     if ((H.checks || 0) < 2) {
       tile.append(h('p', { class: 'tile-sub', text: H.checks ? 'Changes show after the second check.' : 'Positions show after the first Google check.' }));
@@ -266,7 +292,7 @@ registerOverviewTile({
     const trend = H.trend || [];
     if (trend.length >= 2) tile.append(h('div', { class: 'history-cap', text: 'Searches on the first page at each check' }), firstPageBars(trend.slice(-12)));
     const foot = h('div', { class: 'history-foot' });
-    if (H.next_check_at) foot.append(h('span', { class: 'tile-sub', text: `Next check ${day(H.next_check_at)}` }));
+    if (H.next_check_at) foot.append(h('span', { class: 'tile-sub', text: nextText(H.next_check_at) }));
     else if (H.schedule === 'off') foot.append(h('span', { class: 'tile-sub', text: 'Re-checks are off. Turn them on in Settings.' }));
     if (H.checks) foot.append(link('track-history', 'Every search', { class: 'btn btn-plain' }));
     tile.append(foot);
@@ -307,7 +333,7 @@ registerScreen('track-history', {
         h('span', { class: 'history-trend' }, sparkline(row.spark || [], `Positions at each check: ${(row.spark || []).map(rankText).join(', ')}`), changeChip(row))));
     }
     if (!rows.length) list.append(h('div', { class: 'empty-note', text: 'No searches yet.' }));
-    const sub = H.checks ? `${plural(H.checks, 'Google check')} since ${day(H.first_at)}. Pick a search to see it over time.` : 'Positions show after the first Google check.';
+    const sub = H.real === false ? 'Demo data, not Google results. Pick a search to see it over time.' : H.checks ? `${plural(H.checks, 'Google check')} since ${day(H.first_at)}. Pick a search to see it over time.` : 'Positions show after the first Google check.';
     return page('Rank history', sub, null, h('div', { class: 'tile' }, list));
   },
 });
@@ -353,7 +379,7 @@ function sheetBody(data, row) {
   }
   const extras = featureNames(F).filter((name) => !['People also ask', 'Related searches'].includes(name));
   if (extras.length) out.push(h('p', { class: 'tile-sub', text: `Also on this results page: ${extras.join(', ')}.` }));
-  out.push(h('p', { class: 'history-note', text: 'Real Google positions from each check. Not in top 10 means the site was not in the results we hold.' }));
+  out.push(h('p', { class: 'history-note', text: data.real === false ? 'Demo data, invented for this demo. Not Google results.' : 'Real Google positions from each check. Not in top 10 means the site was not in the results we hold.' }));
   return out;
 }
 
@@ -381,30 +407,30 @@ function featureNames(features) {
 registerSettingsSection({
   key: 'tracking',
   order: 15,
-  render({ slug }) {
+  render({ slug, reload }) {
     const section = h('section', { class: 'tile span-2 history-settings' },
       h('div', { class: 'tile-head' }, h('h2', { text: 'Re-checks and usage' })),
       h('p', { class: 'tile-sub', text: 'Loading.' }));
     Promise.all([api.get(`/api/v1/projects/${enc(slug)}/tracking`), api.get('/api/v1/tracking/status')])
-      .then(([tracking, status]) => section.replaceChildren(...settingsBody(slug, tracking, status).filter(Boolean)))
+      .then(([tracking, status]) => section.replaceChildren(...settingsBody(slug, tracking, status, reload).filter(Boolean)))
       .catch(() => section.replaceChildren(h('div', { class: 'tile-head' }, h('h2', { text: 'Re-checks and usage' })), h('p', { class: 'tile-sub', text: 'Could not load. Try again.' })));
     return section;
   },
 });
 
-function settingsBody(slug, tracking, status) {
+function settingsBody(slug, tracking, status, reload) {
   const labels = { off: 'Off', daily: 'Daily', weekly: 'Weekly' };
-  const seg = h('div', { class: 'history-seg', role: 'radiogroup', 'aria-label': 'Re-check schedule' });
+  const seg = h('div', { class: 'history-seg', role: 'group', 'aria-label': 'Re-check schedule' });
   const note = h('p', { class: 'tile-sub history-when' });
   const paintNote = (data) => {
     if (data.schedule === 'off') note.textContent = 'This site is only checked when you refresh it.';
-    else if (data.next_check_at) note.textContent = `Last check ${day(data.last_check_at)}. Next check ${day(data.next_check_at)}.`;
+    else if (data.next_check_at) note.textContent = `Last check ${day(data.last_check_at)}. ${nextText(data.next_check_at)}.`;
     else note.textContent = 'The first check runs on the next scheduled run.';
     if (data.last_result === 'error' && data.last_error) note.textContent += ' The last re-check failed.';
   };
   const paintSeg = (current) => {
     seg.replaceChildren(...tracking.schedules.map((key) => {
-      const button = h('button', { type: 'button', class: `history-seg-btn${key === current ? ' on' : ''}`, role: 'radio', 'aria-checked': key === current ? 'true' : 'false', text: labels[key] || key });
+      const button = h('button', { type: 'button', class: `history-seg-btn${key === current ? ' on' : ''}`, 'aria-pressed': key === current ? 'true' : 'false', text: labels[key] || key });
       button.addEventListener('click', async () => {
         if (key === current) return;
         seg.querySelectorAll('button').forEach((b) => { b.disabled = true; });
@@ -414,6 +440,7 @@ function settingsBody(slug, tracking, status) {
           paintSeg(data.schedule);
           paintNote(data);
           full.delete(slug);
+          if (typeof reload === 'function') reload().catch(() => {}); // the Overview tile shows the schedule too
           toast(key === 'off' ? 'Re-checks turned off' : `Checks ${labels[key].toLowerCase()} from now on`);
         } catch (err) {
           toast(err && err.message ? err.message : 'Could not save. Try again.');

@@ -885,3 +885,44 @@ def test_cron_is_login_exempt_in_the_real_app_and_nothing_else_is(tmp_path, monk
 def test_budget_lives_in_the_workspace_plugin_folder(tmp_path):
     client, ui = _client(tmp_path)
     assert ui.pull_options["budget"].path == ui.root / "_plugins" / "tracking" / "usage.json"
+
+
+def test_synthetic_demo_history_is_never_called_real(tmp_path):
+    project = _history_project(tmp_path)
+    history = tracking.build_history(project, ws.WorkspaceMeta(dataset=ws.DATASET_SYNTHETIC))
+    assert history["real"] is False and "SYNTHETIC" in history["note"] and "REAL" not in history["note"]
+    assert history["next_check_at"] is None
+    report: dict = {}
+    tracking.extend_report(report, project=project, meta=ws.WorkspaceMeta(dataset=ws.DATASET_SYNTHETIC))
+    assert report["history"]["real"] is False
+    assert tracking.build_history(project, ws.WorkspaceMeta())["real"] is True
+
+
+def test_trend_rows_are_dated_by_their_checks_not_the_file(tmp_path):
+    project = _project(tmp_path / "projects", searches=["a"])
+    _write_snapshot(project, "20261110T000000Z", NOW - timedelta(days=4), {"a": [OURS]})
+    # imported today, but the positions were seen in October
+    _write_snapshot(project, "20261114T000000Z", NOW, {"a": ["https://x.example/", OURS]}, kind="import", pulled=datetime(2026, 10, 1, tzinfo=timezone.utc))
+    history = tracking.build_history(project, ws.WorkspaceMeta())
+    assert [row["at"][:10] for row in history["trend"]] == ["2026-10-01", "2026-11-10"]
+    assert history["last_at"][:10] == "2026-11-10" and history["first_at"][:10] == "2026-10-01"
+
+
+def test_after_pull_saves_the_counter_once_when_it_changed(tmp_path, monkeypatch):
+    from aeo.ranksim import plugins
+
+    ui = _ui(tmp_path)
+    budget = tracking.install_budget(ui)
+    saves: list[int] = []
+    monkeypatch.setattr(plugins, "save", lambda ui_: saves.append(1) or True)
+    monkeypatch.setattr(tracking, "_SAVED_USAGE_MTIME", None)
+    tracking.after_pull(project=None, report=None, ui=ui)
+    assert saves == []  # nothing counted yet
+    budget.claim("x")
+    tracking.after_pull(project=None, report=None, ui=ui)
+    tracking.after_pull(project=None, report=None, ui=ui)
+    assert saves == [1]
+    ui.public_demo = True
+    budget.claim("y")
+    tracking.after_pull(project=None, report=None, ui=ui)
+    assert saves == [1]

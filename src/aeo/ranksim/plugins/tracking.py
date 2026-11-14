@@ -39,6 +39,7 @@ SLACK_HOURS = 2.0  # Vercel runs a daily cron within its hour, so "daily" must n
 RETRY_HOURS = 20.0  # at most one re-check attempt per project per day, even when the attempt failed
 TOP_DEPTH = 10
 SPARK_POINTS = 12
+SYNTHETIC_NOTE = "SYNTHETIC demo positions, invented for this demo. Not Google results."
 CRON_PATH = "/api/v1/cron/recheck"
 PROVIDER_LABELS = {"serpapi": "SerpAPI", "dataforseo": "DataForSEO", "serper": "Serper"}
 MONTHS = (
@@ -492,6 +493,7 @@ def build_history(project, meta=None, *, snapshots=None) -> dict:
         ranked: list[int] = []
         counted = 0
         fresh = 0
+        newest_fresh: datetime | None = None  # a row is dated by its newest new check, not by when the file was written
         for entry in snapshot.searches:
             if entry.search not in per_search or not entry.results:
                 continue
@@ -501,15 +503,16 @@ def build_history(project, meta=None, *, snapshots=None) -> dict:
             key = _iso(moment)
             if key not in per_search[entry.search]:
                 fresh += 1  # a reused or kept copy repeats an older check: it is not a new one
+                newest_fresh = moment if newest_fresh is None or moment > newest_fresh else newest_fresh
             per_search[entry.search][key] = (moment, entry)  # the same pull date twice is one check
             counted += 1
             position, _url = _best(entry.results, lambda item: project.is_our_url(item.url))
             if position is not None:
                 ranked.append(position)
-        if fresh and written is not None:
+        if fresh and newest_fresh is not None:
             trend.append(
                 {
-                    "at": _iso(written),
+                    "at": _iso(newest_fresh),
                     "pull_id": snapshot.pull_id,
                     "searches": counted,
                     "ranked": len(ranked),
@@ -555,8 +558,9 @@ def build_history(project, meta=None, *, snapshots=None) -> dict:
             }
         )
     schedule = load_schedule(project)
+    synthetic = _is_synthetic(meta)
     next_check = None
-    if SCHEDULES.get(schedule) and last_check is not None:
+    if SCHEDULES.get(schedule) and last_check is not None and not synthetic:
         next_check = _iso(last_check + timedelta(hours=SCHEDULES[schedule]))
     return {
         "site": project.site,
@@ -570,13 +574,23 @@ def build_history(project, meta=None, *, snapshots=None) -> dict:
         "schedule": schedule,
         "last_check_at": _iso(last_check),
         "next_check_at": next_check,
-        "note": "REAL Google positions from stored pulls. Empty means not in the top 10 we hold.",
+        "real": not synthetic,
+        "note": SYNTHETIC_NOTE if synthetic else "REAL Google positions from stored pulls. Empty means not in the top 10 we hold.",
     }
+
+
+def _is_synthetic(meta) -> bool:
+    try:
+        from aeo.ranksim import workspace as ws
+
+        return getattr(meta, "dataset", None) == ws.DATASET_SYNTHETIC
+    except Exception:  # noqa: BLE001
+        return False
 
 
 def compact_history(full: dict) -> dict:
     """The small form stored in report["history"]."""
-    compact = {key: full.get(key) for key in ("site", "competitors", "checks", "first_at", "last_at", "changes", "trend", "schedule", "last_check_at", "next_check_at", "note")}
+    compact = {key: full.get(key) for key in ("site", "competitors", "checks", "first_at", "last_at", "changes", "trend", "schedule", "last_check_at", "next_check_at", "real", "note")}
     compact["trend"] = (full.get("trend") or [])[-SPARK_POINTS * 2 :]
     compact["searches"] = [
         {
@@ -946,6 +960,29 @@ def register(app, ui) -> None:
 
 def extend_report(report: dict, *, project, meta=None, database=None, ctx=None, ui=None) -> None:
     report["history"] = compact_history(build_history(project, meta))
+
+
+def after_pull(*, project, report=None, ui=None) -> None:
+    """The classic /p/{slug}/pull does not save to cloud storage afterwards, so the search counter it wrote would be
+    lost on a cold start. Save when the counter changed since this process last saved it. (The Studio pull saves
+    again right after this hook; one extra upload is the price of never losing a count.)"""
+    global _SAVED_USAGE_MTIME
+    if ui is None or getattr(ui, "public_demo", False):
+        return
+    try:
+        path = budget_for(ui).path
+        mtime = path.stat().st_mtime if path.is_file() else None
+    except (OSError, ValueError):
+        return
+    if mtime is None or mtime == _SAVED_USAGE_MTIME:
+        return
+    from aeo.ranksim import plugins
+
+    if plugins.save(ui):
+        _SAVED_USAGE_MTIME = mtime
+
+
+_SAVED_USAGE_MTIME: float | None = None
 
 
 def settings_schema() -> dict:

@@ -366,10 +366,12 @@ try {
     const html = `<!doctype html><html><head><title>DirtCrew</title>${tag}</head><body><h1>DirtCrew</h1></body></html>`;
     await page.evaluate(async ([html]) => {
       const csrf = document.getElementById('csrf').value;
-      await fetch('/__e2e/web', { method: 'POST', headers: { 'content-type': 'application/json', 'x-ranksim-csrf': csrf }, body: JSON.stringify({ url: 'https://www.dirtcrew.example/', html }) });
+      for (const url of ['https://dirtcrew.example/', 'https://www.dirtcrew.example/']) {
+        await fetch('/__e2e/web', { method: 'POST', headers: { 'content-type': 'application/json', 'x-ranksim-csrf': csrf }, body: JSON.stringify({ url, html }) });
+      }
     }, [html]);
     await page.click(SEL.proofCheck);
-    await page.waitForSelector(`${SEL.publishSheet} :text("Proven")`, { timeout: SLOW });
+    await page.waitForSelector(`${SEL.publishSheet} :text("Proven")`, { timeout: 20000 });
     await page.click(SEL.platform('wordpress'));
     await page.fill('.sheet input[name="username"]', 'e2e');
     await page.fill('.sheet input[name="app_password"]', 'abcd efgh ijkl mnop');

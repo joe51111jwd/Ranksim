@@ -132,18 +132,22 @@ count.
   {start, end, days, label}, fetched_at, totals, queries (top 100 by impressions), pages (top 50 by clicks),
   query_count, page_count, searches: {<project search>: {clicks, impressions, ctr, position, page}}}`. Reads files
   only, never the network.
-- `discovery_sources`: when on, up to 30 top queries `{q, weight = impressions / max impressions, source: "gsc",
-  impressions, clicks, position}`. Refreshes stale data first (best effort).
+- `discovery_sources`: when on, up to 30 top queries `{q, weight, source: "gsc", impressions, clicks, position}`.
+  The weight is on discovery's scale (a title phrase scores 3.0 to 4.5, 2.5 is the bar): `1.5 + 3.5 * sqrt(share)`
+  where share is impressions over the top query's, so the top query scores 5.0, a query with a tenth of its
+  impressions about 2.6, and a rare query only counts when the site's pages also use it. Refreshes stale data first
+  (best effort). Not called on a site's first analysis (no project yet), so GSC queries join from the next analysis.
 - `after_pull`: refresh stale data (best effort, errors recorded in settings).
 - `settings_schema`: toggle and property.
 
-## UI (phase B, after P0)
+## UI (built in phase B, js/plugins/gsc.js and css/plugins/gsc.css)
 
 - **Settings section** (`registerSettingsSection`): "Google Search Console" with an on/off switch, the property
   picker (select from `/properties`, suggested one first), last updated time, "Refresh now" and "Disconnect".
   When not configured: a "Not set up yet" card with the numbered owner steps and the exact redirect URI.
-- **Searches column** (`registerSearchColumn`): "Clicks" and "Impressions" from `report.gsc.searches`, with a
-  header tooltip "Google Search Console data, <range>".
+- **Searches column** (`registerSearchColumn`, key `gsc`): "Search Console" with clicks and impressions per search
+  from `report.gsc.searches`; the cell title gives CTR, average position and "Google Search Console data, <range>".
+  The column header is always there (the registry is static); its cells are empty until GSC is ready.
 - **Overview tile** (`registerOverviewTile`): totals (clicks, impressions, CTR, average position) labeled
   "Google Search Console data" and the date range, plus the top 5 queries. Off or not set up: a small tile that
   links to Settings.
@@ -158,6 +162,13 @@ section, discovery weights, freshness, refresh grant, disconnect and revoke); 40
 property pick and validation; forbidden property error state and recovery; bad, forged, expired state; nonce
 cookie; session binding; login and CSRF required; Google denial, missing scope, missing refresh token, bad code;
 rotated secret; local mode single use; public demo; hooks with no context; redirect URI override.
+
+## Browser check (phase B)
+
+Playwright against two local servers with the fake Google (`ui.gsc_transport`) and Google's authorization page
+intercepted: not set up state with steps and redirect URI, toggle on, consent redirect with the right scope,
+offline access and consent prompt, callback, Settings totals and property picker, Overview tile, Searches column,
+phone width (390 px, no horizontal scroll), disconnect. No console errors.
 
 ## Known gaps
 

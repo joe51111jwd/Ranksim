@@ -115,7 +115,7 @@ async function propertyPicker(status, rerender) {
     }
   });
   const hint = !current && listed.suggested ? h('span', { class: 'form-help', text: `Suggested: ${listed.suggested}` }) : null;
-  clear(box).append(h('span', { class: 'form-help', text: 'Property' }), h('div', { class: 'select' }, select, icon('chevron', 'chev')), hint);
+  clear(box).append(...[h('span', { class: 'form-help', text: 'Property' }), h('label', { class: 'select' }, select, icon('chevron', 'chev')), hint].filter(Boolean));
   return box;
 }
 

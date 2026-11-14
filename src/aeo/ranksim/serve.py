@@ -720,6 +720,9 @@ def create_app(
             return await call_next(request)
 
     workspace_ui.register(app, ui)
+    from aeo.ranksim.kwresearch.web import register as register_keywords
+
+    register_keywords(app, ui)
     if ui.public_demo:
         # Every public instance builds its own copy of the synthetic demo, so any instance can serve it.
         from aeo.ranksim import workspace as ws

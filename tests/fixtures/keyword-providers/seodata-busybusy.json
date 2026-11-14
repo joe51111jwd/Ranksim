@@ -1,0 +1,23 @@
+{
+  "keyword": "busybusy",
+  "volume": 9900,
+  "cpc": 7.54,
+  "competition": 0.43,
+  "country": "us",
+  "cached": true,
+  "cached_at": "2026-05-18T12:59:50.644Z",
+  "similar": [
+    {
+      "keyword": "busy busy",
+      "volume": 9900,
+      "cpc": 7.54,
+      "overlap": 20
+    },
+    {
+      "keyword": "busybusy app",
+      "volume": 1300,
+      "cpc": 19,
+      "overlap": 14
+    }
+  ]
+}

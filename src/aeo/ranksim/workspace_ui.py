@@ -204,8 +204,10 @@ def home_body(ui, *, error: str = "", values=None) -> str:
 
     values = values or {}
     rows = list_projects(root=ui.root)
+    link = "" if ui.public_demo else '<div class="head-actions"><a class="btn" href="/keywords">Keywords</a></div>'
     parts = ['<div class="page-head"><div><h1>Projects</h1>'
-             '<p class="sub">Compare your pages with competitors on the queries you care about, then test a draft against the same pages.</p></div></div>']
+             '<p class="sub">Compare your pages with competitors on the queries you care about, then test a draft against the same pages.</p></div>'
+             f'{link}</div>']
     if error:
         parts.append(_alert(e(error), "bad", role="alert"))
     demo = _demo_panel(ui, empty=not rows)

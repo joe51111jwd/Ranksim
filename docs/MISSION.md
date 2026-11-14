@@ -188,6 +188,7 @@ Ranksim's core use case, predicting where a new or draft page lands, is still sh
 2. Keep the 90% target on unseen data, with coverage stated. This gate was a point comparison on 30 queries, and a pass can be noise.
 3. Use the Nov 11 position for pages that already ranked. The combined survivor score on Nov 13 is that position.
 4. Apple mockup: blocked on a Superdesign browser sign-in. Resume when that is done, then wait for James's approval.
+5. Keyword volume and a heuristic difficulty score are in `docs/KEYWORDS.md`. A volume is blank unless a source returns a number, and that row keeps the source, the source URL, and the data date. The difficulty score is not a Google prediction. Serper costs 1 credit per uncached keyword. `keywords report` does not spend Serper credits unless `--fetch-serp` is set.
 
 ## Coordination
 - SEO Tracker (Grok Bot teammate) runs SmartCrew site work and sends real SERP data.

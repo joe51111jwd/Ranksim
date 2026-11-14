@@ -2,6 +2,10 @@
 
 Examples:
   python -m aeo.ranksim keywords
+  python -m aeo.ranksim keywords volume --keywords "busybusy, hcss" --project SmartCrew
+  python -m aeo.ranksim keywords import --csv tests/fixtures/keyword-seed/volumes.csv --project SmartCrew
+  python -m aeo.ranksim keywords difficulty --file seeds.txt --project SmartCrew
+  python -m aeo.ranksim keywords report --file seeds.txt --project SmartCrew --out report.csv
   python -m aeo.ranksim gaps
   python -m aeo.ranksim collect --mock
   python -m aeo.ranksim calibrate
@@ -47,8 +51,50 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--database", default=None, help="SQLAlchemy URL. Default is RANKSIM_DATABASE_URL.")
     sub = parser.add_subparsers(dest="command", required=True)
 
-    keywords = sub.add_parser("keywords", help="Write keywords.csv")
-    keywords.add_argument("--refresh-sitemap", action="store_true")
+    keywords = sub.add_parser("keywords", help="Write keywords.csv, or look up volume and difficulty")
+    keywords.add_argument("--refresh-sitemap", action="store_true", help="With no subcommand, refresh the SmartCrew sitemap snapshot")
+    kw = keywords.add_subparsers(dest="keywords_command")
+
+    def add_keyword_source(parser: argparse.ArgumentParser, *, require: bool) -> None:
+        group = parser.add_mutually_exclusive_group(required=require)
+        group.add_argument("--keywords", help='Comma-separated keywords, for example "busybusy, hcss"')
+        group.add_argument("--file", help="One keyword per line, or a CSV with a keyword column")
+        parser.add_argument("--project", default=None, help="Project name. The cache is stored in that project's folder.")
+        parser.add_argument("--cache", default=None, help="SQLite cache path. Overrides --project.")
+
+    volume = kw.add_parser("volume", help="US monthly search volume. Blank when no source returns a number.")
+    add_keyword_source(volume, require=True)
+    volume.add_argument("--out", default=None, help="Write a CSV to this path")
+    volume.add_argument("--json", action="store_true")
+    volume.add_argument("--refresh", action="store_true", help="Ignore a fresh cache and fetch again")
+    volume.add_argument("--delay", type=float, default=1.0, help="Seconds between requests to the same host. Default 1.")
+    volume.add_argument("--semrush-domain", action="append", default=[], help="Competitor domain whose public Semrush overview may be read. Repeatable.")
+
+    difficulty = kw.add_parser("difficulty", help="Heuristic 0-100 score from a live Google top 10. Not a Google prediction.")
+    add_keyword_source(difficulty, require=True)
+    difficulty.add_argument("--out", default=None)
+    difficulty.add_argument("--json", action="store_true")
+    difficulty.add_argument("--refresh", action="store_true", help="Fetch today's SERP again. A cached SERP for this UTC date is free.")
+    difficulty.add_argument("--credit-cap", type=int, default=50, help="Hard Serper credit ceiling. Default 50. One credit per uncached keyword.")
+    difficulty.add_argument("--tranco", default=None, help="Tranco top list CSV or zip. Unknown domains stay flagged if this file is loaded.")
+    difficulty.add_argument("--majestic", default=None, help="Majestic Million CSV with Domain and GlobalRank.")
+
+    report_kw = kw.add_parser("report", help="Volume and difficulty in one table. Does not spend Serper credits unless --fetch-serp.")
+    add_keyword_source(report_kw, require=True)
+    report_kw.add_argument("--out", default=None)
+    report_kw.add_argument("--json", action="store_true")
+    report_kw.add_argument("--refresh", action="store_true", help="Refetch volume. With --fetch-serp, also refetch today's SERP.")
+    report_kw.add_argument("--fetch-serp", action="store_true", help="Spend Serper credits for keywords with no cached SERP today.")
+    report_kw.add_argument("--credit-cap", type=int, default=50)
+    report_kw.add_argument("--delay", type=float, default=1.0)
+    report_kw.add_argument("--semrush-domain", action="append", default=[])
+    report_kw.add_argument("--tranco", default=None)
+    report_kw.add_argument("--majestic", default=None)
+
+    imported = kw.add_parser("import", help="Import a research CSV into the keyword cache. Keeps the original source and data date.")
+    imported.add_argument("--csv", required=True, help="CSV with keyword, us_monthly_volume, volume_source, source_url, data_date, and the other research columns")
+    imported.add_argument("--project", default=None)
+    imported.add_argument("--cache", default=None)
 
     sub.add_parser("gaps", help="Print the page gap list")
 
@@ -273,7 +319,10 @@ def main(argv: list[str] | None = None) -> None:
     database = args.database or settings.ranksim_database_url
     try:
         if args.command == "keywords":
-            _keywords(args.refresh_sitemap)
+            if getattr(args, "keywords_command", None):
+                _keyword_research(settings, args)
+            else:
+                _keywords(args.refresh_sitemap)
         elif args.command == "gaps":
             _gaps()
         elif args.command == "collect":
@@ -1199,6 +1248,116 @@ def _serve(settings, database: str, args) -> None:
     shown = "127.0.0.1" if loopback else args.host
     print(f"Ranksim: http://{shown}:{args.port}/  (old demo at /demo)", flush=True)
     uvicorn.run(app, host=args.host, port=args.port, log_level="warning")
+
+
+def _keyword_research(settings, args) -> None:
+    from aeo.ranksim.kwresearch.providers import PaidConfig
+    from aeo.ranksim.kwresearch.service import (
+        REPORT_FIELDS,
+        VOLUME_FIELDS,
+        dumps,
+        format_difficulty_text,
+        format_report_text,
+        format_volume_text,
+        import_volumes,
+        keyword_difficulty,
+        keyword_report,
+        keyword_volume,
+        read_keyword_list,
+        resolve_cache,
+        write_csv,
+    )
+
+    projects_root = getattr(args, "projects_dir", None)
+    cache = resolve_cache(getattr(args, "project", None), getattr(args, "cache", None), projects_root)
+    command = args.keywords_command
+    if command == "import":
+        stored, blanks = import_volumes(args.csv, cache)
+        print(f"Imported {stored} rows into {cache} ({blanks} without a volume).")
+        return
+    try:
+        keywords = read_keyword_list(getattr(args, "keywords", None), getattr(args, "file", None))
+    except ValueError as exc:
+        raise _usage_error(str(exc)) from exc
+    if not keywords:
+        raise _usage_error("No keywords.")
+    paid = PaidConfig.from_env()
+
+    def log(line: str) -> None:
+        print(line, file=sys.stderr)
+
+    if command == "volume":
+        rows = keyword_volume(
+            keywords,
+            cache,
+            refresh=args.refresh,
+            delay=args.delay,
+            paid=paid,
+            semrush_domains=args.semrush_domain,
+            log=log,
+        )
+        _emit_keyword_rows(rows, json_output=args.json, out=args.out, fields=VOLUME_FIELDS, text=format_volume_text(rows), dumps=dumps)
+        return
+    if command == "difficulty":
+        rows = keyword_difficulty(
+            keywords,
+            cache,
+            refresh=args.refresh,
+            api_key=settings.serper_api_key,
+            credit_cap=args.credit_cap,
+            tranco_path=args.tranco,
+            majestic_path=args.majestic,
+            log=log,
+        )
+        payload = [row.to_dict() for row in rows]
+        text = format_difficulty_text(rows)
+        if args.json:
+            print(dumps(payload), end="")
+        else:
+            print(text)
+        if args.out:
+            write_csv(payload, args.out, ["keyword", "score", "coverage", "kind", "label", "reason", "serp_day", "credits", "navigational", "navigational_note"])
+        return
+    if command == "report":
+        rows = keyword_report(
+            keywords,
+            cache,
+            refresh=args.refresh,
+            fetch_serp=args.fetch_serp,
+            delay=args.delay,
+            paid=paid,
+            semrush_domains=args.semrush_domain,
+            api_key=settings.serper_api_key,
+            credit_cap=args.credit_cap,
+            tranco_path=args.tranco,
+            majestic_path=args.majestic,
+            log=log,
+        )
+        text = format_report_text(rows)
+        if args.json:
+            print(dumps(rows), end="")
+        else:
+            print(text)
+        if args.out:
+            flat = []
+            for row in rows:
+                copied = dict(row)
+                copied.pop("factors", None)
+                flat.append(copied)
+            write_csv(flat, args.out, REPORT_FIELDS)
+        return
+    raise _usage_error(f"Unknown keywords command {command}")
+
+
+def _emit_keyword_rows(rows, *, json_output: bool, out: str | None, fields: list[str], text: str, dumps) -> None:
+    from aeo.ranksim.kwresearch.service import write_csv
+
+    if json_output:
+        print(dumps(rows), end="")
+    else:
+        print(text)
+    if out:
+        write_csv([row.to_dict() for row in rows], out, fields)
 
 
 def _keywords(refresh: bool) -> None:

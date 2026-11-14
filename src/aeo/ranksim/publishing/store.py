@@ -22,7 +22,8 @@ from pathlib import Path
 
 _LOCKS: dict[str, threading.RLock] = {}
 _LOCKS_GUARD = threading.Lock()
-HISTORY_KEEP = 500
+HISTORY_KEEP = 300
+HEAVY = ("payload", "previous", "expected", "regions")  # kept in <id>.data.json, read only for one entry
 
 
 class StoreError(RuntimeError):
@@ -185,20 +186,30 @@ class PublishStore:
 
     def put_history(self, entry: dict) -> None:
         with self.lock:
-            _write_json(self.history_dir / f"{entry['id']}.json", entry)
-            files = sorted(self.history_dir.glob("*.json"))
+            light = {k: v for k, v in entry.items() if k not in HEAVY}
+            heavy = {k: entry[k] for k in HEAVY if k in entry}
+            _write_json(self.history_dir / f"{entry['id']}.data.json", heavy)
+            _write_json(self.history_dir / f"{entry['id']}.json", light)
+            files = self._entry_files()
             for old in files[:-HISTORY_KEEP]:
                 old.unlink(missing_ok=True)
+                old.with_name(old.name[: -len(".json")] + ".data.json").unlink(missing_ok=True)
+
+    def _entry_files(self) -> list[Path]:
+        return sorted(p for p in self.history_dir.glob("*.json") if not p.name.endswith(".data.json"))
 
     def history_entry(self, entry_id: str) -> dict | None:
         if not entry_id or not all(ch.isalnum() or ch == "-" for ch in entry_id):
             return None
-        return _read_json(self.history_dir / f"{entry_id}.json", None)
+        entry = _read_json(self.history_dir / f"{entry_id}.json", None)
+        if entry is not None:
+            entry.update(_read_json(self.history_dir / f"{entry_id}.data.json", {}))
+        return entry
 
     def history(self, limit: int = 50) -> list[dict]:
         if not self.history_dir.is_dir():
             return []
-        files = sorted(self.history_dir.glob("*.json"), reverse=True)[:limit]
+        files = list(reversed(self._entry_files()))[:limit]
         return [entry for entry in (_read_json(path, None) for path in files) if entry]
 
 

@@ -1365,3 +1365,45 @@ def test_real_secretbox_round_trip_through_the_store(tmp_path, monkeypatch):
     monkeypatch.setenv("RANKSIM_SECRET", "a-different-key-0123456789abcdefghijklmn")
     with pytest.raises(StoreError):
         store.secret(c)  # a changed server key: reconnect, never a crash or a leak
+
+
+def test_history_index_files_stay_small(tmp_path):
+    web, router = Web(), Router()
+    pub = make_publisher(tmp_path, web, router)
+    owned(pub, web)
+    url = "https://acme.com/about"
+    web.pages[url] = page(body="<p>" + "word " * 5000 + "</p>")
+    entry = pub.publish(url, page(h1="New", body="<p>" + "word " * 5000 + "</p>"), add_webhook(pub, router)["id"])
+    light = json.loads((pub.store.history_dir / f"{entry['id']}.json").read_text())
+    assert "payload" not in light and "previous" not in light
+    assert pub.store.history_entry(entry["id"])["previous"]["html"].count("word") == 5000
+    assert [e["id"] for e in pub.store.history()] == [entry["id"]]
+
+
+def test_no_network_call_when_encryption_is_not_ready(tmp_path, box):
+    box.configured = lambda: False
+    router = Router()
+    pub = make_publisher(tmp_path, Web(), router)
+    with pytest.raises(PublishError) as err:
+        pub.add_connection(kind="webhook", site="acme.com", label="", settings={"url": "https://hooks.acme.test/x"}, secret={"signing_secret": "k" * 20})
+    assert err.value.status == 503 and router.calls == []
+
+
+def test_after_pull_saves_when_a_proof_was_rechecked(tmp_path, monkeypatch):
+    from aeo.ranksim import plugins
+    from aeo.ranksim.plugins import publish as plugin
+
+    saves = []
+    monkeypatch.setattr(plugins, "save", lambda ui: saves.append(ui) or True)
+    web, router = Web(), Router()
+    ui = FakeUI(tmp_path, web, router)
+    project = ui.project("acme")
+    pub = plugin.publisher_for(ui, project)
+    owned(pub, web)
+    plugin.after_pull(project=project, report={}, ui=ui)
+    assert saves == []  # nothing was due
+    record = pub.store.ownership("acme.com")
+    record["checked_at"] -= own.STALE_AFTER + 10
+    pub.store.put_ownership(record)
+    plugin.after_pull(project=project, report={}, ui=ui)
+    assert saves == [ui]

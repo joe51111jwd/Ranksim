@@ -153,6 +153,10 @@ class Publisher:
         cls = CONNECTORS.get(kind)
         if cls is None:
             raise PublishError("Pick a platform to connect.")
+        from .store import encryption_ready
+
+        if not encryption_ready():  # before any network call: credentials would not be kept anyway
+            raise PublishError("Credential encryption is not set up on this server yet, so connections cannot be saved.", 503)
         try:
             domain = own.site_key(site)
             clean_settings = cls.clean_settings(settings)

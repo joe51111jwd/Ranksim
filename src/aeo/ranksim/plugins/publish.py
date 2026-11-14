@@ -101,6 +101,9 @@ def register(app, ui) -> None:
         try:
             return JSONResponse(await run_in_threadpool(fn, *args, **kwargs))
         except PublishError as exc:
+            # An error answer is not saved by the middleware, but it may follow a write: a failed publish keeps its
+            # history entry, and a stale proof that is gone is revoked. Save those now.
+            await run_in_threadpool(save_quietly, ui)
             return _error(exc.status, str(exc), **exc.extra)
 
     async def body_of(request: Request) -> dict:
@@ -245,6 +248,15 @@ def register(app, ui) -> None:
         return await run(rollback_and_log)
 
 
+def save_quietly(ui) -> None:
+    from aeo.ranksim import plugins
+
+    try:
+        plugins.save(ui)
+    except Exception:  # noqa: BLE001 - CloudError; the answer still goes out
+        log.exception("publish: saving to cloud storage failed")
+
+
 def log_change(project, entry: dict, *, rollback: bool) -> None:
     """Record a publish or rollback in the client change log (the share plugin), when that plugin is present."""
     try:
@@ -272,6 +284,7 @@ def after_pull(*, project, report=None, ui=None, **_ignored) -> None:
     if ui is None:
         return
     try:
-        publisher_for(ui, project).recheck_stale()
+        if publisher_for(ui, project).recheck_stale():
+            save_quietly(ui)  # the classic pull does not save after this hook
     except Exception:  # noqa: BLE001 - a plugin hook never breaks a pull
         log.exception("publish: ownership re-check failed")

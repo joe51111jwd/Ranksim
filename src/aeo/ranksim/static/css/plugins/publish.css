@@ -27,3 +27,4 @@
 
 .publish-entry .body { display: grid; gap: 4px; }
 .publish-entry .form-actions { gap: 2px; margin-left: -10px; }
+.publish-conns button { white-space: normal; overflow-wrap: anywhere; text-align: left; max-width: 100%; }

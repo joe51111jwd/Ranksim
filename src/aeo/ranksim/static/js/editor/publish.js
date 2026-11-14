@@ -138,17 +138,26 @@ async function load(view) {
   plan(view);
 }
 
+/* Every plan is tied to the connection it was made for. A newer plan() call makes older answers stale, and while a
+   plan is on its way the Publish button is off, so a click never sends a plan made for another connection. */
 async function plan(view) {
+  const seq = (view.planSeq = (view.planSeq || 0) + 1);
+  const connection = view.status.owned ? view.connection : null;
+  view.plan = null;
+  view.planFor = null;
   paintChanges(view, null);
+  if (!view.formOpen) paintConnect(view);
   try {
-    const answer = await api.post(`${base()}/plan`, { url: view.url, html: view.page.html, connection_id: view.status.owned ? view.connection : null });
+    const answer = await api.post(`${base()}/plan`, { url: view.url, html: view.page.html, connection_id: connection });
+    if (seq !== view.planSeq) return;
     view.plan = answer.plan;
+    view.planFor = connection;
     paintChanges(view, answer.changes);
-    paintConnect(view);
   } catch (err) {
-    view.plan = null;
+    if (seq !== view.planSeq) return;
     paintChanges(view, null, err.message);
   }
+  if (!view.formOpen) paintConnect(view);
 }
 
 /* ------------------------------------------------------------------ what changes */
@@ -239,6 +248,7 @@ function paintOwner(view) {
 
 function paintConnect(view) {
   const tile = view.connect;
+  view.formOpen = false;
   clear(tile);
   if (!view.status || !view.status.owned) {
     tile.hidden = true;
@@ -253,13 +263,17 @@ function paintConnect(view) {
     paintForm(view);
     return;
   }
+  const planning = !view.plan || view.planFor !== view.connection;
   const seg = h('div', { class: 'seg seg-sm publish-conns', role: 'group', 'aria-label': 'Connection' },
     connections.map((c) => h('button', { type: 'button', 'aria-pressed': String(c.id === view.connection), onClick: () => { view.connection = c.id; view.confirm.clear(); plan(view); } }, c.label)));
   add(tile, seg);
   const current = connections.find((c) => c.id === view.connection);
   const platform = (view.platforms || []).find((p) => current && p.kind === current.kind);
   if (platform && platform.limits.length) add(tile, h('ul', { class: 'publish-limits' }, platform.limits.map((text) => h('li', { text }))));
-  if (!view.plan) return;
+  if (planning) {
+    add(tile, h('button', { class: 'btn btn-primary btn-large btn-block', type: 'button', disabled: true }, 'Comparing with the live page...'));
+    return;
+  }
   for (const warning of view.plan.warnings || []) {
     const key = warning.option || warning.code;
     const box = h('input', { type: 'checkbox', checked: warning.option ? !!view.options[key] : view.confirm.has(key) });
@@ -275,24 +289,29 @@ function paintConnect(view) {
   const ready = () => applying > 0 && (view.plan.warnings || []).every((w) => !w.confirm || view.confirm.has(w.code));
   const publishBtn = h('button', { class: 'btn btn-primary btn-large btn-block', type: 'button', disabled: !ready() },
     applying ? `Publish ${applying === 1 ? '1 change' : `${applying} changes`}` : 'Nothing to publish here');
+  const planned = view.planFor;
   publishBtn.addEventListener('click', async () => {
-    const done = busy(publishBtn, 'Publishing...');
+    busy(publishBtn, 'Publishing...');
+    view.plan = null;  // this plan is used up: no second click while the sheet reloads
     try {
-      const entry = await api.post(base(), { url: view.url, html: view.page.html, connection_id: view.connection, confirm: [...view.confirm], options: view.options });
-      toast(entry.verify && entry.verify.status === 'confirmed' ? 'Published. The live page shows it.' : 'Published.');
-      view.confirm.clear();
-      await load(view);
+      const entry = await api.post(base(), { url: view.url, html: view.page.html, connection_id: planned, confirm: [...view.confirm], options: view.options });
+      toast(publishedText(entry));
     } catch (err) {
-      done();
       toast(err.message);
     }
+    view.confirm.clear();
+    await load(view);
   });
-  add(tile, publishBtn, view.plan.live_after_apply ? null : h('p', { class: 'caveat', text: current && current.kind === 'github' ? 'This opens a pull request. It goes live when you merge it.' : 'This saves the change on the platform.' }));
+  add(tile, publishBtn,
+    view.page.roundTrip || !current || !['github', 'webhook'].includes(current.kind) ? null
+      : h('p', { class: 'caveat', text: 'This sends the whole page as the editor shows it, without its scripts. Ranksim asks you to confirm when the live page has scripts or forms this copy lacks.' }),
+    view.plan.live_after_apply ? null : h('p', { class: 'caveat', text: current && current.kind === 'github' ? 'This opens a pull request. It goes live when you merge it.' : 'This saves the change on the platform.' }));
 }
 
 function paintForm(view) {
   const tile = view.connect;
   clear(tile);
+  view.formOpen = true;
   add(tile, h('div', { class: 'tile-head' }, h('h2', { text: 'Connect where it is hosted' }),
     (view.status.connections || []).length ? h('button', { class: 'btn btn-plain', type: 'button', onClick: () => paintConnect(view) }, 'Cancel') : null));
   if (view.status.encryption_ready === false) {
@@ -315,7 +334,7 @@ function paintForm(view) {
       const input = LONG.has(key)
         ? h('textarea', { class: 'field mono', name: key, rows: 3, placeholder: help })
         : h('input', { class: 'field', name: key, type: secret ? 'password' : 'text', placeholder: help, required, autocomplete: secret ? 'new-password' : 'off', spellcheck: 'false' });
-      if (key === 'base_url' || key === 'url') input.value = key === 'base_url' ? `https://${view.domain}` : '';
+      if (key === 'base_url' || key === 'url') input.value = key === 'base_url' ? new URL(view.url).origin : '';
       return h('label', { class: 'publish-field' }, h('span', { text: required ? label : `${label} (optional)` }), input);
     };
     for (const key of platform.settings) add(form, field(key, false));
@@ -360,7 +379,9 @@ function paintHistory(view) {
   tile.hidden = false;
   add(tile, h('div', { class: 'tile-head' }, h('h2', { text: 'History' }), h('span', { class: 'aside', text: `${entries.length}` })));
   const list = h('div', { class: 'rows' });
-  entries.forEach((entry, index) => {
+  // The server rolls back the newest change first, so only the newest entry that is still in effect offers it.
+  const rollbackable = entries.find((e) => !e.rolled_back_at && e.status !== 'failed' && e.status !== 'closed');
+  entries.forEach((entry) => {
     const [cls, text] = VERIFY_TEXT[(entry.verify && entry.verify.status) || entry.status] || ['label-low', entry.status];
     const fields = (entry.rows || []).filter((r) => r.apply).map((r) => r.label).join(', ');
     const actions = h('div', { class: 'form-actions' });
@@ -379,7 +400,7 @@ function paintHistory(view) {
       });
       actions.append(again);
     }
-    if (entry.can_rollback && index === entries.findIndex((e) => e.can_rollback)) {
+    if (entry.can_rollback && entry === rollbackable) {
       const undo = h('button', { class: 'btn btn-plain btn-danger', type: 'button' }, 'Roll back');
       let armed = false;
       undo.addEventListener('click', async () => {
@@ -390,7 +411,7 @@ function paintHistory(view) {
         }
         const done = busy(undo, 'Rolling back...');
         try {
-          const result = await api.post(`${base()}/history/${enc(entry.id)}/rollback`);
+          const result = await api.post(`${base()}/history/${enc(entry.id)}/rollback`, rollbackBody(view, entry));
           toast((result.rollback && result.rollback.note) || 'Rolled back.');
           await load(view);
         } catch (err) {
@@ -408,6 +429,22 @@ function paintHistory(view) {
       actions)));
   });
   add(tile, list);
+}
+
+/* The connection to roll back with: the one used to publish, or, after a reconnect, one to the same platform. */
+function rollbackBody(view, entry) {
+  const connections = view.status.connections || [];
+  if (!entry.connection || connections.some((c) => c.id === entry.connection.id)) return undefined;
+  const same = connections.find((c) => c.kind === entry.connection.kind);
+  return same ? { connection_id: same.id } : undefined;
+}
+
+function publishedText(entry) {
+  const status = (entry.verify && entry.verify.status) || entry.status;
+  if (entry.status === 'pull_request') return 'Pull request opened. It goes live when you merge it.';
+  if (entry.status === 'saved') return 'Saved on the platform. Not live yet.';
+  if (status === 'confirmed') return 'Published. The live page shows it.';
+  return 'Published. The live page does not show it yet.';
 }
 
 /* ------------------------------------------------------------------ take it with you */

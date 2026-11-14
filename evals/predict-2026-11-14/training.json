@@ -1,0 +1,316 @@
+{
+  "protocol": "Features, penalty, new-page handicap and persistence slope are chosen on training data only. 2026-11-09 positions are not read by this step.",
+  "inputs": {
+    "nov06_positions": {
+      "file": "evals/forward-2026-11-09/baseline_serp.csv",
+      "sha256": "7ad4617418b65377a9ed72b68831e66a3b7ceee6a98c34adf05fb0230d0f8e3d"
+    },
+    "oct29_positions": {
+      "file": "smartcrew/serp.csv",
+      "sha256": "4bcc6715f997f12f99e38c5cf1909916d98d6dbafdc694e9f879a1d673a1663a",
+      "use": "new-page handicap and persistence slope only"
+    },
+    "html": {
+      "urls": 192,
+      "with_html": 167,
+      "fetched_from": "2026-11-14T01:37:28+00:00",
+      "fetched_to": "2026-11-14T01:37:49+00:00",
+      "caveat": "The snapshots' own stored HTML is private and was not available. Every page was fetched again on the dates above, 5 to 8 days after the Nov 6 and Nov 9 snapshots. A page may have changed since it was ranked. HTML is not in git."
+    }
+  },
+  "coverage": {
+    "nov06_rows": 294,
+    "nov06_rows_with_html": 250,
+    "searches": 30,
+    "families": 4
+  },
+  "selection": {
+    "method": "query-family-out pairwise on 2026-11-06 (same snapshot, held-out family). Not accuracy.",
+    "candidates": [
+      {
+        "features": "content",
+        "l2": 0.3,
+        "pairs": 931,
+        "pairwise": 0.4672
+      },
+      {
+        "features": "content",
+        "l2": 1.0,
+        "pairs": 931,
+        "pairwise": 0.4629
+      },
+      {
+        "features": "content",
+        "l2": 3.0,
+        "pairs": 931,
+        "pairwise": 0.4565
+      },
+      {
+        "features": "content",
+        "l2": 10.0,
+        "pairs": 931,
+        "pairwise": 0.4608
+      },
+      {
+        "features": "content",
+        "l2": 30.0,
+        "pairs": 931,
+        "pairwise": 0.4651
+      },
+      {
+        "features": "site",
+        "l2": 0.3,
+        "pairs": 931,
+        "pairwise": 0.5059
+      },
+      {
+        "features": "site",
+        "l2": 1.0,
+        "pairs": 931,
+        "pairwise": 0.5059
+      },
+      {
+        "features": "site",
+        "l2": 3.0,
+        "pairs": 931,
+        "pairwise": 0.5048
+      },
+      {
+        "features": "site",
+        "l2": 10.0,
+        "pairs": 931,
+        "pairwise": 0.5027
+      },
+      {
+        "features": "site",
+        "l2": 30.0,
+        "pairs": 931,
+        "pairwise": 0.507
+      },
+      {
+        "features": "content+site",
+        "l2": 0.3,
+        "pairs": 931,
+        "pairwise": 0.5628
+      },
+      {
+        "features": "content+site",
+        "l2": 1.0,
+        "pairs": 931,
+        "pairwise": 0.5596
+      },
+      {
+        "features": "content+site",
+        "l2": 3.0,
+        "pairs": 931,
+        "pairwise": 0.5521
+      },
+      {
+        "features": "content+site",
+        "l2": 10.0,
+        "pairs": 931,
+        "pairwise": 0.5575
+      },
+      {
+        "features": "content+site",
+        "l2": 30.0,
+        "pairs": 931,
+        "pairwise": 0.5575
+      }
+    ],
+    "chosen": {
+      "features": "content+site",
+      "l2": 0.3,
+      "pairs": 931,
+      "pairwise": 0.5628
+    },
+    "chosen_cv": {
+      "pairs": 931,
+      "correct": 524,
+      "ties": 0,
+      "pairwise": 0.5628
+    },
+    "per_search_backtest": {
+      "all in 1 dirt work software": {
+        "pairs": 28,
+        "correct": 15,
+        "pairwise": 0.5357
+      },
+      "all in one dirt work management software": {
+        "pairs": 45,
+        "correct": 24,
+        "pairwise": 0.5333
+      },
+      "all in one dirt work software": {
+        "pairs": 36,
+        "correct": 23,
+        "pairwise": 0.6389
+      },
+      "all in one dirtwork software": {
+        "pairs": 21,
+        "correct": 7,
+        "pairwise": 0.3333
+      },
+      "all in one excavation software": {
+        "pairs": 45,
+        "correct": 24,
+        "pairwise": 0.5333
+      },
+      "all in one heavy civil software": {
+        "pairs": 36,
+        "correct": 24,
+        "pairwise": 0.6667
+      },
+      "all-in-one heavy civil construction software": {
+        "pairs": 21,
+        "correct": 10,
+        "pairwise": 0.4762
+      },
+      "b2w alternative": {
+        "pairs": 21,
+        "correct": 16,
+        "pairwise": 0.7619
+      },
+      "best all in 1 dirt work software": {
+        "pairs": 28,
+        "correct": 19,
+        "pairwise": 0.6786
+      },
+      "best all in one dirt work management software": {
+        "pairs": 45,
+        "correct": 19,
+        "pairwise": 0.4222
+      },
+      "best all in one dirt work software": {
+        "pairs": 28,
+        "correct": 18,
+        "pairwise": 0.6429
+      },
+      "best all in one excavation software": {
+        "pairs": 28,
+        "correct": 21,
+        "pairwise": 0.75
+      },
+      "best all in one heavy civil software": {
+        "pairs": 28,
+        "correct": 17,
+        "pairwise": 0.6071
+      },
+      "best all-in-one dirt work and excavation software": {
+        "pairs": 28,
+        "correct": 18,
+        "pairwise": 0.6429
+      },
+      "best all-in-one dirt work management software": {
+        "pairs": 36,
+        "correct": 20,
+        "pairwise": 0.5556
+      },
+      "best all-in-one dirtworks software": {
+        "pairs": 28,
+        "correct": 16,
+        "pairwise": 0.5714
+      },
+      "best dirt work software": {
+        "pairs": 28,
+        "correct": 23,
+        "pairwise": 0.8214
+      },
+      "best excavation software": {
+        "pairs": 28,
+        "correct": 21,
+        "pairwise": 0.75
+      },
+      "best heavy civil construction software": {
+        "pairs": 15,
+        "correct": 12,
+        "pairwise": 0.8
+      },
+      "best heavy construction software": {
+        "pairs": 21,
+        "correct": 12,
+        "pairwise": 0.5714
+      },
+      "dirt work contractor software": {
+        "pairs": 28,
+        "correct": 11,
+        "pairwise": 0.3929
+      },
+      "dirt work management software": {
+        "pairs": 45,
+        "correct": 20,
+        "pairwise": 0.4444
+      },
+      "dirt work software with crm": {
+        "pairs": 36,
+        "correct": 18,
+        "pairwise": 0.5
+      },
+      "excavation company software": {
+        "pairs": 36,
+        "correct": 22,
+        "pairwise": 0.6111
+      },
+      "excavation contractor software": {
+        "pairs": 36,
+        "correct": 18,
+        "pairwise": 0.5
+      },
+      "excavation software": {
+        "pairs": 28,
+        "correct": 16,
+        "pairwise": 0.5714
+      },
+      "hcss alternative": {
+        "pairs": 28,
+        "correct": 10,
+        "pairwise": 0.3571
+      },
+      "hcss heavybid alternative": {
+        "pairs": 36,
+        "correct": 8,
+        "pairwise": 0.2222
+      },
+      "hcss heavyjob alternative": {
+        "pairs": 28,
+        "correct": 18,
+        "pairwise": 0.6429
+      },
+      "heavy civil field management software": {
+        "pairs": 36,
+        "correct": 24,
+        "pairwise": 0.6667
+      }
+    },
+    "sign_stable_across_folds": {
+      "title_match": 1,
+      "h1_match": 0,
+      "url_match": 0,
+      "heading_match": 0,
+      "body_match": 1,
+      "term_coverage": 0,
+      "words": -1,
+      "headings": 1,
+      "has_table": 0,
+      "has_faq": -1,
+      "schema": 1,
+      "links": -1,
+      "site_presence": 1,
+      "site_best": 0
+    }
+  },
+  "entrant_prior": {
+    "pairs": 330,
+    "entrant_above_rate": 0.3394,
+    "entrant_logit": -0.8377,
+    "entrants": 96,
+    "median_entrant_position": 6.0,
+    "note": "The Oct 29 list is an older export with heavy churn. It is used only for this handicap and the slope."
+  },
+  "persistence_slope": {
+    "pairs": 100,
+    "slope": 0.3985
+  },
+  "model_sha256": "113eefb0c1b47e0c76328abc61e9dee0702b0c1f0c19477bfbfad7e39bd7bb71",
+  "trained_at": "2026-11-14T01:43:07+00:00"
+}

@@ -1,0 +1,19 @@
+/* Predict: the per-search table and the guidance list under Test changes. Owned by the predict workstream. */
+.predict-label { color: var(--blue); }
+.predict-scroll { overflow-x: auto; margin-top: 10px; }
+.predict-table { width: 100%; border-collapse: collapse; font-size: 14px; font-variant-numeric: tabular-nums; }
+.predict-table th, .predict-table td { text-align: left; padding: 10px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+.predict-table thead th { font-size: 12px; font-weight: 550; color: var(--ink-3); }
+.predict-table tr.is-current th, .predict-table tr.is-current td { background: var(--blue-wash); }
+.predict-q span { display: block; }
+.predict-q > span:first-child { font-weight: 550; color: var(--ink); }
+.predict-method, .predict-bt { font-size: 12px; color: var(--ink-3); font-weight: 450; display: block; }
+.predict-after { font-weight: 650; color: var(--blue); }
+.predict-conf { font-size: 11px; }
+.predict-guide { margin: 10px 0 0; padding-left: 20px; display: grid; gap: 10px; }
+.predict-guide-t { display: block; font-weight: 550; }
+.predict-guide-d { display: block; font-size: 13px; color: var(--ink-3); }
+@media (max-width: 720px) {
+  .predict-table th, .predict-table td { padding: 8px 4px; font-size: 13px; }
+  .predict-table thead th:nth-child(2), .predict-table tbody td:nth-child(2) { display: none; }
+}

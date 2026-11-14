@@ -125,7 +125,7 @@ test('shareBars highlights you and tracked competitors and always shows you', ()
   const cut = shareBars(many.concat([{ domain: 'me.example', slots: 1, you: true }]), { limit: 5 });
   const names = find(cut, (n) => n.tag === 'text' && n.attrs['text-anchor'] === 'end').map((n) => n.kids[0].text);
   assert.equal(names.length, 5);
-  assert.equal(names[4], 'me.example (you)');
+  assert.equal(names[4], 'me.example', 'you are marked by color, so a long domain is not cut by a suffix');
   // Bars stay inside the width.
   for (const r of find(cut, (n) => n.tag === 'rect')) assert.ok(r.attrs.x + r.attrs.width <= 560);
 });

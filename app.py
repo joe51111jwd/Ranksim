@@ -38,7 +38,31 @@ def _load_openmp() -> None:
         ctypes.CDLL(str(ROOT / "vendor" / "libgomp" / "libgomp.so.1"), mode=ctypes.RTLD_GLOBAL)
 
 
-_load_openmp()
+class _OpenMPBeforeLightGBM:
+    """A one-shot import hook: the first `import lightgbm` preloads libgomp, then the normal import continues.
+
+    Most cold starts (the private app, every request that does not train or score) never import LightGBM, so they skip
+    the preload. find_spec runs before lightgbm's own code loads lib_lightgbm.so, so the library is already there."""
+
+    def find_spec(self, name, path=None, target=None):
+        if name == "lightgbm" or name.startswith("lightgbm."):
+            _remove_openmp_hook()
+            _load_openmp()
+        return None  # let the regular finders import it
+
+
+def _install_openmp_hook() -> None:
+    if "lightgbm" in sys.modules:
+        _load_openmp()
+    elif not any(isinstance(finder, _OpenMPBeforeLightGBM) for finder in sys.meta_path):
+        sys.meta_path.insert(0, _OpenMPBeforeLightGBM())
+
+
+def _remove_openmp_hook() -> None:
+    sys.meta_path[:] = [finder for finder in sys.meta_path if not isinstance(finder, _OpenMPBeforeLightGBM)]
+
+
+_install_openmp_hook()
 
 PASSWORD = os.environ.get("RANKSIM_PASSWORD", "").strip()
 PRIVATE = bool(PASSWORD)
@@ -46,6 +70,11 @@ DATA = Path(os.environ.get("RANKSIM_DATA_DIR") or os.environ.get("RANKSIM_PUBLIC
 DATA.mkdir(parents=True, exist_ok=True)
 if not PRIVATE:
     os.environ["RANKSIM_PUBLIC_DEMO"] = "1"
+elif not os.environ.get("RANKSIM_SECRET"):
+    # Without a secret the cookie key comes from the password alone, so one stolen cookie lets someone test password
+    # guesses offline. Never print the value, only that it is missing.
+    print("ranksim: RANKSIM_SECRET is not set; set a long random value so session cookies do not depend on the password alone",
+          file=sys.stderr, flush=True)
 
 from aeo.config import Settings  # noqa: E402
 from aeo.ranksim.serve import create_app  # noqa: E402
@@ -68,13 +97,42 @@ DATABASE = f"sqlite:///{DATA / 'rank.db'}"
 _deployment = os.environ.get("VERCEL_DEPLOYMENT_ID") or os.environ.get("VERCEL_GIT_COMMIT_SHA") or "ranksim-hosted"
 CSRF = hashlib.sha256(f"ranksim-csrf:{_deployment}:{os.environ.get('RANKSIM_SECRET', '')}".encode()).hexdigest()[:43]
 
+def _login_store():
+    """Where failed logins and "sign out everywhere" markers are shared by every instance of this deployment.
+
+    The private Vercel Blob store when it is connected; otherwise a folder under DATA (one machine's instances share
+    it). None if neither can be set up, which leaves the per-instance in-memory limits."""
+    try:
+        if os.environ.get("BLOB_READ_WRITE_TOKEN"):
+            from aeo.ranksim.objects import BlobStore
+
+            return BlobStore()
+        from aeo.ranksim.objects import DirStore
+
+        return DirStore(DATA / "objects")
+    except Exception as exc:  # noqa: BLE001 - login must keep working without a shared store
+        print(f"ranksim: login limits stay per instance: {type(exc).__name__}", file=sys.stderr, flush=True)
+        return None
+
+
+def _share_login_state(built) -> None:
+    """create_app builds its own Access without a store; swap in one that shares rate limits and revocations.
+
+    The Studio routes and middleware read ui.access on every request, so replacing it on app.state.ui is enough.
+    The password and secret are the same, so the signing key and every issued cookie stay the same."""
+    from aeo.ranksim.access import Access
+
+    ui = built.state.ui
+    ui.access = Access(PASSWORD, os.environ.get("RANKSIM_SECRET") or None, store=_login_store())
+
+
 def _build():
     """The FastAPI app for this environment. Vercel looks for a top-level `app`, so it is assigned once below."""
     if PRIVATE:
         from aeo.ranksim.cloud import CloudState
 
         settings = Settings(_env_file=None, ranksim_database_url=DATABASE)  # provider keys come from the environment
-        return create_app(
+        built = create_app(
             settings=settings,
             database=DATABASE,
             projects_root=DATA / "projects",
@@ -85,6 +143,8 @@ def _build():
             cloud=CloudState.from_env(DATA, DATA / "rank.db"),
             pull_options={"engines": [], "workers": 8, "delay_seconds": 0.25},
         )
+        _share_login_state(built)
+        return built
     settings = Settings(_env_file=None, ranksim_database_url=DATABASE, **{name: None for name in KEYS})
     return create_app(settings=settings, database=DATABASE, projects_root=DATA / "projects", public_demo=True, csrf_token=CSRF)
 

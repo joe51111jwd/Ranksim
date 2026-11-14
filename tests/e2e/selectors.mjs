@@ -25,6 +25,17 @@ export const SEL = {
   serpEdit: '.serp .rowcard a[aria-label*="in the editor"]',
   loading: 'main .boot, main .skeleton',
   offline: '.offline',
+  skeleton: (kind) => `main .skeleton.sk-${kind}`,
+
+  gscSection: 'section.tile:has(h2:text-is("Google Search Console"))',
+  gscTile: '[data-gsc="overview"]',
+
+  shareSection: 'section.tile:has(h2:text-is("Client report"))',
+  shareLabel: 'input[aria-label="Link label"]',
+  shareCreate: 'button:has-text("Create link")',
+  shareRow: '.share-row',
+  shareUrl: '.share-row code.share-url',
+  shareOff: '.share-row button:has-text("Turn off")',
 
   issueRow: '.rowcard',
   sheet: '.sheet[role=dialog]',

@@ -7,7 +7,7 @@ import {
   S, main, shell, api, stream, h, icon, clear, enc, hostOf, plural, initial, bar, toast, navigate, link, pathFor,
   parseLocation, loadProjects, openSite, closeSheet, footer, bootSpinner, sleep, emptyState,
 } from './core.js';
-import { registerEditorPanel, screen, screens, renderEntry } from './hooks.js';
+import { registerEditorPanel, screen, screens, renderEntry, sealBuiltIns } from './hooks.js';
 import './screens/overview.js';
 import './screens/issues.js';
 import './screens/searches.js';
@@ -338,7 +338,8 @@ async function openUrl(raw) {
   let result = null;
   for (let wait = 0; wait < 40; wait += 1) {
     try {
-      await analyzeOnce(url, (done) => { result = done; });
+      const paused = await analyzeOnce(url, (done) => { result = done; });
+      if (paused && !result && !S.open.error) continue; /* a long analysis continues in a new request */
       break;
     } catch (err) {
       if (!S.open || S.open.url !== url) return;
@@ -363,7 +364,9 @@ async function openUrl(raw) {
 }
 
 async function analyzeOnce(url, onDone) {
+  let paused = false;
   await stream('/api/v1/sites', { site: url }, (event) => {
+    if (event.type === 'paused') paused = true;
     if (!S.open || S.open.url !== url) return;
     if (event.type === 'step') {
       const key = event.step === 'save' ? 'model' : event.step;
@@ -385,6 +388,7 @@ async function analyzeOnce(url, onDone) {
       S.open.error = event.error;
     }
   });
+  return paused;
 }
 
 async function finishOpen(slug, url) {
@@ -458,6 +462,9 @@ registerEditorPanel({
 /* ------------------------------------------------------------------ start */
 
 Object.assign(shell, { route, render, renderBar, renderLogin, renderProblem });
+/* Everything registered up to here is built in; plugin modules run next, and a plugin key that matches a built-in
+   one logs a warning (see hooks.js). */
+sealBuiltIns();
 paintOffline();
 
 /* Module scripts run in page order before DOMContentLoaded, and the shell lists plugins after this file, so every

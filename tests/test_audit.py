@@ -627,3 +627,48 @@ def test_a_page_without_a_head_still_gets_head_checks():
     url = f"{SITE}/nohead/"
     issues = A.audit_html({url: f"<h1>Dirt work software</h1><p>{FILLER}</p>"})
     assert {"title-missing", "meta-missing", "viewport-missing", "og-missing", "schema-missing"} <= set(kinds(issues, url))
+
+
+# -- through the API and the app shell -------------------------------------------------------------
+
+
+def test_the_report_pins_issues_on_the_stored_html(tmp_path):
+    from fastapi.testclient import TestClient
+    from test_autopilot import HOME, _lines, _site_pages, _token
+    from test_project import FakeCrawler
+    from test_serve_project import make_settings
+
+    from aeo.ranksim.serve import create_app
+
+    stored = _site_pages()
+    app = create_app(settings=make_settings(tmp_path), projects_root=tmp_path / "projects", public_demo=False, pull_options={"fetcher": FakeCrawler(stored), "today": "2026-11-14"})
+    client = TestClient(app)
+    token = _token(client)
+    slug = _lines(client.post("/api/v1/sites", json={"site": HOME}, headers={"x-ranksim-csrf": token}))[-1]["slug"]
+    issues = client.get(f"/api/v1/projects/{slug}/report").json()["issues"]
+    pinned = [issue for issue in issues if issue.get("element")]
+    assert pinned and any(issue["kind"] == "title-long" and issue["element"]["selector"] == "head > title" for issue in issues)
+    assert any(issue["kind"] == "meta-missing" and issue["element"]["selector"] == "head" for issue in pinned)
+    for issue in pinned:  # every pin matches one element of the page as it was stored
+        found = BeautifulSoup(stored[issue["page"]], "lxml").select(issue["element"]["selector"])
+        assert len(found) == 1, (issue["kind"], issue["element"])
+    assert len({issue["id"] for issue in issues}) == len(issues)
+    again = client.get(f"/api/v1/projects/{slug}/report").json()["issues"]
+    assert again == issues  # the cached run gives the same answer
+
+
+def test_the_shell_loads_the_annotations_plugin_and_its_styles(tmp_path):
+    from fastapi.testclient import TestClient
+    from test_serve_project import make_settings
+
+    from aeo.ranksim.serve import create_app
+
+    client = TestClient(create_app(settings=make_settings(tmp_path), projects_root=tmp_path / "projects", public_demo=False))
+    shell = client.get("/").text
+    assert "/studio/js/plugins/annotations.js" in shell and "/studio/css/plugins/annotations.css" in shell
+    for path in ("/studio/js/plugins/annotations.js", "/studio/js/screens/issues.js", "/studio/css/plugins/annotations.css", "/studio/css/issues.css"):
+        body = client.get(path)
+        assert body.status_code == 200, path
+        assert "—" not in body.text and "–" not in body.text, path
+    script = client.get("/studio/js/plugins/annotations.js").text
+    assert "data-rs" in script and "innerHTML" not in script.replace("box.innerHTML = html", "")  # only the sandboxed template

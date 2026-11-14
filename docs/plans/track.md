@@ -160,3 +160,29 @@ routes through a bare FastAPI app.
 ## 8. Owner actions
 
 Set `SERPER_API_KEY` and `CRON_SECRET` (any long random string) on Vercel. Optionally `RANKSIM_MONTHLY_SEARCH_CAP`.
+
+## 9. Vercel Cron Jobs versus Schedules (checked 2026-11-14)
+
+Vercel's docs now call Cron Jobs (`crons` in `vercel.json`) a legacy feature that will migrate to Schedules
+(vercel.com/docs/schedules/migrate-from-cron-jobs). What matters for this project:
+
+- Schedules is still beta: the `vercel schedules` CLI is marked beta and function triggers are `schedule/v1beta`.
+- A Schedules `path` target calls a route on the deployment like a cron does. It sends POST by default;
+  `"requestMethod": "GET"` keeps the current route. Path targets still get `Authorization: Bearer <CRON_SECRET>`,
+  `user-agent: vercel-cron/1.0` and `x-vercel-cron-schedule`, so `GET /api/v1/cron/recheck` works unchanged.
+- A `function` target (a private function with no URL, `@vercel/schedules` `handleSchedule`) gets no Authorization
+  header and needs a JavaScript handler. It does not fit this Python app, so it is not used.
+- On Hobby the jitter is fixed at 15 minutes (Pro can set 1 to 15). A daily re-check does not care.
+- Keeping both `crons` and `schedules` for the same path runs the route twice per occurrence. Migrate in one change.
+
+Decision: `vercel.json` keeps `crons` (supported today, documented, works on Hobby). When Schedules leaves beta,
+replace the `crons` key with this, and nothing else:
+
+```json
+"schedules": {
+  "track-recheck": { "schedule": "17 9 * * *", "path": "/api/v1/cron/recheck", "requestMethod": "GET" }
+}
+```
+
+Even if both run by mistake, the route is safe: a project re-checked in the last 20 hours is skipped, so a second
+call on the same day spends nothing.

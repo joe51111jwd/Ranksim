@@ -104,3 +104,27 @@ ctx.diff()                 block diff vs the original
   can pick up the bold or link of the copied formatting element.
 - Attribute edits on an `<html>` or `<body>` that the page never wrote (browser invented) are not exported.
 - Editing the parent of a React streaming boundary moves the streamed content into place in the export.
+
+## Phase B (integrated)
+
+- `js/editor/editor.js`: the round trip state lives in `draft.rs` ({source, base, text, history}); `draft.text` stays
+  the clean page for panels, plugins and Test. `normalize()` remembers the HTML each clean page came from, so the
+  open flow in app.js needed no change. The preview shows `rs.text`, so every element carries its `data-rs-id`.
+- Undo and redo: one history per page for visual typing (coalesced), HTML mode, title and description, inserted
+  blocks, block switches and section moves. Cmd or Ctrl Z, Shift Z (and Ctrl Y) in the preview, the HTML view and
+  the page; the browser's own designMode undo is intercepted so it never desyncs. Undo updates the preview in place
+  (body swapped, scroll kept) instead of reloading it.
+- Autosave: IndexedDB keeps the latest draft per page with its own copy of the page, so a refresh restores edits even
+  when the site sends different HTML each time (Next.js pages do).
+- `js/editor/tools.js`: toolbar (undo, redo; Text, H2, H3 for the block at the cursor; Insert menu: section,
+  paragraph, list, table, FAQ with optional FAQPage JSON-LD that follows edits, image with required alt text and an
+  http(s) address) and panels (Changes with a plain words summary, a block by block review sheet and Download page;
+  Outline with click to scroll and drag to move a section; Versions to save, open and delete named versions).
+- `preview.js`: JSON-LD is kept by the cleaner; preview-only link and lazy image changes are stashed and restored,
+  so they never count as edits. The sandbox is still `allow-same-origin` only.
+- ctx additions (documented in hooks.js): `exportHtml()`, `diff()`, `undo()`, `redo()`, `canUndo`, `canRedo`, event
+  `editor-caret`, draft-changed sources `undo`, `redo`, `restore`.
+- Tests: `tests/test_editor_e2e.py` runs `tests/js/editor/e2e_editor.cjs` (offline fixture page, real Chromium):
+  byte for byte untouched export, typing, undo and redo, FAQ insert, download keeps every script, comment, noscript,
+  handler and entity. Manual Playwright runs on SmartCrew and the Mitti HCSS alternative page also covered HTML mode
+  undo, block switch, outline drag, saved versions and refresh restore (all passing).

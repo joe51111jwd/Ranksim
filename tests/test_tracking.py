@@ -639,6 +639,7 @@ def test_compact_history_for_the_report(tmp_path):
     compact = report["history"]
     alpha = next(row for row in compact["searches"] if row["search"] == "alpha")
     assert alpha["spark"] == [3, 5, 1]
+    assert len(alpha["spark_at"]) == 3 and alpha["spark_at"][-1] == NOW.isoformat(timespec="seconds")
     assert alpha["features"] == ["people_also_ask", "related_searches"]
     assert "points" not in alpha and compact["changes"]["up"] == 1
     json.dumps(report)  # serializable

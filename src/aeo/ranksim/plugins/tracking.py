@@ -699,6 +699,7 @@ def compact_history(full: dict) -> dict:
             "change": row["change"],
             "delta": row["delta"],
             "spark": [point["position"] for point in row["points"][-SPARK_POINTS:]],
+            "spark_at": [point["at"] for point in row["points"][-SPARK_POINTS:]],
             "features": sorted(row.get("features") or {}),
         }
         for row in full.get("searches") or []

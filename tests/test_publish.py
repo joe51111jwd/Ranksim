@@ -1329,7 +1329,11 @@ def test_publish_and_rollback_reach_the_client_change_log(app_env, monkeypatch):
     from aeo.ranksim.plugins import share
 
     logged = []
-    monkeypatch.setattr(share, "log_change", lambda project, kind, summary, **kw: logged.append((kind, summary, kw["key"])))
+    def fake_log(project, kind, summary, **kw):  # keyed like the real one: a repeat adds nothing
+        if all(row[2] != kw["key"] for row in logged):
+            logged.append((kind, summary, kw["key"], kw.get("public", True)))
+
+    monkeypatch.setattr(share, "log_change", fake_log)
     client, web, router, ui = app_env
     url = "https://acme.com/about"
     web.pages[url] = page()
@@ -1340,8 +1344,9 @@ def test_publish_and_rollback_reach_the_client_change_log(app_env, monkeypatch):
     conn = client.post("/api/v1/projects/acme/publish/connections", json={"kind": "webhook", "site": "acme.com", "settings": {"url": "https://hooks.acme.test/x"}, "secret": {"signing_secret": "k" * 20}}, headers=H).json()
     entry = client.post("/api/v1/projects/acme/publish", json={"url": url, "html": page(h1="New"), "connection_id": conn["id"]}, headers=H).json()
     client.post(f"/api/v1/projects/acme/publish/history/{entry['id']}/rollback", headers=H)
-    assert logged[0] == ("publish", "Published changes to /about: main heading.", f"publish:{entry['id']}")
-    assert logged[1][0] == "publish" and logged[1][1].startswith("Rolled back") and logged[1][2] == f"publish-rollback:{entry['id']}"
+    assert logged[0] == ("publish", "Published changes to /about: main heading.", f"publish:{entry['id']}", True)
+    assert logged[1] == ("publish", "Rolled back the change to /about.", f"publish-rollback:{entry['id']}", True)
+    assert len(logged) == 2
 
 
 def test_real_secretbox_round_trip_through_the_store(tmp_path, monkeypatch):
@@ -1486,7 +1491,14 @@ def test_live_publish_marks_fixed_issues_done_and_rollback_reopens(app_env):
     share.set_issue_plan(project, "meta-missing-about", "planned", plan="Write a description", title="No meta description")
     url = "https://acme.com/about"
     web.pages[url] = page()
-    router.on("POST", r"hooks", lambda r, m: httpx.Response(200))
+
+    def hook(request, m):
+        data = json.loads(request.content)
+        if data["event"] != "ranksim.ping":
+            web.pages[url] = data["html"]
+        return httpx.Response(200)
+
+    router.on("POST", r"hooks", hook)
     _owned_routes(client, web)
     conn = client.post("/api/v1/projects/acme/publish/connections", json={"kind": "webhook", "site": "acme.com", "settings": {"url": "https://hooks.acme.test/x"}, "secret": {"signing_secret": "k" * 20}}, headers=H).json()
     fixes = [{"id": "meta-missing-about", "title": "No meta description"}, {"id": "h1-weak-about", "title": "Weak heading"}, {"id": "NOT VALID"}]
@@ -1500,7 +1512,10 @@ def test_live_publish_marks_fixed_issues_done_and_rollback_reopens(app_env):
     share.set_issue_plan(project, "h1-weak-about", "doing", title="Weak heading")  # the owner changed it since
     client.post(f"/api/v1/projects/acme/publish/history/{entry['id']}/rollback", headers=H)
     plans = share.issue_plans(project)
-    assert plans["meta-missing-about"]["status"] == "open" and plans["h1-weak-about"]["status"] == "doing"
+    # back to its status before the publish (Planned), and the issue the owner moved since is left alone
+    assert plans["meta-missing-about"]["status"] == "planned" and plans["h1-weak-about"]["status"] == "doing"
+    assert any(row["summary"] == "Reopened: No meta description" for row in share.changelog(project))
+    assert not any(row["summary"] == "Reopened: Weak heading" for row in share.changelog(project))
 
 
 def test_pull_request_marks_issues_only_once_merged_and_live(app_env):
@@ -1537,3 +1552,113 @@ def test_fix_sync_never_breaks_a_publish_without_share(app_env, monkeypatch):
     conn = client.post("/api/v1/projects/acme/publish/connections", json={"kind": "webhook", "site": "acme.com", "settings": {"url": "https://hooks.acme.test/x"}, "secret": {"signing_secret": "k" * 20}}, headers=H).json()
     done = client.post("/api/v1/projects/acme/publish", json={"url": url, "html": page(h1="New"), "connection_id": conn["id"], "fixes": [{"id": "a-b", "title": "x"}]}, headers=H)
     assert done.status_code == 200 and done.json()["status"] == "live"
+
+
+# ---------------------------------------------------------------------------
+# Review round 3: what counts as live, and rollbacks that wait for a merge
+# ---------------------------------------------------------------------------
+
+
+def test_pull_request_is_an_owner_note_until_merged(app_env, monkeypatch):
+    from aeo.ranksim.plugins import share
+
+    logged = {}
+    monkeypatch.setattr(share, "log_change", lambda project, kind, summary, **kw: logged.setdefault(kw["key"], (summary, kw.get("public", True))))
+    client, web, router, ui = app_env
+    url = "https://acme.com/about"
+    web.pages[url] = page()
+    gh, state = gh_router({"about.html": page()})
+    router.routes.extend(gh.routes)
+    _owned_routes(client, web)
+    conn = client.post("/api/v1/projects/acme/publish/connections", json={"kind": "github", "site": "acme.com", "settings": {"repo": "acme/site"}, "secret": {"token": "t"}}, headers=H).json()
+    entry = client.post("/api/v1/projects/acme/publish", json={"url": url, "html": page(h1="New"), "connection_id": conn["id"]}, headers=H).json()
+    assert logged == {f"publish-pr:{entry['id']}": ("Opened a pull request for /about.", False)}
+    client.post(f"/api/v1/projects/acme/publish/history/{entry['id']}/rollback", headers=H)  # closes the open PR
+    assert logged[f"publish-closed:{entry['id']}"][1] is False
+    assert not any(public for _summary, public in logged.values())
+
+
+def test_merged_github_rollback_waits_for_the_revert_merge(tmp_path):
+    web = Web()
+    url = "https://acme.com/about"
+    old = page()
+    web.pages[url] = old
+    router, state = gh_router({"about.html": old})
+    pub = make_publisher(tmp_path, web, router)
+    owned(pub, web)
+    entry = pub.publish(url, page(h1="New"), gh_connect(pub)["id"])
+    state["merged"] = True
+    web.pages[url] = page(h1="New")
+    assert pub.verify_live(entry["id"])["status"] == "live"
+    pending = pub.rollback(entry["id"])  # opens a revert PR
+    assert pending["rollback_pending"] and not pending["rolled_back_at"] and not pending["can_rollback"]
+    with pytest.raises(PublishError):
+        pub.rollback(entry["id"])  # no second revert PR
+    done = pub.verify_live(entry["id"])  # the mock says merged
+    assert done["rolled_back_at"] and not done["rollback_pending"]
+
+
+def test_saved_webflow_draft_turns_live_when_the_page_shows_it(tmp_path):
+    web = Web()
+    url = "https://acme.com/about"
+    web.pages[url] = page()
+    router, _ = wf_router(web)
+    pub = make_publisher(tmp_path, web, router)
+    owned(pub, web)
+    conn = pub.add_connection(kind="webflow", site="acme.com", label="", settings={"site_id": "site1"}, secret={"api_token": "t"})
+    new = page(title="New title")
+    saved = pub.publish(url, new, conn["id"])
+    assert saved["status"] == "saved"
+    web.pages[url] = new  # the owner published the site from Webflow
+    assert pub.verify_live(saved["id"])["status"] == "live"
+
+
+def test_rollback_refused_while_publishing_and_url_variants_count_as_newer(tmp_path):
+    web, router = Web(), Router()
+    pub = make_publisher(tmp_path, web, router)
+    owned(pub, web)
+    url = "https://acme.com/about"
+    web.pages[url] = page()
+    web.pages[url + "/"] = page()
+    conn = add_webhook(pub, router)
+    first = pub.publish(url, page(h1="One"), conn["id"])
+    pub.publish(url + "/", page(h1="Two"), conn["id"])
+    with pytest.raises(PublishError) as err:
+        pub.rollback(first["id"])
+    assert err.value.status == 409 and "newer" in str(err.value)
+    stored = pub.store.history_entry(first["id"])
+    stored["status"] = "applying"
+    pub.store.put_history(stored)
+    with pytest.raises(PublishError) as err:
+        pub.rollback(first["id"])
+    assert "still being sent" in str(err.value)
+
+
+def test_fixes_wait_for_a_confirmed_live_check(app_env):
+    from aeo.ranksim.plugins import share
+
+    client, web, router, ui = app_env
+    url = "https://acme.com/about"
+    web.pages[url] = page()
+    router.on("POST", r"hooks", lambda r, m: httpx.Response(200))  # accepted, but the live page lags (a cache)
+    _owned_routes(client, web)
+    conn = client.post("/api/v1/projects/acme/publish/connections", json={"kind": "webhook", "site": "acme.com", "settings": {"url": "https://hooks.acme.test/x"}, "secret": {"signing_secret": "k" * 20}}, headers=H).json()
+    new = page(h1="New")
+    entry = client.post("/api/v1/projects/acme/publish", json={"url": url, "html": new, "connection_id": conn["id"], "fixes": [{"id": "h1-weak", "title": "Weak heading"}]}, headers=H).json()
+    assert entry["verify"]["status"] == "pending" and "h1-weak" not in share.issue_plans(ui.project("acme"))
+    web.pages[url] = new
+    checked = client.post(f"/api/v1/projects/acme/publish/history/{entry['id']}/verify", headers=H).json()
+    assert checked["fixes_marked"] == "done" and share.issue_plans(ui.project("acme"))["h1-weak"]["status"] == "done"
+
+
+def test_checkpoint_saves_the_claims(tmp_path):
+    web, router = Web(), Router()
+    pub = make_publisher(tmp_path, web, router)
+    saves = []
+    pub.checkpoint = lambda: saves.append(1)
+    owned(pub, web)
+    url = "https://acme.com/about"
+    web.pages[url] = page()
+    entry = pub.publish(url, page(h1="New"), add_webhook(pub, router)["id"])
+    pub.rollback(entry["id"])
+    assert len(saves) == 2  # the 'applying' entry and the rollback claim

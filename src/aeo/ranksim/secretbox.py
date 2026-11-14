@@ -26,7 +26,7 @@ SECRET_ENV = "RANKSIM_SECRET"
 VERSION = "v1"
 NONCE_BYTES = 12
 SALT = b"ranksim-secretbox-v1"
-MIN_SECRET_CHARS = 8
+MIN_SECRET_CHARS = 32  # HKDF is fast, so the secret itself must be long and random, not a password
 
 
 class SecretBoxError(Exception):

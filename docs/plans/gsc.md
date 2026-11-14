@@ -31,6 +31,7 @@ search discovery. When the owner has not created the Google OAuth client yet, ev
 - Key: HKDF-SHA256 over `RANKSIM_SECRET` (salt `ranksim-secretbox-v1`, info includes the purpose), so each purpose
   has its own 256-bit key. Cipher: AES-256-GCM, random 96-bit nonce, purpose also bound as associated data.
 - Token format `v1.<base64url(nonce || ciphertext || tag)>`.
+- `RANKSIM_SECRET` must be at least 32 characters (HKDF is fast, so the secret must be random, not a password).
 - Any failure (tamper, wrong purpose, wrong key, bad format, missing or short secret) raises `SecretBoxError`
   whose message never holds key material or plaintext. `configured()` says whether `RANKSIM_SECRET` is usable.
 - Library: `cryptography` (already installed transitively, now declared in `pyproject.toml` as `cryptography>=42`
@@ -48,13 +49,15 @@ search discovery. When the owner has not created the Google OAuth client yet, ev
 3. `GET /api/v1/gsc/callback` (top-level redirect from Google, so no CSRF header; the login middleware still
    requires the signed-in owner). It checks: state unseals, not expired, nonce equals the cookie, session hash
    equals the current session. Then it exchanges the code (same redirect URI), checks that the scope was granted,
-   requires a refresh token, seals and stores the tokens, revokes any older grant, turns the project on,
+   requires a refresh token, seals and stores the tokens (an older refresh token is not revoked: Google's revoke ends
+   the whole grant, including the new token), turns the project on,
    auto-matches the property, fetches data, saves to cloud storage, clears the nonce cookie, and redirects to
    `/app/{slug}/settings?gsc=<result>` (`connected`, `needs_property`, `denied`, `scope_missing`, `bad_state`,
    `expired_state`, `bad_nonce`, `bad_session`, `no_refresh_token`, `invalid_grant`, `not_configured`).
 4. Token refresh: the access token is reused until 60 seconds before expiry, then refreshed with the refresh
    token. A 401 from the API triggers one forced refresh and retry. `invalid_grant` on refresh (revoked or expired)
-   deletes the stored connection, so the state becomes `not_connected`.
+   deletes the stored connection, so the state becomes `not_connected`. `invalid_client` (a wrong client secret)
+   keeps the stored grant and shows an error until the env vars are fixed.
 5. Disconnect: `POST /api/v1/gsc/disconnect` revokes the refresh token at Google (best effort) and deletes the
    stored connection. Project settings are kept.
 

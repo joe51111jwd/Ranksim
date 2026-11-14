@@ -6,7 +6,7 @@ import { S, api, h, icon, clear, main, pathOf, go, enc, plural, page, footer, no
 import { registerScreen, searchColumns, renderEntry } from '../hooks.js';
 
 export const SOURCE_LABEL = {
-  title: 'Title', h1: 'Heading', h2: 'Subheading', slug: 'Page address', related: 'Related search',
+  added: 'Added', title: 'Title', h1: 'Heading', h2: 'Subheading', slug: 'Page address', related: 'Related search',
   paa: 'People ask', competitor: 'Competitor titles', gsc: 'Search Console', plugin: 'Plugin',
 };
 export const INTENT_LABEL = { commercial: 'Buying', transactional: 'Ready to buy', informational: 'Learning', navigational: 'Brand' };
@@ -17,8 +17,10 @@ export const sourceLabel = (key) => SOURCE_LABEL[key] || (key ? key.charAt(0).to
 export function discoveryIndex(report) {
   const found = new Map();
   const data = report && report.discovery;
+  for (const item of (data && data.tracked) || []) found.set(item.q, item);
   for (const item of (data && data.searches) || []) {
     found.set(item.q, item);
+    if (!found.has(item.q) || !(found.get(item.q).sources || []).length) found.set(item.q, item);
     for (const variant of item.variants || []) if (!found.has(variant)) found.set(variant, item);
   }
   return found;
@@ -50,7 +52,8 @@ export function renderSearches() {
   const known = discoveryIndex(R);
   const columns = searchColumns();
   const table = h('div', { class: 'stable', role: 'table', 'aria-label': 'Your searches' });
-  table.style.setProperty('--qcols', String(columns.length));
+  // repeat(0, auto) is invalid CSS, so the template is built here with exactly the columns there are.
+  table.style.gridTemplateColumns = ['minmax(0, 2fr)', 'auto', 'auto', 'auto', 'auto', 'minmax(0, 1.3fr)', ...columns.map(() => 'auto'), 'auto'].join(' ');
   table.append(h('div', { class: 'srow shead', role: 'row' },
     h('span', { role: 'columnheader', text: 'Search' }),
     h('span', { class: 'c-num', role: 'columnheader', text: 'You' }),

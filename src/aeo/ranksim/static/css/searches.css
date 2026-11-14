@@ -1,7 +1,7 @@
 /* Searches: the table of searches, suggestions and the search sheet (gaps, sources).
    Owned with js/screens/searches.js: the session that owns that module edits this file. */
 
-.stable { display: grid; grid-template-columns: minmax(0, 2fr) auto auto auto auto minmax(0, 1.3fr) repeat(var(--qcols, 0), auto) auto; column-gap: 14px; row-gap: 6px; }
+.stable { display: grid; grid-template-columns: minmax(0, 2fr) auto auto auto auto minmax(0, 1.3fr) auto; column-gap: 14px; row-gap: 6px; }
 .srow { grid-column: 1 / -1; display: grid; grid-template-columns: subgrid; align-items: center; padding: 8px 10px 8px 14px; border-radius: var(--r-card); background: var(--card); box-shadow: var(--shadow); min-height: 52px; }
 .srow:hover { box-shadow: var(--shadow-lift); }
 .srow.shead { background: transparent; box-shadow: none; min-height: 0; padding-top: 0; padding-bottom: 2px; font-size: 12px; font-weight: 550; color: var(--ink-3); }
@@ -30,7 +30,7 @@
 .srcline { display: flex; align-items: center; gap: 10px; font-size: 13px; color: var(--ink-2); min-width: 0; }
 
 @media (max-width: 760px) {
-  .stable { display: flex; flex-direction: column; gap: 6px; }
+  .stable { display: flex !important; flex-direction: column; gap: 6px; }
   .srow { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; padding: 12px 10px 12px 14px; }
   .srow.shead { display: none; }
   .srow .c-q { flex: 1 1 calc(100% - 52px); order: 0; }

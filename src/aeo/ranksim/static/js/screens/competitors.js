@@ -96,7 +96,8 @@ export function renderCompetitors() {
       h('div', { class: 'tile-head' }, h('h2', { text: 'Other sites in the top 10' })),
       h('div', { class: 'rows' }, others.map(siteRow))));
   }
-  const gaps = (R.gaps || []).filter((gap) => (gap.topics || []).length || (gap.terms || []).length || (gap.schema || []).length);
+  const size = (gap) => (gap.topics || []).length * 3 + (gap.terms || []).length + (gap.schema || []).length;
+  const gaps = (R.gaps || []).filter((gap) => size(gap) > 0).sort((a, b) => size(b) - size(a)).slice(0, 10);
   if (gaps.length) {
     tiles.push(h('section', { class: 'tile span-4' },
       h('div', { class: 'tile-head' }, h('h2', { text: 'Content gaps' }), h('span', { class: 'aside', text: 'What the pages above you have' })),
@@ -129,7 +130,7 @@ function pct(value) {
 /* The sheet for one site: what it ranks for, its best pages and how it writes them. */
 export function openProfile(row) {
   openSheet((sheet, closeBtn) => {
-    sheet.append(h('div', { class: 'sheet-head' }, h('div', null, h('h2', { text: row.domain }), h('div', { class: 'sub', text: row.reason || '' })), closeBtn));
+    sheet.append(h('div', { class: 'sheet-head' }, h('div', null, h('h2', { text: row.domain }), h('div', { class: 'sub', text: row.reason ? row.reason.charAt(0).toUpperCase() + row.reason.slice(1) : '' })), closeBtn));
     const body = h('div', { class: 'sheet-body' });
     body.append(h('div', { class: 'sgrid three' },
       h('div', { class: 'tile white' }, h('div', { class: 'tile-k', text: 'Searches' }), h('div', { class: 'num', text: String(row.searches) })),

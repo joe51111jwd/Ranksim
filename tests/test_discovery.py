@@ -543,3 +543,46 @@ def test_discover_with_plugins_keeps_rows_for_the_report(tmp_path, monkeypatch):
     assert "grading crew software" in found
     assert dn.load_rows(project) == [{"q": "grading crew software", "weight": 4.0, "source": "gsc", "detail": "weight 4"}]
     assert dn.discover_with_plugins(_smartcrew_pages(), "SmartCrew", host=SC) == found  # no project: nothing stored, same list
+
+
+def test_general_phrases_and_filler_words_are_left_out():
+    found = _titles(["Busybusy: Pricing, Features and Best Alternatives | Acme", "Best Software | Acme", "Best field service software | Acme"], "Acme", "acme.com")
+    assert "best field service software" in found.queries
+    assert not {"pricing features and best alternatives", "features and best alternatives", "best software"} & set(found.queries)
+    assert any(item["reason"] == "too general" for item in found.dropped)
+
+
+def test_profiles_take_titles_from_stored_pages_when_results_have_none():
+    google = GoogleSnapshot("p", "", "import", [SearchResults("excavation software", [
+        _result(1, "https://mitti.example/dirt-work-software"), _result(2, "https://mitti.example/excavation")], "import", "csv", None)])
+    mitti = cp.competitor_profiles(google, SC, _docs())["competitors"][0]
+    assert mitti["titles"]["count"] == 2 and mitti["titles"]["separator"] == "|"
+    assert mitti["best_pages"][0]["title"].endswith("| Mitti")
+
+
+def test_every_tracked_search_gets_an_intent_and_a_source():
+    found = dn.discover(_smartcrew_pages(), "SmartCrew", host=SC)
+    rows = {row["q"]: row for row in dn.describe(["excavation software", "best excavation software", "how to bid a grading job", "smartcrew login"], found, brands={"smartcrew"})}
+    assert rows["excavation software"]["source"] in {"title", "h1", "slug"} and rows["excavation software"]["intent"] == "commercial"
+    assert rows["best excavation software"]["sources"] and rows["best excavation software"]["source"] != "added"  # a near duplicate
+    assert rows["how to bid a grading job"]["source"] == "added" and rows["how to bid a grading job"]["intent"] == "informational"
+    assert rows["smartcrew login"]["intent"] == "navigational"
+
+
+def test_report_sections_are_cached_until_their_inputs_change(tmp_path, monkeypatch):
+    settings = make_settings(tmp_path, serpapi_key="sk-test-discover")
+    app = create_app(settings=settings, projects_root=tmp_path / "projects", public_demo=False,
+                     pull_options={"serp_provider": FakeGoogle(), "fetcher": FakeCrawler(_site_pages()), "today": TODAY, "workers": 4})
+    client = TestClient(app)
+    slug = _lines(client.post("/api/v1/sites", json={"site": SITE}, headers={"x-ranksim-csrf": _token(client)}))[-1]["slug"]
+    first = client.get(f"/api/v1/projects/{slug}/report").json()
+    project = load_project(slug, root=tmp_path / "projects")
+    assert (project.dir / "plugins" / "discover" / "sections.json").is_file()
+    calls = []
+    real = cp.competitor_profiles
+    monkeypatch.setattr(cp, "competitor_profiles", lambda *a, **k: calls.append(1) or real(*a, **k))
+    again = client.get(f"/api/v1/projects/{slug}/report").json()
+    assert not calls and again["competitor_profiles"] == first["competitor_profiles"] and again["gaps"] == first["gaps"]
+    dn.save_rows(project, [{"q": "grading crew software", "weight": 4.0, "source": "gsc"}])  # new input: computed again
+    third = client.get(f"/api/v1/projects/{slug}/report").json()
+    assert calls and any(item["q"] == "grading crew software" for item in third["discovery"]["searches"])

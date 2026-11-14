@@ -394,6 +394,20 @@ def _label_reason(phrase: str) -> str | None:
     return None
 
 
+# Words that say what kind of page or product it is, not what it is about. A phrase made only of these is too general.
+GENERAL = {
+    "best", "top", "good", "great", "free", "online", "new", "pricing", "price", "prices", "features", "feature",
+    "alternative", "alternatives", "review", "reviews", "comparison", "compare", "vs", "versus", "and", "or", "for",
+    "the", "a", "an", "guide", "overview", "options", "software", "app", "apps", "tool", "tools", "platform",
+    "solution", "solutions", "system", "systems", "program", "service", "services", "company", "companies", "online",
+}
+
+
+def _general(phrase: str) -> bool:
+    words = phrase.split()
+    return bool(words) and all(word in GENERAL or YEAR.fullmatch(word) for word in words)
+
+
 def _question(phrase: str) -> bool:
     words = phrase.split()
     if not words:
@@ -456,7 +470,7 @@ def _gather(text: str, source: str, weight: float, page: str | None, *, max_word
         return []
     out: list = []
     for piece, factor in _cut(text, max_words):
-        reason = _label_reason(piece) or _tagline_reason(piece)
+        reason = _label_reason(piece) or _tagline_reason(piece) or ("too general" if _general(piece) else None)
         words = piece.split()
         if not reason and not 2 <= len(words) <= max_words:
             reason = "too long" if len(words) > max_words else "one word"
@@ -687,6 +701,22 @@ def _unique_drops(items: list[dict]) -> list[dict]:
         if key and key not in seen:
             seen.add(key)
             out.append(item)
+    return out
+
+
+def describe(searches: list[str], found: Discovery, *, brands: set[str] | None = None) -> list[dict]:
+    """Intent and sources for every tracked search: from discovery when it found the same search, otherwise the
+    intent rules alone and the source "added" (the person or an import added it)."""
+    out = []
+    for search in searches:
+        match = next((item for item in found.searches if item.q == search or search in item.variants or same_search(item.q, search)), None)
+        if match is not None:
+            data = match.to_dict()
+            data["q"] = search
+        else:
+            intent, rule = classify_intent(search, brands=brands)
+            data = {"q": search, "intent": intent, "intent_rule": rule, "source": "added", "sources": [{"source": "added", "weight": 0, "detail": []}], "variants": [], "page": None}
+        out.append(data)
     return out
 
 

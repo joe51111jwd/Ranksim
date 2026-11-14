@@ -103,7 +103,12 @@ TEXT_STOP = STOP | {
     "going", "come", "find", "give", "look", "start", "try", "able", "sure", "lot", "lots", "thing", "things", "etc",
     "youll", "youre", "were", "weve", "its", "thats", "whats", "great", "good", "every", "everything", "anything",
     "something", "via", "per", "within", "around", "across", "less", "get", "got", "set", "new", "make", "makes",
+    # business filler that every page has
+    "team", "teams", "data", "solution", "solutions", "feature", "features", "product", "products", "business",
+    "businesses", "customer", "customers", "accurate", "powerful", "information", "provide", "provides", "including",
+    "include", "includes", "based", "different", "key", "full", "complete", "available", "need", "needs", "right",
 }
+SINGLE_WORD_SHARE = 0.6  # a single word must be on most pages above you to count as a gap; a pair needs COMMON_SHARE
 
 
 def norm(word: str) -> str:
@@ -410,6 +415,8 @@ def competitor_profiles(google, own_domain: str, docs: dict[str, str] | None = N
                 page["title"] = hit["title"]
         for page in pages.values():
             facts = profiles.get(page["url"])
+            if facts and not page["title"]:
+                page["title"] = facts["title"]  # imported results have no titles; the stored page does
             page["words"] = facts["words"] if facts else None
             page["schema"] = facts["schema"] if facts else []
             page["stored"] = facts is not None
@@ -537,6 +544,8 @@ def gap_for(search: str, page_url: str | None, page_html: str | None, above: lis
     query_words = {norm(word) for word in clean(search).split()}
     terms = []
     for term, urls in seen_in.items():
+        if " " not in term and not term.split()[0] in query_words and len(urls) < max(COMMON_MIN_PAGES + 1, math.ceil(SINGLE_WORD_SHARE * total)):
+            continue
         if not _common(len(urls), total) or my_terms.get(term) or (mine and all(my_terms.get(word) for word in term.split())):
             continue  # a pair counts as covered when both words are on your page ("schedule crews" covers "crew scheduling")
         if " " not in term and any(term in other.split() and other in seen_in and len(seen_in[other]) >= len(urls) for other in seen_in if " " in other):
@@ -610,9 +619,44 @@ def stored_html(database: str, urls: list[str]) -> dict[str, str]:
     return {url: found[loose_key(url)] for url in urls if loose_key(url) in found}
 
 
+SECTIONS_VERSION = 1
+
+
+def _fingerprint(project, meta, google, features, rows, pages, docs) -> str:
+    """Everything the sections are computed from. The same fingerprint gives the same sections."""
+    import hashlib
+    import json
+
+    digest = hashlib.sha1()
+    head = {
+        "v": SECTIONS_VERSION,
+        "searches": list(project.searches),
+        "competitors": sorted(getattr(meta, "competitors", None) or []),
+        "pull": getattr(google, "pull_id", None),
+        "google": [[entry.search, [[item.position, item.url, item.title] for item in entry.results]] for entry in (google.searches if google else [])],
+        "features": features,
+        "rows": rows,
+        "pages": [[page.url, page.status, page.title, page.h1, page.meta, page.h2s, page.words] for page in pages or []],
+    }
+    digest.update(json.dumps(head, sort_keys=True, default=str).encode("utf-8"))
+    for url in sorted(docs):
+        digest.update(url.encode("utf-8"))
+        digest.update(hashlib.sha1(docs[url].encode("utf-8", "replace")).digest())
+    return digest.hexdigest()
+
+
+def _cache_path(project):
+    from aeo.ranksim import plugins
+
+    return plugins.data_dir(project, "discover") / "sections.json"
+
+
 def report_sections(project, meta, database: str, report: dict, *, pages=None) -> dict:
     """The report's ``discovery``, ``competitor_profiles`` and ``gaps`` keys. Never raises: a section that fails is
-    left empty and says why. Also marks top 10 rows whose domain belongs to a picked competitor's subdomain."""
+    left empty. Parsing every ranking page is slow, so the sections are kept in the project's plugin folder and
+    computed again only when their inputs change. Also marks top 10 rows whose domain belongs to a picked
+    competitor's subdomain."""
+    import json
     import logging
 
     from aeo.ranksim import discovery
@@ -621,20 +665,35 @@ def report_sections(project, meta, database: str, report: dict, *, pages=None) -
     sections: dict = {"discovery": None, "competitor_profiles": {"competitors": [], "directories": [], "platforms": [], "publishers": []}, "gaps": []}
     try:
         google, features = discovery.google_inputs(project)
+        rows = discovery.load_rows(project)
         urls = sorted({item["url"] for row in rankings for item in row.get("top") or [] if item.get("url")} | {row["url"] for row in rankings if row.get("url")})
         docs = stored_html(database, urls)
-        if pages:
-            brand = discovery.brand_of(pages, project.domain)
-            found = discovery.discover(pages, brand, host=project.domain, google=google, serp_features=features, extra=discovery.load_rows(project), is_ours=project.is_our_url)
-            data = found.to_dict()
-            tracked = set(project.searches)
-            for item in data["searches"]:
-                item["tracked"] = item["q"] in tracked
-            data["serp_features"] = len(features)
-            sections["discovery"] = data
-        cache: dict = {}
-        sections["competitor_profiles"] = competitor_profiles(google, project.domain, docs, is_ours=project.is_our_url, cache=cache)
-        sections["gaps"] = content_gaps(rankings, docs, is_ours=project.is_our_url, own_domain=project.domain, cache=cache)
+        key = _fingerprint(project, meta, google, features, rows, pages, docs)
+        cached = None
+        try:
+            cached = json.loads(_cache_path(project).read_text(encoding="utf-8"))
+        except (OSError, ValueError, TypeError, AttributeError):
+            cached = None
+        if isinstance(cached, dict) and cached.get("key") == key and isinstance(cached.get("sections"), dict):
+            sections = cached["sections"]
+        else:
+            if pages:
+                brand = discovery.brand_of(pages, project.domain)
+                found = discovery.discover(pages, brand, host=project.domain, google=google, serp_features=features, extra=rows, is_ours=project.is_our_url)
+                data = found.to_dict()
+                tracked = set(project.searches)
+                for item in data["searches"]:
+                    item["tracked"] = item["q"] in tracked
+                data["serp_features"] = len(features)
+                data["tracked"] = discovery.describe(list(project.searches), found, brands=set(discovery.host_tokens(project.domain)))
+                sections["discovery"] = data
+            cache: dict = {}
+            sections["competitor_profiles"] = competitor_profiles(google, project.domain, docs, is_ours=project.is_our_url, cache=cache)
+            sections["gaps"] = content_gaps(rankings, docs, is_ours=project.is_our_url, own_domain=project.domain, cache=cache)
+            try:
+                _cache_path(project).write_text(json.dumps({"key": key, "sections": sections}), encoding="utf-8")
+            except (OSError, ValueError, TypeError, AttributeError):
+                pass  # without the cache the next report computes them again
         picked = {base_domain(domain) for domain in (getattr(meta, "competitors", None) or [])}
         for row in rankings:
             for item in row.get("top") or []:

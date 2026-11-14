@@ -1117,9 +1117,13 @@ def test_client_report_carries_clearer_estimates_with_their_pairs(env, monkeypat
 
     def with_confidence(ui, slug):
         report = json.loads(json.dumps(real(ui, slug)))
+        # Since report.ranking_prediction, ranking pages carry no re-ranked position, so the fixture sets explicit
+        # estimates: one CLEARER with a position (shown to the client) and the rest UNSURE (hidden).
         for index, row in enumerate(report["rankings"]):
-            if row.get("predicted"):
-                row["predicted"]["confidence"] = {"label": "CLEARER" if index == 0 else "UNSURE", "backtest_pairs": 48, "backtest_pairwise": 0.7}
+            row["predicted"] = {
+                "position": 4, "of": 7, "label": "PREDICTED",
+                "confidence": {"label": "CLEARER" if index == 0 else "UNSURE", "backtest_pairs": 48, "backtest_pairwise": 0.7},
+            }
         return report
 
     monkeypatch.setattr(share, "_project_report_fn", lambda: with_confidence)

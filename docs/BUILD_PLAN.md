@@ -80,19 +80,38 @@ of these functions. All are optional. A plugin that raises is logged and skipped
 | Hook | Signature | Called |
 | --- | --- | --- |
 | `register` | `register(app, ui) -> None` | once, after core routes. Add FastAPI routes here. |
-| `extend_report` | `extend_report(report: dict, *, project, meta, database, ctx, ui) -> None` | end of `build_report`. Add keys under your own namespace, e.g. `report["gsc"] = {...}`. |
+| `extend_report` | `extend_report(report: dict, *, project, meta, database, ctx, ui) -> None` | end of `build_report`, one plugin at a time. Add keys under your own namespace, e.g. `report["gsc"] = {...}`. Values must be JSON (no dates, sets, NaN). A plugin that raises, removes a key or adds something that is not JSON has its changes undone. Runs on every report GET: keep it read-only. |
 | `discovery_sources` | `discovery_sources(*, project, pages, ui) -> list[dict]` | during analysis. Return `{"q": str, "weight": float, "source": str}` rows that discovery merges into the search list. |
-| `audit_checks` | `audit_checks() -> list[callable]` | by `audit.audit`. Each check is `check(ctx) -> list[issue dict]` (issue shape in 4.4). |
+| `audit_checks` | `audit_checks() -> list[callable]` | by `audit.audit`. Each check is `check(ctx) -> list[issue dict]` (issue shape in 4.4). Issues that are not JSON are dropped. |
 | `after_pull` | `after_pull(*, project, report, ui) -> None` | after every pull or analysis finished. |
 | `settings_schema` | `settings_schema() -> dict` | optional, describes plugin settings shown in Settings. |
+| `csp` | `csp(path: str) -> str \| None` | per request, for paths outside the Studio pages, classic pages, `/api/`, `/studio/` and `/static/`. Return the Content-Security-Policy for a page your plugin serves (for example the public share page under `/r/`), else None. First answer wins. |
 
 Helpers available to plugins: `plugins.call_all(name, **kwargs) -> list`, `plugins.collect(name, **kwargs)`
-(flattens lists). Routes use the shared helpers in `api/common.py` (CSRF header check, JSON body limits,
-`_not_public` for the anonymous demo, `_error`). Every write route needs the `x-ranksim-csrf` header.
-Every route except the shell, assets, session and login requires the signed-in owner (middleware does it).
+(flattens lists), `plugins.data_dir(project, feature)`, `plugins.workspace_dir(ui, feature)`, `plugins.save(ui)`,
+`plugins.json_error(value)`, `plugins.csp_for(path)`. Routes use
+the shared helpers in `api/common.py` (CSRF header check, JSON body limits, `_not_public` for the anonymous demo,
+`_error`). Every write route needs the `x-ranksim-csrf` header.
+Every route except the shell, assets, session and login requires the signed-in owner (middleware does it), with one
+opt-out for a plugin route that outside callers must reach and that proves itself another way (a read-only share
+link with a signed token, a Vercel cron GET with `Authorization: Bearer <CRON_SECRET>`): set
+`endpoint.login_exempt = True` on its function. That route MUST check its token itself (`secrets.compare_digest`)
+and answer 401 or 404 without it. A write route of that kind also sets `endpoint.csrf_exempt = True`, since an
+outside caller never has the CSRF header. Only the route the router picks counts, so an exempt route never opens a
+core route on the same path. The full rules are in the `aeo.ranksim.plugins` docstring.
 
-Per-project plugin data: store it under the project folder, `project.dir / "plugins" / "<feature>" /`.
-Cloud storage mirrors the projects folder, so it persists on Vercel automatically.
+Workspace-wide plugin data (one Google connection for every project, a monthly usage counter, agency branding) goes
+in `plugins.workspace_dir(ui, "<feature>")`, which is `<projects root>/_plugins/<feature>/`. Never put workspace data
+anywhere else under the projects root (no dot folders): the storage layer persists `_plugins/` like project data.
+
+Per-project plugin data: store it under the project folder, `plugins.data_dir(project, "<feature>")`, which is
+`project.dir / "plugins" / "<feature>" /`. On Vercel each instance has its own disk and cloud storage keeps one copy
+of the data folder, so a write lasts only once it is saved. It is saved automatically after a POST, PUT, PATCH or
+DELETE route that answers below 400 and whose path does not end in `/pull`, `/fetch`, `/login` or `/logout` (a
+streamed answer is saved when it starts, not when it ends), and after `after_pull` in the Studio pull and the
+analysis. Everywhere else (a GET route such as a cron, `extend_report`, a background thread, a write made while a
+stream runs) call `plugins.save(ui)` once after the writes. It does nothing without cloud storage and raises
+`CloudError` when the upload fails.
 
 ### 4.3 Frontend layout after P0
 
@@ -116,7 +135,9 @@ src/aeo/ranksim/static/
 
 Frontend hooks (`js/hooks.js`), all optional:
 
-- `registerScreen(key, {label, nav, order, render})` adds a screen at `/app/<slug>/<key>`.
+- `registerScreen(key, {label, nav, order, render})` adds a screen at `/app/<slug>/<key>`. The key is lowercase
+  letters, digits, `-` and `_`, at most 40 characters: the server serves the shell for any key of that shape, so a
+  reload or a pasted link works.
 - `registerOverviewTile({order, render(report)})` adds a tile to the Overview bento.
 - `registerEditorPanel({order, render(ctx)})` adds a tile to the editor side column.
 - `registerEditorTool({order, render(ctx)})` adds a toolbar control in the editor.
@@ -132,6 +153,8 @@ Issue (audit):
 `{id, severity: "high"|"medium"|"low", kind, title, comment, fix, page, search?, element?: {selector, text, attr?}, suggestion?: string, evidence?: [str]}`
 `element.selector` is a CSS selector for the exact element in the page HTML, so the editor can pin the
 comment on it and "Fix in editor" can jump there. `suggestion` is ready-to-paste replacement text.
+An issue without an `id` gets one from its kind, page, search and `element.selector`, and `audit()` makes every id
+in the list unique (a repeat gets `-2`, `-3` and so on).
 
 Report (`GET /api/v1/projects/{slug}/report`): keep every existing key. Add new data under a namespaced key.
 
@@ -145,14 +168,14 @@ and say so in your final message.
 | --- | --- | --- | --- |
 | 1 | gsc | Google Search Console on/off: OAuth, property pick, 28-day queries and pages, feed searches | `plugins/gsc.py`, `js/plugins/gsc.js`, `css/plugins/gsc.css`, `tests/test_gsc.py` |
 | 2 | track | Search data provider health, cost meter and cap, scheduled re-checks (Vercel cron), rank history over time, SERP features | `plugins/tracking.py`, `js/plugins/history.js`, `css/plugins/history.css`, `tests/test_tracking.py` |
-| 3 | discover | Better search discovery (site, SERP related searches, people also ask, competitor titles, plugin sources), intent, competitor discovery and profiles, content gaps | `discovery.py`, `competitors.py`, `js/screens/searches.js`, `js/screens/competitors.js`, `tests/test_discovery.py` |
-| 4 | audit | Issues engine depth with exact element, comment, fix and suggestion; comments pinned on the page in the editor | `audit.py`, `js/screens/issues.js`, `js/plugins/annotations.js`, `css/plugins/annotations.css`, `tests/test_audit.py` |
+| 3 | discover | Better search discovery (site, SERP related searches, people also ask, competitor titles, plugin sources), intent, competitor discovery and profiles, content gaps | `discovery.py`, `competitors.py`, `js/screens/searches.js`, `js/screens/competitors.js`, `css/searches.css`, `css/competitors.css`, `tests/test_discovery.py` |
+| 4 | audit | Issues engine depth with exact element, comment, fix and suggestion; comments pinned on the page in the editor | `audit.py`, `js/screens/issues.js`, `css/issues.css`, `js/plugins/annotations.js`, `css/plugins/annotations.css`, `tests/test_audit.py` |
 | 5 | editor | Editor power: edits patched onto the original HTML (download keeps scripts), undo and redo, outline, insert FAQ and table and section blocks, diff vs original, saved draft versions | `js/editor/editor.js`, `js/editor/preview.js`, `css/editor.css`, `plugins/drafts.py`, `tests/test_drafts.py` |
 | 6 | predict | Prediction quality and guidance: persistence for ranking pages, a draft predictor evaluated on new top-10 entries, test a draft on all its searches, what would move it up | `tester.py`, `whatif.py`, `api/editor.py` test route, `js/editor/test.js`, `tests/test_predict*.py`, new files under `evals/` |
 | 7 | publish | Ownership proof (meta tag, DNS TXT, file) and publishing (WordPress, Webflow, Shopify, GitHub, webhook), verify live, history, rollback | `plugins/publish.py`, `js/editor/publish.js`, `css/plugins/publish.css`, `tests/test_publish.py` |
 | 8 | client | Client delivery: read-only share links, printable report, CSV export, agency branding, change log | `plugins/share.py`, `js/plugins/share.js`, `static/share/`, `css/print.css`, `tests/test_share.py` |
 | 9 | infra | Reliability on Vercel: per-project storage objects, per-site locks so several analyses run at once, resumable long jobs and job status polling, crawler robustness, login rate limits, security review | `cloud.py`, `access.py`, `api/sites.py`, `app.py`, `vercel.json`, `tests/test_hosted.py`, `tests/test_jobs.py` |
-| 10 | shell | App shell and charts: Overview charts of everything that ranks, per-search SERP view, home and empty and loading and error states, mobile, accessibility, bento consistency, Playwright end-to-end suite | `js/app.js`, `js/core.js`, `js/hooks.js`, `js/screens/overview.js`, `js/screens/settings.js`, `css/base.css`, `tests/e2e/` |
+| 10 | shell | App shell and charts: Overview charts of everything that ranks, per-search SERP view, home and empty and loading and error states, mobile, accessibility, bento consistency, Playwright end-to-end suite | `js/app.js`, `js/core.js`, `js/hooks.js`, `js/charts.js`, `js/screens/overview.js`, `js/screens/settings.js`, `css/base.css`, `css/home.css`, `css/overview.css`, `tests/e2e/` |
 
 Cross-stream needs go through hooks, not edits to another stream's files. Examples: GSC queries reach
 discovery through `discovery_sources`. Rank history reaches the Overview through `registerOverviewTile`.

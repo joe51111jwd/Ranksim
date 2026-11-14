@@ -648,14 +648,35 @@ def test_weekly_moves_from_dated_checks():
     assert [move["q"] for move in moves] == ["up", "down", "new"]  # biggest first; outside the top 10 counts as 11 (tie keeps order)
 
 
-def test_weekly_prefers_tracking_history_and_lists_what_is_next(env):
+def test_weekly_prefers_tracking_history_and_lists_what_is_next(env, monkeypatch):
+    import sys
+    import types
     from datetime import datetime, timezone
 
     project = env["ui"].project(env["demo"])
     now = datetime(2026, 11, 14, tzinfo=timezone.utc)
+    full = {  # the real shape of plugins.tracking.build_history(project)
+        "searches": [
+            {
+                "search": "vinyl fence installation cost", "position": 5, "previous": 8, "change": "up", "delta": 3,
+                "url": "https://www.northwind-fencing.example/resources/vinyl-fence-installation-cost/",
+                "points": [
+                    {"at": "2026-11-06T09:00:00Z", "position": 8, "url": "https://www.northwind-fencing.example/a/"},
+                    {"at": "2026-11-13T09:00:00Z", "position": 5, "url": "https://www.northwind-fencing.example/a/"},
+                    "junk",
+                ],
+                "competitors": {},
+            }
+        ],
+        "checks": 2, "first_at": "2026-11-06T09:00:00Z", "last_at": "2026-11-13T09:00:00Z", "changes": {}, "trend": [],
+    }
+    fake = types.ModuleType("aeo.ranksim.plugins.tracking")
+    fake.build_history = lambda project, meta=None: full
+    monkeypatch.setitem(sys.modules, "aeo.ranksim.plugins.tracking", fake)
     report = {
         "rankings": [{"q": "vinyl fence installation cost"}],
-        "history": {"searches": [{"q": "vinyl fence installation cost", "points": [{"date": "2026-11-06", "position": 8}, {"at": "2026-11-13T09:00:00Z", "position": 5}, "junk"]}]},
+        # the compact form in the report has no dates and must not be read as dated points
+        "history": {"searches": [{"search": "vinyl fence installation cost", "position": 5, "previous": 8, "change": "up", "delta": 3, "spark": [8, 5]}]},
     }
     issues = [
         {"title": "Low open", "severity": "low", "status": "open", "status_label": "Not started", "plan": ""},
@@ -673,7 +694,18 @@ def test_weekly_prefers_tracking_history_and_lists_what_is_next(env):
     assert weekly["moves"] == [{"q": "vinyl fence installation cost", "from": 8, "to": 5, "from_date": "2026-11-06", "to_date": "2026-11-13"}]
     assert [item["summary"] for item in weekly["done"]] == ["Published the pricing page"] and weekly["checks"] == 1
     assert [item["title"] for item in weekly["next"]] == ["Doing", "Planned", "High open"]
+
+    # tracking that raises, or is absent, falls back to the stored pull snapshots without failing
+    def boom(project, meta=None):
+        raise RuntimeError("tracking broke")
+
+    fake.build_history = boom
+    assert share._tracking_history(project) is None
+    assert share.weekly_summary(project, report, issues, changes, now=now)["moves"] == []
+    monkeypatch.setitem(sys.modules, "aeo.ranksim.plugins.tracking", None)
+    assert share._tracking_history(project) is None
     assert share._history_observations("not a dict") == {} and share._history_observations({"searches": "x"}) == {}
+    assert share._history_observations(report["history"]) == {}
 
 
 def test_published_edits_from_other_plugins_reach_the_weekly_summary(env):

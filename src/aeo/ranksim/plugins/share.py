@@ -727,8 +727,8 @@ def _observations(project) -> dict[str, list[tuple[datetime, int | None]]]:
 
 
 def _history_observations(history) -> dict[str, list[tuple[datetime, int | None]]]:
-    """The same shape from report["history"] (rank tracking), when it has
-    {"searches": [{"q": str, "points": [{"date" or "at": str, "position": int | None}]}]}."""
+    """The same shape from rank tracking's full history (plugins.tracking.build_history):
+    {"searches": [{"search": str, "points": [{"at": str, "position": int | None, "url": str}]}]}."""
     out: dict[str, list[tuple[datetime, int | None]]] = {}
     rows = history.get("searches") if isinstance(history, dict) else None
     for row in rows if isinstance(rows, list) else []:
@@ -742,7 +742,7 @@ def _history_observations(history) -> dict[str, list[tuple[datetime, int | None]
             if moment is not None:
                 points.append((moment, _int(point.get("position"))))
         if points:
-            out[_text(row.get("q"), 200)] = sorted(points, key=lambda point: point[0])
+            out[_text(row.get("search") or row.get("q"), 200)] = sorted(points, key=lambda point: point[0])
     return out
 
 
@@ -771,11 +771,27 @@ def _moves(observations, searches, now: datetime) -> list[dict]:
     return sorted(moves, key=size)[:8]
 
 
+def _tracking_history(project):
+    """Rank tracking's dated history when that plugin is installed, else None. report["history"] is its compact
+    form without dates, so the full form is read here."""
+    try:
+        from aeo.ranksim.plugins import tracking
+    except Exception:  # noqa: BLE001 - the plugin may be absent
+        return None
+    build = getattr(tracking, "build_history", None)
+    if build is None:
+        return None
+    try:
+        return build(project)
+    except Exception:  # noqa: BLE001 - tracking trouble never breaks the client report
+        return None
+
+
 def weekly_summary(project, report: dict, issues: list[dict], changes: list[dict], now: datetime | None = None) -> dict:
     """What changed in the last week and what is next, for the client. Every item comes from stored data."""
     now = now or _now()
     since = now - timedelta(days=WEEK_DAYS)
-    history = _history_observations(report.get("history"))
+    history = _history_observations(_tracking_history(project))
     try:
         observations = history or _observations(project)
     except Exception:  # noqa: BLE001

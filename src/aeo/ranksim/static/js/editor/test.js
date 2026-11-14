@@ -29,8 +29,10 @@ function testTile(ctx) {
     history.replaceState({}, '', pathFor('editor', { page: ED.refs.page, q: qSelect.value }));
     renderEditor();
   });
-  const row = R.rankings.find((item) => item.q === q) || {};
-  const mine = row.url && looseKey(row.url) === looseKey(draft.url);
+  let row = R.rankings.find((item) => item.q === q) || {};
+  const self = (row.top || []).find((item) => looseKey(item.url) === looseKey(draft.url));
+  const mine = !!self || (row.url && looseKey(row.url) === looseKey(draft.url));
+  if (self && !(row.url && looseKey(row.url) === looseKey(draft.url))) row = Object.assign({}, row, { position: self.position, url: self.url, predicted: null });
   const standing = !row.checked ? 'No Google results for this search yet.'
     : mine && row.position ? `This page is #${row.position} on Google${row.predicted && row.predicted.position ? `. PREDICTED #${row.predicted.position} of ${row.predicted.of} (${row.predicted.confidence || 'UNSURE'})` : ''}.`
       : row.position ? `${R.name} is #${row.position} with ${pathOf(row.url)}. This page is tested as a new entry.` : 'Not in the top 10 yet. This page is tested against the pages that are.';

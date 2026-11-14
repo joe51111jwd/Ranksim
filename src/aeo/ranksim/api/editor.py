@@ -279,7 +279,8 @@ def _one_source_of_truth(run: dict, query: str) -> None:
     row = next((item for item in block.get("searches") or [] if item.get("search") == query), None)
     if row is None:
         return
-    run["content_rerank"] = {"before": run.get("before"), "after": run.get("after"), "change": run.get("change")}
+    run["content_rerank"] = {"before": run.get("before"), "after": run.get("after"), "change": run.get("change"), "notes": run.get("notes") or []}
+    run["notes"] = []  # those notes describe the content re-rank (its length rule, its candidate set), which is not shown
     conf = row.get("confidence") or {}
     label = conf.get("label") or "UNSURE"
     of = row.get("candidates")

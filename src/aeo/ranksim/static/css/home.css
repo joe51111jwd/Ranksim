@@ -23,3 +23,13 @@
   .composer input { font-size: 16px; }
   .hero { padding-top: 6vh; }
 }
+.home-error { max-width: 620px; margin: 10px auto 0; text-align: left; padding-left: 18px; }
+.composer .btn[disabled] { opacity: 1; }
+.composer .btn .spinner { width: 14px; height: 14px; }
+.hints .demo-entry { font-size: 13px; }
+.sites .tile-head h2 { font-size: 15px; }
+@media (max-width: 720px) {
+  .composer { padding-left: 14px; }
+  .composer .btn { padding-left: 14px; padding-right: 14px; }
+  .sites-grid { grid-template-columns: minmax(0, 1fr); }
+}

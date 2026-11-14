@@ -29,3 +29,13 @@
 .barrow .top-line .val { color: var(--ink-2); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .barrow.you .name { color: var(--blue); }
 .tile .bars { margin-top: 12px; gap: 10px; }
+
+/* Charts and opportunities. The bento packs tiles densely so plugin tiles (rank history at 55) fill gaps. */
+.bento-dense { grid-auto-flow: row dense; }
+.opp { align-items: center; }
+.opp .t { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.opp-pos { flex: none; min-width: 44px; font-size: 18px; font-weight: 650; letter-spacing: -0.03em; color: var(--blue); font-variant-numeric: tabular-nums; }
+.opp-pos.none { color: var(--ink-3); font-size: 14px; font-weight: 600; }
+.opp .go { margin-top: 0; }
+.chart-scatter { display: flex; justify-content: center; }
+.tile .legend { margin-top: 12px; }

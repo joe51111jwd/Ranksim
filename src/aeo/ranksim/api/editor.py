@@ -149,6 +149,7 @@ def register(app: FastAPI, ui) -> None:
             )
         except ws.WorkspaceError as exc:
             return _error(400, str(exc))
+        run["predict"] = await run_in_threadpool(_predict_block, ctx, draft, url, original_html, query, body.get("searches"))
         for key in ("topic_after", "topic_before"):
             if isinstance(run.get(key), dict):
                 run[key] = dict(run[key], text=ws._observed_text(run[key].get("text") or ""))  # observed pages, not "Google ranks"
@@ -245,3 +246,19 @@ def register(app: FastAPI, ui) -> None:
                 owner = row.slug
                 break
         return JSONResponse({"url": url, "html": html, "project": owner})
+
+
+def _predict_block(ctx, draft: str, url: str, original_html: str | None, query: str, searches) -> dict:
+    """Every target search in one call (predict workstream). A failure here never breaks the main test."""
+    from aeo.ranksim import predict_service
+
+    wanted = None
+    if isinstance(searches, list):
+        wanted = [str(item)[:500] for item in searches[: predict_service.MAX_SEARCHES] if isinstance(item, str)]
+    try:
+        return predict_service.test_searches(ctx, ws._as_html(draft), url, searches=wanted or None, original_html=ws._as_html(original_html) if original_html else None, first=query)
+    except predict_service.PredictError as exc:
+        return {"label": "PREDICTED", "searches": [], "error": str(exc)}
+    except Exception as exc:  # noqa: BLE001
+        return {"label": "PREDICTED", "searches": [], "error": f"The per-search check could not run: {type(exc).__name__}."}
+

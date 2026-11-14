@@ -8,7 +8,10 @@
 
    Every registry is sorted by `order` (ascending; ties keep registration order). Every entry may carry a `key`:
    registering a key that already exists replaces that entry, so a plugin can replace a built-in one (built-in keys
-   are listed below). A render or listener that throws is logged to the console and skipped, never fatal.
+   are listed below). Replacing a built-in by accident is easy (a 'share' tile once hid Who takes the top 10), so
+   after app.js has registered the built-ins it calls sealBuiltIns(), and from then on a key that matches a built-in
+   logs a console warning unless the built-in was registered with replaceable: true (the gsc Settings placeholder)
+   or the new spec says replace: true to show the replacement is meant. A render or listener that throws is logged to the console and skipped, never fatal.
    A render returns a Node, an array of Nodes, or null for nothing.
 
    ---------------------------------------------------------------- screens
@@ -30,8 +33,10 @@
    registerOverviewTile({ key, order, render(report, ctx) })   (registerTile is the same function)
      Adds a tile to the Overview bento. Return a <section class="tile ..."> (span-2, span-4, white, black...).
      ctx = { report, project, slug }
-     Built-in keys and orders: search-data 0, first-page 10, average 20, backtest 30, issues 40, rankings 50,
-     share 60, priority 70, competitors 80, pages 90, try 100.
+     Built-in keys and orders: search-data 0, first-page 10, average 20, backtest 30, issues 40, opportunities 45,
+     rankings 50, share 60, predicted 65 (only when PREDICTED and real positions both exist), priority 70,
+     competitors 80, pages 90, try 100. Order 55 is left for rank history. The bento packs densely, so a one-column
+     tile fills the first gap that fits. Charts: import { fit, sparkline, ... } from '../charts.js'.
 
    ---------------------------------------------------------------- editor
 
@@ -163,6 +168,21 @@ function flat(items) {
 /* ------------------------------------------------------------------ registries */
 
 let seq = 0;
+let sealed = false;
+
+/* Marks every entry registered so far as built in. app.js calls it once, after its own imports and registrations
+   and before any plugin module runs. Returns the number of entries marked. */
+export function sealBuiltIns() {
+  sealed = true;
+  let count = 0;
+  for (const reg of REGISTRIES) {
+    for (const entry of reg.list()) {
+      entry.builtIn = true;
+      count += 1;
+    }
+  }
+  return count;
+}
 
 function registry(kind) {
   const entries = [];
@@ -172,7 +192,14 @@ function registry(kind) {
       const entry = { order: 100, ...spec, seq: seq += 1 };
       if (entry.key != null) {
         const at = entries.findIndex((item) => item.key === entry.key);
-        if (at >= 0) entries.splice(at, 1);
+        if (at >= 0) {
+          const old = entries[at];
+          if (sealed && old.builtIn && !old.replaceable && !entry.replace) {
+            console.warn(`Ranksim: a plugin registered the ${kind} key '${entry.key}', which replaces the built-in ${kind} with that key. Pick a new key, or pass replace: true if replacing it is intended.`);
+          }
+          if (old.builtIn) entry.replaced = true;
+          entries.splice(at, 1);
+        }
       }
       entries.push(entry);
       return entry;
@@ -192,6 +219,7 @@ const PANELS = registry('editor panel');
 const TOOLS = registry('editor tool');
 const SECTIONS = registry('settings section');
 const COLUMNS = registry('search column');
+const REGISTRIES = [SCREENS, TILES, PANELS, TOOLS, SECTIONS, COLUMNS];
 
 export function registerScreen(key, { label, nav = true, order = 100, render }) {
   if (!/^[a-z0-9][a-z0-9_-]{0,39}$/.test(String(key))) {

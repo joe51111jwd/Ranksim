@@ -73,6 +73,8 @@ GROUP = {
     "video": "platforms",
     "platform": "platforms",
     "publisher": "publishers",
+    "service": "platforms",
+    "software": "platforms",
 }
 # A domain name ending in one of these words ("constructionreviews") is a directory; one starting with it
 # ("reviewtrackers") is usually a product, so only the end counts.
@@ -84,6 +86,46 @@ AMBIGUOUS_NAMES = {"target", "porch", "bark", "expertise", "builtin", "indeed", 
 FORUM_PREFIXES = ("community.", "forum.", "forums.", "discuss.", "answers.", "discourse.")
 LISTICLE = re.compile(r"\b(best|top \d+|\d+ best|\d+ top|alternatives? to|vs\.?|versus|compared|reviews?|ranked)\b", re.I)
 SELLING_SCHEMA = {"product", "softwareapplication", "webapplication", "mobileapplication", "offer", "aggregateoffer", "service", "localbusiness", "homeandconstructionbusiness", "generalcontractor"}
+
+# What a business sells: software, or a service done on site. Each pattern is one piece of evidence; a site needs two
+# more of one kind than the other before it is called either. Audience words ("for excavation contractors") are not
+# evidence, because software sites name the trades they sell to all the time.
+SOFTWARE_EVIDENCE = (
+    ("software", re.compile(r"\b(software|saas|cloud[- ]based|web[- ]based|mobile app|ios app|android app|platform)\b", re.I)),
+    ("app", re.compile(r"\b(?:the|our|an?) (?:\w+ ){0,2}app\b", re.I)),
+    ("demo or trial", re.compile(r"\b(book a demo|request a demo|get a demo|schedule a demo|free trial|start free|try it free|sign up free)\b", re.I)),
+    ("pricing per user", re.compile(r"\b(per user|per month|/mo\b|/month|per seat|subscription|plans? (?:start|from))", re.I)),
+    ("integrations", re.compile(r"\b(integrations?|api|quickbooks integration|sync with)\b", re.I)),
+)
+SERVICE_EVIDENCE = (
+    ("free estimate", re.compile(r"\bfree (?:estimates?|quotes?|consultations?)\b", re.I)),
+    ("licensed and insured", re.compile(r"\b(licensed (?:and|&) insured|fully insured|bonded)\b", re.I)),
+    ("family owned", re.compile(r"\b(family[- ]owned|locally owned|owner[- ]operated)\b", re.I)),
+    ("service area", re.compile(r"\b(serving|service areas?|proudly serv\w*|near me)\b", re.I)),
+    ("call us", re.compile(r"\b(call (?:us|today|now)|give us a call)\b|\(\d{3}\)\s?\d{3}-\d{4}|\b\d{3}[-.]\d{3}[-.]\d{4}\b", re.I)),
+    ("services we do", re.compile(r"\b(?:excavation|excavating|grading|demolition|paving|septic|land clearing|site work|sitework|trucking|hauling|drainage|driveway|foundation|plumbing|roofing|landscaping)(?: and \w+)? services\b", re.I)),
+    ("residential and commercial", re.compile(r"\b(residential and commercial|commercial and residential)\b", re.I)),
+)
+SERVICE_SCHEMA = {"localbusiness", "homeandconstructionbusiness", "generalcontractor", "plumber", "electrician", "roofingcontractor", "hvacbusiness", "housepainter", "locksmith", "movingcompany", "professionalservice"}
+SOFTWARE_SCHEMA = {"softwareapplication", "webapplication", "mobileapplication"}
+OFFER_LABEL = {"software": "sells software", "service": "a local service business"}
+
+
+def offering(texts: list[str], schema_types: list[str] | None = None) -> tuple[str | None, list[str]]:
+    """("software" | "service" | None, the evidence found). None when the text does not clearly say."""
+    text = " \n ".join(item for item in texts if item)
+    soft = [name for name, pattern in SOFTWARE_EVIDENCE if pattern.search(text)]
+    serv = [name for name, pattern in SERVICE_EVIDENCE if pattern.search(text)]
+    types = {item.lower() for item in schema_types or []}
+    if types & SOFTWARE_SCHEMA:
+        soft.append("software markup")
+    if types & SERVICE_SCHEMA:
+        serv.append("local business markup")
+    if len(soft) >= 2 and len(soft) >= len(serv) + 2:
+        return "software", soft
+    if len(serv) >= 2 and len(serv) >= len(soft) + 2:
+        return "service", serv
+    return None, soft + serv
 ARTICLE_SCHEMA = {"article", "newsarticle", "blogposting", "reportagenewsarticle"}
 SELLING_WORDS = re.compile(r"\b(book a demo|request a demo|get a demo|schedule a demo|start (?:your |a )?free trial|try it free|start free|see pricing|get a quote|request a quote|buy now|add to cart|sign up free)\b", re.I)
 BUTTONS = re.compile(r"<(a|button)\b[^>]*>(.*?)</\1>", re.I | re.S)
@@ -175,6 +217,8 @@ def page_profile(url: str, html: str) -> dict:
         "terms": terms,
         "surface": surface,
         "selling": bool(SELLING_WORDS.search(buttons)),
+        "meta": (found.meta_description or "").strip()[:400],
+        "sample": (found.main_text or "")[:4000],
     }
 
 
@@ -249,8 +293,10 @@ def _terms(text: str, url: str) -> tuple[Counter, dict[str, str]]:
 # -- 1. classify domains ------------------------------------------------------------------------------
 
 
-def classify_domain(domain: str, *, titles: list[str] | None = None, pages: list[dict] | None = None) -> tuple[str, str]:
-    """Kind and reason for one domain. ``pages`` are page_profile dicts for its ranking pages, when stored."""
+def classify_domain(domain: str, *, titles: list[str] | None = None, pages: list[dict] | None = None, snippets: list[str] | None = None, own_offer: str | None = None) -> tuple[str, str]:
+    """Kind and reason for one domain. ``pages`` are page_profile dicts for its ranking pages, when stored; titles and
+    snippets come from Google. With ``own_offer`` (what the user's site sells), a business that clearly sells
+    something else (a contractor in a software site's results) is a "service" or "software" site, not a competitor."""
     host = (domain or "").lower().removeprefix("www.")
     base = base_domain(host)
     for kind, known in (("marketplace", MARKETPLACES), ("forum", FORUMS), ("video", VIDEO), ("directory", DIRECTORIES), ("social", SOCIAL), ("publisher", PUBLISHERS), ("platform", BIG_PLATFORMS)):
@@ -279,6 +325,13 @@ def classify_domain(domain: str, *, titles: list[str] | None = None, pages: list
     buttons = any(page.get("selling") for page in pages)
     articles_only = bool(pages) and all(set(t.lower() for t in page.get("schema") or []) <= ARTICLE_SCHEMA | {"organization", "website", "webpage", "breadcrumblist", "person", "imageobject", "itemlist", "faqpage"} for page in pages)
     listicles = len(titles) >= 2 and all(LISTICLE.search(title) for title in titles)
+    if own_offer:
+        texts = list(titles) + [item for item in snippets or [] if item]
+        for page in pages:
+            texts += [page.get("title") or "", page.get("meta") or "", page.get("h1") or "", page.get("sample") or ""]
+        theirs, evidence = offering(texts, [kind for page in pages for kind in page.get("schema") or []])
+        if theirs and theirs != own_offer:
+            return theirs, f"{OFFER_LABEL[theirs]}: {', '.join(evidence[:3])}"
     if product_schema:
         return "competitor", "marks up a product or service on its ranking pages"
     if listicles and articles_only:
@@ -288,18 +341,50 @@ def classify_domain(domain: str, *, titles: list[str] | None = None, pages: list
     return "competitor", "a business site in your results"
 
 
-def classify_domains(google, own_domain: str, *, profiles: dict[str, dict] | None = None, is_ours=None) -> list[dict]:
-    """Every domain in the top 10: kind, reason, slots, searches, positions, visibility. Sorted by visibility."""
+def own_offering(pages=None, google=None, own_domain: str = "", profiles: dict[str, dict] | None = None, is_ours=None) -> str | None:
+    """What the user's site sells, from its own pages (SitePage rows), its own Google results and stored HTML."""
+    own = (own_domain or "").lower().removeprefix("www.")
+
+    def mine(url: str) -> bool:
+        try:
+            if is_ours is not None:
+                return bool(is_ours(url))
+            host = (urlsplit(url).hostname or "").lower().removeprefix("www.")
+        except ValueError:
+            return False
+        return bool(own) and (host == own or host.endswith("." + own))
+
+    texts: list[str] = []
+    types: list[str] = []
+    for page in pages or []:
+        texts += [getattr(page, "title", "") or "", getattr(page, "meta", "") or "", getattr(page, "h1", "") or "", " ".join(getattr(page, "h2s", None) or [])]
+    for entry in getattr(google, "searches", None) or []:
+        for item in entry.results:
+            if mine(item.url):
+                texts += [item.title or "", getattr(item, "snippet", "") or ""]
+    for url, page in (profiles or {}).items():
+        if mine(url):
+            texts += [page.get("title") or "", page.get("meta") or "", page.get("sample") or ""]
+            types += page.get("schema") or []
+    return offering(texts, types)[0]
+
+
+def classify_domains(google, own_domain: str, *, profiles: dict[str, dict] | None = None, is_ours=None, own_offer: str | None = None, own_pages=None) -> list[dict]:
+    """Every domain in the top 10: kind, reason, slots, searches, positions, visibility. Sorted by visibility.
+    own_offer (or, when it is None, what own_pages and the site's own results say it sells) separates real
+    competitors from businesses that sell something else."""
     if google is None:
         return []
     own = (own_domain or "").lower().removeprefix("www.")
     profiles = profiles or {}
+    if own_offer is None:
+        own_offer = own_offering(own_pages, google, own_domain, profiles, is_ours)
     by_host: dict[str, list[dict]] = defaultdict(list)
     for entry in google.searches:
         for item in entry.results:
             domain = _domain(item)
             if domain and 1 <= (item.position or 0) <= 10:
-                by_host[domain].append({"q": entry.search, "position": item.position, "url": item.url, "title": item.title or ""})
+                by_host[domain].append({"q": entry.search, "position": item.position, "url": item.url, "title": item.title or "", "snippet": getattr(item, "snippet", "") or ""})
 
     def ours(url: str) -> bool:
         try:
@@ -314,7 +399,7 @@ def classify_domains(google, own_domain: str, *, profiles: dict[str, dict] | Non
         if mine:
             kind, reason = "you", "your site"
         else:
-            kind, reason = classify_domain(host, titles=[hit["title"] for hit in found], pages=[profiles[hit["url"]] for hit in found if hit["url"] in profiles])
+            kind, reason = classify_domain(host, titles=[hit["title"] for hit in found], snippets=[hit["snippet"] for hit in found], pages=[profiles[hit["url"]] for hit in found if hit["url"] in profiles], own_offer=own_offer)
         key = base_domain(host) if kind in {"competitor", "you"} else host
         slot = grouped.setdefault(key, {"hosts": {}, "hits": []})
         slot["hosts"][host] = (kind, reason, len(found))
@@ -393,12 +478,12 @@ def title_patterns(titles: list[str], domain: str) -> dict:
     }
 
 
-def competitor_profiles(google, own_domain: str, docs: dict[str, str] | None = None, *, limit: int = MAX_PROFILES, is_ours=None, cache: dict | None = None) -> dict:
+def competitor_profiles(google, own_domain: str, docs: dict[str, str] | None = None, *, limit: int = MAX_PROFILES, is_ours=None, cache: dict | None = None, own_pages=None) -> dict:
     """Profiles of competitors, plus directories, platforms and publishers as their own groups."""
     docs = docs or {}
     cache = {} if cache is None else cache
     profiles = {url: _profile(cache, url, html) for url, html in docs.items() if html}
-    rows = classify_domains(google, own_domain, profiles=profiles, is_ours=is_ours)
+    rows = classify_domains(google, own_domain, profiles=profiles, is_ours=is_ours, own_pages=own_pages)
     out: dict[str, list] = {"competitors": [], "directories": [], "platforms": [], "publishers": []}
     for row in rows:
         if row["kind"] == "you":
@@ -620,7 +705,7 @@ def stored_html(database: str, urls: list[str]) -> dict[str, str]:
     return {url: found[loose_key(url)] for url in urls if loose_key(url) in found}
 
 
-SECTIONS_VERSION = 3
+SECTIONS_VERSION = 4
 
 
 def _fingerprint(project, meta, google, features, rows, pages, docs) -> str:
@@ -688,7 +773,7 @@ def report_sections(project, meta, database: str, report: dict, *, pages=None) -
                 data["tracked"] = discovery.describe(list(project.searches), found, brands=set(discovery.host_tokens(project.domain)))
                 sections["discovery"] = data
             cache: dict = {}
-            sections["competitor_profiles"] = competitor_profiles(google, project.domain, docs, is_ours=project.is_our_url, cache=cache)
+            sections["competitor_profiles"] = competitor_profiles(google, project.domain, docs, is_ours=project.is_our_url, cache=cache, own_pages=pages)
             sections["gaps"] = content_gaps(rankings, docs, is_ours=project.is_our_url, own_domain=project.domain, cache=cache)
             try:
                 _cache_path(project).write_text(json.dumps({"key": key, "sections": sections}), encoding="utf-8")

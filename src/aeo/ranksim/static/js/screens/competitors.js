@@ -6,7 +6,7 @@ import { registerScreen } from '../hooks.js';
 import { hostPath, openSearch } from './searches.js';
 
 const SECOND_LEVEL = new Set(['co', 'com', 'org', 'net', 'ac', 'gov', 'edu', 'ne', 'or', 'go', 'gob']);
-const KIND_LABEL = { directory: 'Directory', marketplace: 'Marketplace', forum: 'Forum', social: 'Social', video: 'Video', platform: 'Platform', publisher: 'Publisher' };
+const KIND_LABEL = { directory: 'Directory', marketplace: 'Marketplace', forum: 'Forum', social: 'Social', video: 'Video', platform: 'Platform', publisher: 'Publisher', service: 'Service business', software: 'Software vendor' };
 
 /* The registrable domain, as the server groups it: help.hcss.com gives hcss.com. */
 export function baseDomain(domain) {

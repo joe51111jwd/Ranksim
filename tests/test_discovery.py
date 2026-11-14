@@ -654,3 +654,47 @@ def test_google_inputs_use_the_real_tracking_helper(tmp_path):
         "related": ["excavation contractor software"], "paa": ["What is the best software for excavation contractors?"]}}
     found = dn.discover(_smartcrew_pages(), "SmartCrew", host=SC, google=google, serp_features=features)
     assert "excavation contractor software" in found.queries
+
+
+def _contractor_page(name):
+    return _page("", f"Excavation & Site Work Services | {name}", f"{name} Excavation", ["Our services", "Service area"],
+                 "Family owned excavation contractor serving Cape Cod. Licensed and insured. Excavation services, septic systems and driveways. "
+                 "Call us at (508) 555-1234 for a free estimate. Residential and commercial work. " * 5,
+                 {"@type": "HomeAndConstructionBusiness"})
+
+
+def _vendor_page(name):
+    return _page("", f"Excavation Software | {name}", "Excavation software for contractors", ["Pricing", "Integrations"],
+                 "Our cloud-based software and mobile app run dispatch and timecards. Book a demo or start a free trial. Plans start at $40 per user. " * 5,
+                 {"@type": "SoftwareApplication"})
+
+
+def test_offering_tells_software_vendors_from_service_businesses():
+    assert cp.offering(["Excavation software for contractors. Book a demo. Mobile app. Per user pricing."])[0] == "software"
+    assert cp.offering(["Family owned excavation contractor serving Cape Cod. Free estimate. Call (508) 555-1234."])[0] == "service"
+    assert cp.offering(["Excavation"])[0] is None
+    # software for contractors is not a contractor: audience words are not evidence
+    assert cp.offering(["Dirt work software for excavation contractors and site work crews. Book a demo. Mobile app."])[0] == "software"
+
+
+def test_a_local_contractor_in_a_software_sites_results_is_not_a_competitor():
+    google = GoogleSnapshot("p", "", "import", [SearchResults("excavation software", [
+        _result(1, "https://mitti.example/excavation", "Excavation Software | Mitti"),
+        _result(2, "https://dirtworkscapecod.example/", "Dirt Works Cape Cod", ),
+        _result(3, f"{SC_HOME}excavation-software/", "Excavation Software | SmartCrew"),
+    ], "import", "csv", None)])
+    docs = {"https://mitti.example/excavation": _vendor_page("Mitti"), "https://dirtworkscapecod.example/": _contractor_page("Dirt Works"),
+            f"{SC_HOME}excavation-software/": _vendor_page("SmartCrew")}
+    profiles = cp.competitor_profiles(google, SC, docs)
+    assert [row["domain"] for row in profiles["competitors"]] == ["mitti.example"]
+    service = next(row for row in profiles["platforms"] if row["domain"] == "dirtworkscapecod.example")
+    assert service["kind"] == "service" and "local service business" in service["reason"]
+    # with no stored pages and no snippets nothing is known, so the old answer stands
+    assert "dirtworkscapecod.example" in cp.pick_competitors(google, SC)
+    # Google snippets alone are enough when they are clear
+    google.searches[0].results[1].snippet = "Family owned excavation contractor serving Cape Cod. Free estimates. Licensed and insured."
+    google.searches[0].results[2].snippet = "SmartCrew is cloud-based software with a mobile app. Book a demo."
+    assert "dirtworkscapecod.example" not in cp.pick_competitors(google, SC)
+    # a contractor's site sees software vendors as software, not competitors
+    rows = {row["domain"]: row for row in cp.classify_domains(google, SC, profiles={url: cp.page_profile(url, html) for url, html in docs.items()}, own_offer="service")}
+    assert rows["mitti.example"]["kind"] == "software"

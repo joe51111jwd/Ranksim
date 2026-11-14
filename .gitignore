@@ -9,3 +9,6 @@ data/
 *.egg-info/
 dist/
 build/
+
+# end-to-end screenshots
+tests/e2e/screenshots/

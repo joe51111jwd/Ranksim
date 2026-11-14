@@ -470,17 +470,17 @@ def confidence(backtest_pairwise: float | None, pairs: int | None) -> dict:
     clearer = backtest_pairwise >= CLEARER_MIN_PAIRWISE and pairs >= CLEARER_MIN_PAIRS
     share = f"{backtest_pairwise:.0%} of {pairs} page pairs"
     if clearer:
-        short = "Clearer: the model did well on this search in a backtest."
-        text = f"Backtest on held-out searches: it put {share} in the right order for this search. Still a prediction."
+        short = "Clearer: the model held up on this search in a backtest."
+        text = f"Backtest on this snapshot, not accuracy: {share} in order on this search when it was held out. Still a prediction."
     elif near:
         short = "Unsure: close to a coin flip on this search."
-        text = f"Near chance: the backtest put {share} in the right order for this search. 50% is a coin flip."
+        text = f"Near chance. Backtest on this snapshot, not accuracy: {share} in order on this search when it was held out. 50% is a coin flip."
     elif backtest_pairwise < 0.5:
         short = "Unsure: the model has been wrong more often than right here."
-        text = f"The backtest put only {share} in the right order for this search. 50% is a coin flip."
+        text = f"Backtest on this snapshot, not accuracy: only {share} in order on this search when it was held out. 50% is a coin flip."
     else:
         short = "Unsure: some signal, not enough to rely on."
-        text = f"The backtest put {share} in the right order for this search. Not enough to be sure."
+        text = f"Backtest on this snapshot, not accuracy: {share} in order on this search when it was held out. Not enough to be sure."
     return {
         "label": CLEARER if clearer else UNSURE,
         "backtest_pairwise": round(float(backtest_pairwise), 3),

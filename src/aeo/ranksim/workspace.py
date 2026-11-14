@@ -932,7 +932,7 @@ def _record_draft_ledger(database: str, run: dict, draft_html: str) -> None:
                 "dataset": run.get("dataset") or "",
                 "source": "workspace",
                 "model_kind": run.get("model_kind") or "",
-                "instrument": "lambdamart",
+                "instrument": run.get("instrument") or "lambdamart",
                 "features": "FEATURE_NAMES",
                 "held_out": bool(run.get("calibration_held_out")),
             },

@@ -1,7 +1,7 @@
 """Test one draft on every search it targets, for a loaded project.
 
 Uses the recipe that was frozen in ``evals/predict-2026-11-14/training.json``: content plus site
-features, L2 0.3, the new-page handicap and the persistence slope learned on SmartCrew's
+features, L2 0.3, the new-page handicap and the persistence slope learned on one client's
 Oct 29 to Nov 6 move. The pairwise weights are refit on each project's own observed results.
 
 Per search the result says PREDICTED position now and with the edit, the move, and a
@@ -40,11 +40,10 @@ GUIDE_ABOVE = 3
 MAX_SEARCHES = 40
 
 FORWARD_NOTE = (
-    "One forward check, on SmartCrew searches only (2026-11-06 to 2026-11-09, page HTML fetched 2026-11-14, "
-    "83 of 97 new pages scorable): new pages that entered a top 10 were put in the right order among themselves "
-    "in 92 of 151 pairs (0.61). Against pages already ranking it was not clearly better than placing every new "
-    "page last, and its position number was no better than a constant guess. Weights here are refit on this "
-    "project, so that check does not measure this project."
+    "On a forward check of 30 searches in one niche (scored once on results three days later), new pages that entered "
+    "a top 10 were put in the right order among themselves in 61% of 151 pairs. Against pages already ranking it was "
+    "not clearly better than placing every new page last, and its position number was no better than a constant "
+    "guess. The weights here are refit on this site, so that check does not measure this site."
 )
 
 
@@ -347,7 +346,8 @@ def _round(value: float | None) -> float | None:
 
 
 def _slot(value: float | None) -> int | None:
-    return None if value is None else max(1, int(round(value)))
+    """The whole position shown, rounded half up (the same rule as whole-place moves)."""
+    return None if value is None else max(1, int(float(value) + 0.5))
 
 
 def test_searches(
@@ -398,6 +398,30 @@ def test_searches(
             "confidence": conf,
             "google_seen": seen,
         }
+        if mine is None and not peers:
+            # Nothing to compare against: a slot here would be "#1 of 1" by construction, which is no estimate.
+            never = not found
+            row.update(
+                method="no estimate",
+                method_text=(
+                    "This search has not been checked on Google yet, so there are no pages to compare against."
+                    if never
+                    else "None of the pages ranking for this search are stored yet, so there is nothing to compare against."
+                ),
+                observed_position=None,
+                now=None,
+                with_edit=None,
+                slot_now=None,
+                slot_with_edit=None,
+                move=None,
+                move_places=None,
+                above=[],
+                others=[],
+                guidance=[],
+            )
+            row["confidence"] = dict(conf, label=UNSURE, short="No estimate: no pages to compare against yet.")
+            out_rows.append(row)
+            continue
         if mine is None and not _uses_search_words(after):
             row.update(
                 method="not placed",
@@ -465,13 +489,15 @@ def test_searches(
             row["move"] = round(row["now"] - row["with_edit"], 1)  # positive: PREDICTED higher
         else:
             row["move"] = None
-        row["move_places"] = _places(row["move"])
+        # Whole-place moves come from the two slots the person sees, so "#5 to #4" always reads "1 place higher".
+        row["move_places"] = row["slot_now"] - row["slot_with_edit"] if row["slot_now"] is not None and row["slot_with_edit"] is not None else None
         target = row["with_edit"] or 1.0
         above = sorted(
             [(signals, item) for signals, item in other_signals if item.position < target and item.doc is not None and _domain(item.url) != own_domain],
             key=lambda pair: -pair[1].position,
         )[:GUIDE_ABOVE]
         row["above"] = [{"url": item.url, "position": item.position} for _signals_, item in above]
+        row["others"] = [{"url": item.url, "position": item.position} for item in sorted(others, key=lambda item: item.position)]
         row["guidance"] = guidance(
             model,
             after,
@@ -498,7 +524,7 @@ def test_searches(
         "searches": out_rows,
         "guidance_note": "Guidance, not a guarantee. These are the gaps to the pages PREDICTED just above you that this model ties to ranking higher.",
         "forward_check": FORWARD_NOTE,
-        "backtest_note": "Backtest: each search scored by a model trained on the other search families in this project, same snapshot. Not accuracy.",
+        "backtest_note": "Backtest on this snapshot, not accuracy: each search is scored by a model trained on the other searches here.",
         "model": {"features": model.features, "pairs": model.pairs, "searches": predictor.groups},
         "notes": notes,
     }

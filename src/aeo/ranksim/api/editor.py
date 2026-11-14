@@ -150,6 +150,7 @@ def register(app: FastAPI, ui) -> None:
         except ws.WorkspaceError as exc:
             return _error(400, str(exc))
         run["predict"] = await run_in_threadpool(_predict_block, ctx, draft, url, original_html, query, body.get("searches"))
+        _one_source_of_truth(run, query)
         for key in ("topic_after", "topic_before"):
             if isinstance(run.get(key), dict):
                 run[key] = dict(run[key], text=ws._observed_text(run[key].get("text") or ""))  # observed pages, not "Google ranks"
@@ -261,4 +262,73 @@ def _predict_block(ctx, draft: str, url: str, original_html: str | None, query: 
         return {"label": "PREDICTED", "searches": [], "error": str(exc)}
     except Exception as exc:  # noqa: BLE001
         return {"label": "PREDICTED", "searches": [], "error": f"The per-search check could not run: {type(exc).__name__}."}
+
+
+def _host(url: str) -> str:
+    from urllib.parse import urlsplit
+
+    return (urlsplit(url).hostname or "").removeprefix("www.")
+
+
+def _one_source_of_truth(run: dict, query: str) -> None:
+    """The verdict tile, the saved run and the change log use the same PREDICTED numbers as the Every search row.
+
+    The content re-rank's own placement is kept under ``content_rerank`` for reference and is not shown.
+    """
+    block = run.get("predict") or {}
+    row = next((item for item in block.get("searches") or [] if item.get("search") == query), None)
+    if row is None:
+        return
+    run["content_rerank"] = {"before": run.get("before"), "after": run.get("after"), "change": run.get("change")}
+    conf = row.get("confidence") or {}
+    label = conf.get("label") or "UNSURE"
+    of = row.get("candidates")
+
+    others = row.get("others") or []
+
+    def order_for(slot):
+        """Other pages at their Google positions, this page at its PREDICTED slot."""
+        if slot is None:
+            return []
+        listing, placed = [], False
+        for item in others:
+            if not placed and slot <= len(listing) + 1:
+                listing.append({"predicted": len(listing) + 1, "page": True})
+                placed = True
+            listing.append({"predicted": len(listing) + 1, "page": False, "url": item["url"], "domain": _host(item["url"]), "observed": int(item["position"])})
+        if not placed:
+            listing.append({"predicted": len(listing) + 1, "page": True})
+        return listing
+
+    def side(slot, value):
+        return {
+            "position": slot,
+            "of": of,
+            "value": value,
+            "order": order_for(slot),
+            "confidence": label,
+            "confidence_note": conf.get("text", ""),
+            "features": {},
+            "method": row.get("method"),
+        }
+
+    if row.get("with_edit") is None:
+        after = side(None, None)
+        after["unplaced"] = row.get("method_text") or "No PREDICTED position for this search."
+        after["confidence"] = "n/a"
+    else:
+        after = side(row.get("slot_with_edit"), row.get("with_edit"))
+    run["after"] = after
+    if row.get("now") is not None:
+        run["before"] = side(row.get("slot_now"), row.get("now"))
+        if row.get("method") == "anchored":
+            run["before"]["google"] = True
+    elif run.get("before") is not None:
+        run["before"] = None
+    run["change"] = row.get("move_places") if row.get("move_places") is not None else None
+    if run["change"] is None:
+        run.pop("change", None)
+    run["instrument"] = "pairwise model with persistence anchor (predict)"
+    run["query_pairwise"] = conf.get("backtest_pairwise")
+    run["query_pairs"] = conf.get("backtest_pairs")
 

@@ -231,7 +231,8 @@ def test_unchanged_draft_scores_like_the_stored_page_and_is_saved_locally(local)
         {"q": QUERY, "draft": html, "url": row["your_url"], "original": "current", "original_html": html},
         token,
     ).json()
-    assert run["before"]["position"] == run["after"]["position"] == row["predicted"]
+    # One source of truth (predict): the verdict uses the same PREDICTED slots as the Every search row.
+    assert run["before"]["position"] == run["after"]["position"] == run["predict"]["searches"][0]["slot_now"]
     assert run["change"] == 0 and run["has_original"] and "current page" in run["original_label"]
     assert run["saved"] is True and ws.DRAFT_ID_RE.match(run["id"])
     assert "pages Google ranks" not in (run["topic_after"] or {}).get("text", "")
@@ -253,7 +254,7 @@ def test_a_longer_draft_is_scored_against_the_same_candidates(local):
         {"q": QUERY, "draft": longer, "url": row["your_url"], "original": "current", "original_html": html},
         token,
     ).json()
-    assert run["after"]["of"] == run["before"]["of"] == run["candidates"] + 1
+    assert run["after"]["of"] == run["before"]["of"] == run["predict"]["searches"][0]["candidates"]  # one source of truth
     assert run["facts_after"]["word_count"] > run["facts_before"]["word_count"]
     assert run["facts_after"]["table_count"] == run["facts_before"]["table_count"] + 1
     assert sum(1 for item in run["after"]["order"] if item["page"]) == 1

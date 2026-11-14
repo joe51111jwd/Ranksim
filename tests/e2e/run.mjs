@@ -18,6 +18,9 @@ const BASE = (args.base || 'http://127.0.0.1:8799').replace(/\/$/, '');
 // Optional second server whose job budget is so short that analyses pause and the app has to post again.
 const PAUSED_BASE = args['paused-base'] ? args['paused-base'].replace(/\/$/, '') : '';
 const OUT = args.out || 'tests/e2e/screenshots';
+// --group main | jobs | all. pytest runs main and jobs at the same time against separate servers to keep the run short.
+const GROUP = args.group || 'all';
+const JOB_STEPS = new Set(['parallel-analysis', 'reattach-after-refresh', 'paused-resume']);
 const PASSWORD = process.env.E2E_PASSWORD || 'e2e-pass';
 const SITE = process.env.E2E_SITE || 'www.dirtcrew.example';
 const SEARCHES = JSON.parse(process.env.E2E_SEARCHES || '["dirt work software","excavation crew app","grading job costing","paving crew scheduling"]');
@@ -33,6 +36,7 @@ let phase = 'start';
 const allowed = []; // [{phase, pattern}] console errors expected in one phase only
 
 async function step(name, fn) {
+  if (GROUP !== 'all' && name !== 'login' && (GROUP === 'jobs') !== JOB_STEPS.has(name)) return;
   phase = name;
   const started = Date.now();
   try {
@@ -301,6 +305,109 @@ try {
     await audit(page, 'desktop-10-competitors');
   });
 
+  await step('discover-searches', async () => {
+    await goto(page, `/app/${encodeURIComponent(slug)}/searches`);
+    await page.waitForSelector(SEL.searchTable);
+    const headers = (await page.$$eval(SEL.searchHeader, (list) => list.map((el) => el.textContent.trim()))).join('|');
+    for (const want of ['Search', 'You', 'PREDICTED', 'Intent', 'Source', 'Best page']) expect(headers.includes(want), `Searches has a ${want} column: ${headers}`);
+    // gsc's column has when(report) false until Search Console is connected, so it must not show.
+    expect(!/Search Console|Clicks|Impr/i.test(headers), `the Search Console column is hidden while not connected: ${headers}`);
+    await page.locator(SEL.searchRow).filter({ hasText: SEARCHES[0] }).click();
+    const sheet = page.locator(SEL.searchSheet);
+    await sheet.waitFor();
+    await sheet.locator(':text("Top 10 on Google")').waitFor();
+    expect((await sheet.locator(SEL.serpRow).count()) >= 5, 'the search sheet lists the real top 10');
+    expect((await sheet.locator(SEL.serpYou).count()) === 1, 'your page is marked in the search sheet');
+    const gaps = await sheet.locator(':text("What the pages above have")').count();
+    expect(gaps >= 1, 'the search sheet shows the gaps against the pages above');
+    await audit(page, 'desktop-09b-search-sheet');
+    await page.keyboard.press('Escape');
+    await page.waitForSelector(SEL.sheet, { state: 'detached' });
+    const found = page.locator(SEL.foundNotTracked);
+    if (await found.count()) {
+      const before = await page.locator(SEL.searchRow).count();
+      const add = found.locator('button:has-text("Add")').first();
+      await add.click();
+      await page.waitForFunction((sel) => /Added/.test(document.querySelector(sel).textContent), SEL.toast);
+      await page.waitForFunction(([sel, n]) => document.querySelectorAll(sel).length > n, [SEL.searchRow, before]);
+    }
+  });
+
+  await step('discover-competitors', async () => {
+    await goto(page, `/app/${encodeURIComponent(slug)}/competitors`);
+    await page.waitForSelector(SEL.competitorCard);
+    const card = page.locator(SEL.competitorCard).first();
+    const button = card.locator('button.track');
+    const before = (await button.innerText()).trim();
+    await button.click();
+    await page.waitForFunction(([sel, was]) => { const b = document.querySelector(sel); return b && !b.disabled && b.textContent.trim() !== was; }, [SEL.trackToggle, before], { timeout: 20000 });
+    await page.locator(SEL.trackToggle).first().click();
+    await page.waitForFunction(([sel, was]) => { const b = document.querySelector(sel); return b && !b.disabled && b.textContent.trim() === was; }, [SEL.trackToggle, before], { timeout: 20000 });
+    await audit(page, 'desktop-10b-competitors');
+    await page.locator(SEL.competitorCard).first().locator('button.body').click();
+    await page.waitForSelector(SEL.sheet);
+    await page.keyboard.press('Escape');
+    await page.waitForSelector(SEL.sheet, { state: 'detached' });
+  });
+
+  await step('audit-issues', async () => {
+    await goto(page, `/app/${encodeURIComponent(slug)}/issues`);
+    await page.waitForSelector(SEL.issueRow);
+    const all = await page.locator(SEL.issueRow).count();
+    await page.locator(SEL.issueFilter).filter({ hasText: 'High' }).click();
+    await page.waitForSelector(`${SEL.issueFilter}[aria-pressed="true"]:has-text("High")`);
+    expect((await page.locator(SEL.issueRow).count()) <= all, 'the High filter narrows the list');
+    await page.locator(SEL.issueFilter).filter({ hasText: 'All' }).click();
+    await page.locator(SEL.issueGroup).filter({ hasText: 'By search' }).click();
+    await page.waitForSelector(`${SEL.issueGroup}[aria-pressed="true"]:has-text("By search")`);
+    await audit(page, 'desktop-07b-issues-by-search');
+    await page.locator(SEL.issueGroup).filter({ hasText: 'By page' }).click();
+    const withFix = page.locator(SEL.issueRow).filter({ has: page.locator('.issue-has-fix') }).first();
+    await withFix.click();
+    await page.waitForSelector(SEL.sheet);
+    await page.locator('.sheet button:has-text("Copy")').first().click();
+    await page.waitForFunction((sel) => /Copied|Copy did not work/.test(document.querySelector(sel).textContent), SEL.toast);
+    await page.click(SEL.fixInEditor);
+    await page.waitForURL(/\/editor/);
+    await page.waitForSelector(SEL.commentsPanel, { timeout: SLOW });
+    await page.waitForSelector(`${SEL.commentsPanel} [aria-expanded="true"]`, { timeout: SLOW });
+    const frame = page.frameLocator(SEL.editorFrame);
+    await frame.locator('[data-rs-annotations="active"]').first().waitFor({ timeout: SLOW });
+    await audit(page, 'desktop-11b-fix-in-editor');
+  });
+
+  await step('audit-apply', async () => {
+    const pageUrl = `https://${SITE}/dirt-work-software/`;
+    await goto(page, `/app/${encodeURIComponent(slug)}/editor?page=${encodeURIComponent(pageUrl)}&q=${encodeURIComponent(SEARCHES[0])}`);
+    await page.waitForSelector(SEL.commentsPanel, { timeout: SLOW });
+    const frame = page.frameLocator(SEL.editorFrame);
+    await frame.locator('h1').first().waitFor();
+    const heads = page.locator(`${SEL.commentsPanel} .annot-head`);
+    let applied = null;
+    for (let i = 0; i < await heads.count() && !applied; i += 1) {
+      const head = heads.nth(i);
+      if ((await head.getAttribute('aria-expanded')) !== 'true') await head.click();
+      const item = page.locator(`${SEL.commentsPanel} li`).nth(i);
+      const tag = await item.locator('.annot-tag').first().textContent().catch(() => '');
+      const apply = item.locator('button:has-text("Apply suggestion")');
+      if (await apply.count() && /h1/i.test(tag || '')) applied = { apply, tag };
+    }
+    if (!applied) {
+      const apply = page.locator(SEL.applySuggestion).first();
+      if (await apply.count()) applied = { apply, tag: 'other' };
+    }
+    expect(applied, 'a comment offers Apply suggestion');
+    const before = await page.evaluate(async (url) => (await import('/studio/js/editor/editor.js')).draftFor(url).text, pageUrl);
+    const h1Before = await frame.locator('h1').first().innerText();
+    await applied.apply.click();
+    await page.waitForFunction((url) => import('/studio/js/editor/editor.js').then((m) => m.draftFor(url).touched), pageUrl);
+    const after = await page.evaluate(async (url) => (await import('/studio/js/editor/editor.js')).draftFor(url).text, pageUrl);
+    expect(after !== before, 'Apply suggestion changed the draft');
+    if (applied.tag !== 'other') expect((await frame.locator('h1').first().innerText()) !== h1Before, 'the H1 changed');
+    expect(!/data-rs/.test(after), 'the saved HTML has no data-rs marks');
+    await audit(page, 'desktop-11c-applied');
+  });
+
   await step('editor-test', async () => {
     const pageUrl = `https://${SITE}/dirt-work-software/`;
     await goto(page, `/app/${encodeURIComponent(slug)}/editor?page=${encodeURIComponent(pageUrl)}&q=${encodeURIComponent(SEARCHES[0])}`);
@@ -377,7 +484,9 @@ try {
     await page.click(SEL.platform('wordpress'));
     await page.fill('.sheet input[name="username"]', 'e2e');
     await page.fill('.sheet input[name="app_password"]', 'abcd efgh ijkl mnop');
-    await page.click(SEL.connect);
+    await page.locator('.sheet button:text-is("Check")').last().click();
+    await page.waitForSelector(`${SEL.connectSave}:not([disabled])`, { timeout: 20000 });
+    await page.click(SEL.connectSave);
     await page.waitForSelector(`${SEL.publishGo}:not([disabled])`, { timeout: SLOW });
     await audit(page, 'desktop-18-publish-ready');
     await page.click(SEL.publishGo);

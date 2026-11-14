@@ -754,3 +754,72 @@ def test_best_page_prefers_the_page_that_targets_the_search():
     assert dn.best_page("all in one dirt work software", pages) == f"{SC_HOME}all-in-one-dirt-work-software/"
     assert dn.best_page("hcss alternative", pages) is None
     assert dn.best_page("software", pages) is None
+
+
+# -- shapes from live runs on SmartCrew, Mitti, OneCrew and HCSS (discovery review, Nov 14) -----------------------
+
+
+def test_the_page_sample_reads_product_and_compare_pages_first():
+    base = "https://www.example.com"
+    urls = [f"{base}/legal/new-sccs", f"{base}/legal/privacy-policy", f"{base}/de", f"{base}/es/legal", f"{base}/pt-BR/juridico",
+            f"{base}/schedule/demo-lg", f"{base}/schedule/demo-md", f"{base}/referrals/signup", f"{base}/summit/register",
+            f"{base}/dev-tc/home", f"{base}/news/q3-2025-release", f"{base}/careers"]
+    urls += [f"{base}/blog/post-{i}" for i in range(30)]
+    urls += [f"{base}/compare/hcss-alternative/", f"{base}/compare/b2w-alternative/", f"{base}/vs/hcss-vs-busybusy/",
+             f"{base}/industries/paving", f"{base}/features/dispatch", f"{base}/excavation-software/", f"{base}/about/"]
+    picked = dn.rank_site_urls(urls, 12)
+    assert len(picked) == 12
+    assert {f"{base}/compare/hcss-alternative/", f"{base}/compare/b2w-alternative/", f"{base}/vs/hcss-vs-busybusy/", f"{base}/excavation-software/"} <= set(picked)
+    assert not any("/legal" in url or "/schedule/" in url or "/dev-tc/" in url or "/de" == url[len(base):] or "/news/" in url for url in picked)
+    assert sum(1 for url in picked if "/blog/" in url) <= 12 - 7  # every product, compare and plain page comes before the blog
+    assert dn.page_class(f"{base}/") == "home" and dn.page_class(f"{base}/es/legal") == "skip"
+
+
+def _phrases(titles, brand="Acme", host="acme.com", h2s=None, urls=None):
+    pages = [autopilot.SitePage(url=(urls[i] if urls else f"https://{host}/p{i}-software/"), status="fetched", title=t, h2s=(h2s or {}).get(i, [])) for i, t in enumerate(titles)]
+    pages.append(autopilot.SitePage(url=f"https://{host}/", status="fetched", title=f"Dirt work software for paving and excavation contractors | {brand}", h1="Dirt work software"))
+    return dn.discover(pages, brand, host=host)
+
+
+def test_legal_press_and_marketing_lines_are_not_searches():
+    found = _phrases([
+        "Service Specific Terms and Conditions | Acme", "Embedded Software Supplemental Terms | Acme", "Master Partner Agreement | Acme",
+        "Q3 2025 Release | Acme", "USA Today Top Workplace | Acme", "Always On Support, Always Human | Acme",
+        "Software Trusted by Top Paving Contractors | Acme", "First End to End Platform | Acme", "Refer a Contractor | Acme",
+        "Product Updates | Acme", "Top Picks for 2026 | Acme", "Paving and Construction Contractor Resources | Acme",
+        "AGB und Datenschutz | Acme", "Embedded Software Supplemental… | Acme",
+        "Paving Estimating Software | Acme", "Excavation Software for Contractors 2026 | Acme",
+    ])
+    queries = set(found.queries)
+    assert "paving estimating software" in queries
+    assert "excavation software for contractors" not in queries or "excavation software" not in queries  # year gone, merged
+    assert not any("2026" in q or "2025" in q for q in queries)
+    for junk in ("service specific terms and conditions", "embedded software supplemental terms", "master partner agreement",
+                 "q3 release", "usa today top workplace", "always on support always human", "software trusted by top paving contractors",
+                 "first end to end platform", "refer a contractor", "product updates", "top picks for", "paving and construction contractor resources",
+                 "agb und datenschutz", "embedded software supplemental"):
+        assert junk not in queries, junk
+    reasons = {item["q"]: item["reason"] for item in found.dropped}
+    assert reasons.get("service specific terms and conditions") == "legal wording"
+    assert reasons.get("embedded software supplemental") == "cut off"
+
+
+def test_slug_only_and_utility_page_phrases_are_dropped():
+    urls = ["https://acme.com/schedule/demo-lg", "https://acme.com/schedule/demo-md", "https://acme.com/demo-sm", "https://acme.com/legal/privacy-portal"]
+    found = _phrases(["", "", "", "Privacy Portal | Acme"], urls=urls)
+    assert not {"demo lg", "demo md", "demo sm", "privacy portal"} & set(found.queries)
+
+
+def test_own_pages_are_scored_against_what_the_site_sells():
+    urls = ["https://acme.com/blog/heat-stress", "https://acme.com/blog/asc-boot", "https://acme.com/compare/hcss-alternative/"]
+    found = _phrases(["Heat Stress Awareness | Acme", "Consulting Connect | Acme", "HCSS Alternative for Dirt Work | Acme"], urls=urls)
+    assert "hcss alternative for dirt work" in found.queries or "hcss alternative" in " ".join(found.queries)
+    assert "heat stress awareness" not in found.queries and "consulting connect" not in found.queries
+
+
+def test_intent_fixes_from_live_sites():
+    assert dn.classify_intent("potential change order")[0] != "transactional"
+    assert dn.classify_intent("overbilling vs underbilling")[0] == "informational"
+    assert dn.classify_intent("hcss vs busybusy")[0] == "commercial"
+    assert dn.same_search("grading contractor software", "grading contractor software for machine hours")
+    assert dn.same_search("hcss vs busybusy 2026", "hcss vs busybusy")

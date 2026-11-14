@@ -93,7 +93,7 @@ NEWS = re.compile(r"\b(q[1-4]|release|released|releases|announces?|announcing|an
 MARKETING = {
     "trusted", "powering", "powered", "deliver", "delivers", "delivering", "unified", "unify", "ultimate", "innovative",
     "revolutionary", "seamless", "seamlessly", "greatness", "aligns", "empowering", "reimagined", "smarter", "always",
-    "never", "everything", "industry first", "game changer", "world class", "best in class", "next generation",
+    "never", "everything", "industry first", "end to end", "game changer", "world class", "best in class", "next generation",
 }
 # Common words of other languages: a phrase with one of these is not an English search.
 FOREIGN = {
@@ -571,9 +571,13 @@ def _cut(text: str, max_words: int) -> list[tuple[str, float]]:
     parts = CONNECTORS.split(f" {raw} ")
     joins = [match.group(0).strip() for match in CONNECTORS.finditer(f" {raw} ")]
     previous = ""
+    audience = False
     for index, chunk in enumerate(parts):
         chunk_words = clean(chunk).split()
         joiner = joins[index - 1] if index else ""
+        if audience and joiner in {"and", "or", ","}:
+            continue  # "for paving and excavation contractors": still the audience, never a search alone
+        audience = joiner == "for"
         if joiner == "for":
             if not (previous and 1 <= len(chunk_words) <= 3 and chunk_words[-1].endswith("s")):
                 previous = ""

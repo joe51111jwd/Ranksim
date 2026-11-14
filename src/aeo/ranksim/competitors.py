@@ -862,6 +862,15 @@ def report_sections(project, meta, database: str, report: dict, *, pages=None) -
                     item["competitor"] = True
     except Exception:  # noqa: BLE001 - the report never fails on these sections
         logging.getLogger(__name__).exception("discover report sections failed")
+    # One shape on every path: gaps is a list, competitor_profiles has its four groups, discovery is a dict or None.
+    if not isinstance(sections.get("gaps"), list):
+        sections["gaps"] = []
+    profiles = sections.get("competitor_profiles")
+    if not isinstance(profiles, dict):
+        profiles = {}
+    sections["competitor_profiles"] = {group: list(profiles.get(group) or []) for group in ("competitors", "directories", "platforms", "publishers")}
+    if not isinstance(sections.get("discovery"), dict):
+        sections["discovery"] = None
     return sections
 
 

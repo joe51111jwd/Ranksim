@@ -30,8 +30,10 @@
    registerOverviewTile({ key, order, render(report, ctx) })   (registerTile is the same function)
      Adds a tile to the Overview bento. Return a <section class="tile ..."> (span-2, span-4, white, black...).
      ctx = { report, project, slug }
-     Built-in keys and orders: search-data 0, first-page 10, average 20, backtest 30, issues 40, rankings 50,
-     share 60, priority 70, competitors 80, pages 90, try 100.
+     Built-in keys and orders: search-data 0, first-page 10, average 20, backtest 30, issues 40, opportunities 45,
+     rankings 50, share 60, predicted 65 (only when PREDICTED and real positions both exist), priority 70,
+     competitors 80, pages 90, try 100. Order 55 is left for rank history. The bento packs densely, so a one-column
+     tile fills the first gap that fits. Charts: import { fit, sparkline, ... } from '../charts.js'.
 
    ---------------------------------------------------------------- editor
 

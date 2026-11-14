@@ -301,7 +301,7 @@ export async function openSite(slug, { keepDrafts = false } = {}) {
   S.report = null;
   S.project = null;
   shell.renderBar();
-  if (!keepDrafts) clear(main).append(h('div', { class: 'boot' }, h('span', { class: 'spinner', 'aria-hidden': 'true' })));
+  if (!keepDrafts) clear(main).append(skeleton());
   const [report, project] = await Promise.all([api.get(`/api/v1/projects/${enc(slug)}/report`), api.get(`/api/v1/projects/${enc(slug)}`)]);
   S.report = report;
   S.project = project;
@@ -470,13 +470,37 @@ export function noSearchData() {
 
 export const SEVERITY = { high: 'High', medium: 'Medium', low: 'Low' };
 
-/* A list of Google results: position, site initial, title and domain; your page and competitors are labeled. */
-export function serpList(items) {
-  return h('div', { class: 'serp' }, items.map((item) => h('div', { class: `rowcard${item.you ? ' you' : ''}` },
+/* A list of Google results: position, site initial, title and domain. Your page is highlighted, tracked competitors
+   are marked, and every result opens in the editor (any page can be edited; publishing needs ownership).
+   opts.q is the search the editor should test against (defaults to ?q= in the address). */
+export function serpList(items, opts = {}) {
+  const q = opts.q || (S.params && S.params.get('q')) || '';
+  return h('ol', { class: 'serp', 'aria-label': q ? `Top results for ${q}` : 'Top results' }, (items || []).map((item) => h('li', { class: `rowcard${item.you ? ' you' : item.competitor ? ' rival' : ''}` },
     h('span', { class: `pos${item.you ? ' you' : ''}`, text: String(item.position) }),
-    h('span', { class: `fav${item.you ? ' you' : ''}`, text: initial(item.domain) }),
+    h('span', { class: `fav${item.you ? ' you' : item.competitor ? ' dark' : ''}`, text: initial(item.domain), 'aria-hidden': 'true' }),
     h('div', { class: 'body' }, h('div', { class: 't', text: item.title || item.domain }),
-      h('div', { class: 'm' }, h('span', { text: item.domain }), item.you ? h('span', { class: 'label label-you', text: 'You' }) : item.competitor ? h('span', { class: 'label label-low', text: 'Competitor' }) : null)))));
+      h('div', { class: 'm' }, h('span', { text: item.domain }),
+        item.you ? h('span', { class: 'label label-you', text: 'Your page' }) : item.competitor ? h('span', { class: 'label label-plain label-rival', text: 'Competitor' }) : null)),
+    item.url && S.slug ? h('div', { class: 'right' }, link('editor', icon('pencil'), {
+      class: 'icon-btn',
+      title: 'Open in editor',
+      'aria-label': `Open ${item.domain} in the editor`,
+    }, q ? { page: item.url, q } : { page: item.url })) : null)));
+}
+
+/* A placeholder in the bento's shape while a site loads: gray blocks, no spinner wall. Still under reduced motion. */
+export function skeleton() {
+  const tile = (cls) => h('div', { class: `tile ${cls || ''}` }, h('span', { class: 'sk sk-line' }), h('span', { class: 'sk sk-big' }), h('span', { class: 'sk sk-block' }));
+  return h('div', { class: 'wrap screen skeleton', 'aria-busy': 'true', 'aria-label': 'Loading' },
+    h('div', { class: 'head' }, h('div', null, h('span', { class: 'sk sk-big' }), h('span', { class: 'sk sk-line' }))),
+    h('div', { class: 'bento' }, tile('white span-2'), tile('black'), tile(), tile('span-2 tall'), tile('white span-2 tall')),
+    h('span', { class: 'sr-only', role: 'status', text: 'Loading' }));
+}
+
+/* A centered empty or error state: a short title, one sentence, and the buttons for the next step. */
+export function emptyState(title, text, ...actions) {
+  return h('div', { class: 'empty-state' }, h('h2', { text: title }), text ? h('p', { text }) : null,
+    actions.length ? h('div', { class: 'form-actions' }, actions) : null);
 }
 
 /* The spinner shown while a screen loads. */

@@ -13,7 +13,7 @@ import './screens/issues.js';
 import './screens/searches.js';
 import './screens/competitors.js';
 import './screens/settings.js';
-import { draftFor, normalize, paintFrame, paintSide, renderEditor } from './editor/editor.js';
+import { draftFor, normalize, paintFrame, paintSide, renderEditor, syncFromFrame } from './editor/editor.js';
 import './editor/test.js';
 import { publishButton } from './editor/publish.js';
 
@@ -400,6 +400,10 @@ async function finishOpen(slug, url) {
     paintSide();
     return;
   }
+  /* While the site was analyzed, edits lived only in the live preview (the draft is marked touched and read back
+     on demand). The render below rebuilds the editor from draft.text, so read the preview back first, or every
+     edit made during the analysis is lost. */
+  syncFromFrame();
   S.open = null;
   S.screen = 'editor';
   S.params = new URLSearchParams({ page: url });

@@ -161,3 +161,28 @@ test('ids are unique across charts on one page', () => {
   const b = rankDots(ROWS);
   assert.notEqual(a.attrs['aria-labelledby'], b.attrs['aria-labelledby']);
 });
+
+test('predictions: null, missing position and UNSURE are handled; UNSURE draws a quiet dashed ring', async () => {
+  const { predictionOf, predictionText } = await import(`data:text/javascript;base64,${Buffer.from(SOURCE).toString('base64')}`);
+  assert.equal(predictionOf({ predicted: null }), null);
+  assert.equal(predictionOf({ predicted: { position: null, of: 8 } }), null);
+  assert.equal(predictionOf({}), null);
+  const sure = predictionOf({ predicted: { position: 3, of: 8, confidence: 'CLEARER' } });
+  const unsure = predictionOf({ predicted: { position: 5, of: 8, confidence: 'unsure', query_pairs: 12 } });
+  assert.equal(sure.unsure, false);
+  assert.equal(unsure.unsure, true);
+  assert.equal(predictionText(unsure), 'PREDICTED #5 of 8, unsure');
+  assert.equal(predictionText(predictionOf({ predicted: { position: 2 } })), 'PREDICTED #2');
+  const rows = [
+    { q: 'a', position: 4, checked: true, predicted: { position: 3, of: 8, confidence: 'CLEARER' } },
+    { q: 'b', position: 2, checked: true, predicted: { position: 6, of: 8, confidence: 'UNSURE' } },
+    { q: 'c', position: 1, checked: true, predicted: null },
+  ];
+  const tree = rankDots(rows, { width: 500 });
+  assertAccessible(tree);
+  const rings = find(tree, (n) => n.tag === 'circle' && /rc-pred/.test(n.attrs.class));
+  assert.deepEqual(rings.map((n) => n.attrs.class), ['rc-pred rc-unsure', 'rc-pred']);
+  const svg = toSvg(tree);
+  assert.match(svg, /PREDICTED #6 of 8, unsure/);
+  assert.match(svg, /Dashed rings are PREDICTED but unsure, for 1 search\./);
+});

@@ -150,6 +150,8 @@ def build_app(data: Path):
     web.pages[WP_PAGE] = wp_page("About DirtCrew | DirtCrew", "About DirtCrew", "<p>We run dirt work crews.</p>")
 
     def preview_fetch(url: str) -> tuple[str, str]:
+        if "slow-" in url:
+            time.sleep(SLOW * 2)  # a real page takes seconds to fetch; the first-load checks need that gap
         if web.get(url) is not None:
             return web(url)
         if "broken" in url:

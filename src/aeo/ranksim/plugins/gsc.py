@@ -67,6 +67,7 @@ REPORT_PAGES = 50
 DISCOVERY_LIMIT = 30
 DISCOVERY_TOP = 5.0
 DISCOVERY_FLOOR = 2.5
+DISCOVERY_MIN_IMPRESSIONS = 10
 LABEL = "Google Search Console data"
 GOOD_PERMISSIONS = {"siteOwner", "siteFullUser", "siteRestrictedUser"}
 
@@ -925,6 +926,12 @@ def _adopt(ui, project) -> None:
         _record_adopt_check(ui, project)
 
 
+def discovery_min_impressions(top: int) -> int:
+    """A query reaches discovery only with at least max(10, 1% of the top query's) impressions over the 28 days, so
+    a search seen once or twice never becomes a tracked search that costs a paid pull."""
+    return max(DISCOVERY_MIN_IMPRESSIONS, -(-int(top) // 100))
+
+
 def discovery_sources(*, project, pages=None, ui=None) -> list[dict]:
     """Top Search Console queries for the site, weighted on discovery's scale. For a project, only when GSC is on. On a
     site's first analysis (no project yet), when Google is connected and a property covers the site."""
@@ -943,10 +950,14 @@ def discovery_sources(*, project, pages=None, ui=None) -> list[dict]:
             snapshot = None
     if not snapshot:
         return []
-    queries = [item for item in snapshot.get("queries") or [] if item.get("impressions", 0) > 0][:DISCOVERY_LIMIT]
+    ranked = [item for item in snapshot.get("queries") or [] if item.get("impressions", 0) > 0]
+    if not ranked:
+        return []
+    top = max(item["impressions"] for item in ranked)
+    floor = discovery_min_impressions(top)
+    queries = [item for item in ranked if item["impressions"] >= floor][:DISCOVERY_LIMIT]
     if not queries:
         return []
-    top = max(item["impressions"] for item in queries) or 1
     return [
         {
             "q": item["q"],

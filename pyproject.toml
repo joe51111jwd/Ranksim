@@ -17,6 +17,7 @@ dependencies = [
   "psycopg[binary]>=3.2",
   "lightgbm>=4.0",
   "vercel-blob>=0.5",
+  "cryptography>=42",
 ]
 
 [project.optional-dependencies]

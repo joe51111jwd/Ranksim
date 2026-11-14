@@ -1,7 +1,7 @@
 // Client delivery for the owner: share links, the print view, CSV files, agency branding, issue plans, change log.
 // Server side: plugins/share.py. The client page itself lives in static/share/ and never loads this file.
 import { registerSettingsSection, registerOverviewTile } from '../hooks.js';
-import { h, api, enc, toast, CSRF, MODE } from '../core.js';
+import { h, api, enc, toast, link, CSRF, MODE } from '../core.js';
 
 const STATUSES = [['open', 'Not started'], ['planned', 'Planned'], ['doing', 'In progress'], ['done', 'Done']];
 const EXPIRY = [['', 'Never expires'], ['7', 'Expires in 7 days'], ['30', 'Expires in 30 days'], ['90', 'Expires in 90 days']];
@@ -256,10 +256,8 @@ registerOverviewTile({
   order: 95,
   render(_report, { slug }) {
     return h('section', { class: 'tile span-2 no-print' },
-      h('div', { class: 'tile-k', text: 'Client report' }),
-      h('p', { class: 'tile-sub', text: 'Share a read only report or print it as a PDF.' }),
-      h('div', { class: 'result-actions' },
-        h('a', { class: 'btn', href: `/app/${enc(slug)}/settings`, text: 'Share links' }),
-        h('a', { class: 'btn btn-plain', href: `/report/${enc(slug)}`, target: '_blank', rel: 'noopener', text: 'Print' })));
+      h('div', { class: 'tile-head' }, h('h2', { text: 'Client report' }), link('settings', 'Share', { class: 'btn btn-plain' })),
+      h('p', { class: 'tile-sub', text: 'Share a read only report with your client, or open it to print a PDF.' }),
+      h('p', { class: 'tile-sub' }, h('a', { href: `/report/${enc(slug)}`, target: '_blank', rel: 'noopener', text: 'Open the printable report' })));
   },
 });

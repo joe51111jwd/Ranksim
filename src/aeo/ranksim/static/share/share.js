@@ -161,20 +161,20 @@
       var pos = r.position ? "#" + r.position : r.checked ? "Not on page one" : "Not checked yet";
       var leader = (r.top || []).filter(function (t) { return t.position === 1; })[0];
       return h("tr", {}, [
-        h("td", { class: "q" }, [
+        h("td", { class: "q", "data-label": "Search" }, [
           h("span", { text: r.q }),
           r.url ? h("span", { class: "muted small", text: "Your page: " + pathOf(r.url) }) : null,
           r.date && r.date !== d.google_date ? h("span", { class: "muted small", text: "Checked " + r.date }) : null,
         ]),
-        h("td", { class: "num" + (r.position && r.position <= 3 ? " good" : ""), text: pos }),
-        d.predictions ? h("td", { class: "num" }, r.predicted ? [h("span", { text: "#" + r.predicted.position + " of " + r.predicted.of }), h("span", { class: "tag", text: "PREDICTED" })] : ["No estimate"]) : null,
-        h("td", { class: "muted", text: leader ? leader.domain : "" }),
+        h("td", { class: "num" + (r.position && r.position <= 3 ? " good" : ""), "data-label": "Your position", text: pos }),
+        d.predictions ? h("td", { class: "num", "data-label": "Estimate (PREDICTED)" }, r.predicted ? [h("span", { text: "#" + r.predicted.position + " of " + r.predicted.of }), h("span", { class: "tag", text: "PREDICTED" })] : ["No estimate"]) : null,
+        h("td", { class: "muted", "data-label": "First result", text: leader ? leader.domain : "" }),
       ]);
     });
     root.appendChild(tile("", [
       head("Where you show up", "Your position in Google for each search. #1 is the first result. " + checked + "." +
         (d.predictions ? " The estimate is Ranksim's model of where your page should land among the pages we stored. It is PREDICTED, not a Google position." : "")),
-      rows.length ? h("div", { class: "table-wrap" }, [h("table", {}, [
+      rows.length ? h("div", { class: "table-wrap" }, [h("table", { class: "stack" }, [
         h("thead", {}, [h("tr", {}, [
           h("th", { text: "Search" }),
           h("th", { class: "num", text: "Your position" }),
@@ -208,14 +208,14 @@
     root.appendChild(tile("", [
       head("Who else shows up", "Sites on page one of Google for your searches. " + checked + "."),
       d.competitors && d.competitors.length ? h("p", { class: "chips" }, [h("span", { class: "muted small", text: "Main competitors:" })].concat(d.competitors.map(function (c) { return h("span", { class: "chip", text: c }); }))) : null,
-      share.length ? h("div", { class: "table-wrap" }, [h("table", {}, [
+      share.length ? h("div", { class: "table-wrap" }, [h("table", { class: "stack" }, [
         h("thead", {}, [h("tr", {}, [h("th", { text: "Site" }), h("th", { class: "num", text: "Page one spots" }), h("th", { class: "num", text: "Best position" }), h("th", { class: "num", text: "Average position" })])]),
         h("tbody", {}, share.map(function (s) {
           return h("tr", { class: s.you ? "you" : "" }, [
-            h("td", {}, [s.domain, s.you ? h("span", { class: "tag blue", text: "You" }) : null, s.competitor ? h("span", { class: "tag", text: "Competitor" }) : null]),
-            h("td", { class: "num", text: String(s.slots) }),
-            h("td", { class: "num", text: "#" + s.best }),
-            h("td", { class: "num", text: String(s.average) }),
+            h("td", { "data-label": "Site" }, [s.domain, s.you ? h("span", { class: "tag blue", text: "You" }) : null, s.competitor ? h("span", { class: "tag", text: "Competitor" }) : null]),
+            h("td", { class: "num", "data-label": "Page one spots", text: String(s.slots) }),
+            h("td", { class: "num", "data-label": "Best position", text: "#" + s.best }),
+            h("td", { class: "num", "data-label": "Average position", text: String(s.average) }),
           ]);
         })),
       ])]) : h("p", { class: "muted", text: "Not checked on Google yet." }),

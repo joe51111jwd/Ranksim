@@ -26,6 +26,7 @@ import shutil
 import time
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
+from types import SimpleNamespace
 from urllib.parse import quote, urlencode, urlsplit
 
 import httpx
@@ -749,7 +750,67 @@ def report_section(ui, project) -> dict:
             entry["page"] = top_page[_loose(q)]["page"]
         searches[q] = entry
     data["searches"] = searches
+    data["opportunities"] = opportunities(snapshot)
     return data
+
+
+NEAR_MIN, NEAR_MAX = 8.0, 20.0
+OPPORTUNITY_LIMIT = 25
+# A rough typical click rate by position on page one (organic, desktop and mobile mixed). A benchmark for spotting
+# outliers, not Google data; the UI says so.
+TYPICAL_CTR = {1: 0.28, 2: 0.15, 3: 0.10, 4: 0.07, 5: 0.05, 6: 0.04, 7: 0.03, 8: 0.025, 9: 0.02, 10: 0.018}
+
+
+def _min_impressions(snapshot: dict) -> int:
+    total = int((snapshot.get("totals") or {}).get("impressions") or 0)
+    return max(20, round(total * 0.01))
+
+
+def typical_ctr(position: float) -> float | None:
+    slot = int(round(position or 0))
+    return TYPICAL_CTR.get(slot)
+
+
+def opportunities(snapshot: dict) -> dict:
+    """Two lists from one snapshot. near_page_one: queries with many impressions at an average position of 8 to 20,
+    with the page that gets most of their impressions. low_ctr: pages on page one with many impressions and under
+    half the typical click rate for their position. Both sorted by impressions."""
+    floor = _min_impressions(snapshot)
+    best_page: dict[str, dict] = {}
+    for pair in snapshot.get("query_pages") or []:
+        key = _loose(pair["q"])
+        if key not in best_page or pair["impressions"] > best_page[key]["impressions"]:
+            best_page[key] = pair
+    near = []
+    for row in snapshot.get("queries") or []:
+        if row["impressions"] >= floor and NEAR_MIN <= row["position"] <= NEAR_MAX:
+            item = {key: row[key] for key in ("q", "clicks", "impressions", "ctr", "position")}
+            page = best_page.get(_loose(row["q"]))
+            item["page"] = page["page"] if page else ""
+            near.append(item)
+    low = []
+    for row in snapshot.get("pages") or []:
+        expected = typical_ctr(row["position"])
+        if expected is None or row["impressions"] < floor or row["ctr"] >= expected * 0.5:
+            continue
+        item = {key: row[key] for key in ("page", "clicks", "impressions", "ctr", "position")}
+        item["typical_ctr"] = expected
+        item["missed_clicks"] = max(0, round(row["impressions"] * expected * 0.5) - row["clicks"])
+        top_query = max((pair for pair in snapshot.get("query_pages") or [] if pair["page"] == row["page"]), key=lambda pair: pair["impressions"], default=None)
+        item["q"] = top_query["q"] if top_query else ""
+        low.append(item)
+    near.sort(key=lambda item: (-item["impressions"], item["position"]))
+    low.sort(key=lambda item: (-item["impressions"], item["page"]))
+    return {
+        "near_page_one": near[:OPPORTUNITY_LIMIT],
+        "low_ctr": low[:OPPORTUNITY_LIMIT],
+        "min_impressions": floor,
+        "rules": {
+            "near_page_one": f"Searches with at least {floor} impressions at an average position of 8 to 20.",
+            "low_ctr": f"Pages on page one with at least {floor} impressions and under half the typical click rate for "
+            "their position. The typical rate is a rough benchmark, not Google data.",
+        },
+    }
 
 
 # ---------------------------------------------------------------------------------------------------------------------
@@ -771,15 +832,82 @@ def discovery_weight(impressions: int, top: int) -> float:
     return round(DISCOVERY_FLOOR + (DISCOVERY_TOP - DISCOVERY_FLOOR) * share, 3)
 
 
-def discovery_sources(*, project, pages=None, ui=None) -> list[dict]:
-    """Top Search Console queries for the project, weighted by impressions (1.0 for the most seen). Only when on."""
-    if ui is None or not _active(ui, project):
-        return []
+PENDING_SECONDS = 3600
+
+
+def _pending_path(ui, host: str) -> Path:
+    from aeo.ranksim import plugins
+
+    digest = hashlib.sha256(host.lower().encode("utf-8")).hexdigest()[:24]
+    return plugins.workspace_dir(ui, NAME) / "pending" / f"{digest}.json"
+
+
+def _host_of_pages(pages) -> str:
+    for page in pages or []:
+        host = (urlsplit(str(getattr(page, "url", "") or "")).hostname or "").lower()
+        if host:
+            return host
+    return ""
+
+
+def _first_analysis_snapshot(ui, pages) -> dict | None:
+    """A site's first analysis runs before its project exists. When Google is connected and one of the account's
+    properties covers the site, load its data now so its queries count, and park it for after_pull to adopt."""
+    if getattr(ui, "public_demo", False) or not oauth_config()["ready"] or not connected(ui):
+        return None
+    host = _host_of_pages(pages)
+    if not host:
+        return None
     try:
-        snapshot = refresh_project(ui, project)
+        chosen = match_property(SimpleNamespace(site=host), list_properties(ui))
+        if not chosen:
+            return None
+        snapshot = collect_snapshot(ui, chosen)
     except GscError:
-        snapshot = load_snapshot(project)
-    if not snapshot or snapshot.get("property") != load_settings(project)["property"]:
+        return None
+    _write_json(_pending_path(ui, host), {"host": host, "property": chosen, "at": _now(ui), "snapshot": snapshot})
+    return snapshot
+
+
+def _adopt(ui, project) -> None:
+    """A project that never had GSC settings: turn it on when Google is connected. Uses the data the first analysis
+    parked when there is some, else matches the property now. A project the owner turned off stays off."""
+    if getattr(ui, "public_demo", False) or not oauth_config()["ready"] or not connected(ui):
+        return
+    if (project_dir(project) / "settings.json").exists():
+        return
+    host = _site_host(project)
+    parked = _read_json(_pending_path(ui, host)) if host else None
+    if parked and _now(ui) - float(parked.get("at") or 0) <= PENDING_SECONDS and isinstance(parked.get("snapshot"), dict):
+        save_snapshot(project, parked["snapshot"])
+        save_settings(ui, project, {"enabled": True, "property": str(parked.get("property") or ""), "auto": True})
+        _pending_path(ui, host).unlink(missing_ok=True)
+        return
+    try:
+        chosen = match_property(project, list_properties(ui))
+    except GscError:
+        return
+    if chosen:
+        save_settings(ui, project, {"enabled": True, "property": chosen, "auto": True})
+
+
+def discovery_sources(*, project, pages=None, ui=None) -> list[dict]:
+    """Top Search Console queries for the site, weighted on discovery's scale. For a project, only when GSC is on. On a
+    site's first analysis (no project yet), when Google is connected and a property covers the site."""
+    if ui is None:
+        return []
+    if project is None:
+        snapshot = _first_analysis_snapshot(ui, pages)
+    elif not _active(ui, project):
+        return []
+    else:
+        try:
+            snapshot = refresh_project(ui, project)
+        except GscError:
+            snapshot = load_snapshot(project)
+        if snapshot and snapshot.get("property") != load_settings(project)["property"]:
+            snapshot = None
+    if not snapshot:
         return []
     queries = [item for item in snapshot.get("queries") or [] if item.get("impressions", 0) > 0][:DISCOVERY_LIMIT]
     if not queries:
@@ -805,7 +933,10 @@ def extend_report(report: dict, *, project=None, meta=None, database=None, ctx=N
 
 
 def after_pull(*, project=None, report=None, ui=None) -> None:
-    if ui is None or not _active(ui, project):
+    if ui is None or project is None:
+        return
+    _adopt(ui, project)
+    if not _active(ui, project):
         return
     try:
         refresh_project(ui, project)
@@ -983,7 +1114,10 @@ def register(app, ui) -> None:
             return blocked
 
         def answer(result: str, slug: str = "", status: int = 200) -> JSONResponse:
-            response = JSONResponse({"result": result, "slug": slug, "message": "" if result in {"connected", "needs_property"} else result}, status_code=status)
+            body = {"result": result, "slug": slug}
+            if status >= 400:
+                body["error"] = "Search Console sign in did not finish. Turn it on again to retry."
+            response = JSONResponse(body, status_code=status)
             response.delete_cookie(PENDING_COOKIE, path="/api/v1/gsc")
             response.delete_cookie(NONCE_COOKIE, path="/api/v1/gsc")
             return response

@@ -125,6 +125,7 @@ class FakeGoogle:
                 "rows": [
                     {"keys": ["https://www.dirtcrew.example/"], "clicks": 70, "impressions": 3500, "ctr": 0.02, "position": 9.0},
                     {"keys": ["https://www.dirtcrew.example/pricing"], "clicks": 50, "impressions": 900, "ctr": 0.0556, "position": 6.2},
+                    {"keys": ["https://www.dirtcrew.example/features"], "clicks": 6, "impressions": 1200, "ctr": 0.005, "position": 4.2},
                 ]
             }
         if dims == ["query", "page"]:
@@ -133,6 +134,7 @@ class FakeGoogle:
                     {"keys": ["heavy civil software", "https://www.dirtcrew.example/"], "clicks": 45, "impressions": 2800, "ctr": 0.016, "position": 10.9},
                     {"keys": ["heavy civil software", "https://www.dirtcrew.example/pricing"], "clicks": 5, "impressions": 200, "ctr": 0.025, "position": 13.0},
                     {"keys": ["dirt work software", "https://www.dirtcrew.example/pricing"], "clicks": 30, "impressions": 900, "ctr": 0.0333, "position": 8.4},
+                    {"keys": ["estimating software", "https://www.dirtcrew.example/features"], "clicks": 6, "impressions": 1200, "ctr": 0.005, "position": 4.2},
                 ]
             }
         return {"rows": []}
@@ -352,7 +354,7 @@ def test_full_flow_connect_pick_fetch_report_refresh_disconnect(tmp_path, env):
     assert report["rankings"] == [] and section["label"] == "Google Search Console data"
     assert [row["q"] for row in section["queries"]] == ["heavy civil software", "dirt work software", "dirt crew login"]
     assert section["queries"][0] == {"q": "heavy civil software", "clicks": 50, "impressions": 3000, "ctr": 0.0167, "position": 11.1}
-    assert [row["page"] for row in section["pages"]] == ["https://www.dirtcrew.example/", "https://www.dirtcrew.example/pricing"]
+    assert [row["page"] for row in section["pages"]] == ["https://www.dirtcrew.example/", "https://www.dirtcrew.example/pricing", "https://www.dirtcrew.example/features"]
     assert section["searches"]["heavy civil software"]["page"] == "https://www.dirtcrew.example/"
     assert section["searches"]["dirt work software"]["clicks"] == 30
     assert "excavation estimating" not in section["searches"]
@@ -747,3 +749,87 @@ def test_discovery_weight_range():
     assert gsc.discovery_weight(1, 100000) >= 2.5
     assert gsc.discovery_weight(0, 0) == 2.5
     assert all(2.5 <= gsc.discovery_weight(n, 500) <= 5.0 for n in (0, 1, 250, 500, 9999))
+
+
+def test_first_analysis_uses_gsc_before_the_project_exists(tmp_path, env):
+    from aeo.ranksim import discovery
+
+    box = _app(tmp_path)
+    _sign_in(box)
+    query = _connect(box)
+    _callback(box, {"code": "good-code", "state": query["state"]})
+    pages = [SimpleNamespace(url="https://www.other.example/", status="fetched", title="", h1="", h2s=[])]
+    found = discovery.discover_with_plugins(pages, "Other", host="www.other.example", project=None, ui=box.ui)
+    assert found[:2] == ["heavy civil software", "dirt work software"]
+    assert any(path.endswith("/sites/https%3A%2F%2Fother.example%2F/searchAnalytics/query") for kind, path, _ in box.google.calls)
+    # The analysis then creates the project and runs after_pull: GSC is on with the parked data, no second fetch.
+    project = create_project("Other", "www.other.example", found, root=tmp_path / "projects")
+    calls = len(box.google.calls)
+    gsc.after_pull(project=project, report=None, ui=box.ui)
+    settings = gsc.load_settings(project)
+    assert settings["enabled"] and settings["property"] == "https://other.example/"
+    assert gsc.project_state(box.ui, project)["state"] == "ready"
+    assert len(box.google.calls) == calls
+    assert not list((gsc.account_path(box.ui).parent / "pending").glob("*.json"))
+
+
+def test_a_new_project_is_turned_on_but_an_off_switch_is_kept(tmp_path, env):
+    box = _app(tmp_path)
+    _sign_in(box)
+    query = _connect(box)
+    _callback(box, {"code": "good-code", "state": query["state"]})
+    fresh = create_project("Other", "other.example", ["a search"], root=tmp_path / "projects")
+    gsc.after_pull(project=fresh, report=None, ui=box.ui)
+    assert gsc.project_state(box.ui, fresh)["state"] == "ready"  # matched and fetched, no parked data needed
+    _post(box, f"/api/v1/gsc/projects/{fresh.slug}", {"enabled": False})
+    gsc.after_pull(project=fresh, report=None, ui=box.ui)
+    assert gsc.load_settings(fresh)["enabled"] is False
+
+
+def test_first_analysis_without_a_matching_property_adds_nothing(tmp_path, env):
+    box = _app(tmp_path)
+    _sign_in(box)
+    query = _connect(box)
+    _callback(box, {"code": "good-code", "state": query["state"]})
+    pages = [SimpleNamespace(url="https://unknown.example/")]
+    assert gsc.discovery_sources(project=None, pages=pages, ui=box.ui) == []
+
+
+def test_opportunities_near_page_one_and_low_ctr(tmp_path, env):
+    box = _app(tmp_path)
+    _sign_in(box)
+    query = _connect(box)
+    _callback(box, {"code": "good-code", "state": query["state"]})
+    section = box.client.get(f"/api/v1/projects/{box.project.slug}/report").json()["gsc"]
+    opp = section["opportunities"]
+    assert opp["min_impressions"] == 64  # 1% of 6,400
+    near = opp["near_page_one"]
+    assert [row["q"] for row in near] == ["heavy civil software", "dirt work software"]  # positions 11.1 and 8.4
+    assert near[0]["page"] == "https://www.dirtcrew.example/"  # the page with most of its impressions
+    low = opp["low_ctr"]
+    assert [row["page"] for row in low] == ["https://www.dirtcrew.example/features"]  # 0.5% CTR at position 4
+    assert low[0]["typical_ctr"] == 0.07 and low[0]["q"] == "estimating software" and low[0]["missed_clicks"] == 36
+    assert "not Google data" in opp["rules"]["low_ctr"]
+    text = json.dumps(opp, ensure_ascii=False)
+    assert not any(dash in text for dash in DASHES)
+
+
+def test_opportunity_rules():
+    snapshot = {
+        "totals": {"impressions": 1000},
+        "queries": [
+            {"q": "a", "clicks": 0, "impressions": 19, "ctr": 0.0, "position": 9.0},  # under the 20 floor
+            {"q": "b", "clicks": 1, "impressions": 50, "ctr": 0.02, "position": 7.9},  # above page one's bottom
+            {"q": "c", "clicks": 1, "impressions": 50, "ctr": 0.02, "position": 20.0},
+            {"q": "d", "clicks": 1, "impressions": 50, "ctr": 0.02, "position": 20.1},
+        ],
+        "pages": [
+            {"page": "p1", "clicks": 10, "impressions": 100, "ctr": 0.1, "position": 1.0},  # 10% at #1: low
+            {"page": "p2", "clicks": 3, "impressions": 100, "ctr": 0.03, "position": 7.0},  # typical: fine
+            {"page": "p3", "clicks": 0, "impressions": 500, "ctr": 0.0, "position": 14.0},  # not on page one
+        ],
+        "query_pages": [],
+    }
+    opp = gsc.opportunities(snapshot)
+    assert [row["q"] for row in opp["near_page_one"]] == ["c"]
+    assert [row["page"] for row in opp["low_ctr"]] == ["p1"] and opp["low_ctr"][0]["page"] == "p1"

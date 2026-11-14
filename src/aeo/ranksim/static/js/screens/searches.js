@@ -13,7 +13,7 @@ export function renderSearches() {
   const R = S.report;
   const want = S.params.get('q');
   const selected = R.rankings.find((row) => row.q === want) || R.rankings.slice().sort((a, b) => (a.position || 99) - (b.position || 99))[0];
-  const columns = searchColumns();
+  const columns = searchColumns().filter((column) => typeof column.when !== 'function' || column.when(R)); // when(report): show the column only when it has data
   const list = h('div', { class: `qlist${columns.length ? ' has-cols' : ''}` });
   if (columns.length) {
     list.style.setProperty('--qcols', String(columns.length));

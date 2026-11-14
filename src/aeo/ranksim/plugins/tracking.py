@@ -675,7 +675,82 @@ def build_history(project, meta=None, *, snapshots=None) -> dict:
         "next_check_at": next_check,
         "real": not synthetic,
         "note": SYNTHETIC_NOTE if synthetic else "REAL Google positions from stored pulls. Empty means not in the top 10 we hold.",
+        "week": weekly_summary(rows, competitors, last_check),
     }
+
+
+WEEK_DAYS = 7
+WEEK_SLACK_HOURS = 12  # a weekly re-check that ran a few hours early still counts as a week apart
+MOVES_SHOWN = 6
+
+
+def weekly_summary(rows: list[dict], competitors: list[str], last_check: datetime | None, *, days: int = WEEK_DAYS) -> dict:
+    """What changed since last week, from real dated checks only.
+
+    For each search, its newest check is compared with its newest check at least a week older (12 hours slack). A
+    search not checked in the last week, or with no check a week before, is left out and counted in "skipped".
+    gained/lost: into or out of the top 10. moves: both ranked, position changed, biggest first. passed: a tracked
+    competitor that was behind us (or not in the top 10 while we were), climbed, and is now ahead of us (or in the
+    top 10 while we are not). A competitor that stayed put while we fell is not counted: that is our drop, shown as
+    lost or a move down."""
+    empty = {"ready": False, "days": days, "compared": 0, "skipped": len(rows), "gained": [], "lost": [], "moves": [], "passed": [], "from": None, "to": _iso(last_check)}
+    if last_check is None:
+        return {**empty, "reason": "No Google checks yet."}
+    cutoff = last_check - timedelta(days=days) + timedelta(hours=WEEK_SLACK_HOURS)  # "now" is after it, "last week" on or before
+    gained, lost, moves, passed, base_dates = [], [], [], [], []
+    compared = 0
+    for row in rows:
+        points = row.get("points") or []
+        if len(points) < 2:
+            continue
+        latest = points[-1]
+        latest_at = parse_time(latest["at"])
+        if latest_at is None or latest_at <= cutoff:
+            continue  # not checked in the last week
+        base = None
+        for point in points[:-1]:
+            moment = parse_time(point["at"])
+            if moment is not None and moment <= cutoff:
+                base = point
+        if base is None:
+            continue
+        compared += 1
+        base_dates.append(base["at"])
+        was, now = base["position"], latest["position"]
+        item = {"search": row["search"], "from": was, "to": now, "from_at": base["at"], "to_at": latest["at"]}
+        if was is None and now is not None:
+            gained.append(item)
+        elif was is not None and now is None:
+            lost.append(item)
+        elif was is not None and now is not None and was != now:
+            moves.append({**item, "delta": was - now})
+        for domain in competitors:
+            seen = {point["at"]: point["position"] for point in (row.get("competitors") or {}).get(domain) or []}
+            their_was, their_now = seen.get(base["at"]), seen.get(latest["at"])
+            behind_then = was is not None and (their_was is None or their_was > was)
+            ahead_now = their_now is not None and (now is None or their_now < now)
+            climbed = their_was is None or their_now is not None and their_now < their_was  # they moved, not only we fell
+            if behind_then and ahead_now and climbed:
+                passed.append({"domain": domain, "search": row["search"], "their_from": their_was, "their_to": their_now, "our_from": was, "our_to": now})
+    moves.sort(key=lambda item: (-abs(item["delta"]), item["search"]))
+    passed.sort(key=lambda item: (item["their_to"], item["search"], item["domain"]))
+    summary = {
+        **empty,
+        "ready": compared > 0,
+        "compared": compared,
+        "skipped": len(rows) - compared,
+        "gained": gained,
+        "lost": lost,
+        "moves": moves[:MOVES_SHOWN],
+        "moves_total": len(moves),
+        "up": sum(1 for item in moves if item["delta"] > 0),
+        "down": sum(1 for item in moves if item["delta"] < 0),
+        "passed": passed,
+        "from": min(base_dates) if base_dates else None,
+    }
+    if not compared:
+        summary["reason"] = "Needs two Google checks at least a week apart."
+    return summary
 
 
 def _is_synthetic(meta) -> bool:
@@ -689,7 +764,7 @@ def _is_synthetic(meta) -> bool:
 
 def compact_history(full: dict) -> dict:
     """The small form stored in report["history"]."""
-    compact = {key: full.get(key) for key in ("site", "competitors", "checks", "first_at", "last_at", "changes", "trend", "schedule", "last_check_at", "next_check_at", "real", "note")}
+    compact = {key: full.get(key) for key in ("site", "competitors", "checks", "first_at", "last_at", "changes", "trend", "schedule", "last_check_at", "next_check_at", "real", "note", "week")}
     compact["trend"] = (full.get("trend") or [])[-SPARK_POINTS * 2 :]
     compact["searches"] = [
         {

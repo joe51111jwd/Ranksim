@@ -1101,3 +1101,128 @@ def test_replayed_checkpoint_answers_are_free_and_keep_their_date(tmp_path):
     again = ReplayingGoogle({SEARCHES[0]: fetched, SEARCHES[1]: ""})
     report = proj.pull(project, settings, serp_provider=again, fetcher=FakeCrawler(), today=TODAY, budget=budget, engines=[])
     assert report.google_kind == "api" and budget.used() == 1
+
+
+def test_since_last_week_summary(tmp_path):
+    project = _project(tmp_path / "projects", searches=["up", "down", "gain", "lose", "stale", "young", "pass"])
+    rival = "https://rival.example/"
+    two_weeks, week, mid, now = NOW - timedelta(days=14), NOW - timedelta(days=7) + timedelta(hours=3), NOW - timedelta(days=3), NOW
+    x = [f"https://x{index}.example/" for index in range(10)]
+    _write_snapshot(project, "20261031T120000Z", two_weeks, {"stale": [OURS], "pass": x[:1] + [OURS]})
+    _write_snapshot(project, "20261107T150000Z", week, {
+        "up": x[:5] + [OURS], "down": [OURS], "gain": x[:3], "lose": x[:1] + [OURS], "pass": [OURS] + x[:2] + [rival],
+    })
+    _write_snapshot(project, "20261111T120000Z", mid, {"young": [OURS]})
+    _write_snapshot(project, "20261114T120000Z", now, {
+        "up": [OURS], "down": x[:3] + [OURS], "gain": x[:1] + [OURS], "lose": x[:3], "young": [OURS], "pass": [rival] + x[:2] + [OURS],
+    })
+    week_view = tracking.build_history(project, ws.WorkspaceMeta(competitors=["rival.example"]))["week"]
+    assert week_view["ready"] and week_view["compared"] == 5 and week_view["skipped"] == 2  # stale and young left out
+    assert [(row["search"], row["from"], row["to"]) for row in week_view["gained"]] == [("gain", None, 2)]
+    assert [(row["search"], row["from"], row["to"]) for row in week_view["lost"]] == [("lose", 2, None)]
+    assert [(row["search"], row["delta"]) for row in week_view["moves"]] == [("up", 5), ("down", -3), ("pass", -3)]
+    assert week_view["up"] == 1 and week_view["down"] == 2
+    assert week_view["passed"] == [{"domain": "rival.example", "search": "pass", "their_from": 4, "their_to": 1, "our_from": 1, "our_to": 4}]
+    still = tracking.weekly_summary(
+        [{"search": "s", "points": [{"at": week.isoformat(), "position": 2}, {"at": now.isoformat(), "position": None}],
+          "competitors": {"rival.example": [{"at": week.isoformat(), "position": 3}, {"at": now.isoformat(), "position": 3}]}}],
+        ["rival.example"], now)
+    assert still["lost"] and still["passed"] == []  # they stayed at #3 while we fell: our drop, not their pass
+    assert week_view["from"] == week.isoformat(timespec="seconds") and week_view["to"] == now.isoformat(timespec="seconds")
+    report: dict = {}
+    tracking.extend_report(report, project=project, meta=ws.WorkspaceMeta(competitors=["rival.example"]))
+    assert report["history"]["week"]["compared"] == 5
+
+
+def test_since_last_week_needs_checks_a_week_apart(tmp_path):
+    project = _project(tmp_path / "projects", searches=["a"])
+    assert tracking.build_history(project, ws.WorkspaceMeta())["week"]["reason"] == "No Google checks yet."
+    _write_snapshot(project, "20261111T000000Z", NOW - timedelta(days=3), {"a": [OURS]})
+    _write_snapshot(project, "20261114T000000Z", NOW, {"a": ["https://x.example/", OURS]})
+    view = tracking.build_history(project, ws.WorkspaceMeta())["week"]
+    assert view["ready"] is False and "a week apart" in view["reason"] and view["moves"] == []
+
+
+# -- regression tests for infra findings (phase C review). Expected to fail until infra's fixes land; the markers
+# come off once they pass on the integration branch.
+
+INFRA_PENDING = "infra fix pending (reported to the coordinator, phase C review)"
+
+
+@pytest.mark.xfail(reason=INFRA_PENDING, strict=False)
+def test_regression_concurrent_saves_keep_both_instances_counter_files(tmp_path):
+    """Instance B saves "_plugins" between instance A's list and put. Every instance must end with both files."""
+    from aeo.ranksim.cloud import CloudState
+    from aeo.ranksim.objects import MemoryStore
+
+    store = MemoryStore()
+
+    def instance(name):
+        folder = tmp_path / name
+        (folder / "projects").mkdir(parents=True)
+        return CloudState(data_dir=folder, db_file=folder / "rank.db", enabled=True, store=store)
+
+    a, b = instance("a"), instance("b")
+    usage = lambda cloud: cloud.projects_dir / "_plugins" / "tracking" / "usage" / "2026-11"  # noqa: E731
+    usage(a).mkdir(parents=True)
+    (usage(a) / "A.json").write_text('{"searches": 1}')
+    a.save_project("_plugins")
+    b.refresh(force=True)
+    usage(b).mkdir(parents=True, exist_ok=True)
+    (usage(b) / "B.json").write_text('{"searches": 5}')
+    (usage(a) / "A.json").write_text('{"searches": 9}')
+    real_put = store.put
+    interleaved = []
+
+    def put(name, body, **kwargs):
+        if not interleaved and name.startswith("ranksim/v2/projects/_plugins/v/"):
+            interleaved.append(name)
+            b.save_project("_plugins")  # B finishes a whole save while A is in the middle of its own
+        return real_put(name, body, **kwargs)
+
+    store.put = put
+    try:
+        a.save_project("_plugins")
+    finally:
+        store.put = real_put
+    a.refresh(force=True)
+    b.refresh(force=True)
+    c = instance("c")
+    c.refresh(force=True)
+    for cloud in (a, b, c):
+        files = {path.name: json.loads(path.read_text())["searches"] for path in usage(cloud).iterdir()}
+        assert files == {"A.json": 9, "B.json": 5}
+
+
+def _resume_pull(budget, ctx):
+    from aeo.ranksim.api.sites import _CheckpointedSerp
+
+    class Inner(SerpProvider):
+        name, is_google = "serper", True
+        calls = 0
+
+        def search(self, query, count=10):
+            return self.search_with_features(query, count)[0]
+
+        def search_with_features(self, query, count=10):
+            Inner.calls += 1
+            hits = [SerpHit(position=1, url=f"https://a.example/{query}", title="t", snippet="", provider="serper", synthetic=False, is_google=True)]
+            return hits, {"related_searches": [f"{query} more"]}
+
+    project = SimpleNamespace(searches=["a", "b"])
+    rows = proj._pull_google(project, _CheckpointedSerp(Inner(), ctx), {}, 10, lambda *args: None, budget, set())
+    return rows, Inner
+
+
+@pytest.mark.xfail(reason=INFRA_PENDING, strict=False)
+def test_regression_resumed_job_pull_is_free_keeps_features_and_dates(tmp_path):
+    ctx = SimpleNamespace(checkpoint={}, save_checkpoint=lambda *args: None)
+    budget = tracking.Budget(tmp_path, cap=3, fresh_hours=0, instance="i1")
+    first, _ = _resume_pull(budget, ctx)
+    assert budget.used() == 2
+    assert all(row.features.get("related_searches") for row in first)  # job pulls keep SERP features
+    again, inner = _resume_pull(budget, ctx)  # the same job, resumed: answers come from the checkpoint
+    assert budget.used() == 2  # replayed answers are not paid for again
+    assert all(row.results and not row.error for row in again)
+    assert [row.pulled_at for row in again] == [row.pulled_at for row in first]  # dated when Google answered
+    assert all(row.features.get("related_searches") for row in again)

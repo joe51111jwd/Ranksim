@@ -1,11 +1,21 @@
-"""One HTML report. Empty sections stay empty instead of showing made-up ranks."""
+"""Reports. Empty sections stay empty instead of showing made-up ranks.
+
+render_report: the one-page HTML report of the SmartCrew keyword run (the CLI and the old API).
+build_report: the Studio report for one project (GET /api/v1/projects/{slug}/report): where the site ranks, who
+it is up against, and the audit's issues. Plugins add their own keys at the end through extend_report.
+"""
 
 from __future__ import annotations
 
 from html import escape
+from urllib.parse import urlsplit
 
+from aeo.crawl.urls import domain_of
+from aeo.ranksim.competitors import share_of_top10
+from aeo.ranksim.discovery import _clean
 from aeo.ranksim.keywords import Keyword, build_keywords, gap_summary, page_gaps
-from aeo.ranksim.store import latest_checks, latest_test, latest_weights, open_session
+from aeo.ranksim.site import SitePage, page_facts
+from aeo.ranksim.store import RsPage, latest_checks, latest_test, latest_weights, open_session
 
 
 def render_report(database_url: str | None = None, keywords: list[Keyword] | None = None) -> str:
@@ -172,3 +182,147 @@ def _fmt_pos(value) -> str:
     if value is None:
         return "n/a"
     return escape(str(value))
+
+
+# -- the Studio report ----------------------------------------------------------------------------
+
+
+def stored_site_pages(project, database: str, limit: int = 80) -> list[SitePage]:
+    session = open_session(database)
+    try:
+        rows = session.query(RsPage).filter(RsPage.domain.in_([project.domain, "www." + project.domain.removeprefix("www.")])).limit(limit * 2).all()
+        pages = []
+        for row in rows:
+            if not project.is_our_url(row.url):
+                continue
+            pages.append(page_facts(row.url, row.raw_html or "", row.status or "error", row.error or "", row.fetch_ms))
+    finally:
+        session.close()
+    pages.sort(key=lambda page: (urlsplit(page.url).path.strip("/").count("/"), page.url))
+    return pages[:limit]
+
+
+def _pages_for(database: str, urls: list[str]) -> dict[str, SitePage]:
+    from aeo.ranksim.project import loose_key
+
+    if not urls:
+        return {}
+    session = open_session(database)
+    try:
+        wanted = set(urls) | {url.rstrip("/") for url in urls} | {url.rstrip("/") + "/" for url in urls}
+        rows = session.query(RsPage).filter(RsPage.url.in_(sorted(wanted))).all()
+        found = {}
+        for row in rows:
+            if row.status == "fetched" and (row.raw_html or "").strip():
+                found[loose_key(row.url)] = page_facts(row.url, row.raw_html)
+    finally:
+        session.close()
+    return {url: found[loose_key(url)] for url in urls if loose_key(url) in found}
+
+
+def build_report(project, meta, database: str, *, ctx=None, google_ready: bool = False, ui=None) -> dict:
+    """Rankings, competitors and issues for one project, from what is stored. Positions are Google's; predicted
+    positions, when an engine is built, are the model's order among the stored candidates.
+
+    Every plugin's extend_report(report, project=, meta=, database=, ctx=, ui=) runs last, one at a time, and adds
+    keys under its own name. A plugin that raises, removes a key or adds something that is not JSON has its changes
+    undone (plugins.extend), so the report always encodes. ui is the app state when the report is built for the
+    API, else None.
+    """
+    from aeo.ranksim import plugins
+    from aeo.ranksim.audit import audit
+    from aeo.ranksim.project import latest_google
+
+    google = latest_google(project)
+    own_pages = stored_site_pages(project, database)
+    readable = [page for page in own_pages if page.status == "fetched"]
+    by_search = google.by_search() if google is not None else {}
+    result_urls = [item.url for entry in (google.searches if google else []) for item in entry.results if 1 <= item.position <= 10]
+    docs = _pages_for(database, result_urls)
+    competitors = set(meta.competitors or [])
+
+    rankings = []
+    for search in project.searches:
+        entry = by_search.get(search)
+        results = sorted(entry.results, key=lambda item: item.position) if entry else []
+        top = [item for item in results if 1 <= item.position <= 10]
+        mine = next((item for item in top if project.is_our_url(item.url)), None)
+        predicted = None
+        if ctx is not None and mine is not None:
+            try:
+                from aeo.ranksim import workspace as ws
+
+                view = ws.compare_search(ctx, search, meta)
+                predicted = {"position": view.your_predicted, "of": view.scored}
+            except Exception:  # noqa: BLE001 - the report never fails on one search
+                predicted = None
+        rankings.append(
+            {
+                "q": search,
+                "position": mine.position if mine else None,
+                "url": mine.url if mine else _best_page(search, readable),
+                "predicted": predicted,
+                "checked": bool(results),
+                "top": [
+                    {
+                        "position": item.position,
+                        "url": item.url,
+                        "domain": (item.domain or domain_of(item.url)).removeprefix("www."),
+                        "title": item.title or (docs.get(item.url).title if docs.get(item.url) else ""),
+                        "you": project.is_our_url(item.url),
+                        "competitor": (item.domain or domain_of(item.url)).removeprefix("www.") in competitors,
+                    }
+                    for item in top
+                ],
+            }
+        )
+
+    share = share_of_top10(google, project.domain)
+    for row in share:
+        row["competitor"] = row["domain"] in competitors
+    issues = audit(project, own_pages, rankings, docs, database=database, meta=meta)
+    ranked = [row for row in rankings if row["position"]]
+    checked = [row for row in rankings if row["checked"]]
+    report = {
+        "site": project.site,
+        "name": project.name,
+        "pages_read": len(readable),
+        "pages_failed": len(own_pages) - len(readable),
+        "search_data": bool(checked),
+        "google_ready": google_ready,
+        "pulled": next((entry.pulled_label for entry in (google.searches if google else []) if entry.results), ""),
+        "kpis": {
+            "searches": len(project.searches),
+            "checked": len(checked),
+            "top10": len(ranked),
+            "top3": sum(1 for row in ranked if row["position"] <= 3),
+            "average": round(sum(row["position"] for row in ranked) / len(ranked), 1) if ranked else None,
+            "issues": len(issues),
+            "high": sum(1 for issue in issues if issue["severity"] == "high"),
+        },
+        "rankings": rankings,
+        "share": share[:12],
+        "competitors": list(meta.competitors or []),
+        "issues": issues,
+        "pages": [
+            {"url": page.url, "path": page.path, "status": page.status, "title": page.title, "words": page.words, "issues": sum(1 for issue in issues if issue.get("page") == page.url)}
+            for page in own_pages
+        ],
+    }
+    plugins.extend("extend_report", report, project=project, meta=meta, database=database, ctx=ctx, ui=ui)
+    return report
+
+
+def _tokens(text: str) -> set[str]:
+    return {word for word in _clean(text).split() if len(word) > 2 and word not in {"and", "the", "for", "with", "your", "you"}}
+
+
+def _best_page(search: str, pages: list[SitePage]) -> str | None:
+    want = _tokens(search)
+    best, score = None, 0.0
+    for page in pages:
+        have = _tokens(f"{page.title} {page.h1}")
+        overlap = len(want & have) / len(want) if want else 0.0
+        if overlap > score:
+            best, score = page.url, overlap
+    return best if score >= 0.6 and len(want) >= 2 else None

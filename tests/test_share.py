@@ -673,6 +673,10 @@ def test_weekly_prefers_tracking_history_and_lists_what_is_next(env, monkeypatch
     fake = types.ModuleType("aeo.ranksim.plugins.tracking")
     fake.build_history = lambda project, meta=None: full
     monkeypatch.setitem(sys.modules, "aeo.ranksim.plugins.tracking", fake)
+    import aeo.ranksim.plugins as plugin_package
+
+    # once the real tracking plugin is loaded, "from aeo.ranksim.plugins import tracking" reads the package attribute
+    monkeypatch.setattr(plugin_package, "tracking", fake, raising=False)
     report = {
         "rankings": [{"q": "vinyl fence installation cost"}],
         # the compact form in the report has no dates and must not be read as dated points

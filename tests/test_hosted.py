@@ -619,3 +619,47 @@ def test_security_headers(hosted):
     assert "strict-transport-security" not in plain.headers  # only over https
     secure = client.get("/", headers={"x-forwarded-proto": "https"})
     assert secure.headers["strict-transport-security"].startswith("max-age=")
+
+
+def test_an_old_instance_saving_during_the_rollout_is_merged_once(tmp_path, fake_blob):
+    """First deploy: old and new instances overlap. A save in the old format after the migration is not lost, a newer
+    edit made on the new side is not overwritten, and importing the same old save twice changes nothing."""
+    from aeo.ranksim.cloud import LEGACY_POINTER, REFRESH_EVERY_SECONDS
+
+    old = tmp_path / "old"
+    _make_state(old)
+    first_name = f"{LEGACY_PREFIX}00000000000000000001-aaa.tgz"
+    fake_blob.put_blob(first_name, _legacy_tarball(old), access="private")
+    fake_blob.put_blob(LEGACY_POINTER, first_name.encode(), access="private", allow_overwrite=True)
+
+    clock = [1000.0]
+    new = CloudState(data_dir=tmp_path / "new", db_file=tmp_path / "new" / "rank.db", enabled=True, clock=lambda: clock[0])
+    assert new.refresh(force=True) is True
+    demo_new = tmp_path / "new" / "projects" / "demo"
+    (demo_new / "notes.json").write_text('{"by": "new"}')  # an edit on the new side after the migration
+    new.save()
+
+    # The old instance, unaware, saves again in the old format: it edits project.json and adds a project.
+    (old / "projects" / "demo" / "project.json").write_text('{"name": "Demo, renamed on the old instance"}')
+    (old / "projects" / "late").mkdir()
+    (old / "projects" / "late" / "project.json").write_text('{"name": "Late"}')
+    second_name = f"{LEGACY_PREFIX}00000000000000000002-bbb.tgz"
+    fake_blob.put_blob(second_name, _legacy_tarball(old), access="private")
+    fake_blob.put_blob(LEGACY_POINTER, second_name.encode(), access="private", allow_overwrite=True)
+
+    clock[0] += REFRESH_EVERY_SECONDS + 1
+    assert new.refresh() is True
+    assert (demo_new / "project.json").read_text() == '{"name": "Demo, renamed on the old instance"}'
+    assert (demo_new / "notes.json").read_text() == '{"by": "new"}'  # not removed: the old instance never had it
+    assert (tmp_path / "new" / "projects" / "late" / "project.json").is_file()
+    assert _manifest_of(fake_blob)["legacy"]["name"] == second_name
+
+    reader = _instance(tmp_path / "reader")
+    reader.refresh(force=True)
+    assert (tmp_path / "reader" / "projects" / "late" / "project.json").is_file()
+    assert (tmp_path / "reader" / "projects" / "demo" / "notes.json").is_file()
+
+    fake_blob.calls.clear()
+    clock[0] += REFRESH_EVERY_SECONDS + 1
+    assert new.refresh() is False  # the same old save again: nothing to import, nothing uploaded
+    assert not [call for call in fake_blob.calls if call.startswith("put")]

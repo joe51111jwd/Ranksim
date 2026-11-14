@@ -1,32 +1,40 @@
 """Durable state for a hosted Ranksim (Vercel): projects, stored pages and trained engines in a private Blob store.
 
 A serverless instance only has an empty, temporary /tmp. Ranksim keeps working files there as usual, and this module
-mirrors them to a private Vercel Blob store, one object per project plus one for the shared rank database:
+mirrors them to a private Vercel Blob store:
 
-  ranksim/v2/projects/<slug>/v/<time>-<rand>.tgz   immutable versions of one project folder
-  ranksim/v2/projects/<slug>/HEAD                  pointer to that project's newest version (a hint)
-  ranksim/v2/db/v/<time>-<rand>.db.gz              immutable versions of the SQLite rank database
-  ranksim/v2/HEAD                                  changes on every save anywhere (a hint)
-  ranksim/v2/migrated                              written once the old single tarball was imported
+  ranksim/v2/HEAD             the manifest (JSON): each project's newest save, the rank database's snapshot and the
+                              deltas after it, shared login state (sign out everywhere, a global login lockout)
+  ranksim/v2/s/<time>-<rand>  immutable save objects: the folders of the projects that changed, plus the database's
+                              row-level delta (or a full snapshot when deltas pile up)
 
-Design rules:
+Blob operations are budgeted. Vercel Hobby allows 10,000 simple operations (head, get) and 2,000 advanced ones (put,
+list) a month and blocks Blob for 30 days past a cap (deletes are free). So:
 
-- Versions are immutable, so a cached download can never be stale. The pointers are hints: an instance heads the
-  global pointer (a cheap call that is not served from a cache) and lists the versions when it changed, or every
-  LIST_EVERY_SECONDS anyway, so a pointer write that failed or was slow can only delay, never hide, a newer save.
-- Each project version records the version it was based on and a manifest (path -> sha256) of its files. Saving and
-  loading are three-way merges at file level against that base: files only one side changed are taken from that side,
-  and when both sides changed one file the side doing the merge keeps its own (it is the newer work). So two people
-  working on different projects never clobber each other, and two writers on one project only collide on a file both
-  changed. After writing, the writer lists again; a version that appeared meanwhile is merged and written once more.
-- The rank database is shared by every project (pages and Google results are keyed by URL and search), so it cannot
-  simply be split. It is merged row by row against the last synced copy (see merge_sqlite): rows added or removed on
-  the other side are applied here, a search's Google results are replaced as a group (newest pull wins), and the
-  hash-chained prediction ledger stays one valid chain (local rows never saved are re-chained after the other side's).
-- A project deleted on one instance is saved as a tombstone version with no files, so the deletion reaches the others.
-- The old format (one tarball of everything under ranksim/state/) is imported automatically on the first refresh that
-  finds no new-format data, then saved in the new format. The old tarballs are left in place (nothing is deleted), so
-  going back to an older deployment still finds them.
+- An ordinary request makes no Blob call. An instance checks the manifest (one head) on a cold start, before a write,
+  every REFRESH_EVERY_SECONDS, or when the browser's rs_sync cookie (the newest save it has seen) is newer than what
+  the instance knows. That gives read-your-writes across instances without polling.
+- A save with nothing changed makes no call. Otherwise: one put of the save object and one put of the manifest, with a
+  head before each write of the manifest. Nothing lists: objects nobody references are deleted (free), and the
+  database goes up as a small delta, not the whole file.
+
+Merging (two writers never clobber each other):
+
+- Projects: three-way merge at file level against the version both sides started from. Files only one side changed
+  come from that side; a file both changed keeps the merging side's copy (the newer work). A deleted project is a
+  save with no files (a tombstone).
+- The rank database is shared by every project (pages and Google results are keyed by URL and search), so it is
+  merged row by row (merge_sqlite, make_delta): rows added or removed on one side are applied on the other, a search's
+  Google results move as a group (newest pull wins), and the hash-chained prediction ledger stays one valid chain.
+- Put has no compare-and-swap, so the manifest is re-checked right before it is written; a save that lands in between
+  is merged and the manifest written again.
+
+Older formats. The first check of a store with no manifest imports the phase A layout (ranksim/v2/projects/...) or the
+old single tarball (ranksim/state/), once. During the first deploy an old instance may still save an old-format
+tarball; for LEGACY_WATCH_SECONDS after the migration every instance notices a newer one (one head per check) and
+merges only what the old instance changed since the import (against ranksim/v2/legacy-base.json), so nothing is lost,
+newer edits on the new side are kept, and importing the same tarball twice changes nothing. Old objects are never
+deleted, so going back to an older deployment still finds them.
 
 Nothing here runs unless BLOB_READ_WRITE_TOKEN is set (or a store is passed in, as the tests do).
 """

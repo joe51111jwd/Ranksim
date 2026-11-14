@@ -48,7 +48,8 @@ def test_shell_is_served_at_root_and_app_paths_with_its_own_policy(local):
         csp = page.headers["content-security-policy"]
         assert "default-src 'self'" in csp and "script-src 'self'" in csp and "frame-ancestors 'none'" in csp
         assert page.headers["x-frame-options"] == "DENY"
-    assert client.get(f"/app/{ws.DEMO_SLUG}/nope").status_code == 404
+    assert client.get(f"/app/{ws.DEMO_SLUG}/history").status_code == 200  # a plugin's screen key survives a reload
+    assert client.get(f"/app/{ws.DEMO_SLUG}/No.Such").status_code == 404
     # the classic screens keep the strict policy
     assert "'unsafe-inline'" not in client.get("/projects").headers["content-security-policy"]
 

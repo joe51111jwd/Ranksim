@@ -1184,6 +1184,10 @@ def _pull_work(ui: UiState, slug: str, job: Job) -> str:
             "(query, url, position) with 'Import Google positions from a CSV' under Key searches on this page. Nothing was invented."
         ) from exc
     ui.forget(slug)
+    from aeo.ranksim import plugins
+    from aeo.ranksim.api.common import _pull_summary
+
+    plugins.call_all("after_pull", project=project, report=_pull_summary(report), ui=ui)
     job.timings = [asdict(step) for step in report.all_steps()]
     ui.jobs.event(job, "done", f"Pull {report.pull_id} finished in {report.total_seconds:.1f} s.", 1, 1)
     return f"/p/{slug}?pulled={report.pull_id}"

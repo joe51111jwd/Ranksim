@@ -70,10 +70,12 @@ since the import is applied, newer edits on the new side are kept, and importing
 
 ## How to roll back safely
 
-The old deployment only reads `ranksim/state/`. Without step 1 below it starts from the state at migration time, and
-work done on the new deployment would be invisible to it (still kept in `ranksim/v2/`, not deleted).
+**A rollback loses every change made on the new deployment unless you run `export-legacy` first.** The old deployment
+only reads `ranksim/state/`, so without step 1 it starts from the state at the moment of migration: projects,
+analyses, pulls, edits and settings made on the new deployment do not appear in it (they stay in `ranksim/v2/` and come
+back if you deploy the new code again, but the old deployment never sees them).
 
-1. Hand the newest state back to the old format first:
+1. Always first, before touching Vercel: hand the newest state back to the old format:
    ```bash
    python -m aeo.ranksim.cloud export-legacy
    ```

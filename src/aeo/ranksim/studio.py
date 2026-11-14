@@ -165,6 +165,19 @@ def _error(status: int, message: str) -> JSONResponse:
     return JSONResponse({"error": message}, status_code=status)
 
 
+def _share_link_shape(path: str) -> bool:
+    """A path that looks like a share link (/r/<token>[/...]) with a well-formed token. Only these may make a
+    signed-out request read storage (the routine cold-start check), and only once the token has the right shape."""
+    if not path.startswith("/r/") or path.startswith("/r/assets/"):
+        return False
+    token = path[3:].split("/", 1)[0]
+    try:
+        from aeo.ranksim.plugins.share import TOKEN_RE
+    except Exception:  # noqa: BLE001 - no share plugin: no public pages that need data
+        return False
+    return bool(TOKEN_RE.match(token))
+
+
 def _is_open(path: str) -> bool:
     return path in OPEN_EXACT or path.startswith(OPEN_PREFIX)
 
@@ -199,6 +212,11 @@ def register(app: FastAPI, ui) -> None:
         # checked its token, so it never forces a check and its cookie hint is ignored: anyone could send either, and
         # Vercel Hobby blocks Blob for 30 days past its monthly cap. It still gets the routine cold-start check.
         trusted = _signed_in(ui, request)
+        if not trusted and not _share_link_shape(path):
+            # Signed out and not a well-formed share link (the cron route checks its secret and syncs by itself; the
+            # share catch-all and anything else answer without project data): no storage call at all, so anonymous
+            # traffic can never start a cold-start sync.
+            return await call_next(request)
         writing = request.method in {"POST", "PUT", "PATCH", "DELETE"}
         force = writing and trusted
         hint_text = request.cookies.get(SYNC_COOKIE, "") if trusted else ""

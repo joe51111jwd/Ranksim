@@ -351,6 +351,18 @@ class _CheckpointedSerp:
             closer()
 
 
+def _warm_report(ui, slug: str, events=None) -> None:
+    """Build the report now, after after_pull and before the save, so its cache (reportcache.py) is saved with the job
+    and the next GET on any instance reads it instead of building it. Best effort: a failure only means a slower GET."""
+    try:
+        from aeo.ranksim.api.projects import project_report
+
+        ui.forget(slug)
+        project_report(ui, slug, cached=False)
+    except Exception as exc:  # noqa: BLE001
+        print(f"ranksim: the report for {slug} was not precomputed: {type(exc).__name__}", flush=True)
+
+
 def _save_now(ui) -> None:
     cloud = getattr(ui, "cloud", None)
     if cloud is not None and cloud.enabled:
@@ -524,6 +536,7 @@ def _run_pull_unlocked(ui, project, use_google: bool, events, *, notify: bool = 
     summary = _pull_summary(report)
     if notify:
         _after_pull(ui, project, summary)  # before the cloud save, so what plugins store is kept
+        _warm_report(ui, project.slug, events)
     cloud = getattr(ui, "cloud", None)
     if cloud is not None and cloud.enabled:
         events.put({"type": "progress", "step": "store", "message": "Saving the project, pages and engine.", "done": 0, "total": 1, "seconds": 0})
@@ -668,6 +681,7 @@ def _analyze_rest_locked(ui, project, chosen: list, events, step, ctx, *, resume
         summary = None
         step("google", "Search data isn't connected on this server yet, so rankings are skipped. Your pages were still checked.", state="skipped")
     _after_pull(ui, project, summary)  # before the cloud save, so what plugins store is kept
+    _warm_report(ui, project.slug, events)
     cloud = getattr(ui, "cloud", None)
     if cloud is not None and cloud.enabled and ctx is None:
         cloud.save()  # a job saves once, with its final record, when it ends

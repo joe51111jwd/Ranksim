@@ -357,7 +357,9 @@ def test_the_client_report_labels_every_number(env):
     # the demo is labeled as demo, never as Google data, and an unrecorded date is not shown as a date
     assert data["source"] == "Demo" and data["data"]["demo"] is True
     assert data["google_date"] == "" and "not recorded" in data["notes"][0] and "Google results" not in data["notes"][0]
-    assert data["predictions"] is False  # demo estimates carry no CLEARER backtest, so a client sees none
+    # Both hold: demo estimates carry no CLEARER backtest, and a ranking page keeps its Google position
+    # (rankings[].predicted has no re-ranked position, report.ranking_prediction), so a client sees no estimate.
+    assert data["predictions"] is False
     assert all(row["predicted"] is None or row["predicted"]["label"] == "PREDICTED" for row in data["rankings"])
     js = (share.SHARE_STATIC / "share.js").read_text(encoding="utf-8")
     for label in ("PREDICTED", ' checked "', "Report made ", "Your position", "check date not recorded", "This week", "Position changes", '"based on "', '" page pairs"'):
@@ -1115,9 +1117,13 @@ def test_client_report_carries_clearer_estimates_with_their_pairs(env, monkeypat
 
     def with_confidence(ui, slug):
         report = json.loads(json.dumps(real(ui, slug)))
+        # Since report.ranking_prediction, ranking pages carry no re-ranked position, so the fixture sets explicit
+        # estimates: one CLEARER with a position (shown to the client) and the rest UNSURE (hidden).
         for index, row in enumerate(report["rankings"]):
-            if row.get("predicted"):
-                row["predicted"]["confidence"] = {"label": "CLEARER" if index == 0 else "UNSURE", "backtest_pairs": 48, "backtest_pairwise": 0.7}
+            row["predicted"] = {
+                "position": 4, "of": 7, "label": "PREDICTED",
+                "confidence": {"label": "CLEARER" if index == 0 else "UNSURE", "backtest_pairs": 48, "backtest_pairwise": 0.7},
+            }
         return report
 
     monkeypatch.setattr(share, "_project_report_fn", lambda: with_confidence)

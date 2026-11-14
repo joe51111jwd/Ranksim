@@ -59,10 +59,10 @@ TOKEN_SKEW_SECONDS = 60
 TIMEOUT_SECONDS = 20.0
 
 DAYS = 28
-LAG_DAYS = 2  # Search Console's final data trails today by about two days
-ROW_LIMIT = 1000
+LAG_DAYS = 3  # final data trails by 2 to 3 days, and Search Console days are Pacific time
+ROW_LIMIT = 5000  # rows per dimension set; Google sorts by clicks, so the cut drops rows with few clicks
 STALE_SECONDS = 12 * 3600
-KEEP_SNAPSHOTS = 8
+KEEP_SNAPSHOTS = 3  # snapshots can hold 15,000 rows; keep the cloud copy small
 REPORT_QUERIES = 100
 REPORT_PAGES = 50
 DISCOVERY_LIMIT = 30
@@ -352,42 +352,58 @@ def _api_error(response: httpx.Response, property_url: str = "") -> GscError:
 # ---------------------------------------------------------------------------------------------------------------------
 
 
+# Access tokens live in this process only. account.json changes only when Google is connected or disconnected, so
+# an hourly refresh on one serverless instance never makes its copy differ from the cloud copy: a disconnect or an
+# account switch made on another instance always wins the merge (review fix).
+_ACCESS: dict[str, tuple[str, float]] = {}
+
+
+def _access_key(account: dict) -> str:
+    return hashlib.sha256(str(account.get("refresh_token") or "").encode("utf-8")).hexdigest()
+
+
 def store_tokens(ui, tokens: dict, *, keep_refresh: str = "") -> dict:
+    """Seal and store a new grant (connect). With keep_refresh (a refresh), only the in-memory access token changes."""
     refresh = str(tokens.get("refresh_token") or keep_refresh or "")
     if not refresh:
         raise GscError("Google did not return lasting access. Remove Ranksim from your Google account's third party access, then connect again.", code="no_refresh_token")
-    previous = load_account(ui) or {}
-    account = {
-        "refresh_token": secretbox.seal(refresh, purpose=REFRESH_PURPOSE),
-        "access_token": secretbox.seal(str(tokens["access_token"]), purpose=ACCESS_PURPOSE),
-        "expires_at": int(_now(ui) + int(tokens.get("expires_in") or 3600)),
-        "scope": str(tokens.get("scope") or previous.get("scope") or SCOPE),
-        "connected_at": previous.get("connected_at") if keep_refresh else _stamp(ui),
-        "refreshed_at": _stamp(ui),
-    }
-    save_account(ui, account)
+    expires = _now(ui) + int(tokens.get("expires_in") or 3600)
+    account = load_account(ui) or {}
+    if not keep_refresh or not account.get("refresh_token"):
+        account = {
+            "refresh_token": secretbox.seal(refresh, purpose=REFRESH_PURPOSE),
+            "scope": str(tokens.get("scope") or SCOPE),
+            "connected_at": _stamp(ui),
+            "connection_id": secrets.token_hex(8),
+        }
+        save_account(ui, account)
+    _ACCESS[_access_key(account)] = (str(tokens["access_token"]), expires)
     return account
+
+
+def _forget_account(ui) -> None:
+    """The grant is gone (revoked, unreadable): delete it here and in cloud storage, even from a GET."""
+    delete_account(ui)
+    _save_cloud(ui)
 
 
 def access_token(ui, *, force_refresh: bool = False) -> str:
     account = load_account(ui)
     if not account or not account.get("refresh_token"):
         raise GscError("Search Console is not connected.", code="not_connected", status=409)
-    if not force_refresh and account.get("access_token") and float(account.get("expires_at") or 0) - TOKEN_SKEW_SECONDS > _now(ui):
-        try:
-            return secretbox.unseal(account["access_token"], purpose=ACCESS_PURPOSE)
-        except secretbox.SecretBoxError:
-            pass  # fall through to a refresh
+    cached = _ACCESS.get(_access_key(account))
+    if not force_refresh and cached and cached[1] - TOKEN_SKEW_SECONDS > _now(ui):
+        return cached[0]
     try:
         refresh = secretbox.unseal(account["refresh_token"], purpose=REFRESH_PURPOSE)
     except secretbox.SecretBoxError:
-        delete_account(ui)
+        _forget_account(ui)
         raise GscAuthError("The stored Google access can no longer be read (the secret changed). Turn it on again to reconnect.", code="unreadable", status=409) from None
     config = oauth_config()
     try:
         tokens = client_for(ui).refresh(config, refresh)
     except GscAuthError:
-        delete_account(ui)
+        _forget_account(ui)
         raise
     store_tokens(ui, tokens, keep_refresh=refresh)
     return str(tokens["access_token"])
@@ -421,6 +437,8 @@ def revoke(ui) -> bool:
             revoked = True
             break  # revoking either token ends the whole grant
     delete_account(ui)
+    _ACCESS.clear()
+    shutil.rmtree(Path(ui.root) / "_plugins" / NAME / "pending", ignore_errors=True)  # parked first-analysis data goes with the grant
     return revoked
 
 
@@ -536,7 +554,9 @@ def _rematch_other_sites(ui, connected_project, usable: set[str], properties: li
             continue
         settings = load_settings(other)
         if settings["enabled"] and settings["property"] and settings["property"] not in usable:
-            save_settings(ui, other, {"property": match_property(other, properties), "last_error": "", "error_at": ""})
+            save_settings(ui, other, {"property": match_property(other, properties, strict=True), "last_error": "", "error_at": ""})
+        elif settings["enabled"] and settings["last_error"]:
+            save_settings(ui, other, {"last_error": "", "error_at": ""})  # a fresh grant: old errors no longer hold
 
 
 def auth_url(config: dict, redirect_uri: str, state: str, *, challenge: str = "") -> str:
@@ -881,12 +901,19 @@ def opportunities(snapshot: dict) -> dict:
         low.append(item)
     near.sort(key=lambda item: (-item["impressions"], item["position"]))
     low.sort(key=lambda item: (-item["impressions"], item["page"]))
+    capped = snapshot.get("capped") or {}
+    partial = (
+        f" Partial: the site has more than {int(snapshot.get('row_limit') or ROW_LIMIT):,} searches or search and page pairs, "
+        "and Search Console sends the most clicked first, so some rarely clicked ones are not listed."
+        if capped.get("queries") or capped.get("query_pages") or capped.get("pages") else ""
+    )
     return {
+        "partial": bool(partial),
         "near_page_one": near[:OPPORTUNITY_LIMIT],
         "low_ctr": low[:OPPORTUNITY_LIMIT],
         "min_impressions": floor,
         "rules": {
-            "near_page_one": f"Searches with at least {floor} impressions at an average position of 8 to 20.",
+            "near_page_one": f"Searches with at least {floor} impressions at an average position of 8 to 20.{partial}",
             "low_ctr": f"Pages on page one with at least {floor} impressions and under half a benchmark click rate for "
             "their position. The benchmark is a rough industry curve, not Google data.",
         },
@@ -924,7 +951,7 @@ def _pending_path(ui, host: str) -> Path:
 
 def _prune_pending(ui) -> None:
     """Parked first-analysis data older than PENDING_SECONDS is deleted (an analysis that stopped never adopts it)."""
-    folder = _pending_path(ui, "x").parent
+    folder = Path(ui.root) / "_plugins" / NAME / "pending"  # read only: never creates the folder
     if not folder.is_dir():
         return
     for path in folder.glob("*.json"):
@@ -940,7 +967,12 @@ def _adopt_checked_recently(ui, project) -> bool:
     from aeo.ranksim import plugins
 
     checks = _read_json(plugins.workspace_dir(ui, NAME) / "adopt_checks.json") or {}
-    return _now(ui) - float(checks.get(project.slug) or 0) < ADOPT_RETRY_SECONDS
+    return _now(ui) - float(checks.get(_adopt_key(project)) or 0) < ADOPT_RETRY_SECONDS
+
+
+def _adopt_key(project) -> str:
+    """The slug and creation time: a project deleted and created again under the same slug starts fresh."""
+    return f"{project.slug}|{getattr(project, 'created', '')}"
 
 
 def _record_adopt_check(ui, project) -> None:
@@ -948,7 +980,8 @@ def _record_adopt_check(ui, project) -> None:
 
     path = plugins.workspace_dir(ui, NAME) / "adopt_checks.json"
     checks = _read_json(path) or {}
-    checks[project.slug] = _now(ui)
+    checks = {key: at for key, at in checks.items() if _now(ui) - float(at or 0) < ADOPT_RETRY_SECONDS}  # drop old rows
+    checks[_adopt_key(project)] = _now(ui)
     _write_json(path, checks)
 
 
@@ -1018,6 +1051,8 @@ def discovery_sources(*, project, pages=None, ui=None) -> list[dict]:
     site's first analysis (no project yet), when Google is connected and a property covers the site."""
     if ui is None:
         return []
+    if not getattr(ui, "public_demo", False) and getattr(ui, "root", None):
+        _prune_pending(ui)
     if project is None:
         snapshot = _first_analysis_snapshot(ui, pages)
     elif not _active(ui, project):
@@ -1476,7 +1511,7 @@ def register(app, ui) -> None:
         if changes.get("enabled") and not current["property"] and connected(ui) and oauth_config()["ready"]:
             # Google is already connected (another site did it): pick this site's property as the callback would.
             try:
-                chosen = match_property(project, await run_in_threadpool(list_properties, ui))
+                chosen = match_property(project, await run_in_threadpool(list_properties, ui), strict=True)
             except GscError:
                 chosen = ""
             if chosen:

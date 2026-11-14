@@ -2,7 +2,7 @@
    building blocks every screen uses. No screen code lives here. Every number on screen comes from /api/v1.
    Predicted positions are model estimates among stored pages, never a Google rank. */
 
-import { call, screen } from './hooks.js';
+import { call, screen, screenNotices, renderAll } from './hooks.js';
 
 export const CSRF = (document.getElementById('csrf') || {}).value || '';
 export const MODE = document.documentElement.dataset.mode || 'local';
@@ -453,10 +453,12 @@ export function footer() {
 
 /* The standard screen: a heading, an optional line under it, optional actions on the right, then the body. */
 export function page(title, sub, actions, ...body) {
+  const notices = currentNotices();
   return h('div', { class: 'wrap screen' },
     h('div', { class: 'head' },
       h('div', null, h('h1', { text: title }), sub ? h('p', { class: 'sub', text: sub }) : null),
       actions ? h('div', { class: 'actions' }, actions) : null),
+    notices.length ? h('div', { class: 'notices', role: 'status' }, notices) : null,
     body);
 }
 
@@ -466,9 +468,22 @@ export function paint(...nodes) {
 }
 
 /* The note shown when the server has no search data for this site. */
+/* The screen notices (registerScreenNotice) for the screen being drawn. Rendered once per screen paint: page() and
+   noSearchData() both ask, so they share the answer. */
+let noticeCache = null;
+function currentNotices() {
+  const key = S.screen || '';
+  if (noticeCache && noticeCache.key === key && noticeCache.report === S.report) return noticeCache.nodes;
+  const nodes = renderAll(screenNotices(key), { screen: key, report: S.report, project: S.project, slug: S.slug });
+  noticeCache = { key, report: S.report, nodes };
+  queueMicrotask(() => { noticeCache = null; }); // a screen paints synchronously; the next paint renders afresh
+  return nodes;
+}
+
 export function noSearchData() {
   const R = S.report;
   if (R.search_data) return null;
+  if (currentNotices().length) return null; // a plugin notice speaks for this screen; never stack the two
   return h('div', { class: 'callout span-4' }, icon('warn'), h('span', null,
     h('b', { text: 'Rankings need search data. ' }),
     R.google_ready ? 'Refresh this site in Settings to pull Google results.' : 'Search data isn\'t connected on this server yet, so this report covers your pages only. Add SERPER_API_KEY to the server once and every site gets rankings and competitors.'));

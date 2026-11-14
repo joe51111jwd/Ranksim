@@ -20,7 +20,14 @@ const PAUSED_BASE = args['paused-base'] ? args['paused-base'].replace(/\/$/, '')
 const OUT = args.out || 'tests/e2e/screenshots';
 // --group main | jobs | all. pytest runs main and jobs at the same time against separate servers to keep the run short.
 const GROUP = args.group || 'all';
-const JOB_STEPS = new Set(['parallel-analysis', 'reattach-after-refresh', 'paused-resume']);
+// Three groups run at the same time against three servers: main (the core flow), more (plugin features on a project
+// it seeds through the API), jobs (analysis jobs on slow fake sites).
+const GROUPS = {
+  jobs: new Set(['first-load-kept', 'parallel-analysis', 'reattach-after-refresh', 'paused-resume']),
+  more: new Set(['seed', 'discover-searches', 'discover-competitors', 'audit-issues', 'audit-details', 'audit-fix-top', 'audit-apply',
+    'track', 'publish', 'phone-issue-sheet', 'phone-test-changes', 'phone-publish']),
+};
+const groupOf = (name) => (GROUPS.jobs.has(name) ? 'jobs' : GROUPS.more.has(name) ? 'more' : 'main');
 const PASSWORD = process.env.E2E_PASSWORD || 'e2e-pass';
 const SITE = process.env.E2E_SITE || 'www.dirtcrew.example';
 const SEARCHES = JSON.parse(process.env.E2E_SEARCHES || '["dirt work software","excavation crew app","grading job costing","paving crew scheduling"]');
@@ -36,7 +43,7 @@ let phase = 'start';
 const allowed = []; // [{phase, pattern}] console errors expected in one phase only
 
 async function step(name, fn) {
-  if (GROUP !== 'all' && name !== 'login' && (GROUP === 'jobs') !== JOB_STEPS.has(name)) return;
+  if (name !== 'login' && (GROUP === 'all' ? name === 'seed' : groupOf(name) !== GROUP)) return;
   phase = name;
   const started = Date.now();
   try {
@@ -136,6 +143,22 @@ try {
     await page.fill(SEL.password, PASSWORD);
     await page.click(SEL.loginSubmit);
     await page.waitForSelector(SEL.homeInput);
+  });
+
+  await step('seed', async () => {
+    // The same site as the main flow, built through the API: analyze, set the searches, pull Google again.
+    slug = await page.evaluate(async ([site, searches]) => {
+      const csrf = document.getElementById('csrf').value;
+      const post = (path, body) => fetch(path, { method: 'POST', headers: { 'content-type': 'application/json', 'x-ranksim-csrf': csrf }, body: JSON.stringify(body) });
+      const lines = (await (await post('/api/v1/sites', { site })).text()).trim().split('\n').map((line) => JSON.parse(line));
+      const done = lines.find((line) => line.type === 'done');
+      if (!done) throw new Error(`analysis did not finish: ${JSON.stringify(lines.slice(-2))}`);
+      await post(`/api/v1/projects/${encodeURIComponent(done.slug)}/settings`, { queries: searches.join('\n') });
+      const pull = (await (await post(`/api/v1/projects/${encodeURIComponent(done.slug)}/pull`, { google: true })).text()).trim().split('\n').map((line) => JSON.parse(line));
+      if (!pull.some((line) => line.type === 'done')) throw new Error(`pull did not finish: ${JSON.stringify(pull.slice(-2))}`);
+      return done.slug;
+    }, [SITE, SEARCHES]);
+    expect(slug, 'a seeded project');
   });
 
   await step('home', async () => {
@@ -381,8 +404,85 @@ try {
     await audit(page, 'desktop-11b-fix-in-editor');
   });
 
+  await step('audit-details', async () => {
+    const issues = `/app/${encodeURIComponent(slug)}/issues`;
+    await goto(page, issues);
+    await page.waitForSelector('.issue-controls');
+    await page.locator('.issue-controls .seg button').filter({ hasText: 'High' }).click();
+    const dots = await page.$$eval('.rowcard .dot', (list) => list.map((d) => d.className));
+    expect(dots.length && dots.every((c) => /high/.test(c)), `High shows only high issues: ${dots.join(',')}`);
+    await page.locator('.issue-controls .seg button').filter({ hasText: 'All' }).click();
+    await page.locator('.issue-controls button').filter({ hasText: 'By search' }).click();
+    const heads = await page.$$eval('.bento section.tile h2', (list) => list.map((el) => el.textContent.trim()));
+    expect(heads.length && heads.every((t) => /^["\u201c]/.test(t) || /Not tied to a search/.test(t)), `By search headings: ${heads.join(' | ')}`);
+    await page.locator('.issue-controls button').filter({ hasText: 'By page' }).click();
+    // 2. the sheet for an issue with an element
+    const h1Row = () => page.locator(SEL.issueRow).filter({ has: page.locator('.issue-tag', { hasText: '<h1>' }) }).first();
+    await h1Row().click();
+    await page.waitForSelector('.sheet.open .issue-element code.issue-selector');
+    const sheetText = await page.innerText('.sheet.open');
+    expect(/What to do/.test(sheetText), 'the issue sheet says what to do');
+    const title = (await page.innerText('.sheet.open .sheet-head h2')).trim();
+    // 3 and 4. Fix in editor, open another comment, come back and Fix in editor again
+    for (let round = 0; round < 2; round += 1) {
+      await page.click(SEL.fixInEditor);
+      await page.waitForURL(/focus=/);
+      await page.waitForSelector('.annot-item.open', { timeout: SLOW });
+      const frame = page.frameLocator(SEL.editorFrame);
+      await frame.locator('[data-rs-pick]').first().waitFor({ state: 'attached', timeout: SLOW });
+      expect((await frame.locator('[data-rs-annotations="active"]').count()) === 1, 'exactly one active element');
+      expect((await frame.locator('[data-rs-pin]').count()) >= 1, 'pins are drawn');
+      expect((await page.innerText('.annot-item.open .annot-title')).trim() === title, 'the open comment is the issue');
+      if (round === 0) {
+        await page.locator('.annot-item:not(.open) .annot-head').first().click();
+        await page.click(SEL.navLink('Issues'));
+        await page.waitForSelector(SEL.issueRow);
+        await h1Row().click();
+        await page.waitForSelector(SEL.fixInEditor);
+      }
+    }
+    // 5. mode toggle closes comments and draws pins again
+    await page.locator('.annot-item.open .annot-head').click();
+    await page.locator('button:has-text("HTML")').first().click();
+    // 7. nothing leaks into the code view
+    const code = await page.locator('textarea.code').first().inputValue();
+    expect(!/data-rs/.test(code), 'the HTML view has no data-rs');
+    await page.locator('button:has-text("Visual")').first().click();
+    await page.frameLocator(SEL.editorFrame).locator('[data-rs-pin]').first().waitFor({ timeout: SLOW });
+    expect((await page.locator('.annot-item.open').count()) === 0, 'no comment is open after a mode change');
+    await audit(page, 'desktop-11d-audit-editor');
+  });
+
+  await step('audit-fix-top', async () => {
+    await goto(page, `/app/${encodeURIComponent(slug)}/issues`);
+    const button = page.locator('button.fix-top').first();
+    await button.waitFor();
+    const n = Number(((await button.innerText()).match(/\d+/) || ['0'])[0]);
+    await button.click();
+    await page.waitForSelector('.fix-list');
+    const rows = await page.locator('.fix-row').count();
+    expect(n && rows === n, `the review lists ${n} changes, got ${rows}`);
+    if (rows > 1) {
+      await page.locator('.fix-row input[type=checkbox]').last().uncheck();
+      const label = (await page.innerText('.fix-actions button')).trim();
+      expect(new RegExp(`${rows - 1} change`).test(label), `the apply button counts the checked rows: ${label}`);
+    }
+    await audit(page, 'desktop-07c-fix-top-review');
+    const tests = [];
+    const onRequest = (r) => { if (/\/api\/v1\/projects\/[^/]+\/test$/.test(r.url()) && r.method() === 'POST') tests.push(r.postData() || ''); };
+    page.on('request', onRequest);
+    await page.locator('.fix-actions button').click();
+    await page.waitForSelector('.sheet', { state: 'detached', timeout: SLOW });
+    await page.waitForSelector('.result, .verdict', { timeout: SLOW });
+    page.off('request', onRequest);
+    const done = await page.locator('.annot-done').count();
+    expect(done === Math.max(1, rows - 1), `the applied comments are marked Applied (${done} of ${Math.max(1, rows - 1)}; ${await page.locator('.annot-item').count()} comments)`);
+    expect(tests.length && tests.every((body) => !/data-rs/.test(body)), 'the Test changes draft has no data-rs');
+    await audit(page, 'desktop-11e-fix-top-result');
+  });
+
   await step('audit-apply', async () => {
-    const pageUrl = `https://${SITE}/dirt-work-software/`;
+    const pageUrl = `https://${SITE}/`; // a page Fix the top issues did not touch
     await goto(page, `/app/${encodeURIComponent(slug)}/editor?page=${encodeURIComponent(pageUrl)}&q=${encodeURIComponent(SEARCHES[0])}`);
     await page.waitForSelector(SEL.commentsPanel, { timeout: SLOW });
     const frame = page.frameLocator(SEL.editorFrame);
@@ -425,8 +525,14 @@ try {
     await page.keyboard.type(' for dirt work crews');
     await page.waitForTimeout(400);
     await page.waitForSelector(`${SEL.testButton}:not([disabled])`, { timeout: SLOW });
+    const answers = [];
+    const onAnswer = (r) => { if (/\/api\/v1\/projects\/[^/]+\/(test|predict)/.test(r.url()) && r.request().method() === 'POST') answers.push(`${r.status()} ${r.url().replace(BASE, '')}`); };
+    page.on('response', onAnswer);
     await page.click(SEL.testButton);
     await page.waitForSelector(SEL.verdict, { timeout: SLOW });
+    await page.waitForTimeout(500);
+    page.off('response', onAnswer);
+    expect(answers.length && answers.every((line) => line.startsWith('200')), `Test changes answers 200: ${answers.join(', ')}`);
     const body = await page.innerText('main');
     expect(/predict/i.test(body), 'the result says it is a prediction');
     await checkPredictTiles(page);
@@ -535,6 +641,50 @@ try {
     await page.setViewportSize({ width: 1280, height: 900 });
   });
 
+  await step('first-load-kept', async () => {
+    // A brand new site on a slow host: the page shows first, the person edits while the analysis runs, and the
+    // report arriving must neither empty the draft, load it again, nor drop those edits.
+    const site = 'https://www.slow-first.example/';
+    const tab = await desk.newPage();
+    watch(tab, 'first-load');
+    await tab.goto(`${BASE}/edit?url=${encodeURIComponent(site)}`);
+    const h1 = tab.frameLocator(SEL.editorFrame).locator('h1').first();
+    await h1.waitFor({ timeout: SLOW * 3 });
+    const base = await tab.evaluate(async (u) => (await import('/studio/js/editor/editor.js')).draftFor(u).base, site);
+    expect(base && base.length > 100, 'the first loaded draft has the page');
+    // Watch the draft from inside the page: it must never go empty or get a different base once loaded.
+    await tab.evaluate(async (u) => {
+      const m = await import('/studio/js/editor/editor.js');
+      const first = m.draftFor(u).base;
+      window.__draftProblems = [];
+      window.__draftWatch = setInterval(() => {
+        const d = m.draftFor(u);
+        if (!d.text) window.__draftProblems.push('empty');
+        if (d.base !== first) window.__draftProblems.push('reloaded');
+      }, 20);
+    }, site);
+    await h1.click();
+    await tab.keyboard.press('End');
+    let typed = 0;
+    while (!/\/app\//.test(tab.url()) && typed < 400) {
+      await tab.keyboard.type('Q');
+      typed += 1;
+      await tab.waitForTimeout(60);
+    }
+    expect(/\/app\//.test(tab.url()), 'the analysis finished while typing');
+    await tab.waitForSelector(SEL.editorFrame);
+    await tab.waitForTimeout(800);
+    const result = await tab.evaluate(async (u) => {
+      clearInterval(window.__draftWatch);
+      const m = await import('/studio/js/editor/editor.js');
+      const frame = document.querySelector('iframe[title="Editable page"]');
+      return { problems: [...new Set(window.__draftProblems)], draft: (m.draftFor(u).text.match(/Q+/) || [''])[0].length, frame: ((frame.contentDocument.body.textContent || '').match(/Q+/) || [''])[0].length };
+    }, site);
+    expect(!result.problems.length, `the first loaded draft was never emptied or replaced: ${result.problems.join(', ')}`);
+    expect(result.draft >= typed - 1 && result.frame >= typed - 1, `edits made during the analysis are kept (typed ${typed}, draft ${result.draft}, preview ${result.frame})`);
+    await tab.close();
+  });
+
   await step('parallel-analysis', async () => {
     const one = await desk.newPage();
     const two = await desk.newPage();
@@ -546,9 +696,26 @@ try {
       one.goto(`${BASE}/edit?url=${encodeURIComponent('https://www.slow-a.example/')}`),
       two.goto(`${BASE}/edit?url=${encodeURIComponent('https://www.slow-b.example/')}`),
     ]);
-    const timeline = (p) => p.waitForSelector('.progress-tile .step.active', { timeout: SLOW }).then(() => Date.now())
-      .then(async (start) => { await p.waitForURL(/\/app\//, { timeout: SLOW }); return { start, end: Date.now() }; });
-    const [a, b] = await Promise.all([timeline(one), timeline(two)]);
+    // Each analysis is timed by its own done signal (the project shows as built), not by a fixed URL timeout, so a
+    // busy machine only makes it slower, never flaky. Generous headroom: six minutes per site.
+    const HEADROOM = 360000;
+    const timeline = async (p, host) => {
+      await p.waitForSelector('.progress-tile .step.active, .progress-tile .step.done', { timeout: HEADROOM });
+      const start = Date.now();
+      for (;;) {
+        const built = await p.evaluate(async (want) => {
+          const list = await (await fetch('/api/v1/projects')).json();
+          return (list.projects || []).some((x) => String(x.site).includes(want) && x.built);
+        }, host).catch(() => false);
+        if (built) break;
+        if (Date.now() - start > HEADROOM) throw new Error(`${host} did not finish in ${HEADROOM / 1000} s`);
+        await p.waitForTimeout(250);
+      }
+      const end = Date.now();
+      await p.waitForURL(/\/app\//, { timeout: HEADROOM });
+      return { start, end };
+    };
+    const [a, b] = await Promise.all([timeline(one, 'slow-a.example'), timeline(two, 'slow-b.example')]);
     expect(Math.max(a.start, b.start) < Math.min(a.end, b.end), `the two analyses overlap in time: ${JSON.stringify({ a, b })}`);
     expect(!refused.length, `no 409 while two sites are analyzed: ${refused.join(', ')}`);
     await one.close();
@@ -559,12 +726,12 @@ try {
     const tab = await desk.newPage();
     watch(tab, 'reattach');
     await tab.goto(`${BASE}/edit?url=${encodeURIComponent('https://www.slow-c.example/')}`);
-    await tab.waitForSelector('.progress-tile .step.done', { timeout: SLOW });
+    await tab.waitForSelector('.progress-tile .step.done', { timeout: SLOW * 3 });
     expect(!/\/app\//.test(tab.url()), 'still analyzing when the page reloads');
     await tab.reload();
-    await tab.waitForSelector(SEL.progress, { timeout: SLOW });
-    await tab.waitForURL(/\/app\//, { timeout: SLOW });
-    await tab.waitForSelector(SEL.editorFrame, { timeout: SLOW });
+    await tab.waitForSelector(SEL.progress, { timeout: SLOW * 3 });
+    await tab.waitForURL(/\/app\//, { timeout: SLOW * 3 });
+    await tab.waitForSelector(SEL.editorFrame, { timeout: SLOW * 3 });
     const projects = await tab.evaluate(async () => (await (await fetch('/api/v1/projects')).json()).projects.map((p) => p.site));
     const copies = projects.filter((site) => /slow-c/.test(site));
     expect(copies.length === 1, `one project for the reattached site, got ${JSON.stringify(projects)}`);
@@ -589,15 +756,15 @@ try {
     await tab.route('**/api/v1/sites', async (route) => {
       if (route.request().method() !== 'POST') return route.continue();
       posts += 1;
-      const response = await route.fetch({ timeout: SLOW });
+      const response = await route.fetch({ timeout: SLOW * 3 });
       const body = await response.text();
       if (/"type":\s*"paused"/.test(body)) paused += 1;
       await route.fulfill({ response, body });
     });
     await tab.fill(SEL.homeInput, 'www.slow-p.example');
     await tab.click(SEL.homeSubmit);
-    await tab.waitForURL(/\/app\//, { timeout: SLOW * 2 });
-    await tab.waitForSelector(SEL.editorFrame, { timeout: SLOW });
+    await tab.waitForURL(/\/app\//, { timeout: SLOW * 3 });
+    await tab.waitForSelector(SEL.editorFrame, { timeout: SLOW * 3 });
     expect(posts >= 2, `the app posted again after a pause (${posts} posts, ${paused} paused answers)`);
     expect(paused >= 1, `the server paused at least once (${paused})`);
     await ctx.close();
@@ -635,6 +802,19 @@ try {
       }
     });
   }
+
+  await step('phone-issue-sheet', async () => {
+    for (const width of [390, 360]) {
+      await mobile.setViewportSize({ width, height: 844 });
+      await goto(mobile, `/app/${encodeURIComponent(slug)}/issues`);
+      await mobile.waitForSelector(SEL.issueRow);
+      await mobile.locator(SEL.issueRow).first().click();
+      await mobile.waitForSelector('.sheet.open');
+      await audit(mobile, `phone-${width}-issue-sheet`);
+      await mobile.keyboard.press('Escape');
+    }
+    await mobile.setViewportSize({ width: 390, height: 844 });
+  });
 
   await step('phone-test-changes', async () => {
     const pageUrl = `https://${SITE}/dirt-work-software/`;

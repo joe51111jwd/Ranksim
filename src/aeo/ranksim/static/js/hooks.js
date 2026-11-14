@@ -34,7 +34,7 @@
      Adds a tile to the Overview bento. Return a <section class="tile ..."> (span-2, span-4, white, black...).
      ctx = { report, project, slug }
      Built-in keys and orders: search-data 0, first-page 10, average 20, backtest 30, issues 40, opportunities 45,
-     rankings 50, share 60, predicted 65 (only when PREDICTED and real positions both exist), priority 70,
+     rankings 50, share 60, priority 70,
      competitors 80, pages 90, try 100. Order 55 is left for rank history. The bento packs densely, so a one-column
      tile fills the first gap that fits. Charts: import { fit, sparkline, ... } from '../charts.js'.
 
@@ -115,6 +115,14 @@
      Optional when(report): the column shows only when it returns true. A false or throwing when() hides the column
      (use it for data that may not exist yet, for example Search Console before it is connected).
 
+   registerScreenNotice({ key, order, screens, render(ctx) })
+     Adds a short notice at the top of a screen, under its heading (for example "2 searches moved up since your last
+     visit" on Searches). `screens` is a list of screen keys (['searches', 'overview'], a plugin screen...), or
+     ['*'] for every screen; `screen: 'searches'` (one key) works too. render(ctx) returns a Node (use
+     <div class="callout info">), an array, or null for nothing. ctx = { screen, report, project, slug }.
+     Notices show on every screen built with page() from core.js. When a screen has a notice, the built-in
+     "Rankings need search data" callout (noSearchData) steps aside, so the two never stack.
+
    ---------------------------------------------------------------- events
 
    on(name, fn) listens and returns a function that stops listening. call(name, ctx) runs every listener and returns
@@ -128,6 +136,8 @@
      'editor-caret'   editor ctx  when the cursor moves in the preview (the block toolbar follows it).
      'test-finished'  { run, search, url, page, html, editor }  after Test changes returns. run is the API answer;
                       editor is the editor ctx, or null if the person already left the editor.
+     'publish-fixes'  collect('publish-fixes', editorCtx) -> [{ id, title }], the issues fixed in this draft,
+                      answered by the audit plugin and read by the Publish sheet.
 
    ---------------------------------------------------------------- frozen module exports
 
@@ -142,7 +152,7 @@
      editor/test.js     runTest() -> Promise          renderResult(run, animate)
      editor/publish.js  publishButton(draft) -> Node
      screens/issues.js  issueRow(issue, compact) -> Node
-     Importers: app.js (draftFor, normalize, paintFrame, paintSide, renderEditor, publishButton), screens/overview.js
+     Importers: app.js (draftFor, normalize, paintFrame, paintSide, renderEditor, syncFromFrame, publishButton), screens/overview.js
      (issueRow), editor/test.js (ED, draftFor, editorCtx, getCompare, renderEditor, syncFromFrame, facts,
      publishButton), editor/editor.js (renderResult, runTest), editor/publish.js (ED, draftFor, syncFromFrame, editorCtx).
      tests/test_studio_modules.py checks this list against the imports.
@@ -238,7 +248,8 @@ const PANELS = registry('editor panel');
 const TOOLS = registry('editor tool');
 const SECTIONS = registry('settings section');
 const COLUMNS = registry('search column');
-const REGISTRIES = [SCREENS, TILES, PANELS, TOOLS, SECTIONS, COLUMNS];
+const NOTICES = registry('screen notice');
+const REGISTRIES = [SCREENS, TILES, PANELS, TOOLS, SECTIONS, COLUMNS, NOTICES];
 
 export function registerScreen(key, { label, nav = true, order = 100, render }) {
   if (!/^[a-z0-9][a-z0-9_-]{0,39}$/.test(String(key))) {
@@ -270,7 +281,14 @@ export function registerSearchColumn(spec) {
   return COLUMNS.add(spec);
 }
 
+export function registerScreenNotice(spec) {
+  const screens = Array.isArray(spec.screens) ? spec.screens.map(String) : [spec.screen != null ? String(spec.screen) : '*'];
+  return NOTICES.add({ ...spec, screens });
+}
+
 export const screens = () => SCREENS.list();
+/* The notices for one screen key, in order: those registered for that screen and those for every screen ('*'). */
+export const screenNotices = (key) => NOTICES.list().filter((entry) => entry.screens.includes('*') || entry.screens.includes(key));
 export const screen = (key) => SCREENS.get(key);
 export const overviewTiles = () => TILES.list();
 export const editorPanels = () => PANELS.list();

@@ -233,7 +233,7 @@ def register(app, ui) -> None:
                 text(body.get("connection_id"), 40),
                 confirm=confirm,
                 options=options,
-                fixes=body.get("fixes") if isinstance(body.get("fixes"), list) else None,
+                fixes=checked_fixes(ui, slug, body.get("fixes")),
             )
             return after_change(ui, slug, pub, entry)
 
@@ -268,6 +268,39 @@ def register(app, ui) -> None:
             return after_change(ui, slug, pub, pub.rollback(entry_id, connection_id))
 
         return await run(rollback_and_log)
+
+
+def known_issues(ui, slug: str) -> dict | None:
+    """{issue id: title} from the project's current report, or None when it cannot be built. Uses the share
+    plugin's short cache of the owner report when that plugin is present."""
+    try:
+        share = _share()
+        if share is not None and hasattr(share, "owner_report"):
+            report = share.owner_report(ui, slug)
+        else:
+            from aeo.ranksim.api.projects import project_report
+
+            report = project_report(ui, slug)
+    except Exception:  # noqa: BLE001 - no report: no fixes are recorded, the publish still goes ahead
+        log.exception("publish: the report for fix ids could not be built")
+        return None
+    return {str(issue.get("id")): str(issue.get("title") or "") for issue in report.get("issues") or [] if isinstance(issue, dict) and issue.get("id")}
+
+
+def checked_fixes(ui, slug: str, fixes) -> list[dict]:
+    """The fixes the browser sent, kept only when the current report has that issue, with the report's own title.
+    Unknown ids are dropped, never stored."""
+    if not isinstance(fixes, list) or not fixes:
+        return []
+    known = known_issues(ui, slug)
+    if not known:
+        return []
+    kept = []
+    for fix in fixes:
+        fix_id = str(fix.get("id") or "") if isinstance(fix, dict) else ""
+        if fix_id in known:
+            kept.append({"id": fix_id, "title": known[fix_id] or str(fix.get("title") or "")})
+    return kept
 
 
 def after_change(ui, slug: str, pub, entry: dict) -> dict:

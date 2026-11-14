@@ -54,6 +54,51 @@ class Webflow(Connector):
         site = self.call("GET", f"/sites/{self.site_id}").json()
         return site.get("displayName") or site.get("shortName") or self.site_id
 
+    def inspect(self, url: str = "") -> list[dict]:
+        """The guided Webflow check: site and token, reading access, the domain, this page, and what the API can change."""
+        steps: list[dict] = []
+
+        def step(key, label, ok, detail):
+            steps.append({"key": key, "label": label, "ok": ok, "detail": detail})
+            return ok
+
+        try:
+            site_id = self.site_id
+        except ConnectorError as exc:
+            step("site", "Site ID", False, str(exc))
+            return steps
+        response = self.request("GET", f"{API}/sites/{site_id}", headers=self.headers, expect=None)
+        if response.status_code in (401, 403):
+            step("login", "Site token", False, "Webflow did not accept the token. Generate a site API token in the site's Settings, Apps and integrations.")
+            return steps
+        if response.status_code == 404:
+            step("site", "Site ID", False, "Webflow has no site with that ID for this token. Copy the Site ID from the site's Settings, General.")
+            return steps
+        if response.status_code != 200:
+            step("login", "Site token", False, f"Webflow said {response.status_code}.")
+            return steps
+        site = response.json()
+        step("login", "Site token", True, f"Connected to {site.get('displayName') or site.get('shortName') or site_id}.")
+        try:
+            self.pages()
+            self.call("GET", f"/sites/{site_id}/collections")
+            step("rights", "Permissions", True, "The token can read pages and CMS. Writing needs Pages and CMS write access, checked when you publish.")
+        except ConnectorError as exc:
+            step("rights", "Permissions", False, f"The token cannot read pages or CMS ({exc}). Give it Pages and CMS access.")
+        if url:
+            try:
+                found = self.locate(url)
+                if found["type"] == "page":
+                    step("page", "This page", True, "This is a static page. Webflow's API can change its SEO title and description. Its text needs the Designer.")
+                else:
+                    name = (found["collection"] or {}).get("displayName") or (found["collection"] or {}).get("slug")
+                    step("page", "This page", True, f"This is a CMS item in {name}. Ranksim can change its name, SEO fields and rich text.")
+            except ConnectorError as exc:
+                step("page", "This page", False, str(exc))
+        step("limits", "What Ranksim can change", True,
+             "Static pages: SEO title and description, live when the site is published. CMS items: name, SEO fields and rich text, live right away. Not the text of static pages.")
+        return steps
+
     # -- finding the page or item -----------------------------------------
 
     def pages(self) -> list[dict]:

@@ -2,12 +2,12 @@
    Charts are inline SVG from ../charts.js, redrawn at the tile's real width. Every number comes from the report.
 
    Built-in keys and orders (hooks.js lists them for plugins): search-data 0, first-page 10, average 20,
-   backtest 30, issues 40, opportunities 45, rankings 50, (55 is left for rank history), share 60, predicted 65,
+   backtest 30, issues 40, opportunities 45, rankings 50, (55 is left for rank history), share 60,
    priority 70, competitors 80, pages 90, try 100. */
 
 import { S, h, icon, clear, main, plural, pct, bar, ring, link, go, page, footer, pulledText, noSearchData, openSheet, closeSheet, serpList, pathOf } from '../core.js';
 import { registerOverviewTile, registerScreen, overviewTiles, renderAll } from '../hooks.js';
-import { fit, rankDots, positionColumns, shareBars, opportunities } from '../charts.js';
+import { fit, predictionOf, predictionText, rankDots, positionColumns, shareBars, opportunities } from '../charts.js';
 import { issueRow } from './issues.js';
 
 export function renderOverview() {
@@ -33,9 +33,9 @@ function head(title, action) {
 /* The top 10 for one search, in a sheet, with your page marked and an editor link on every result. */
 export function openSerp(row) {
   openSheet((sheet, closeBtn) => {
-    const pred = row.predicted && row.predicted.position != null ? row.predicted : null;
+    const pred = predictionOf(row);
     const status = row.position ? `You are #${row.position} on Google` : row.checked ? 'You are not in the top 10' : 'Not checked yet';
-    sheet.append(h('div', { class: 'sheet-head' }, h('div', null, h('h2', { text: row.q }), h('div', { class: 'sub', text: pred ? `${status} · PREDICTED #${pred.position} of ${pred.of}` : status })), closeBtn));
+    sheet.append(h('div', { class: 'sheet-head' }, h('div', null, h('h2', { text: row.q }), h('div', { class: 'sub', text: pred ? `${status} · ${predictionText(pred)}` : status })), closeBtn));
     const body = h('div', { class: 'sheet-body' });
     if (row.top && row.top.length) body.append(serpList(row.top, { q: row.q }));
     else body.append(h('div', { class: 'empty-note', text: row.checked ? 'Google returned no results for this search.' : 'Refresh the site to pull Google results for this search.' }));
@@ -127,13 +127,16 @@ registerOverviewTile({
   key: 'rankings',
   order: 50,
   render(R) {
-    const hasPred = R.rankings.some((row) => row.predicted && row.predicted.position != null);
+    const preds = R.rankings.map(predictionOf).filter(Boolean);
+    const hasPred = preds.some((p) => !p.unsure);
+    const hasUnsure = preds.some((p) => p.unsure);
     return h('section', { class: 'tile white span-2' },
       head('Where you rank', link('searches', 'All searches', { class: 'btn btn-plain' })),
       R.rankings.length ? chart((width) => rankDots(R.rankings, { width }), 'chart-dots') : h('div', { class: 'empty-note', text: 'No searches yet. Add some in Settings.' }),
       R.rankings.length ? h('div', { class: 'legend' },
         h('span', { class: 'l-on', text: 'Google position' }),
         hasPred ? h('span', { class: 'l-ring', text: 'PREDICTED' }) : null,
+        hasUnsure ? h('span', { class: 'l-ring-unsure', text: 'PREDICTED, unsure' }) : null,
         h('span', { text: 'Out of the top 10' })) : null);
   },
 });

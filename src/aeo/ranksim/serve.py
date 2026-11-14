@@ -1588,7 +1588,7 @@ def _project_body(ui: UiState, project, running, *, error: str = "", message: st
     if report is not None and report.metrics is not None:
         accuracy.append(f'<p class="small muted">Content model (reads the page text, unvalidated): {e(report.metrics.text)}</p>')
     if accuracy:
-        parts.append('<section class="card"><h2>How accurate are the predictions?</h2>' + "".join(accuracy) + "</section>")
+        parts.append('<section class="card"><h2>Backtest on this snapshot (not accuracy)</h2>' + "".join(accuracy) + "</section>")
 
     # Searches and coverage
     rows = []

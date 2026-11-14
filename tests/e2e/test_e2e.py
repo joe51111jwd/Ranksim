@@ -67,13 +67,15 @@ def test_end_to_end(tmp_path):
     servers = []
     try:
         base = _start(servers, tmp_path / "data", env)
+        more = _start(servers, tmp_path / "more", env)
         jobs = _start(servers, tmp_path / "jobs", env)
         # A third server whose job budget leaves almost no time, so every analysis pauses and the app posts again.
         paused = _start(servers, tmp_path / "paused", {**env, "RANKSIM_JOB_BUDGET_SECONDS": "27", "E2E_SLOW_SECONDS": "1.5"})
         out = str(HERE / "screenshots")
-        # The main flow and the job checks run at the same time, each against its own server.
+        # The main flow, the plugin features and the job checks run at the same time, each against its own server.
         runs = [
             subprocess.Popen([NODE, str(HERE / "run.mjs"), "--group", "main", "--base", base, "--out", out], cwd=ROOT, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True),
+            subprocess.Popen([NODE, str(HERE / "run.mjs"), "--group", "more", "--base", more, "--out", out], cwd=ROOT, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True),
             subprocess.Popen([NODE, str(HERE / "run.mjs"), "--group", "jobs", "--base", jobs, "--paused-base", paused, "--out", out], cwd=ROOT, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True),
         ]
         results = [run.communicate(timeout=900) + (run.returncode,) for run in runs]

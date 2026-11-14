@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 from bs4 import BeautifulSoup
 
-from aeo.ranksim import audit_rules as A
+from aeo.ranksim import audit as A
 
 SITE = "https://www.shovel.example"
 ROOT = Path(__file__).resolve().parents[1]
@@ -478,7 +478,7 @@ def test_caps_many_repeats_on_one_page():
 
 def test_registry_and_plugin_hook(monkeypatch):
     def custom(ctx):
-        return [A.make_issue("custom-check", "Custom", "A plugin said so.", page=ctx.pages[0], fix="Do it.", severity="high")]
+        return [A.make_issue("custom-check", "Custom", "A plugin said so.", page=ctx.pages[0].url, fix="Do it.", severity="high")]
 
     def broken(ctx):
         raise RuntimeError("boom")
@@ -596,18 +596,20 @@ def test_bad_plugin_issues_are_dropped_or_coerced(monkeypatch):
     def sloppy(ctx):
         url = ctx.pages[0].url
         return [
-            {"kind": "p1", "title": 5, "page": url},
-            {"kind": "p2", "title": "Element is a string", "element": "body", "page": url},
-            {"kind": "p3", "title": "Page is a list", "page": [url]},
-            {"kind": "p4", "title": "Impact is text", "impact": "5", "page": url},
+            {"severity": "low", "kind": "p1", "title": 5, "page": url},  # not a string title: dropped
+            {"severity": "low", "kind": "p2", "title": "Element is a string", "element": "body", "page": url},
+            {"severity": "low", "kind": "p3", "title": "Page is a list", "page": [url]},
+            {"severity": "low", "kind": "p4", "title": "Impact is text", "impact": "5", "page": url},
+            {"kind": "p5", "title": "No severity"},  # dropped
             "not an issue",
-            {"title": "no kind"},
+            {"severity": "low", "title": "no kind"},
         ]
 
     monkeypatch.setattr(A, "plugin_checks", lambda: [sloppy])
     issues = run({GOOD: page()})
-    assert sorted(issue["kind"] for issue in issues) == ["p1", "p2", "p3", "p4"]
+    assert sorted(issue["kind"] for issue in issues) == ["p2", "p3", "p4"]
     assert all(isinstance(issue["title"], str) and "element" not in issue for issue in issues)
+    assert next(issue for issue in issues if issue["kind"] == "p3")["page"] is None
     assert next(issue for issue in issues if issue["kind"] == "p4")["impact"] == 5
 
 

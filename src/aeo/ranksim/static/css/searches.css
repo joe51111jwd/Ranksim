@@ -11,6 +11,9 @@
 .srow .c-num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .srow .p { font-size: 17px; font-weight: 650; letter-spacing: -0.03em; }
 .srow .pred { font-size: 14px; font-weight: 550; color: var(--blue); }
+.srow .pred.unsure { font-size: 12px; font-weight: 550; color: var(--ink-3); letter-spacing: 0.02em; }
+.sgrid .num.unsure { font-size: 22px; color: var(--ink-3); }
+.btn.add .spinner-sm { width: 14px; height: 14px; border-width: 2px; }
 .srow .none { font-size: 13px; font-weight: 500; color: var(--ink-3); letter-spacing: 0; }
 .srow .c-source, .srow .c-page { font-size: 13px; color: var(--ink-2); white-space: nowrap; }
 .srow .c-page { min-width: 0; }
@@ -33,6 +36,7 @@
 .gapline .t { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; font-weight: 550; font-size: 14px; }
 .gapline .count { font-size: 12.5px; color: var(--ink-3); font-weight: 500; font-variant-numeric: tabular-nums; }
 .evidence { display: grid; gap: 2px; margin-top: 4px; font-size: 12.5px; color: var(--ink-3); }
+.srcline .count { margin-left: auto; font-size: 12.5px; color: var(--ink-3); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .srcline { display: flex; align-items: center; gap: 10px; font-size: 13px; color: var(--ink-2); min-width: 0; }
 
 @media (max-width: 760px) {

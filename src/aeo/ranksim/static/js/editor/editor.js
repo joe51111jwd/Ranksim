@@ -11,7 +11,7 @@ import { call, editorPanels, editorTools, registerEditorPanel, registerEditorToo
 import { asHtml, cleanDoc, cleanParsed, facts, frameSource, normalize as cleanNormalize, pick, revealHidden, serialize } from './preview.js';
 import { renderResult, runTest } from './test.js';
 import { exportHtml, stripRs } from './roundtrip.js';
-import { draftFromHtml, makeBase, serializeDraft } from './model.js';
+import { draftFromHtml, makeBase, ownRsAttrs, serializeDraft as serializeWith } from './model.js';
 import { History, undoKey } from './history.js';
 import { diffBlocks } from './diff.js';
 import { syncFaq } from './blocks.js';
@@ -61,6 +61,13 @@ export function modelOf(draft) {
   draft.rs = { key, source, base, text, history };
   restoreAutosave(draft);
   return draft.rs;
+}
+
+/* The draft markup of a document, keeping the page's own data-rs-* attributes. */
+function serializeDraft(doc, draft = ED.refs ? draftFor(ED.refs.page) : null) {
+  const rs = draft && draft.rs;
+  if (rs && !rs.own) rs.own = ownRsAttrs(rs.base);
+  return serializeWith(doc, rs ? rs.own : null);
 }
 
 /* Saves new draft markup (with markers). `group` merges quick typing into one undo step. */
@@ -155,6 +162,7 @@ export function setPage(draft, source, base) {
   }
   rs.source = source;
   rs.base = base;
+  rs.own = null;
   draft.base = stripRs(base);
   rs.key = draft.base;
   SOURCES.set(draft.base, source);

@@ -48,7 +48,10 @@ test('changed, added, removed and moved blocks read plainly', () => {
   assert.deepEqual(h.words, [{ op: '=', text: 'All in one ' }, { op: '-', text: 'heavy civil' }, { op: '+', text: 'dirt work' }, { op: '=', text: ' software' }]);
   assert.equal(d.counts.added, 1);
   assert.equal(d.counts.removed, 1);
-  assert.match(summary(d.counts), /^\d+ changes?, 1 addition, 1 removal and 1 move\.$/);
+  assert.match(summary(d.counts), /^\d+ parts of the page changed: \d+ edited, 1 added, 1 removed and 1 moved\.$/);
+  assert.equal(summary({ changed: 1, added: 0, removed: 0, moved: 0 }), '1 part of the page edited.');
+  assert.equal(summary({ changed: 0, added: 3, removed: 0, moved: 0 }), '3 parts of the page added.');
+  assert.equal(summary({ changed: 2, added: 3, removed: 0, moved: 0 }), '5 parts of the page changed: 2 edited and 3 added.');
 });
 
 test('a paragraph switched to a heading says so', () => {

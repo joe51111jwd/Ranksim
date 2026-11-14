@@ -181,15 +181,14 @@ export function diffBlocks(baseHtml, draftHtml, { all = false } = {}) {
   return { changes, counts, total: counts.changed + counts.added + counts.removed + counts.moved, summary: summary(counts) };
 }
 
-/* One plain sentence for the top of the diff view. */
+/* One plain sentence for a client: "3 parts of the page changed: 2 edited and 1 added." */
 export function summary(counts) {
-  const parts = [];
-  const say = (n, one, many) => { if (n) parts.push(`${n} ${n === 1 ? one : many}`); };
-  say(counts.changed, 'change', 'changes');
-  say(counts.added, 'addition', 'additions');
-  say(counts.removed, 'removal', 'removals');
-  say(counts.moved, 'move', 'moves');
-  if (!parts.length) return 'No changes yet.';
-  const last = parts.pop();
-  return `${parts.length ? `${parts.join(', ')} and ${last}` : last}.`;
+  const kinds = [['changed', 'edited'], ['added', 'added'], ['removed', 'removed'], ['moved', 'moved']].filter(([key]) => counts[key]);
+  const total = kinds.reduce((sum, [key]) => sum + counts[key], 0);
+  if (!total) return 'No changes yet.';
+  const parts = `${total} ${total === 1 ? 'part' : 'parts'} of the page`;
+  if (kinds.length === 1) return `${parts} ${kinds[0][1]}.`;
+  const list = kinds.map(([key, word]) => `${counts[key]} ${word}`);
+  const last = list.pop();
+  return `${parts} changed: ${list.join(', ')} and ${last}.`;
 }

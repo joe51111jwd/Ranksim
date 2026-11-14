@@ -1,0 +1,22 @@
+/* Annotations: the audit's comments in the editor side column (js/plugins/annotations.js). The pins inside the
+   preview carry their own style, since the preview is a separate document. */
+
+.annot-panel .tile-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.annot-list { list-style: none; margin: 10px 0 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.annot-item { border-radius: var(--r-sm); background: var(--card); }
+.annot-item.open { box-shadow: var(--shadow), inset 0 0 0 1px var(--blue-soft); }
+.annot-head { display: flex; align-items: flex-start; gap: 10px; width: 100%; border: 0; background: transparent; padding: 10px 12px; text-align: left; color: var(--ink); font: inherit; font-size: 14px; cursor: pointer; border-radius: var(--r-sm); }
+.annot-head:hover .annot-title { color: var(--blue); }
+.annot-num { flex: none; min-width: 22px; height: 22px; padding: 0 6px; border-radius: 11px; color: #fff; font-size: 12px; font-weight: 600; line-height: 22px; text-align: center; background: var(--ink-2); }
+.annot-num.high { background: var(--red); }
+.annot-num.medium { background: var(--amber); }
+.annot-title { flex: 1; min-width: 0; font-weight: 550; line-height: 1.4; overflow-wrap: anywhere; }
+.annot-done { flex: none; font-size: 12px; font-weight: 600; color: var(--green); }
+.annot-body { padding: 0 12px 12px 44px; font-size: 13.5px; }
+.annot-comment { margin: 0 0 8px; color: var(--ink); }
+.annot-fix { margin: 0 0 8px; color: var(--ink-2); }
+.annot-el { display: flex; gap: 8px; align-items: baseline; margin: 0 0 8px; color: var(--ink-2); overflow-wrap: anywhere; }
+.annot-tag { flex: none; font-family: var(--mono); font-size: 11.5px; color: var(--ink-3); }
+.annot-suggestion { margin: 0 0 10px; padding: 10px 12px; border-radius: var(--r-sm); background: var(--tile); font-family: var(--mono); font-size: 12px; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 200px; overflow: auto; }
+.annot-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.annot-note { margin: 8px 0 0; color: var(--ink-3); font-size: 12.5px; }

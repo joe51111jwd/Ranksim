@@ -917,7 +917,7 @@ def client_report(ui, project, *, preview: bool = False) -> dict:
         date_note = f"{source} positions are shown; the date they were pulled was not recorded."
     else:
         date_note = "No search results have been pulled yet."
-    return {
+    out = {
         "preview": bool(preview),
         "agency": {"name": branding["agency"], "logo": branding["logo"]},
         "name": _text(report.get("name"), 120),
@@ -940,12 +940,15 @@ def client_report(ui, project, *, preview: bool = False) -> dict:
         "competitors": [domain for domain in (_domain(item) for item in (report.get("competitors") or [])[:20]) if domain],
         "changes": changes[:15],
         "weekly": weekly_summary(project, report, issues, changes),
-        "search_console": _search_console(report),  # gsc session, flagged edit
         "notes": [
             date_note,
             "Estimates marked PREDICTED come from Ranksim's model of the pages we stored for each search. They are not Google positions.",
         ],
     }
+    search_console = _search_console(report)  # gsc session, flagged edit: only when Search Console has data
+    if search_console:
+        out["search_console"] = search_console
+    return out
 
 
 # ---------------------------------------------------------------------------

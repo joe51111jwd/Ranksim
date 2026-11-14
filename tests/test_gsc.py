@@ -1025,4 +1025,4 @@ def test_client_report_carries_search_console_apart_from_google(tmp_path, env):
     _post(box, f"/api/v1/gsc/projects/{box.project.slug}", {"enabled": False})
     share_state = share._state(box.ui)
     share_state["cache"].clear()
-    assert share.client_report(box.ui, _project(box))["search_console"] is None
+    assert "search_console" not in share.client_report(box.ui, _project(box))  # absent when off: the key set stays as before

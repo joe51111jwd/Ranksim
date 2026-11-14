@@ -631,3 +631,26 @@ def test_rows_from_a_first_analysis_reach_the_new_project(tmp_path, monkeypatch)
     assert dn.load_rows(project) == rows  # now saved in the project
     detail = dn.discover(_smartcrew_pages(), "SmartCrew", host=SC, extra=rows).to_dict()["searches"]
     assert any(item["q"] == "grading crew software" and "impressions 120" in item["sources"][0]["detail"][0] for item in detail)
+
+
+def test_google_inputs_use_the_real_tracking_helper(tmp_path):
+    from aeo.ranksim.plugins import tracking
+    from aeo.ranksim.project import create_project
+
+    project = create_project("SmartCrew", SC, ["excavation software"], root=tmp_path)
+    snapshot = _google().to_dict()
+    for entry in snapshot["searches"]:
+        if entry["search"] == "excavation software":
+            entry["features"] = {
+                "related_searches": ["excavation contractor software"],
+                "people_also_ask": [{"question": "What is the best software for excavation contractors?", "snippet": "x", "url": "https://a.example/"}],
+            }
+    folder = project.dir / "pulls" / "20261109T000000Z"
+    folder.mkdir(parents=True)
+    (folder / "google.json").write_text(json.dumps(snapshot), encoding="utf-8")
+    assert "excavation software" in tracking.serp_features(project)
+    google, features = dn.google_inputs(project)
+    assert google is not None and features == {"excavation software": {
+        "related": ["excavation contractor software"], "paa": ["What is the best software for excavation contractors?"]}}
+    found = dn.discover(_smartcrew_pages(), "SmartCrew", host=SC, google=google, serp_features=features)
+    assert "excavation contractor software" in found.queries

@@ -100,10 +100,14 @@ ctx.diff()                 block diff vs the original
 
 ## Known gaps
 
-- Misnested legacy formatting (`<b>1<p>2</b>3</p>`): editing the text after the misnest keeps the words but they
-  can pick up the bold or link of the copied formatting element.
-- Attribute edits on an `<html>` or `<body>` that the page never wrote (browser invented) are not exported.
+Closed in phase C: misnested formatting (new text now takes the old text's place in the source), attributes on an
+`<html>` or `<body>` the page never wrote (the tag is written where the browser implies it), and a page's own
+`data-rs-*` attributes (kept on its elements in the draft and the export).
+
 - Editing the parent of a React streaming boundary moves the streamed content into place in the export.
+- A page attribute named exactly like one of the editor's own (`data-rs-id`, `data-rs-faq`, `data-rs-faq-ld`) is
+  treated as the editor's.
+- Hidden parts (scripts, iframes) travel with a moved element only when they directly follow it.
 
 ## Phase B (integrated)
 
@@ -128,3 +132,13 @@ ctx.diff()                 block diff vs the original
   byte for byte untouched export, typing, undo and redo, FAQ insert, download keeps every script, comment, noscript,
   handler and entity. Manual Playwright runs on SmartCrew and the Mitti HCSS alternative page also covered HTML mode
   undo, block switch, outline drag, saved versions and refresh restore (all passing).
+
+## Phase C
+
+- Round trip gaps above closed, with Chromium cases in `tests/js/editor/browser-cases.test.mjs`.
+- Publish sheet checked on SmartCrew home, a SmartCrew ranking page and mitti.com/hcss-alternative: the download is
+  the whole page with every script verbatim (7/7, 11/11, 88/88). The diff summary reads "5 parts of the page changed:
+  2 edited and 3 added."
+- Phone and tablet (iPhone 13, iPad emulation, touch): tap to edit, block switch, Insert menu as a bottom panel on
+  phones, outline move up and down buttons (40px on touch and narrow screens; drag stays for mouse), panels stack
+  under the preview, no sideways scroll at 390px.

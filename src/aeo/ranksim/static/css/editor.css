@@ -136,3 +136,19 @@
 .link-btn .v-name { font-size: 13.5px; font-weight: 550; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .version-list .icon-btn { width: 30px; height: 30px; }
 .version-list .icon-btn svg { width: 14px; height: 14px; }
+.outline-moves { display: inline-flex; gap: 2px; flex: none; opacity: 0; transition: opacity 0.15s var(--ease); }
+.outline-list li:hover .outline-moves, .outline-list li:focus-within .outline-moves { opacity: 1; }
+.outline-move { display: inline-grid; place-items: center; width: 28px; height: 28px; border: 0; border-radius: 8px; background: transparent; color: var(--ink-2); }
+.outline-move:hover:not(:disabled) { background: var(--card); color: var(--ink); }
+.outline-move:disabled { opacity: 0.3; }
+.outline-move svg { width: 14px; height: 14px; }
+@media (pointer: coarse), (max-width: 1080px) {
+  .outline-moves { opacity: 1; }
+  .outline-move { width: 40px; height: 40px; }
+  .outline-list .grip { display: none; }
+  .outline-row { padding: 10px 8px; }
+}
+@media (max-width: 640px) {
+  .browser { height: min(620px, 72vh); min-height: 420px; }
+  .toolbar .right { gap: 6px; }
+}

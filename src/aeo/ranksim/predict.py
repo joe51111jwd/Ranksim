@@ -233,14 +233,18 @@ def _pair_matrix(groups: list[Group], features: list[str], means: np.ndarray, sc
 
 def fit_pairwise(groups: list[Group], features: Iterable[str], *, l2: float = 1.0, trained_on: str = "") -> PairwiseModel:
     """Fit a symmetric pairwise logistic model (no intercept) with an L2 penalty."""
+    import warnings
+
     names = list(features)
     values = [
         [signals.get(name, float("nan")) for name in names] for group in groups for signals in group.signals
     ]
     matrix = np.array(values, dtype=float) if values else np.zeros((0, len(names)))
-    means = np.nanmean(matrix, axis=0) if len(matrix) else np.zeros(len(names))
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", RuntimeWarning)  # a feature never observed is all NaN
+        means = np.nanmean(matrix, axis=0) if len(matrix) else np.zeros(len(names))
+        scales = np.nanstd(matrix, axis=0) if len(matrix) else np.ones(len(names))
     means = np.where(np.isnan(means), 0.0, means)
-    scales = np.nanstd(matrix, axis=0) if len(matrix) else np.ones(len(names))
     scales = np.where(np.isnan(scales) | (scales < 1e-9), 1.0, scales)
     diffs = _pair_matrix(groups, names, means, scales)
     weights = np.zeros(len(names))
@@ -326,7 +330,7 @@ def anchored_position(
 
     base = expected(0.0)
     moved = expected(delta)
-    predicted = min(max(1.0, current_position + (moved - base)), float(len(others) + 1))
+    predicted = min(max(1.0, current_position + (moved - base)), max(float(len(others) + 1), float(current_position)))
     return {"now": float(current_position), "predicted": predicted, "score_change": delta}
 
 

@@ -495,3 +495,47 @@ def main(argv: list[str] | None = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
+
+def intervals(out: Path, draws: int = 2000, seed: int = 7) -> dict:
+    """Search-clustered bootstrap intervals for the scored slices. Reads report.json; scores nothing new."""
+    import random
+
+    report = json.loads((out / "report.json").read_text(encoding="utf-8"))
+    by_search = defaultdict(list)
+    for row in report["rows"]:
+        by_search[row["search"]].append(row)
+    fields = {"hybrid_with_prior": "predicted", "persistence_bottom": "bottom"}
+
+    def value(row, scorer):
+        if not row["entrant"]:
+            return -row["pos06"]
+        if scorer == "bottom" or not row["scorable"]:
+            return -BOTTOM
+        return -row[scorer]
+
+    per = {}
+    for name, field_name in fields.items():
+        for mode in ("all", "entrant_vs_returning", "entrant_vs_entrant", "never_seen_vs_never_seen"):
+            counts = {s: _slice({s: rows}, lambda r, f=field_name: value(r, f), mode) for s, rows in by_search.items()}
+            per[(name, mode)] = counts
+    rng = random.Random(seed)
+    searches = sorted(by_search)
+    result = {}
+    for (name, mode), counts in per.items():
+        stats = []
+        for _ in range(draws):
+            pick = [rng.choice(searches) for _ in searches]
+            good = sum(counts[s]["correct"] for s in pick)
+            total = sum(counts[s]["pairs"] for s in pick)
+            if total:
+                stats.append(good / total)
+        stats.sort()
+        if stats:
+            result.setdefault(name, {})[mode] = {"low": round(stats[int(0.025 * len(stats))], 4), "high": round(stats[int(0.975 * len(stats)) - 1], 4)}
+    payload = {
+        "method": f"95% interval, bootstrap over the 30 searches ({draws} draws, seed {seed}). Computed from report.json rows after the single scoring run.",
+        "intervals": result,
+    }
+    (out / "intervals.json").write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    return payload

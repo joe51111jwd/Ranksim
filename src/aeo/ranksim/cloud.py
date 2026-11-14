@@ -51,32 +51,42 @@ from pathlib import Path
 from aeo.ranksim.objects import BlobStore, ObjectStore, StoreError, new_name, stamp_of
 
 ROOT_PREFIX = "ranksim/v2/"
-PROJECTS_PREFIX = ROOT_PREFIX + "projects/"
-DB_PREFIX = ROOT_PREFIX + "db/v/"
-DB_POINTER = ROOT_PREFIX + "db/HEAD"
-POINTER = ROOT_PREFIX + "HEAD"
-MIGRATED = ROOT_PREFIX + "migrated"
+SAVES_PREFIX = ROOT_PREFIX + "s/"
+POINTER = ROOT_PREFIX + "HEAD"  # the manifest
+LEGACY_BASE = ROOT_PREFIX + "legacy-base.json"
 LEGACY_PREFIX = "ranksim/state/"
 LEGACY_POINTER = "ranksim/HEAD"
-# Kept for code that imported the old names.
-PREFIX = PROJECTS_PREFIX
+# Names of the first per-project layout (phase A), read once by the bootstrap if a store still holds them.
+PROJECTS_PREFIX = ROOT_PREFIX + "projects/"
+DB_PREFIX = ROOT_PREFIX + "db/v/"
+PREFIX = SAVES_PREFIX
 
-KEEP_VERSIONS = 3
-PRUNE_AFTER_SECONDS = 600  # an old version is deleted only when it is this old, so a reader mid-download still finds it
-REFRESH_EVERY_SECONDS = 2.0
-LIST_EVERY_SECONDS = 45.0
+# Blob operation budget (Vercel Hobby: 10,000 simple and 2,000 advanced operations a month, and Blob is blocked for
+# 30 days once a cap is passed). Ordinary requests make no Blob call at all:
+REFRESH_EVERY_SECONDS = 300.0  # an active instance checks the manifest (one head) at most this often
+HINT_MIN_SECONDS = 5.0  # a stale-hint cookie can force a check at most this often per instance
+LEGACY_WATCH_SECONDS = 24 * 3600  # after the migration, watch the old pointer (one head per check) for a day
+KEEP_RECENT = 12  # save objects remembered for pruning; unreferenced ones beyond this are deleted (deletes are free)
+PRUNE_AFTER_SECONDS = 600  # never delete an object younger than this: a reader mid-download still finds it
+COMPACT_DELTAS = 15  # after this many database deltas the next save uploads a full snapshot
+COMPACT_RATIO = 0.5  # or when the deltas add up to half the snapshot's size (counted from COMPACT_FLOOR_BYTES up)
+COMPACT_FLOOR_BYTES = 4 * 1024 * 1024
 POINTER_WAIT_SECONDS = 8.0
 CONFIRM_ROUNDS = 3
 SKIP_PARTS = {"llm-cache", "__pycache__"}
 VERSION_FILE = ".ranksim-version.json"
 LOOSE = "_files"  # pseudo project: files sitting directly in projects/
-# Project folders, plus "_plugins" (workspace-wide plugin data: plugins.workspace_dir), saved as its own object with
-# the same merge rules. Dot folders are never saved.
+# Project folders, plus "_plugins" (workspace-wide plugin data: plugins.workspace_dir), saved with the same merge
+# rules. Dot folders are never saved.
 SLUG_RE = re.compile(r"^(?:[A-Za-z0-9][A-Za-z0-9._-]{0,199}|_plugins)$")
 
 
 class CloudError(RuntimeError):
     pass
+
+
+def _empty_manifest() -> dict:
+    return {"v": 2, "stamp": 0, "projects": {}, "db": {"snapshot": None, "deltas": [], "sizes": {}}, "auth": {"epoch": 0, "lock_until": 0}, "recent": [], "legacy": {}}
 
 
 @dataclass
@@ -88,14 +98,18 @@ class CloudState:
     enabled: bool = False
     on_change: list = field(default_factory=list)
     store: ObjectStore | None = None
-    _seen: str | None = None  # global pointer etag this instance last synced to
-    _version: str | None = None  # newest version name this instance wrote or installed (for describe)
-    _checked: float = 0.0
-    _listed: float = 0.0
+    clock: object = None  # monotonic clock, injectable for tests
+    _seen: str | None = None  # manifest etag this instance last read
+    _manifest: dict = field(default_factory=_empty_manifest)
+    _version: str | None = None
+    _checked: float | None = None
+    _hinted: float = -1e18
+    _legacy_checked: float = -1e18
     _lock: threading.RLock = field(default_factory=threading.RLock)
-    _installed: dict = field(default_factory=dict)  # slug -> {"version": name, "files": manifest, "deleted": bool}
-    _db_version: str | None = None
-    _db_clean: tuple | None = None  # (size, mtime_ns) of the local db right after the last sync
+    _installed: dict = field(default_factory=dict)  # slug -> {"version": save name, "files": manifest, "deleted": bool}
+    _db: dict = field(default_factory=lambda: {"snapshot": None, "applied": []})
+    _db_clean: tuple | None = None
+    _pending_db: list = field(default_factory=list)  # database saves uploaded but not in the manifest yet
     _hash_cache: dict = field(default_factory=dict)
     _loaded: bool = False
     last_error: str = ""
@@ -105,6 +119,8 @@ class CloudState:
         self.db_file = Path(self.db_file)
         if self.enabled and self.store is None:
             self.store = BlobStore()
+        if self.clock is None:
+            self.clock = time.monotonic
 
     @classmethod
     def from_env(cls, data_dir: Path, db_file: Path) -> "CloudState":
@@ -126,6 +142,16 @@ class CloudState:
     def _base_db(self) -> Path:
         return self._meta_dir / "base.db"
 
+    @property
+    def stamp(self) -> int:
+        """The newest save this instance knows (nanoseconds). The app sends it to the browser as a hint."""
+        return int(self._manifest.get("stamp") or 0)
+
+    @property
+    def auth(self) -> dict:
+        """Shared login state from the manifest: {"epoch": int, "lock_until": float}."""
+        return dict(self._manifest.get("auth") or {"epoch": 0, "lock_until": 0})
+
     def describe(self) -> dict:
         return {"enabled": self.enabled, "version": self._version, "error": self.last_error, "projects": len(self._installed)}
 
@@ -139,108 +165,147 @@ class CloudState:
             data = json.loads((self._meta_dir / "state.json").read_text("utf-8"))
         except (OSError, ValueError):
             return
+        if data.get("v") != 2:
+            return  # the phase A layout: start over (the bootstrap reads it from the store)
         self._installed = dict(data.get("installed") or {})
-        self._db_version = data.get("db_version")
+        self._db = dict(data.get("db") or {"snapshot": None, "applied": []})
         clean = data.get("db_clean")
         self._db_clean = tuple(clean) if clean else None
 
     def _save_meta(self) -> None:
         self._meta_dir.mkdir(parents=True, exist_ok=True)
         temp = self._meta_dir / f".state-{secrets.token_hex(4)}.json"
-        temp.write_text(json.dumps({"installed": self._installed, "db_version": self._db_version, "db_clean": self._db_clean}), "utf-8")
+        temp.write_text(json.dumps({"v": 2, "installed": self._installed, "db": self._db, "db_clean": self._db_clean}), "utf-8")
         os.replace(temp, self._meta_dir / "state.json")
 
     # -- reading ---------------------------------------------------------------------------------
 
-    def refresh(self, *, force: bool = False) -> bool:
-        """Bring this instance up to the newest saved state. Returns True when local files changed."""
+    def refresh(self, *, force: bool = False, hint: int = 0) -> bool:
+        """Bring this instance up to the newest saved state. Returns True when local files changed.
+
+        Without force, this makes no Blob call unless the instance has not checked yet (cold start), the last check is
+        REFRESH_EVERY_SECONDS old, or hint (the newest save the browser has seen, from its cookie) is newer than what
+        this instance knows. A check is one head of the manifest; the manifest and changed saves are read only when
+        it changed.
+        """
         if not self.enabled:
             return False
         with self._lock:
             self._load_meta()
-            now = time.monotonic()
-            if not force and now - self._checked < REFRESH_EVERY_SECONDS:
-                return False
+            now = self.clock()
+            if not force:
+                stale_hint = hint > self.stamp and now - self._hinted >= HINT_MIN_SECONDS
+                due = self._checked is None or now - self._checked >= REFRESH_EVERY_SECONDS
+                if not (stale_hint or due):
+                    return False
+                if stale_hint:
+                    self._hinted = now
             try:
-                etag = self.store.head(POINTER) or "none"
-            except StoreError:
-                etag = None  # the hint is unavailable: fall back to listing
-            self._checked = now
-            if etag is not None and etag == self._seen and now - self._listed < LIST_EVERY_SECONDS:
-                return False
-            try:
-                changed = self._sync_all()
-            except (StoreError, KeyError, OSError, tarfile.TarError, sqlite3.Error) as exc:
+                changed = self._sync()
+            except (StoreError, KeyError, OSError, ValueError, tarfile.TarError, sqlite3.Error) as exc:
                 self.last_error = f"Could not read storage: {type(exc).__name__}."
                 raise CloudError(self.last_error) from exc
-            self._listed = time.monotonic()
-            self._seen = etag
+            self._checked = self.clock()
             self.last_error = ""
             if changed:
                 for callback in list(self.on_change):
                     callback()
             return changed
 
-    def _sync_all(self) -> bool:
-        projects = self._remote_projects()
-        db_versions = self.store.list(DB_PREFIX)
-        changed = False
-        if not projects and not db_versions and self.store.head(MIGRATED) is None:
-            changed = self._migrate_legacy()
-            projects = self._remote_projects()
-            db_versions = self.store.list(DB_PREFIX)
-        for slug, versions in sorted(projects.items()):
-            newest = versions[-1]
-            if self._installed.get(slug, {}).get("version") != newest:
-                changed |= self._pull_project(slug, newest)
-        if db_versions and db_versions[-1] != self._db_version:
-            changed |= self._pull_db(db_versions[-1])
+    def _sync(self) -> bool:
+        etag = self.store.head(POINTER)
+        if etag is None:
+            changed = self._bootstrap()
+        elif etag == self._seen:
+            changed = False
+        else:
+            changed = self._apply(self._read_manifest(etag), etag)
+        changed |= self._watch_legacy()
         self._save_meta()
         return changed
 
-    def _remote_projects(self) -> dict[str, list[str]]:
-        found: dict[str, list[str]] = {}
-        for name in self.store.list(PROJECTS_PREFIX):
-            rest = name[len(PROJECTS_PREFIX):]
-            slug, _sep, tail = rest.partition("/v/")
-            if tail and SLUG_RE.match(slug) and tail.endswith(".tgz"):
-                found.setdefault(slug, []).append(name)
-        return {slug: sorted(names, key=lambda item: (stamp_of(item), item)) for slug, names in found.items()}
+    def _read_manifest(self, etag: str | None) -> dict:
+        data = json.loads(self.store.get(POINTER).decode("utf-8"))
+        if not isinstance(data, dict) or data.get("v") != 2:
+            raise ValueError("bad manifest")
+        base = _empty_manifest()
+        base.update(data)
+        return base
 
-    def _pull_project(self, slug: str, version: str) -> bool:
-        """Merge one stored project version into the local folder (local unsaved changes win conflicts)."""
-        body = self.store.get(version)
-        with _Unpacked(self.data_dir, body) as (folder, meta):
+    def _apply(self, manifest: dict, etag: str | None) -> bool:
+        """Install every project and database change the manifest names that this instance does not have yet."""
+        changed = False
+        bodies: dict[str, bytes] = {}
+        for slug, name in sorted((manifest.get("projects") or {}).items()):
+            mine = self._installed.get(slug, {})
+            if mine.get("base") == name and mine.get("version") != name:
+                continue  # our newer save of this project is on its way into the manifest
+            if SLUG_RE.match(slug) and mine.get("version") != name:
+                if name not in bodies:
+                    bodies[name] = self.store.get(name)
+                changed |= self._install_project(slug, name, bodies[name])
+        db = manifest.get("db") or {}
+        if db.get("snapshot") and (db["snapshot"] != self._db.get("snapshot") or any(d not in self._db.get("applied", []) for d in db.get("deltas") or [])):
+            self._apply_db(db, bodies)
+            changed = True
+        self._manifest, self._seen = manifest, etag
+        return changed
+
+    def _install_project(self, slug: str, name: str, body: bytes) -> bool:
+        with _Unpacked(self.data_dir, body) as folder:
+            meta_file = folder / "p" / slug / VERSION_FILE
+            if not meta_file.is_file():
+                raise KeyError(f"{slug} missing from {name}")
+            meta = json.loads(meta_file.read_text("utf-8"))
             base = self._installed.get(slug, {}).get("files", {})
-            changed = _merge_files(self._scope(slug), base, folder, meta.get("files", {}), self._hash_cache)
-        self._installed[slug] = {"version": version, "files": meta.get("files", {}), "deleted": bool(meta.get("deleted"))}
-        self._version = version
+            changed = _merge_files(self._scope(slug), base, folder / "p" / slug, meta.get("files", {}), self._hash_cache)
+        self._installed[slug] = {"version": name, "files": meta.get("files", {}), "deleted": bool(meta.get("deleted"))}
+        self._version = name
         if meta.get("deleted"):
             _remove_if_empty(self._scope(slug).path)
         return changed
 
-    def _pull_db(self, version: str) -> bool:
-        body = gzip.decompress(self.store.get(version))
+    def _apply_db(self, db: dict, bodies: dict) -> None:
+        """Snapshot (when it changed), then each delta not applied yet, merged into the local db and the base copy."""
         self._meta_dir.mkdir(parents=True, exist_ok=True)
-        theirs = self._meta_dir / f".incoming-{secrets.token_hex(4)}.db"
-        theirs.write_bytes(body)
-        try:
-            self._merge_db_from(theirs)
-        finally:
-            theirs.unlink(missing_ok=True)
-        self._db_version = version
-        return True
+        snapshot = db.get("snapshot")
+        if snapshot != self._db.get("snapshot"):
+            body = bodies.get(snapshot) or self.store.get(snapshot)
+            bodies[snapshot] = body
+            with _Unpacked(self.data_dir, body) as folder:
+                full = folder / "db.full"
+                if not full.is_file():
+                    raise KeyError(f"no database in {snapshot}")
+                self._merge_full(full)
+            self._db = {"snapshot": snapshot, "applied": []}
+        for name in db.get("deltas") or []:
+            if name in self._db["applied"]:
+                continue
+            body = bodies.get(name) or self.store.get(name)
+            bodies[name] = body
+            with _Unpacked(self.data_dir, body) as folder:
+                minus, plus = folder / "db.minus", folder / "db.plus"
+                if plus.is_file() and minus.is_file():
+                    clean = self._db_is_clean()
+                    if not self.db_file.is_file() or self.db_file.stat().st_size == 0:
+                        _copy_db(self._base_db, self.db_file)
+                    merge_sqlite(self.db_file, minus, plus)
+                    merge_sqlite(self._base_db, minus, plus)
+                    self._db_clean = _stat_sig(self.db_file) if clean else None
+            self._db["applied"].append(name)
 
-    def _merge_db_from(self, theirs: Path) -> None:
-        """Apply what changed in theirs since the base copy to the local database, then make theirs the new base."""
+    def _db_is_clean(self) -> bool:
+        return self._db.get("snapshot") is not None and _stat_sig(self.db_file) == self._db_clean
+
+    def _merge_full(self, theirs: Path) -> None:
+        """Three-way merge of a full database snapshot into the local db (local unsaved rows are kept)."""
         self.db_file.parent.mkdir(parents=True, exist_ok=True)
         if not self.db_file.is_file() or self.db_file.stat().st_size == 0:
             _dispose_engines(self.db_file)
             _copy_db(theirs, self.db_file)
             clean = True
         else:
-            # Local rows not saved yet stay "dirty" after the merge, so the next save uploads them.
-            clean = self._db_version is not None and _stat_sig(self.db_file) == self._db_clean
+            clean = self._db_is_clean()
             base = self._base_db if self._base_db.is_file() else None
             merge_sqlite(self.db_file, base, theirs)
         _copy_db(theirs, self._base_db)
@@ -249,54 +314,209 @@ class CloudState:
     # -- writing ---------------------------------------------------------------------------------
 
     def save(self) -> str | None:
-        """Upload every project and the database that changed since the last sync. Returns the last version written,
-        or None when cloud storage is off or nothing changed."""
+        """Upload what changed since the last sync as one save object, then point the manifest at it.
+
+        Nothing changed: no Blob call. Otherwise: one head (plus reads only when another instance saved meanwhile),
+        one put of the save object, one head and one put of the manifest. Returns the save's name, or None.
+        """
         if not self.enabled:
             return None
         with self._lock:
             self._load_meta()
-            written: list[str] = []
             try:
-                for slug in self._local_slugs():
-                    name = self._save_project(slug)
-                    if name:
-                        written.append(name)
-                for slug, info in sorted(self._installed.items()):
-                    if not info.get("deleted") and slug != LOOSE and not self._scope(slug).path.is_dir():
-                        written.append(self._write_tombstone(slug))
-                name = self._save_db()
-                if name:
-                    written.append(name)
-            except (StoreError, KeyError, OSError, tarfile.TarError, sqlite3.Error) as exc:
+                if not self._dirty():
+                    return None
+                return self._commit()
+            except (StoreError, KeyError, OSError, ValueError, tarfile.TarError, sqlite3.Error) as exc:
                 self.last_error = f"Could not save to storage: {type(exc).__name__}."
                 raise CloudError(self.last_error) from exc
             finally:
                 self._save_meta()
-            if written:
-                self._version = written[-1]
-                self._seen = self._write_pointers(written)
-                self._checked = self._listed = time.monotonic()
-            self.last_error = ""
-            return written[-1] if written else None
 
     def save_project(self, slug: str) -> str | None:
-        """Save one project now (a job's checkpoint), without touching the others."""
-        if not self.enabled:
+        """Kept for callers of the phase A API: a save covers every changed project in one object anyway."""
+        return self.save()
+
+    def _dirty(self) -> bool:
+        for slug in self._local_slugs():
+            if _manifest(self._scope(slug), self._hash_cache) != self._installed.get(slug, {}).get("files") or self._installed.get(slug, {}).get("deleted"):
+                if _manifest(self._scope(slug), self._hash_cache) or self._installed.get(slug):
+                    return True
+        if any(not info.get("deleted") and slug != LOOSE and not self._scope(slug).path.is_dir() for slug, info in self._installed.items()):
+            return True
+        return self.db_file.is_file() and not self._db_is_clean()
+
+    def _commit(self) -> str | None:
+        etag = self.store.head(POINTER)
+        if etag is None and self._seen is None and not self._manifest.get("stamp"):
+            self._bootstrap()  # a first save on an empty store still checks for older formats first
+            if not self._dirty():
+                return self._version  # the bootstrap saved everything
+            etag = self.store.head(POINTER)
+        if etag is not None and etag != self._seen:
+            self._apply(self._read_manifest(etag), etag)  # merge what another instance saved first
+        ours = self._write_save()
+        if ours is None:
             return None
+        for _round in range(CONFIRM_ROUNDS):
+            if self._put_manifest(ours):
+                return ours
+            # Another save landed between our upload and the manifest write: merge it, and if that changed a project
+            # we had saved (both sides edited it), upload the merged result as a new save.
+            etag = self.store.head(POINTER)
+            self._apply(self._read_manifest(etag), etag)
+            if self._dirty():
+                ours = self._write_save() or ours
+        print("ranksim: storage was busy; this save will be listed by the next one.", flush=True)
+        return ours
+
+    def _manifest_has(self, name: str) -> bool:
+        m = self._manifest
+        return name in (m.get("projects") or {}).values() or name in (m.get("db") or {}).get("deltas", []) or name == (m.get("db") or {}).get("snapshot")
+
+    def _write_save(self) -> str | None:
+        """Pack every changed project and the database delta (or a full snapshot) into one immutable object."""
+        projects: dict[str, tuple[dict, dict]] = {}
+        for slug in self._local_slugs():
+            files = _manifest(self._scope(slug), self._hash_cache)
+            installed = self._installed.get(slug, {})
+            if files == installed.get("files") and not installed.get("deleted"):
+                continue
+            if not files and not installed:
+                continue
+            projects[slug] = (files, {"base": installed.get("version"), "files": files, "deleted": False, "slug": slug})
+        for slug, info in sorted(self._installed.items()):
+            if not info.get("deleted") and slug != LOOSE and not self._scope(slug).path.is_dir():
+                projects[slug] = ({}, {"base": info.get("version"), "files": {}, "deleted": True, "slug": slug})
+        name = new_name(SAVES_PREFIX, ".tgz")
+        self._meta_dir.mkdir(parents=True, exist_ok=True)
+        snap = self._meta_dir / f".snap-{secrets.token_hex(4)}.db"
+        minus = self._meta_dir / f".minus-{secrets.token_hex(4)}.db"
+        plus = self._meta_dir / f".plus-{secrets.token_hex(4)}.db"
+        db_kind = None
+        try:
+            if self.db_file.is_file() and not self._db_is_clean():
+                sig_before = _stat_sig(self.db_file)
+                _sqlite_copy(self.db_file, snap)
+                db = self._manifest.get("db") or {}
+                sizes = db.get("sizes") or {}
+                if not self._db.get("snapshot") or not self._base_db.is_file():
+                    db_kind = "full"
+                else:
+                    changed_rows = make_delta(snap, self._base_db, minus, plus)
+                    if changed_rows:
+                        delta_size = minus.stat().st_size + plus.stat().st_size
+                        total = sum(int(v) for k, v in sizes.items() if k in (db.get("deltas") or [])) + delta_size
+                        too_many = len(db.get("deltas") or []) >= COMPACT_DELTAS
+                        snapshot_size = max(COMPACT_FLOOR_BYTES, int(sizes.get(db.get("snapshot"), 0)))
+                        db_kind = "full" if too_many or total > COMPACT_RATIO * snapshot_size else "delta"
+                    else:
+                        self._db_clean = sig_before  # same rows as the base: nothing to upload
+            if not projects and db_kind is None:
+                return None
+            buffer = io.BytesIO()
+            with tarfile.open(fileobj=buffer, mode="w:gz", compresslevel=6) as archive:
+                for slug, (files, meta) in sorted(projects.items()):
+                    _add_bytes(archive, f"p/{slug}/{VERSION_FILE}", json.dumps(meta, sort_keys=True).encode("utf-8"))
+                    for rel in files:
+                        archive.add(self._scope(slug).path / rel, arcname=f"p/{slug}/{rel}", recursive=False)
+                if db_kind == "full":
+                    archive.add(snap, arcname="db.full", recursive=False)
+                elif db_kind == "delta":
+                    archive.add(minus, arcname="db.minus", recursive=False)
+                    archive.add(plus, arcname="db.plus", recursive=False)
+            body = buffer.getvalue()
+            self.store.put(name, body, content_type="application/gzip")
+            for slug, (files, meta) in projects.items():
+                self._installed[slug] = {"version": name, "files": files, "deleted": meta["deleted"], "base": meta["base"]}
+            if db_kind is not None:
+                _copy_db(snap, self._base_db)
+                self._db_clean = sig_before
+                if db_kind == "full":
+                    self._db = {"snapshot": name, "applied": []}
+                else:
+                    self._db["applied"].append(name)
+            if db_kind is not None:
+                size = snap.stat().st_size if db_kind == "full" else minus.stat().st_size + plus.stat().st_size
+                self._pending_db.append({"name": name, "kind": db_kind, "size": size})
+            self._version = name
+            return name
+        finally:
+            for path in (snap, minus, plus):
+                path.unlink(missing_ok=True)
+
+    def _put_manifest(self, ours: str) -> bool:
+        """Re-check the manifest, add our save, write it. False when another save landed in between (merge again)."""
+        etag = self.store.head(POINTER)
+        if etag is not None and etag != self._seen:
+            return False
+        manifest = json.loads(json.dumps(self._manifest))
+        written = set()
+        for slug, info in self._installed.items():
+            if "base" in info and info["base"] == manifest["projects"].get(slug) and info["version"] != manifest["projects"].get(slug):
+                manifest["projects"][slug] = info["version"]  # our save of this project, not listed yet
+                written.add(info["version"])
+        db = manifest.setdefault("db", {"snapshot": None, "deltas": [], "sizes": {}})
+        for item in self._pending_db:
+            if item["kind"] == "full":
+                db["snapshot"], db["deltas"], db["sizes"] = item["name"], [], {item["name"]: item["size"]}
+            else:
+                db["deltas"] = list(db.get("deltas") or []) + [item["name"]]
+                db.setdefault("sizes", {})[item["name"]] = item["size"]
+            written.add(item["name"])
+        written.add(ours)
+        manifest["stamp"] = max([int(manifest.get("stamp") or 0)] + [stamp_of(name) for name in written])
+        manifest["recent"] = list(manifest.get("recent") or []) + sorted(name for name in written if name not in (manifest.get("recent") or []))
+        self._prune(manifest)
+        new_etag = self._write_pointer(manifest)
+        self._manifest, self._seen = manifest, new_etag
+        self._pending_db = []
+        for info in self._installed.values():
+            info.pop("base", None)
+        self._checked = self.clock()
+        return True
+
+    def _prune(self, manifest: dict) -> None:
+        """Delete save objects nothing references any more. Deletes are free; no listing is needed."""
+        referenced = set((manifest.get("projects") or {}).values())
+        db = manifest.get("db") or {}
+        referenced |= set(db.get("deltas") or []) | {db.get("snapshot")}
+        recent = list(manifest.get("recent") or [])
+        cutoff = time.time_ns() - int(PRUNE_AFTER_SECONDS * 1e9)
+        old = [name for name in recent[:-KEEP_RECENT] if name not in referenced]
+        doomed = [name for name in old if stamp_of(name) < cutoff]
+        manifest["recent"] = [name for name in recent if name not in doomed]
+        db["sizes"] = {k: v for k, v in (db.get("sizes") or {}).items() if k in referenced}
+        if doomed:
+            try:
+                self.store.delete(doomed)
+            except StoreError:
+                manifest["recent"] = doomed + manifest["recent"]  # try again next time
+
+    def _write_pointer(self, manifest: dict) -> str | None:
+        return self.store.put(POINTER, json.dumps(manifest, sort_keys=True).encode("utf-8"), overwrite=True, content_type="application/json")
+
+    def update_auth(self, **changes) -> dict:
+        """Change the shared login state (revocation epoch, lockout) in the manifest: one head and one put."""
+        if not self.enabled:
+            return self.auth
         with self._lock:
             self._load_meta()
-            try:
-                name = self._save_project(slug) if self._scope(slug).path.is_dir() else None
-                db = self._save_db()
-            except (StoreError, KeyError, OSError, tarfile.TarError, sqlite3.Error) as exc:
-                self.last_error = f"Could not save to storage: {type(exc).__name__}."
-                raise CloudError(self.last_error) from exc
-            finally:
-                self._save_meta()
-            written = [item for item in (name, db) if item]
-            if written:
-                self._seen = self._write_pointers(written)
-            return name
+            for _round in range(CONFIRM_ROUNDS):
+                etag = self.store.head(POINTER)
+                if etag is not None and etag != self._seen:
+                    self._apply(self._read_manifest(etag), etag)
+                manifest = json.loads(json.dumps(self._manifest))
+                auth = manifest.setdefault("auth", {"epoch": 0, "lock_until": 0})
+                for key, value in changes.items():
+                    auth[key] = max(auth.get(key) or 0, value) if key in {"epoch", "lock_until"} else value
+                if self.store.head(POINTER) != etag:
+                    continue
+                self._seen = self._write_pointer(manifest)
+                self._manifest = manifest
+                break
+            self._save_meta()
+            return self.auth
 
     def _local_slugs(self) -> list[str]:
         if not self.projects_dir.is_dir():
@@ -311,149 +531,86 @@ class CloudState:
             return _Scope(self.projects_dir, recursive=False)
         return _Scope(self.projects_dir / slug, recursive=True)
 
-    def _save_project(self, slug: str) -> str | None:
-        scope = self._scope(slug)
-        prefix = f"{PROJECTS_PREFIX}{slug}/v/"
-        ours: str | None = None
-        for _round in range(CONFIRM_ROUNDS):
-            remote = sorted(self.store.list(prefix), key=lambda item: (stamp_of(item), item))
-            newest = remote[-1] if remote else None
-            installed = self._installed.get(slug, {})
-            if newest and newest != installed.get("version") and newest != ours:
-                self._pull_project(slug, newest)  # someone else saved this project: merge their version first
-                installed = self._installed[slug]
-            files = _manifest(scope, self._hash_cache)
-            if ours is not None and newest == ours:
-                break  # nothing newer appeared after our write
-            if files == installed.get("files") and not installed.get("deleted"):
-                break
-            if not files and not installed:
-                break
-            ours = new_name(prefix, ".tgz")
-            meta = {"base": installed.get("version"), "files": files, "deleted": False, "slug": slug}
-            self.store.put(ours, _pack(scope, files, meta), content_type="application/gzip")
-            self._installed[slug] = {"version": ours, "files": files, "deleted": False}
-        if len(remote) >= KEEP_VERSIONS:
-            self._prune(prefix, keep=self._installed.get(slug, {}).get("version"))
-        return ours
+    # -- first boot, and the older formats --------------------------------------------------------
 
-    def _write_tombstone(self, slug: str) -> str:
-        prefix = f"{PROJECTS_PREFIX}{slug}/v/"
-        installed = self._installed.get(slug, {})
-        name = new_name(prefix, ".tgz")
-        meta = {"base": installed.get("version"), "files": {}, "deleted": True, "slug": slug}
-        self.store.put(name, _pack(self._scope(slug), {}, meta), content_type="application/gzip")
-        self._installed[slug] = {"version": name, "files": {}, "deleted": True}
-        self._prune(prefix, keep=name)
-        return name
-
-    def _save_db(self) -> str | None:
-        if not self.db_file.is_file():
-            return None
-        ours: str | None = None
-        for _round in range(CONFIRM_ROUNDS):
-            remote = self.store.list(DB_PREFIX)
-            newest = remote[-1] if remote else None
-            if newest and newest != self._db_version and newest != ours:
-                self._pull_db(newest)
-            if ours is not None and newest == ours:
-                break
-            if self._db_version is not None and _stat_sig(self.db_file) == self._db_clean:
-                break  # unchanged since the last sync
-            self._meta_dir.mkdir(parents=True, exist_ok=True)
-            copy = self._meta_dir / f".outgoing-{secrets.token_hex(4)}.db"
-            try:
-                _sqlite_copy(self.db_file, copy)
-                ours = new_name(DB_PREFIX, ".db.gz")
-                self.store.put(ours, gzip.compress(copy.read_bytes(), compresslevel=6), content_type="application/gzip")
-                _copy_db(copy, self._base_db)
-            finally:
-                copy.unlink(missing_ok=True)
-            self._db_version = ours
-            # Taken after the copy, because closing the copy's connection may checkpoint the WAL into the main file.
-            # A write landing in the instant between is not lost: it is uploaded with the next change.
-            self._db_clean = _stat_sig(self.db_file)
-        if len(remote) >= KEEP_VERSIONS:
-            self._prune(DB_PREFIX, keep=self._db_version)
-        return ours
-
-    def _prune(self, prefix: str, keep: str | None) -> None:
-        """Delete versions beyond the newest KEEP_VERSIONS once they are old enough. Costs storage when it fails."""
-        try:
-            names = sorted(self.store.list(prefix), key=lambda item: (stamp_of(item), item))
-            cutoff = time.time_ns() - int(PRUNE_AFTER_SECONDS * 1e9)
-            stale = [name for name in names[:-KEEP_VERSIONS] if name != keep and stamp_of(name) < cutoff]
-            if stale:
-                self.store.delete(stale)
-        except StoreError:
-            pass
-
-    def _write_pointers(self, written: list[str]) -> str | None:
-        """Update the hints, waiting a few seconds at most. Returns the global pointer's etag when it was written."""
-        box: dict = {}
-        latest = written[-1]
-        slugs = {name[len(PROJECTS_PREFIX):].split("/v/")[0] for name in written if name.startswith(PROJECTS_PREFIX)}
-
-        def write() -> None:
-            try:
-                for slug in sorted(slugs):
-                    newest = self._installed.get(slug, {}).get("version")
-                    if newest:
-                        self.store.put(f"{PROJECTS_PREFIX}{slug}/HEAD", newest.encode(), overwrite=True, content_type="text/plain")
-                if any(name.startswith(DB_PREFIX) for name in written) and self._db_version:
-                    self.store.put(DB_POINTER, self._db_version.encode(), overwrite=True, content_type="text/plain")
-                box["etag"] = self.store.put(POINTER, latest.encode(), overwrite=True, content_type="text/plain")
-            except Exception as exc:  # noqa: BLE001 - the pointers are hints; listing finds the versions anyway
-                box["error"] = type(exc).__name__
-
-        worker = threading.Thread(target=write, name="ranksim-pointer", daemon=True)
-        worker.start()
-        worker.join(POINTER_WAIT_SECONDS)
-        if "error" in box or worker.is_alive():
-            print(f"ranksim: storage pointer not updated ({box.get('error', 'slow')}); other servers will find the save by listing.", flush=True)
-        return box.get("etag")
-
-    def project_changed_remotely(self, slug: str) -> bool:
-        """True when another instance saved this project since we synced it (one cheap head call)."""
-        if not self.enabled:
-            return False
-        try:
-            body_tag = self.store.head(f"{PROJECTS_PREFIX}{slug}/HEAD")
-        except StoreError:
-            return True
-        if body_tag is None:
-            return False
-        try:
-            pointed = self.store.get(f"{PROJECTS_PREFIX}{slug}/HEAD").decode("utf-8", "replace").strip()
-        except (StoreError, KeyError):
-            return True
-        return pointed != self._installed.get(slug, {}).get("version")
-
-    # -- the old single tarball ------------------------------------------------------------------
-
-    def _migrate_legacy(self) -> bool:
-        """Import the newest old-format tarball, then save it in the new format. The old tarballs are kept."""
+    def _bootstrap(self) -> bool:
+        """No manifest yet. Import the phase A layout or the old single tarball if a store holds one, then save
+        everything as the first manifest. Costs a few lists once per store, never again."""
+        changed = False
         legacy = sorted(self.store.list(LEGACY_PREFIX))
-        if not legacy:
-            return False
-        newest = legacy[-1]
-        body = self.store.get(newest)
+        phase_a = self.store.list(PROJECTS_PREFIX) + self.store.list(DB_PREFIX)
+        if phase_a:
+            changed |= self._import_phase_a(phase_a)
+        elif legacy:
+            changed |= self._import_legacy(legacy[-1], first=True)
+        self._seen = None
+        if self._dirty() or legacy or phase_a:
+            name = self._write_save()
+            manifest = _empty_manifest()
+            if legacy:
+                manifest["legacy"] = {"name": legacy[-1], "etag": self.store.head(LEGACY_POINTER), "since": time.time()}
+            self._manifest = manifest
+            if name:
+                self._put_manifest(name)
+            else:
+                self._seen = self._write_pointer(manifest)
+        return changed
+
+    def _import_phase_a(self, names: list[str]) -> bool:
+        newest: dict[str, str] = {}
+        for name in names:
+            if name.startswith(PROJECTS_PREFIX) and name.endswith(".tgz") and "/v/" in name:
+                slug = name[len(PROJECTS_PREFIX):].split("/v/")[0]
+                if SLUG_RE.match(slug) and (slug not in newest or stamp_of(name) > stamp_of(newest[slug])):
+                    newest[slug] = name
+        for slug, name in sorted(newest.items()):
+            with _Unpacked(self.data_dir, self.store.get(name)) as folder:
+                meta_file = folder / VERSION_FILE
+                meta = json.loads(meta_file.read_text("utf-8")) if meta_file.is_file() else {}
+                if meta.get("deleted"):
+                    continue
+                theirs = meta.get("files") or _manifest(_Scope(folder, recursive=True), {})
+                _merge_files(self._scope(slug), {}, folder, theirs, self._hash_cache)
+        dbs = sorted(name for name in names if name.startswith(DB_PREFIX))
+        if dbs:
+            self._meta_dir.mkdir(parents=True, exist_ok=True)
+            incoming = self._meta_dir / f".incoming-{secrets.token_hex(4)}.db"
+            incoming.write_bytes(gzip.decompress(self.store.get(dbs[-1])))
+            try:
+                self._merge_full(incoming)
+                self._db_clean = None
+            finally:
+                incoming.unlink(missing_ok=True)
+        return True
+
+    def _import_legacy(self, name: str, *, first: bool) -> bool:
+        """Merge one old-format tarball in. The first import takes everything (local files win); a later one, written
+        by an old instance still running during the rollout, is merged against what the first import brought, so
+        only what the old instance changed since then is applied. Running it twice changes nothing."""
+        body = self.store.get(name)
+        bases: dict = {}
+        if not first:
+            try:
+                bases = json.loads(self.store.get(LEGACY_BASE).decode("utf-8"))
+            except KeyError:
+                bases = {}
         staging = self.data_dir.parent / f".{self.data_dir.name}-legacy-{secrets.token_hex(4)}"
         staging.mkdir(parents=True)
+        seen: dict = {}
         try:
             with tarfile.open(fileobj=io.BytesIO(body), mode="r:gz") as archive:
                 archive.extractall(staging, filter="data")
             incoming = staging / "projects"
             if incoming.is_dir():
                 self.projects_dir.mkdir(parents=True, exist_ok=True)
-                for slug in sorted(path.name for path in incoming.iterdir() if path.is_dir()):
-                    theirs = _Scope(incoming / slug, recursive=True)
-                    # local files win; a fresh instance has none, so everything is taken
-                    _merge_files(self._scope(slug), {}, theirs.path, _manifest(theirs, {}), self._hash_cache)
-                loose = _Scope(incoming, recursive=False)
-                loose_files = _manifest(loose, {})
-                if loose_files:
-                    _merge_files(self._scope(LOOSE), {}, incoming, loose_files, self._hash_cache)
+                for slug in sorted(path.name for path in incoming.iterdir() if path.is_dir() and SLUG_RE.match(path.name)):
+                    theirs = _manifest(_Scope(incoming / slug, recursive=True), {})
+                    _merge_files(self._scope(slug), bases.get(slug, {}), incoming / slug, theirs, self._hash_cache)
+                    seen[slug] = theirs
+                loose = _manifest(_Scope(incoming, recursive=False), {})
+                if loose:
+                    _merge_files(self._scope(LOOSE), bases.get(LOOSE, {}), incoming, loose, self._hash_cache)
+                    seen[LOOSE] = loose
             incoming_db = staging / "rank.db"
             if incoming_db.is_file():
                 if self.db_file.is_file() and self.db_file.stat().st_size:
@@ -462,14 +619,41 @@ class CloudState:
                     self.db_file.parent.mkdir(parents=True, exist_ok=True)
                     _dispose_engines(self.db_file)
                     _copy_db(incoming_db, self.db_file)
+                self._db_clean = None
         finally:
             shutil.rmtree(staging, ignore_errors=True)
-        for slug in self._local_slugs():
-            self._save_project(slug)
-        self._save_db()
-        self.store.put(MIGRATED, newest.encode(), overwrite=True, content_type="text/plain")
-        print(f"ranksim: imported the old storage format ({newest.rsplit('/', 1)[-1]}) into per-project storage.", flush=True)
+        self.store.put(LEGACY_BASE, json.dumps(seen).encode("utf-8"), overwrite=True, content_type="application/json")
+        print(f"ranksim: imported the old storage format ({name.rsplit('/', 1)[-1]}).", flush=True)
         return True
+
+    def _watch_legacy(self) -> bool:
+        """For a day after the migration, notice a save an old instance made in the old format and merge it in."""
+        legacy = self._manifest.get("legacy") or {}
+        if not legacy.get("since") or time.time() - float(legacy["since"]) > LEGACY_WATCH_SECONDS:
+            return False
+        now = self.clock()
+        if now - self._legacy_checked < REFRESH_EVERY_SECONDS:
+            return False
+        self._legacy_checked = now
+        etag = self.store.head(LEGACY_POINTER)
+        if etag is None or etag == legacy.get("etag"):
+            return False
+        names = sorted(self.store.list(LEGACY_PREFIX))
+        if not names or names[-1] == legacy.get("name"):
+            return False
+        self._import_legacy(names[-1], first=False)
+        self._manifest.setdefault("legacy", {}).update({"name": names[-1], "etag": etag})
+        if self._dirty():
+            self._commit()
+        else:
+            self.update_auth()  # writes the manifest with the new legacy marker
+        return True
+
+
+def _add_bytes(archive, name: str, data: bytes) -> None:
+    info = tarfile.TarInfo(name)
+    info.size, info.mtime = len(data), int(time.time())
+    archive.addfile(info, io.BytesIO(data))
 
 
 # -- files: manifests, packing, three-way merge ----------------------------------------------------
@@ -520,35 +704,19 @@ def _sha_file(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _pack(scope: _Scope, files: dict[str, str], meta: dict) -> bytes:
-    buffer = io.BytesIO()
-    with tarfile.open(fileobj=buffer, mode="w:gz", compresslevel=6) as archive:
-        encoded = json.dumps(meta, sort_keys=True).encode("utf-8")
-        info = tarfile.TarInfo(VERSION_FILE)
-        info.size, info.mtime = len(encoded), int(time.time())
-        archive.addfile(info, io.BytesIO(encoded))
-        for rel in files:
-            archive.add(scope.path / rel, arcname=rel, recursive=False)
-    return buffer.getvalue()
-
-
 class _Unpacked:
-    """Extract a project version to a private staging folder; yields (folder, meta) and cleans up."""
+    """Extract an object to a private staging folder; yields the folder and cleans up."""
 
     def __init__(self, data_dir: Path, body: bytes) -> None:
         self.data_dir, self.body = data_dir, body
         self.folder: Path | None = None
 
-    def __enter__(self):
+    def __enter__(self) -> Path:
         self.folder = self.data_dir.parent / f".{self.data_dir.name}-incoming-{secrets.token_hex(4)}"
         self.folder.mkdir(parents=True)
         with tarfile.open(fileobj=io.BytesIO(self.body), mode="r:gz") as archive:
             archive.extractall(self.folder, filter="data")
-        meta_file = self.folder / VERSION_FILE
-        meta = json.loads(meta_file.read_text("utf-8")) if meta_file.is_file() else {}
-        if "files" not in meta:  # a version without a manifest: describe what it holds
-            meta["files"] = _manifest(_Scope(self.folder, recursive=True), {})
-        return self.folder, meta
+        return self.folder
 
     def __exit__(self, *_exc):
         shutil.rmtree(self.folder, ignore_errors=True)
@@ -797,7 +965,11 @@ def _merge_groups(conn, table: str, cols: list[str], group: str) -> int:
 
 
 def _merge_ledger(conn, table: str, cols: list[str]) -> int:
-    """Keep one hash chain: theirs' rows first, then our unsaved rows re-chained on top of theirs."""
+    """Keep one hash chain: theirs' new rows go on, then our rows that theirs does not have are re-chained after them.
+
+    The anchor is the prev_hash of theirs' first new row: our rows after that row are ours alone (never saved). This
+    works with a full copy of theirs and with a delta that holds only theirs' new rows.
+    """
     q = _q(table)
     names = ", ".join(_q(col) for col in cols)
     new_theirs = conn.execute(
@@ -805,19 +977,25 @@ def _merge_ledger(conn, table: str, cols: list[str]) -> int:
     ).fetchall()
     if not new_theirs:
         return 0
-    local_only = conn.execute(
-        f"SELECT {names} FROM main.{q} WHERE row_hash NOT IN (SELECT row_hash FROM t.{q}) "
-        f"AND row_hash NOT IN (SELECT row_hash FROM b.{q}) ORDER BY rowid"
-    ).fetchall()
+    index = {col: i for i, col in enumerate(cols)}
+    anchor = new_theirs[0][index["prev_hash"]]
+    found = conn.execute(f"SELECT rowid FROM main.{q} WHERE row_hash = ?", (anchor,)).fetchone()
+    if found is not None:
+        after = f"rowid > {int(found[0])}"
+    elif not conn.execute(f"SELECT 1 FROM main.{q} LIMIT 1").fetchone() or anchor == "0" * 64:
+        after = "1"
+    else:  # theirs builds on rows we never saw: keep every row of ours that neither side's history has
+        after = f"row_hash NOT IN (SELECT row_hash FROM b.{q})"
+    where = f"{after} AND row_hash NOT IN (SELECT row_hash FROM t.{q})"
+    local_only = conn.execute(f"SELECT {names} FROM main.{q} WHERE {where} ORDER BY rowid").fetchall()
     if local_only:
-        conn.execute(f"DELETE FROM main.{q} WHERE row_hash NOT IN (SELECT row_hash FROM t.{q}) AND row_hash NOT IN (SELECT row_hash FROM b.{q})")
+        conn.execute(f"DELETE FROM main.{q} WHERE {where}")
     marks = ", ".join("?" for _ in cols)
     for row in new_theirs:
         conn.execute(f"INSERT INTO main.{q} ({names}) VALUES ({marks})", row)
     if local_only:
         from aeo.ranksim.ledger import _row_hash
 
-        index = {col: i for i, col in enumerate(cols)}
         tip = conn.execute(f"SELECT row_hash FROM main.{q} ORDER BY rowid DESC LIMIT 1").fetchone()[0]
         for row in local_only:
             values = list(row)
@@ -836,6 +1014,55 @@ def _merge_ledger(conn, table: str, cols: list[str]) -> int:
             conn.execute(f"INSERT INTO main.{q} ({names}) VALUES ({marks})", values)
             tip = values[index["row_hash"]]
     return len(new_theirs) + len(local_only)
+
+
+def make_delta(new: Path, base: Path | None, minus: Path, plus: Path) -> int:
+    """The changes from base to new as two small databases: plus holds rows new has and base lacks, minus the rows base
+    has and new lacks (a search's Google results move as a whole group). merge_sqlite(target, minus, plus) applies
+    them. Returns how many rows changed (0: nothing to save)."""
+    for path in (minus, plus):
+        path.unlink(missing_ok=True)
+    conn = sqlite3.connect(str(new), timeout=30)
+    total = 0
+    try:
+        conn.execute("ATTACH DATABASE ? AS m", (str(minus),))
+        conn.execute("ATTACH DATABASE ? AS p", (str(plus),))
+        if base is not None and Path(base).is_file():
+            conn.execute("ATTACH DATABASE ? AS b", (str(base),))
+        else:
+            conn.execute("ATTACH DATABASE ':memory:' AS b")
+        base_tables = _tables(conn, "b")
+        for table, sql in _tables(conn, "main").items():
+            conn.execute(_in_schema(sql, table, "m"))
+            conn.execute(_in_schema(sql, table, "p"))
+            if table not in base_tables:
+                conn.execute(_in_schema(sql, table, "b"))
+            cols = [name for name, _type, _pk in _columns(conn, "main", table)]
+            base_names = {name for name, _type, _pk in _columns(conn, "b", table)}
+            shared = [col for col in cols if col in base_names]
+            names = ", ".join(_q(col) for col in shared)
+            q = _q(table)
+            group = GROUPED.get(table)
+            if group and group in shared:
+                g = _q(group)
+                changed = (
+                    f"SELECT {g} FROM (SELECT {names} FROM main.{q} EXCEPT SELECT {names} FROM b.{q}) "
+                    f"UNION SELECT {g} FROM (SELECT {names} FROM b.{q} EXCEPT SELECT {names} FROM main.{q})"
+                )
+                total += conn.execute(f"INSERT INTO p.{q} ({names}) SELECT {names} FROM main.{q} WHERE {g} IN ({changed}) ORDER BY rowid").rowcount
+                total += conn.execute(f"INSERT INTO m.{q} ({names}) SELECT {names} FROM b.{q} WHERE {g} IN ({changed}) ORDER BY rowid").rowcount
+                continue
+            order = " ORDER BY " + _q("id") if "id" in shared else ""
+            total += conn.execute(
+                f"INSERT INTO p.{q} ({names}) SELECT * FROM (SELECT {names} FROM main.{q} EXCEPT SELECT {names} FROM b.{q}){order}"
+            ).rowcount
+            total += conn.execute(
+                f"INSERT INTO m.{q} ({names}) SELECT * FROM (SELECT {names} FROM b.{q} EXCEPT SELECT {names} FROM main.{q}){order}"
+            ).rowcount
+        conn.commit()
+    finally:
+        conn.close()
+    return max(total, 0)
 
 
 def _sqlite_copy(source: Path, target: Path) -> None:

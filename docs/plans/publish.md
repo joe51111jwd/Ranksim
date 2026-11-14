@@ -96,13 +96,21 @@ code did, so it has the same DNS rebinding window. Infra owns that file.
 `ownership/verify`, `ownership/reset`, `connections` (GET, POST, DELETE `/{id}`), `plan`, the publish POST itself,
 `history`, `history/{id}/verify`, `history/{id}/rollback`. Every write checks `x-ranksim-csrf`. The public demo is refused.
 
-## Phase B (after P0)
+## Phase B (done)
 
-Rebase, switch the tests to the real secretbox, build the Publish sheet in `js/editor/publish.js`: the change list from the
-editor's diff and the server plan, ownership steps with copy buttons and a Check button when the site is not owned,
-connection forms per platform with their honest limits, confirm boxes for warnings, publish, live check, history and
-rollback. Download and Copy stay available in every state. Verify in Chromium with Playwright against a local server
-with mocked platforms.
+- Wired to P0: routes use `aeo.ranksim.api.common`; state lives in `plugins.data_dir(project, "publish")`. Secretbox is
+  imported lazily: when it is missing or `RANKSIM_SECRET` is unset, the plugin still loads, saving a connection answers
+  503, and `status` reports `encryption_ready: false` so the sheet says so.
+- Publish sheet (`js/editor/publish.js`, `css/plugins/publish.css`): What changes (the server diff, with the editor's
+  `ctx.diff()` summary when the editor offers it, and per field whether it will publish and why not), Ownership (three
+  methods with copy buttons and Check, last check result), Where it is hosted (platform forms with their honest limits,
+  saved connections, confirm boxes for warnings, the Webflow "publish the site" option, Publish), History (live check
+  status, Check again, pull request link, Roll back with a second click to confirm), and Take it with you (Download and
+  Copy, always). It publishes `ctx.exportHtml()` when the editor offers it (the original page with edits, scripts
+  intact), else the draft HTML.
+- Verified in Chromium at 1280 and 390 wide against a local server with a mocked web and WordPress site (no network):
+  prove ownership, connect, publish, live check confirmed, roll back; no horizontal scroll; the password never appears
+  in the page.
 
 ## Owner actions
 

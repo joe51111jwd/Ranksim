@@ -974,3 +974,34 @@ def test_recheck_saves_only_what_it_touched(tmp_path):
     _project(ui.root, slug="p", searches=["one"])
     tracking.recheck(ui, now=NOW, run_pull=lambda *_: {}, limit_seconds=600)
     assert saves == ["p", "p", "_plugins"]  # the attempt marker before paying, then the result and the counter
+
+
+def test_counts_from_two_instances_survive_the_real_cloud_merge(tmp_path):
+    """Two serverless instances with their own disks, one shared object store (infra's cloud.py, no network)."""
+    from aeo.ranksim.cloud import CloudState
+    from aeo.ranksim.objects import MemoryStore
+
+    store = MemoryStore()
+
+    def instance(name):
+        folder = tmp_path / name
+        (folder / "projects").mkdir(parents=True)
+        return folder, CloudState(data_dir=folder, db_file=folder / "rank.db", enabled=True, store=store)
+
+    one_dir, one = instance("one")
+    two_dir, two = instance("two")
+    a = tracking.Budget(one_dir / "projects" / "_plugins" / "tracking", cap=100, clock=Clock(), instance="aaaa")
+    b = tracking.Budget(two_dir / "projects" / "_plugins" / "tracking", cap=100, clock=Clock(), instance="bbbb")
+    for _ in range(3):
+        a.claim("x")
+    for _ in range(4):
+        b.claim("y")
+    one.save_project("_plugins")  # both save at nearly the same time, each from its own stale copy
+    two.save_project("_plugins")
+    one.refresh(force=True)
+    two.refresh(force=True)
+    assert a.used() == 7 and b.used() == 7  # nothing lost: the last save did not win over the first
+    b.claim("z")
+    two.save_project("_plugins")
+    one.refresh(force=True)
+    assert a.used() == 8

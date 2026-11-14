@@ -928,3 +928,94 @@ def test_publish_history_and_tracking_files_on_disk_never_reach_a_share_link(env
     for suffix in ("/data", "/rankings.csv", "/issues.csv", "/../plugins/publish/state.json", "/plugins/gsc/token.json"):
         response = client.get(link["path"] + suffix)
         assert "OWNERONLY" not in response.text, suffix
+
+
+# ---------------------------------------------------------------------------
+# Monday digest (owner only, every client)
+# ---------------------------------------------------------------------------
+
+
+def test_page_one_a_week_ago_uses_dated_checks_only():
+    from datetime import datetime, timezone
+
+    now = datetime(2026, 11, 14, tzinfo=timezone.utc)
+
+    def at(day):
+        return datetime(2026, 11, day, tzinfo=timezone.utc)
+
+    observations = {
+        "a": [(at(6), 4), (at(13), 2)],
+        "b": [(at(6), None), (at(13), 9)],
+        "c": [(at(5), 8), (at(13), 12)],
+        "d": [(at(12), 3), (at(13), 3)],  # no check a week back: not counted either way
+    }
+    assert share._page_one_then(observations, ["a", "b", "c", "d"], now) == (2, "2026-11-06")
+    assert share._page_one_then({"d": [(at(12), 3), (at(13), 3)]}, ["d"], now) == (None, "")
+    assert share._page_one_then({}, ["a"], now) == (None, "")
+    stale = {"a": [(at(1) - timedelta(days=40), 3), (at(1) - timedelta(days=30), 2)]}
+    assert share._page_one_then(stale, ["a"], now) == (None, "")
+
+
+def test_digest_lists_every_client_and_isolates_each_clients_email(env, monkeypatch):
+    client = env["client"]
+    ui = env["ui"]
+    demo, other = ui.project(env["demo"]), ui.project(env["other"])
+    share.log_change(demo, "note", "ALPHA-ONLY public note")
+    share.log_change(demo, "note", "ALPHA-PRIVATE note", public=False)
+    share.log_change(other, "publish", "BRAVO-ONLY published /widgets", detail="BRAVO-DETAIL", key="publish:bravo-1")
+    share.log_change(other, "note", "BRAVO-PRIVATE note", public=False)
+    demo_link = _link(env)
+    other_link = _link(env, slug=env["other"])
+
+    data = client.get("/api/v1/digest").json()
+    by_slug = {row["slug"]: row for row in data["projects"]}
+    assert set(by_slug) == {env["demo"], env["other"]} and data["failed"] == []
+    assert all("_data" not in row for row in data["projects"])
+    row = by_slug[env["demo"]]
+    assert row["demo"] is True and row["page_one"]["now"] == 4 and row["page_one"]["of"] == 6
+    assert row["page_one"]["week_ago"] is None  # the demo has no dated checks, so no week-ago claim
+    assert row["report_url"] == f"http://testserver{demo_link['path']}"
+    assert by_slug[env["other"]]["last_publish"]["summary"] == "BRAVO-ONLY published /widgets"
+    assert "Monday digest" in data["text"] and "(demo data)" in data["text"] and OTHER_NAME in data["text"]
+
+    updates = {item["slug"]: item for item in data["updates"]}
+    alpha, bravo = updates[env["demo"]], updates[env["other"]]
+    for update, mine, theirs, link in ((alpha, "ALPHA-ONLY", "BRAVO", demo_link), (bravo, "BRAVO-ONLY", "ALPHA", other_link)):
+        blob = update["subject"] + update["text"] + update["html"]
+        assert mine in blob and theirs not in blob
+        assert link["path"] in blob
+        other_path = (other_link if link is demo_link else demo_link)["path"]
+        assert other_path not in blob
+    assert OTHER_NAME not in alpha["text"] and "Northwind" not in bravo["text"]
+    whole = json.dumps(data)
+    for secret in ("ALPHA-PRIVATE", "BRAVO-PRIVATE", "BRAVO-DETAIL", *FAKE_KEYS.values(), str(env["root"]), env["csrf"]):
+        assert secret not in whole, secret
+    assert "updates_text" in data and data["updates_text"].count("Subject: ") == 2
+    # each link in an update opens only its own client's report
+    assert client.get(other_link["path"] + "/data").json()["name"] == OTHER_NAME
+
+
+def test_digest_is_owner_only_and_survives_a_broken_project(env, tmp_path, monkeypatch):
+    settings = make_settings(tmp_path)
+    app = create_app(settings=settings, database=settings.ranksim_database_url, projects_root=tmp_path / "projects",
+                     public_demo=False, access_password="owner-pass", access_secret="test-secret")
+    assert TestClient(app).get("/api/v1/digest").status_code == 401
+
+    real = share.client_report
+
+    def flaky(ui, project, **kw):
+        if project.slug == env["other"]:
+            raise RuntimeError("broken project")
+        return real(ui, project, **kw)
+
+    monkeypatch.setattr(share, "client_report", flaky)
+    data = env["client"].get("/api/v1/digest").json()
+    assert [row["slug"] for row in data["projects"]] == [env["demo"]] and data["failed"] == [env["other"]]
+    assert "Could not build" in data["text"]
+
+
+def test_digest_html_is_escaped(env):
+    project = env["ui"].project(env["other"])
+    share.log_change(project, "publish", "<img src=x onerror=alert(1)> published", key="publish:xss")
+    data = env["client"].get("/api/v1/digest").json()
+    assert "<img" not in data["html"] and "<img" not in data["updates_html"] and "&lt;img" in data["updates_html"]

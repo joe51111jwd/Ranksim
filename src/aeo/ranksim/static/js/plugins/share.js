@@ -276,10 +276,80 @@ function logSection({ slug }) {
     list);
 }
 
+/* ------------------------------------------------------------------ Monday digest (every client) */
+
+async function copyRich(html, text, done) {
+  try {
+    if (window.ClipboardItem && navigator.clipboard && navigator.clipboard.write) {
+      await navigator.clipboard.write([new ClipboardItem({
+        'text/html': new Blob([html], { type: 'text/html' }),
+        'text/plain': new Blob([text], { type: 'text/plain' }),
+      })]);
+    } else {
+      await navigator.clipboard.writeText(text);
+    }
+    toast(done);
+  } catch (_err) {
+    window.prompt('Copy this', text);
+  }
+}
+
+function digestSection() {
+  const body = h('div', { class: 'share-list' }, h('p', { class: 'tile-sub', text: 'Loading every client.' }));
+  const copyDigest = h('button', { class: 'btn btn-primary', type: 'button', disabled: true }, 'Copy digest');
+  const copyAll = h('button', { class: 'btn', type: 'button', disabled: true }, 'Copy all updates');
+  let digest = null;
+
+  function fact(label, value) {
+    return h('div', { class: 'share-digest-fact' }, h('span', { class: 'tile-sub', text: label }), h('strong', { text: value }));
+  }
+
+  function paint(data) {
+    digest = data;
+    body.replaceChildren();
+    if (!data.projects.length) {
+      body.append(h('p', { class: 'tile-sub', text: 'No clients yet.' }));
+      return;
+    }
+    for (const row of data.projects) {
+      const p1 = row.page_one;
+      const then = p1.week_ago == null ? 'No check a week ago' : `${p1.week_ago} on ${day(p1.week_ago_date)}`;
+      const move = row.biggest_move;
+      const moveText = move ? `${move.q}: ${move.from ? '#' + move.from : 'not on page one'} to ${move.to ? '#' + move.to : 'not on page one'}` : 'None';
+      body.append(h('div', { class: 'share-row share-digest-row' },
+        h('div', { class: 'share-row-main' },
+          h('div', { class: 'share-row-top' }, h('strong', { text: row.name }), row.demo ? h('span', { class: 'chip chip-gray', text: 'Demo data' }) : null),
+          h('span', { class: 'tile-sub', text: row.google_date ? `${row.source} checked ${row.google_date}` : `${row.source} check date not recorded` }),
+          h('div', { class: 'share-digest-facts' },
+            fact('Page one now', `${p1.now} of ${p1.of}`),
+            fact('A week ago', then),
+            fact('Biggest move', moveText),
+            fact('Fixed this week', String(row.fixed)),
+            fact('Open high priority', String(row.open_high)),
+            fact('Last publish', row.last_publish ? `${day(row.last_publish.date)}` : 'None yet'))),
+        h('div', { class: 'share-row-actions' },
+          row.report_url ? h('a', { class: 'btn btn-plain', href: row.report_url, target: '_blank', rel: 'noopener noreferrer' }, 'Client report')
+            : h('a', { class: 'btn btn-plain', href: row.preview_path, target: '_blank', rel: 'noopener' }, 'Preview'))));
+    }
+    if (data.failed.length) body.append(h('p', { class: 'form-error', text: `Could not build: ${data.failed.join(', ')}` }));
+    copyDigest.disabled = false;
+    copyAll.disabled = !data.updates.length;
+  }
+
+  copyDigest.addEventListener('click', () => digest && copyRich(digest.html, digest.text, 'Digest copied.'));
+  copyAll.addEventListener('click', () => digest && copyRich(digest.updates_html, digest.updates_text, `${digest.updates.length} client updates copied.`));
+  api.get('/api/v1/digest').then(paint).catch((err) => body.replaceChildren(h('p', { class: 'form-error', text: err.message })));
+  return h('section', { class: 'tile span-4' },
+    h('div', { class: 'tile-head' }, h('h2', { text: 'Monday digest' }), h('div', { class: 'share-head-actions' }, copyDigest, copyAll)),
+    h('p', { class: 'tile-sub', text: 'Every client on one page. Page one counts a week ago come only from dated Google checks. Copy all updates gives each client their own weekly email.' }),
+    body);
+}
+
 registerSettingsSection({ key: 'share', order: 50, render: linksSection });
 registerSettingsSection({ key: 'share-plans', order: 52, render: plansSection });
 registerSettingsSection({ key: 'share-log', order: 54, render: logSection });
 registerSettingsSection({ key: 'share-brand', order: 56, render: brandingSection });
+registerSettingsSection({ key: 'share-digest', order: 58, render: digestSection });
 
 registerOverviewTile({
   key: 'client-report', // not 'share': that key is the built-in Who takes the top 10 tile

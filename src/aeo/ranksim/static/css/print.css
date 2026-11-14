@@ -1,0 +1,13 @@
+/* Printing a Studio screen (loaded with media="print"). The client report has its own print rules in share/share.css. */
+@page { size: auto; margin: 14mm 12mm; }
+html, body { background: #fff !important; color: #111 !important; }
+* { -webkit-print-color-adjust: exact; print-color-adjust: exact; box-shadow: none !important; }
+.bar, .toast, .scrim, .sheet, .skip, .noscript, .no-print, button, .btn, .icon-btn, input, select, textarea, .result-actions, .form-actions { display: none !important; }
+main, .screen, .wrap, .narrow { max-width: none !important; padding: 0 !important; margin: 0 !important; }
+.bento { display: block !important; }
+.tile, .card, .rowcard { background: #fff !important; color: #111 !important; border: 1px solid #d9d9d2; border-radius: 10pt; margin: 0 0 10pt; padding: 12pt; break-inside: avoid; page-break-inside: avoid; }
+.tile-big, .tile.span-4, .tile.span-3 { break-inside: auto; page-break-inside: auto; }
+h1, h2, h3, .tile-head { break-after: avoid; page-break-after: avoid; }
+tr, li { break-inside: avoid; page-break-inside: avoid; }
+thead { display: table-header-group; }
+a { color: inherit !important; text-decoration: none !important; }

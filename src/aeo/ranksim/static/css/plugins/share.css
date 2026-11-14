@@ -1,0 +1,26 @@
+/* Client delivery (owner side): share links, branding, issue plans, change log. Bento tokens from base.css. */
+.share-head-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.share-create { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 14px; }
+.share-create .field { flex: 1 1 220px; width: auto; }
+.share-create .share-select { flex: 0 1 200px; }
+.share-list { display: grid; gap: 10px; margin-top: 14px; }
+.share-row { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; justify-content: space-between; background: var(--card); border-radius: var(--r-card); padding: 14px 16px; min-width: 0; }
+.share-row.is-off { opacity: 0.7; }
+.share-row-main { display: grid; gap: 4px; min-width: 0; flex: 1 1 260px; }
+.share-row-top { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.share-row-actions { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.share-url { font-family: var(--mono); font-size: 12px; color: var(--ink-2); overflow-wrap: anywhere; }
+.share-plan-edit { display: flex; flex-wrap: wrap; gap: 8px; flex: 1 1 420px; }
+.share-plan-edit .field { flex: 1 1 200px; width: auto; }
+.share-plan-edit .share-select { flex: 0 1 160px; }
+.share-brand { display: flex; flex-wrap: wrap; gap: 14px; align-items: center; margin-top: 14px; }
+.share-logo { display: flex; align-items: center; justify-content: center; min-width: 120px; min-height: 56px; padding: 8px 12px; background: var(--card); border-radius: var(--r-card); }
+.share-logo img { max-height: 40px; max-width: 160px; display: block; }
+.share-log { list-style: none; margin: 14px 0 0; padding: 0; display: grid; gap: 8px; }
+.share-log-row { display: grid; grid-template-columns: 110px auto 1fr auto; gap: 12px; align-items: baseline; background: var(--card); border-radius: var(--r-card); padding: 12px 16px; }
+.share-log-text { display: grid; gap: 2px; min-width: 0; overflow-wrap: anywhere; }
+.share-check { display: inline-flex; gap: 6px; align-items: center; font-size: 14px; color: var(--ink-2); }
+@media (max-width: 720px) {
+  .share-log-row { grid-template-columns: 1fr; gap: 4px; }
+  .share-row-actions .btn { flex: 1 1 auto; }
+}

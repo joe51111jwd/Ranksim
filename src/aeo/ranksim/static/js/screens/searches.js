@@ -158,30 +158,55 @@ function sourcesTile(item) {
       h('span', { class: 'one-line', text: (source.detail || []).join(', ') })))));
 }
 
-/* What the pages above you share and your page lacks, with the pages that have each one. */
+/* Friendly names for structured data types. */
+const SCHEMA_NAME = {
+  FAQPage: 'FAQ markup', HowTo: 'how-to markup', Product: 'product markup', SoftwareApplication: 'software markup',
+  Review: 'review markup', AggregateRating: 'star rating markup', BreadcrumbList: 'breadcrumb markup', VideoObject: 'video markup',
+  Article: 'article markup', BlogPosting: 'article markup', Organization: 'organization markup', LocalBusiness: 'local business markup',
+  ItemList: 'list markup', WebPage: 'page markup', WebSite: 'site markup',
+};
+
+function pagesAbove(item) {
+  return item.pages === item.of ? `All ${item.of} pages above` : `${item.pages} of the ${item.of} pages above`;
+}
+
+/* One gap as a sentence, the pages that have it, and Open in editor. */
+function gapLine(sentence, urls, gap, extra) {
+  return h('div', { class: 'gapline' },
+    h('div', { class: 'gaprow' },
+      h('div', { class: 'gaptext' }, h('div', { class: 't', text: sentence }), extra || null,
+        h('div', { class: 'evidence' }, urls.slice(0, 4).map((url) => h('a', { class: 'one-line', href: url, target: '_blank', rel: 'noopener noreferrer', title: url, text: hostPath(url) })))),
+      gap.q ? h('button', { class: 'btn btn-sm', type: 'button', onClick: () => openInEditor({ q: gap.q, url: gap.page }) }, icon('pencil'), gap.page ? 'Add it' : 'Write it') : null));
+}
+
+/* What the pages above you share and your page lacks, said plainly, with the pages that have each one. */
 export function gapTile(gap) {
-  const tile = h('div', { class: 'tile' }, h('div', { class: 'tile-head' }, h('h2', { text: 'What the pages above have' }), h('span', { class: 'aside', text: gap.compared && gap.compared.length ? `${gap.compared.length} pages` : '' })));
+  const tile = h('div', { class: 'tile' }, h('div', { class: 'tile-head' }, h('h2', { text: 'What the pages above have' }), h('span', { class: 'aside', text: gap.compared && gap.compared.length ? plural(gap.compared.length, 'page') : '' })));
   if (gap.note) tile.append(h('p', { class: 'reason gap-bottom', text: gap.note }));
-  const evidence = (urls) => h('div', { class: 'evidence' }, urls.slice(0, 4).map((url) => h('span', { class: 'one-line', title: url, text: `${hostPath(url)}` })));
-  if (gap.topics && gap.topics.length) {
-    tile.append(h('div', { class: 'tile-k', text: 'Sections' }), h('div', { class: 'rows gap-bottom' }, gap.topics.map((topic) => h('div', { class: 'gapline' },
-      h('div', { class: 't' }, h('span', { text: topic.topic }), h('span', { class: 'count', text: `${topic.pages} of ${topic.of}` }), topic.in_your_text ? h('span', { class: 'label label-low', text: 'In your text' }) : null),
-      evidence(topic.evidence.map((entry) => entry.url))))));
+  const yours = gap.checked === false ? '' : ' Yours doesn\'t.';
+  const lines = h('div', { class: 'rows' });
+  for (const item of gap.elements || []) lines.append(gapLine(`${pagesAbove(item)} have ${item.label}.${yours}`, item.evidence, gap));
+  for (const topic of gap.topics || []) {
+    lines.append(gapLine(`${pagesAbove(topic)} have a section on "${topic.topic}".${topic.in_your_text ? ' You mention it, but without a heading.' : yours}`,
+      topic.evidence.map((entry) => entry.url), gap,
+      topic.evidence.length ? h('div', { class: 'quote' }, topic.evidence.slice(0, 2).map((entry) => h('span', { class: 'one-line', text: `"${entry.heading}"` }))) : null));
   }
+  for (const item of gap.schema || []) lines.append(gapLine(`${pagesAbove(item)} use ${SCHEMA_NAME[item.type] || `${item.type} markup`}.${yours}`, item.evidence, gap));
   if (gap.terms && gap.terms.length) {
-    tile.append(h('div', { class: 'tile-k', text: 'Words' }), h('div', { class: 'chips gap-bottom' }, gap.terms.map((term) => h('span', {
-      class: `chip${term.in_search ? '' : ' chip-gray'}`,
-      title: `${term.pages} of ${term.of} pages: ${term.evidence.map(hostPath).join(', ')}`,
-      text: `${term.term} ${term.pages}/${term.of}`,
-    }))));
+    const top = gap.terms.slice(0, 8);
+    lines.append(h('div', { class: 'gapline' },
+      h('div', { class: 't', text: gap.checked === false ? 'Words the pages above use:' : 'Words the pages above use that yours doesn\'t:' }),
+      h('div', { class: 'chips' }, top.map((term) => h('span', {
+        class: `chip${term.in_search ? '' : ' chip-gray'}`,
+        title: `${pagesAbove(term)}: ${term.evidence.map(hostPath).join(', ')}`,
+        text: `${term.term} (${term.pages} of ${term.of})`,
+      })))));
   }
-  if (gap.schema && gap.schema.length) {
-    tile.append(h('div', { class: 'tile-k', text: 'Structured data' }), h('div', { class: 'chips gap-bottom' }, gap.schema.map((item) => h('span', { class: 'chip chip-gray', title: item.evidence.map(hostPath).join(', '), text: `${item.type} ${item.pages}/${item.of}` }))));
+  if (gap.words && gap.words.median_above && gap.words.yours != null && gap.words.yours < gap.words.median_above * 0.7) {
+    lines.append(gapLine(`The pages above have about ${gap.words.median_above} words. Yours has ${gap.words.yours}.`, [], gap));
   }
-  if (gap.words && gap.words.median_above) {
-    tile.append(h('p', { class: 'reason', text: gap.words.yours != null ? `Your page has ${gap.words.yours} words. The pages above have ${gap.words.median_above} (median).` : `The pages above have ${gap.words.median_above} words (median).` }));
-  }
-  if (!gap.note && !(gap.topics || []).length && !(gap.terms || []).length && !(gap.schema || []).length) tile.append(h('p', { class: 'reason', text: 'Nothing the pages above share is missing from yours.' }));
+  if (lines.childNodes.length) tile.append(lines);
+  else if (!gap.note) tile.append(h('p', { class: 'reason', text: 'Nothing the pages above share is missing from yours.' }));
   return tile;
 }
 

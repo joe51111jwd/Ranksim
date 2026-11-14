@@ -219,7 +219,37 @@ def page_profile(url: str, html: str) -> dict:
         "selling": bool(SELLING_WORDS.search(buttons)),
         "meta": (found.meta_description or "").strip()[:400],
         "sample": (found.main_text or "")[:4000],
+        "elements": _elements(body, headings, types),
     }
+
+
+# Parts of a page that the pages above often have, named the way the search sheet says them.
+ELEMENTS = {
+    "faq": "an FAQ section",
+    "table": "a comparison table",
+    "video": "a video",
+    "pricing": "a pricing section",
+    "steps": "numbered steps",
+}
+
+
+def _elements(html: str, headings: list[dict], types: list[str]) -> list[str]:
+    """Which ELEMENTS a page has, from its HTML (chrome removed), its H2 and H3 headings and structured data."""
+    lower = (html or "").lower()
+    texts = " | ".join(item["text"].lower() for item in headings)
+    kinds = {item.lower() for item in types}
+    found = []
+    if "faqpage" in kinds or re.search(r"\bfaqs?\b|frequently asked|common questions", texts):
+        found.append("faq")
+    if re.search(r"<table\b", lower) and re.search(r"<t[hd]\b", lower):
+        found.append("table")
+    if re.search(r"<video\b|<iframe[^>]+(youtube|vimeo|wistia|loom)", lower) or "videoobject" in kinds:
+        found.append("video")
+    if re.search(r"\bpric(?:e|es|ing)\b|\bcosts?\b", texts):
+        found.append("pricing")
+    if "howto" in kinds or len(re.findall(r"(?:^| \| )(?:step )?\d+[.):]? ", texts)) >= 3:
+        found.append("steps")
+    return found
 
 
 CONTENT_LABELS = {"pricing", "features", "faq", "faqs", "testimonials", "case studies", "integrations", "reviews", "how it works", "frequently asked questions"}
@@ -585,7 +615,7 @@ def gap_for(search: str, page_url: str | None, page_html: str | None, above: lis
             if not profile.get("unreadable"):
                 pages.append(profile)
     mine = _profile(cache, page_url or "", page_html) if page_html else None
-    result = {"q": search, "page": page_url, "page_stored": mine is not None, "checked": mine is not None, "compared": [page["url"] for page in pages], "topics": [], "terms": [], "schema": [], "words": None}
+    result = {"q": search, "page": page_url, "page_stored": mine is not None, "checked": mine is not None, "compared": [page["url"] for page in pages], "elements": [], "topics": [], "terms": [], "schema": [], "words": None}
     if len(pages) < COMMON_MIN_PAGES:
         result["note"] = "Fewer than two pages above yours are stored, so there is nothing to compare yet."
         return result
@@ -650,6 +680,16 @@ def gap_for(search: str, page_url: str | None, page_html: str | None, above: lis
         for kind, urls in sorted(schema.items(), key=lambda kv: -len(kv[1]))
         if _common(len(urls), total) and kind not in mine_schema
     ]
+    have: dict[str, list[str]] = defaultdict(list)
+    for page in pages:
+        for name in page.get("elements") or []:
+            have[name].append(page["url"])
+    mine_elements = set(mine.get("elements") or []) if mine else set()
+    result["elements"] = [
+        {"element": name, "label": ELEMENTS[name], "pages": len(have[name]), "of": total, "evidence": have[name][:6]}
+        for name in ELEMENTS
+        if _common(len(have[name]), total) and name not in mine_elements
+    ]
     counts = [page["words"] for page in pages if page["words"]]
     if counts:
         result["words"] = {"yours": mine["words"] if mine else None, "median_above": int(median(counts)), "max_above": max(counts)}
@@ -705,7 +745,7 @@ def stored_html(database: str, urls: list[str]) -> dict[str, str]:
     return {url: found[loose_key(url)] for url in urls if loose_key(url) in found}
 
 
-SECTIONS_VERSION = 4
+SECTIONS_VERSION = 5
 
 
 def _fingerprint(project, meta, google, features, rows, pages, docs) -> str:

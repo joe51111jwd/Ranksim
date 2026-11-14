@@ -698,3 +698,18 @@ def test_a_local_contractor_in_a_software_sites_results_is_not_a_competitor():
     # a contractor's site sees software vendors as software, not competitors
     rows = {row["domain"]: row for row in cp.classify_domains(google, SC, profiles={url: cp.page_profile(url, html) for url, html in docs.items()}, own_offer="service")}
     assert rows["mitti.example"]["kind"] == "software"
+
+
+def test_gaps_name_page_elements_the_pages_above_have():
+    faq = '<h2>Frequently asked questions</h2><h3>Q?</h3><p>A.</p><table><tr><th>Plan</th><td>$40</td></tr></table><iframe src="https://www.youtube.com/embed/x"></iframe>'
+    a = _page("", "A", "A", ["Job costing"], "words " * 50).replace("</main>", faq + "</main>")
+    b = _page("", "B", "B", ["Dispatch"], "words " * 50).replace("</main>", faq + "</main>")
+    c = _page("", "C", "C", ["Daily logs"], "words " * 50)
+    mine = _page("", "Mine", "Mine", ["Daily logs"], "words " * 50).replace("</main>", '<iframe src="https://player.vimeo.com/video/1"></iframe></main>')
+    gap = cp.gap_for("x software", "https://me.example/", mine, [("https://a.example/", a), ("https://b.example/", b), ("https://c.example/", c)])
+    elements = {item["element"]: item for item in gap["elements"]}
+    assert set(elements) == {"faq", "table"}  # you have a video already
+    assert elements["faq"]["label"] == "an FAQ section" and elements["faq"]["pages"] == 2 and elements["faq"]["of"] == 3
+    assert elements["faq"]["evidence"] == ["https://a.example/", "https://b.example/"]
+    footer_only = _page("", "D", "D", ["X"], "w " * 20).replace("</body>", "<footer><h3>FAQ</h3></footer></body>")
+    assert "faq" not in cp.page_profile("https://d.example/", footer_only)["elements"]  # site chrome is not content

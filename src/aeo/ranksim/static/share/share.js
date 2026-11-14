@@ -200,13 +200,17 @@
           r.date && r.date !== d.google_date ? h("span", { class: "muted small", text: "Checked " + r.date }) : null,
         ]),
         h("td", { class: "num" + (r.position && r.position <= 3 ? " good" : ""), "data-label": "Your position", text: pos }),
-        d.predictions ? h("td", { class: "num", "data-label": "Estimate (PREDICTED)" }, r.predicted ? [h("span", { text: "#" + r.predicted.position + " of " + r.predicted.of }), h("span", { class: "tag", text: "PREDICTED" })] : ["No estimate"]) : null,
+        d.predictions ? h("td", { class: "num", "data-label": "Estimate (PREDICTED)" }, r.predicted ? [
+          h("span", { text: "#" + r.predicted.position + " of " + r.predicted.of }),
+          h("span", { class: "tag", text: "PREDICTED" }),
+          h("span", { class: "muted small est-basis", text: "based on " + r.predicted.pairs + " page pairs" }),
+        ] : ["Not shown"]) : null,
         h("td", { class: "muted", "data-label": "First result", text: leader ? leader.domain : "" }),
       ]);
     });
     root.appendChild(tile("", [
       head("Where you show up", "Your position in Google for each search. #1 is the first result. " + checked + "." +
-        (d.predictions ? " The estimate is Ranksim's model of where your page should land among the pages we stored. It is PREDICTED, not a Google position." : "")),
+        (d.predictions ? " The estimate is Ranksim's model of where your page should land among the pages we stored. It is PREDICTED, not a Google position, and it is shown only for searches where a backtest was clearer, with the number of page pairs it is based on." : "")),
       rows.length ? h("div", { class: "table-wrap" }, [h("table", { class: "stack" }, [
         h("thead", {}, [h("tr", {}, [
           h("th", { text: "Search" }),

@@ -922,6 +922,26 @@ def _search_console(report: dict):
     }
 
 
+def _client_estimate(predicted) -> dict | None:
+    """A model estimate a client may see: only when predict marked this search CLEARER from its backtest, with the
+    number of page pairs behind it. UNSURE, no confidence at all (before predict adds it), null, or zero pairs: hidden.
+    Accepts confidence as predict's dict ({"label", "backtest_pairs", ...}) or as a plain label string."""
+    if not isinstance(predicted, dict):
+        return None
+    position, of = _int(predicted.get("position")), _int(predicted.get("of"))
+    if not position or not of:
+        return None
+    confidence = predicted.get("confidence")
+    if isinstance(confidence, dict):
+        label, pairs = confidence.get("label"), confidence.get("backtest_pairs")
+    else:
+        label, pairs = confidence, predicted.get("backtest_pairs", predicted.get("pairs"))
+    pairs = _int(pairs)
+    if label != "CLEARER" or not pairs or pairs <= 0:
+        return None
+    return {"position": position, "of": of, "label": "PREDICTED", "pairs": pairs}
+
+
 def client_report(ui, project, *, preview: bool = False) -> dict:
     report = owner_report(ui, project.slug)
     plans = issue_plans(project)
@@ -950,7 +970,7 @@ def client_report(ui, project, *, preview: bool = False) -> dict:
                 "url": _url(row.get("url")) if _int(row.get("position")) else None,
                 "checked": bool(row.get("checked")),
                 "date": dated.get(str(row.get("q") or ""), ("", ""))[1],
-                "predicted": {"position": position, "of": _int(predicted.get("of")), "label": "PREDICTED"} if predicted and position and _int(predicted.get("of")) else None,
+                "predicted": _client_estimate(predicted),
                 "top": [
                     {
                         "position": _int(item.get("position")),
@@ -1033,7 +1053,7 @@ def client_report(ui, project, *, preview: bool = False) -> dict:
         "weekly": weekly_summary(project, report, issues, changes),
         "notes": [
             date_note,
-            "Estimates marked PREDICTED come from Ranksim's model of the pages we stored for each search. They are not Google positions.",
+            "Estimates marked PREDICTED come from Ranksim's model of the pages we stored for each search. They are shown only where a backtest was clearer, and they are not Google positions.",
         ],
     }
     search_console = _search_console(report)  # gsc session, flagged edit: only when Search Console has data
@@ -1294,11 +1314,12 @@ def rankings_csv(data: dict) -> str:
                 row["url"] or "",
                 predicted.get("position") or "",
                 predicted.get("of") or "",
+                predicted.get("pairs") or "",
                 (leader or {}).get("domain", ""),
             ]
         )
     source = data.get("source") or "Google"
-    return _csv(["Search", f"{source} position", f"{source} data date", "Page", "PREDICTED position", "PREDICTED of", f"{source} #1"], rows)
+    return _csv(["Search", f"{source} position", f"{source} data date", "Page", "PREDICTED position", "PREDICTED of", "PREDICTED based on page pairs", f"{source} #1"], rows)
 
 
 def issues_csv(data: dict) -> str:

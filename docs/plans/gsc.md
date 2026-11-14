@@ -272,6 +272,20 @@ Without a search data key, new sites have no Google positions. When GSC is on:
 - Audit check `gsc-title-search`: for those searches, when the best page's title does not use the search's words,
   a medium issue on the title, quoting the Search Console average position and date range.
 
+## Second review fixes
+
+- Access tokens are kept in memory per instance. `account.json` (sealed refresh token, scope, `connected_at`,
+  `connection_id`) changes only on connect and disconnect, so a refresh on one Vercel instance can never win the cloud
+  merge over a disconnect or account switch made on another. A grant found revoked during a GET is deleted and saved.
+- Search Analytics asks for 5,000 rows per dimension set (Google sorts by clicks). When a set is capped, the
+  opportunities say "Partial", a tracked search outside the rows shows "Not in top searches" (not "No data"), and the
+  editor panel says the page is not among the pages sent. Three snapshots are kept.
+- The date range ends 3 days before today (final data, Pacific time days).
+- Automatic matching is strict everywhere (first analysis, new sites, turning a second site on, re-matching after a
+  reconnect): never a parent domain property. A reconnect clears old errors on every enabled site.
+- Disconnect deletes parked first-analysis data; parked data is pruned on every discovery call; the once-a-day
+  re-check is keyed by slug and creation time, and old rows are dropped.
+
 ## Known gaps
 
 - One Google account per Ranksim. A client whose property lives under a different Google account must add James's

@@ -343,12 +343,12 @@ def test_full_flow_connect_pick_fetch_report_refresh_disconnect(tmp_path, env):
     status = box.client.get(f"/api/v1/gsc/projects/{slug}").json()
     assert status["state"] == "ready" and status["connected"] and status["enabled"]
     assert status["property"] == "sc-domain:dirtcrew.example"
-    assert status["range"] == {"start": "2026-10-08", "end": "2026-11-04", "days": 28, "label": "Oct 8 to Nov 4, 2026"}
+    assert status["range"] == {"start": "2026-10-07", "end": "2026-11-03", "days": 28, "label": "Oct 7 to Nov 3, 2026"}
     assert status["totals"] == {"clicks": 120, "impressions": 6400, "ctr": 0.0188, "position": 14.2}
     bodies = box.google.api_bodies()
     assert [body["dimensions"] for body in bodies] == [[], ["query"], ["page"], ["query", "page"]]
-    assert all(body["startDate"] == "2026-10-08" and body["endDate"] == "2026-11-04" for body in bodies)
-    assert all(body.get("rowLimit") == 1000 for body in bodies[1:])
+    assert all(body["startDate"] == "2026-10-07" and body["endDate"] == "2026-11-03" for body in bodies)
+    assert all(body.get("rowLimit") == gsc.ROW_LIMIT == 5000 for body in bodies[1:])
     assert any(path == "/sites/sc-domain%3Adirtcrew.example/searchAnalytics/query" for kind, path, _ in box.google.calls)
 
     snapshots = list((box.project.dir / "plugins" / "gsc" / "snapshots").glob("*.json"))
@@ -1121,3 +1121,43 @@ def test_reconnecting_another_account_rematches_every_site(tmp_path, env):
     _callback(box, {"code": "good-code", "state": query["state"]})
     assert gsc.load_settings(second)["property"] == ""  # this account cannot read it: Settings asks for a property
     assert gsc.project_state(box.ui, second)["state"] == "needs_property"
+
+
+def test_token_refresh_never_rewrites_the_stored_connection(tmp_path, env):
+    """Refreshes stay in memory, so an instance that refreshed never overwrites a disconnect or an account switch made
+    on another instance when the cloud copies merge."""
+    box = _connected_box(tmp_path)
+    before = gsc.account_path(box.ui).read_bytes()
+    box.ui.gsc_clock.now += 2 * 3600
+    gsc._ACCESS.clear()  # a cold instance
+    assert _post(box, f"/api/v1/gsc/projects/{box.project.slug}/refresh").status_code == 200
+    assert [grant for kind, grant, _ in box.google.calls if kind == "token"][-1] == "refresh_token"
+    assert gsc.account_path(box.ui).read_bytes() == before
+    assert not {"access_token", "expires_at"} & set(json.loads(before))  # no access token at rest at all
+
+
+def test_revoked_grant_found_in_a_get_is_saved_to_cloud(tmp_path, env):
+    box = _connected_box(tmp_path)
+    saves = []
+    box.ui.cloud = SimpleNamespace(enabled=True, save=lambda: saves.append(1), refresh=lambda force=False: None, on_change=[])
+    box.google.refresh_tokens.clear()
+    gsc._ACCESS.clear()
+    assert box.client.get(f"/api/v1/gsc/projects/{box.project.slug}/properties").status_code == 401
+    assert saves and not gsc.account_path(box.ui).exists()
+    box.ui.cloud = None
+
+
+def test_disconnect_removes_parked_data(tmp_path, env):
+    box = _connected_box(tmp_path)
+    gsc.discovery_sources(project=None, pages=[SimpleNamespace(url="https://www.other.example/")], ui=box.ui)
+    folder = gsc.account_path(box.ui).parent / "pending"
+    assert list(folder.glob("*.json"))
+    _post(box, "/api/v1/gsc/disconnect")
+    assert not folder.exists()
+
+
+def test_capped_snapshot_is_labeled_partial():
+    snapshot = {"totals": {"impressions": 100}, "queries": [], "pages": [], "query_pages": [], "capped": {"queries": True}, "row_limit": 5000}
+    opp = gsc.opportunities(snapshot)
+    assert opp["partial"] is True and "Partial" in opp["rules"]["near_page_one"]
+    assert gsc.opportunities({**snapshot, "capped": {}})["partial"] is False

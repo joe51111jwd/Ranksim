@@ -93,7 +93,9 @@ def read_site(site: str, settings, database: str, *, fetcher=None, max_pages: in
         if kind == "urlset":
             urls.extend(locs)
         else:
-            for child in locs[:3]:
+            from aeo.ranksim.discovery import rank_sitemaps  # discover: product and page maps first, no legal maps
+
+            for child in rank_sitemaps(locs)[:4]:
                 item = fetch([child])[0]
                 if item.status == "fetched" and item.html:
                     try:

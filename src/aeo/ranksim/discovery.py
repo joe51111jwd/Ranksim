@@ -84,6 +84,7 @@ STRONG_LABEL_STARTS = (
     "meet ", "about ", "plans", "table of contents", "in this article", "key takeaways", "conclusion",
     "final thoughts", "summary", "next steps", "share this", "subscribe", "follow us", "stay ", "thanks", "hear from",
     "loved by", "customer stories", "product updates", "top picks", "use of ", "no charge", "refer ", "what it ",
+    "key differences", "differences between", "pros and cons",
     "what you ", "how we ", "who we ", "what we ",
 )
 # Words that only appear in legal pages and documents.
@@ -127,7 +128,7 @@ HEADS = {
 }
 CONNECTORS = re.compile(r",|;|\s(?:for|with|that|to|and|or|by|from|which|so|built|designed|made|without|will|actually|in a|is|are)\s")
 # A phrase with one of these reads like a sentence, so it is cut into its product phrases even when it is short.
-SENTENCE = re.compile(r"\s(?:that|which|so|built|designed|made|without|will|actually|in a|is|are)\s")
+SENTENCE = re.compile(r"\s(?:that|which|so|built|designed|made|without|will|actually|in a|is|are|by)\s")
 STOP = {
     "a", "an", "the", "and", "or", "for", "with", "to", "of", "in", "on", "at", "by", "from", "is", "are", "be", "it",
     "its", "this", "that", "as", "your", "you", "our", "we", "us", "how", "what", "why", "when", "who", "which",
@@ -267,17 +268,62 @@ def page_class(url: str) -> str:
         return "skip"
     if any(BLOG_SEGMENT.match(segment) for segment in segments[:-1]) or BLOG_SEGMENT.match(first):
         return "blog"
+    if len(segments) > 1 and re.match(r"(?:what|how|does|do|will|can|where|when|is|are|should)-", segments[-1].lower()):
+        return "blog"  # an FAQ answer ("/heavyjob/what-is-heavyjob/") explains a product, it doesn't target a search
     if any(CORE_SEGMENT.match(segment) for segment in segments) or CORE_SLUG.search(segments[-1]):
         return "core"
     return "page"
+
+
+def _core_rank(url: str) -> int:
+    """Among product pages: compare and alternative pages and "<x> software" pages first, then features and
+    solutions, then industries, then hub pages that only list the others (/compare/, /industries/)."""
+    segments = [segment.lower() for segment in urlsplit(url).path.strip("/").split("/") if segment]
+    last = segments[-1] if segments else ""
+    if len(segments) == 1 and CORE_SEGMENT.match(last):
+        return 3
+    if re.search(r"(?:^|-)(?:alternatives?|vs|versus|compare)(?:-|$)", last) or segments[0] in {"compare", "vs", "versus", "alternatives"}:
+        return 0
+    if re.search(r"(?:^|-)(?:software|app|platform|crm|tool|tools|system)(?:-|$)", last):
+        return 0
+    if segments[0] in {"industries", "industry", "who-we-serve", "use-cases", "use-case"}:
+        return 2
+    return 1
+
+
+def rank_sitemaps(locs: list[str]) -> list[str]:
+    """Child sitemaps of a sitemap index, most useful first. Legal, author, tag, press, news, media and event maps are
+    left out; product, page and solution maps come before the blog."""
+    def rank(url: str) -> int | None:
+        name = (urlsplit(url).path or "").lower().rsplit("/", 1)[-1]
+        if re.search(r"legal|author|tag|categor|press|news|media|release|event|webinar|image|video|ebook|white-paper|whitepaper|podcast|career|job", name):
+            return None
+        if re.search(r"product|solution|feature|industr|compare|alternative|service|app|homepage|home|page|main|core|landing", name):
+            return 0 if not re.search(r"homepage", name) else 1
+        if re.search(r"post|blog|article|guide|resource|case|topic|checklist|training|library|customer", name):
+            return 3
+        return 2
+
+    ranked = [(rank(url), index, url) for index, url in enumerate(locs)]
+    return [url for value, _index, url in sorted(item for item in ranked if item[0] is not None)]
+
+
+def _unique_urls(urls: list[str]) -> list[str]:
+    seen, out = set(), []
+    for url in urls:
+        key = url.rstrip("/")
+        if key not in seen:
+            seen.add(key)
+            out.append(url)
+    return out
 
 
 def rank_site_urls(urls: list[str], limit: int) -> list[str]:
     """The site pages worth reading, best first, at most ``limit``: product, compare and industry pages, then other
     pages, then a share of the blog. Legal, utility, press, staging and other-language pages are left out."""
     order = {"home": 0, "core": 1, "page": 2, "blog": 3}
-    kept = [url for url in urls if page_class(url) != "skip"]
-    ranked = sorted(kept, key=lambda url: (order[page_class(url)], urlsplit(url).path.strip("/").count("/"), len(url)))
+    kept = [url for url in _unique_urls(urls) if page_class(url) != "skip"]
+    ranked = sorted(kept, key=lambda url: (order[page_class(url)], _core_rank(url) if page_class(url) == "core" else 0, urlsplit(url).path.strip("/").count("/"), len(url)))
     blog_cap = max(3, limit // 3)
     picked, blog = [], 0
     for url in ranked:
@@ -511,7 +557,10 @@ GENERAL = {
     "alternative", "alternatives", "review", "reviews", "comparison", "compare", "vs", "versus", "and", "or", "for",
     "the", "a", "an", "guide", "overview", "options", "software", "app", "apps", "tool", "tools", "platform",
     "solution", "solutions", "system", "systems", "program", "service", "services", "company", "companies", "online",
+    "whats", "what", "which", "is", "are", "you", "need", "right",
 }
+# Size words: "midsized contractors" names an audience, not a search.
+AUDIENCE_SIZE = {"small", "smaller", "midsized", "mid", "medium", "large", "larger", "growing", "local", "busy", "independent"}
 
 
 def _general(phrase: str) -> bool:
@@ -536,6 +585,12 @@ def _noise_reason(phrase: str, source: str) -> str | None:
         return "a tagline"
     if source in OWN_SOURCES and " and " in padded and words[-1] not in HEADS:
         return "a list of features"
+    if source in OWN_SOURCES and " or " in padded:
+        return "a choice, not a search"
+    if " in one " in padded and " all in one " not in padded:
+        return "a tagline"
+    if len(words) == 2 and words[0] in AUDIENCE_SIZE:
+        return "an audience"
     return None
 
 
@@ -608,6 +663,8 @@ def _gather(text: str, source: str, weight: float, page: str | None, *, max_word
     out: list = []
     for piece, factor in _cut(text, max_words):
         piece = " ".join(word for word in piece.split() if not YEAR.fullmatch(word))  # searchers rarely type the year
+        piece = re.sub(r"\s+(?:in|for|of|from|on|to)$", "", piece)  # "buildertrend pricing in" after the year went
+        piece = re.sub(r"^\d{1,2}\s+(?=(?:best|top)\b)", "", piece)  # "7 best joist alternatives" is "best joist alternatives"
         reason = _label_reason(piece) or _tagline_reason(piece) or ("too general" if _general(piece) else None) or _noise_reason(piece, source)
         words = piece.split()
         if not reason and not 2 <= len(words) <= max_words:

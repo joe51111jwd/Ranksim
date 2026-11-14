@@ -823,3 +823,17 @@ def test_intent_fixes_from_live_sites():
     assert dn.classify_intent("hcss vs busybusy")[0] == "commercial"
     assert dn.same_search("grading contractor software", "grading contractor software for machine hours")
     assert dn.same_search("hcss vs busybusy 2026", "hcss vs busybusy")
+
+
+def test_more_shapes_from_live_sites():
+    found = _phrases([
+        "Software Alternatives by Crew Size | Acme", "Dirt Crews or Home Service | Acme", "Leads to Crew in One App | Acme",
+        "Midsized Contractors | Acme", "7 Best Joist Alternatives for Contractors (2026) | Acme", "Buildertrend Pricing in 2026 | Acme",
+        "What's the Best Tool? | Acme", "Key Differences for Contractors | Acme", "Procore Pricing | Acme",
+    ])
+    queries = set(found.queries)
+    assert {"procore pricing", "buildertrend pricing"} <= queries
+    assert any(q.startswith("best joist alternatives") for q in queries)
+    for junk in ("software alternatives by crew size", "dirt crews or home service", "leads to crew in one app", "midsized contractors",
+                 "whats the best tool", "key differences for contractors", "buildertrend pricing in"):
+        assert junk not in queries, junk

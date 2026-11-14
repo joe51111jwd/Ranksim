@@ -169,6 +169,15 @@ def build_app(data: Path):
     import httpx
 
     handler = wordpress(web)
+
+    # The fake hosts (*.example) never resolve, so let the publishing connectors skip their DNS guard for them only.
+    # Every other host still goes through the real check. Same idea as tests/test_publish.py patching assert_safe_url.
+    from aeo.ranksim.publishing.connectors import base as connectors
+
+    real_safe, real_pinned = connectors.Connector.safe_url, connectors.Connector.pinned
+    fake = lambda url: (urlsplit(url).hostname or "").endswith(".example")  # noqa: E731
+    connectors.Connector.safe_url = lambda self, url: url if fake(url) else real_safe(self, url)
+    connectors.Connector.pinned = lambda self, url: (url, {}, {}) if fake(url) else real_pinned(self, url)
     app.state.ui.publish_overrides = {
         "http_factory": lambda *args, **kwargs: httpx.Client(transport=httpx.MockTransport(handler)),
         "sleep": lambda seconds: None,

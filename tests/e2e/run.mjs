@@ -367,6 +367,11 @@ try {
     await page.waitForSelector(SEL.sheet);
     await page.locator('.sheet button:has-text("Copy")').first().click();
     await page.waitForFunction((sel) => /Copied|Copy did not work/.test(document.querySelector(sel).textContent), SEL.toast);
+    await page.keyboard.press('Escape');
+    await page.waitForSelector(SEL.sheet, { state: 'detached' });
+    // Fix in editor focuses elements in the page body (head tags such as <title> have nothing to point at).
+    await page.locator(SEL.issueRow).filter({ has: page.locator('.issue-tag', { hasText: '<h1>' }) }).first().click();
+    await page.waitForSelector(SEL.sheet);
     await page.click(SEL.fixInEditor);
     await page.waitForURL(/\/editor/);
     await page.waitForSelector(SEL.commentsPanel, { timeout: SLOW });
@@ -495,7 +500,8 @@ try {
     expect(/live|confirmed|published/i.test(sheetText), `the live check reports: ${sheetText.slice(0, 200)}`);
     await audit(page, 'desktop-19-published');
     await page.click(SEL.rollBack);
-    await page.waitForFunction((sel) => /rolled back|restored/i.test(document.querySelector(sel).innerText), SEL.publishSheet, { timeout: SLOW });
+    await page.click('.sheet button:text-is("Roll back for real?")');
+    await page.locator(SEL.publishSheet).filter({ hasText: /rolled back|restored/i }).waitFor({ timeout: SLOW });
     await audit(page, 'desktop-20-rolled-back');
     await page.keyboard.press('Escape');
   });
@@ -638,6 +644,25 @@ try {
     await mobile.waitForSelector(SEL.verdict, { timeout: SLOW });
     await checkPredictTiles(mobile);
     await audit(mobile, 'phone-editor-result');
+  });
+
+  await step('phone-publish', async () => {
+    const wp = 'https://www.dirtcrew.example/wp-about/';
+    await goto(mobile, `/app/${encodeURIComponent(slug)}/editor?page=${encodeURIComponent(wp)}`);
+    const heading = mobile.frameLocator(SEL.editorFrame).locator('h1').first();
+    await heading.waitFor({ timeout: SLOW });
+    await heading.click();
+    await mobile.keyboard.press('End');
+    await mobile.keyboard.type(' today');
+    await mobile.waitForTimeout(500);
+    await mobile.locator(SEL.publishOpen).first().click();
+    await mobile.waitForSelector(SEL.publishSheet);
+    await mobile.locator(SEL.publishSheet).filter({ hasText: 'Proven' }).waitFor({ timeout: SLOW });
+    await mobile.waitForSelector(`${SEL.publishGo}:not([disabled])`, { timeout: SLOW });
+    const wide = await mobile.$$eval('.sheet .tile, .sheet button, .sheet code', (list) => list.filter((el) => el.getBoundingClientRect().right > window.innerWidth + 1).map((el) => el.className || el.tagName));
+    expect(!wide.length, `the publish sheet fits 390px: ${wide.join(', ')}`);
+    await audit(mobile, 'phone-publish-sheet');
+    await mobile.keyboard.press('Escape');
   });
 
   await step('sign-out', async () => {

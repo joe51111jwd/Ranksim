@@ -47,6 +47,8 @@ async function route() {
   }
   try {
     if (where.slug && S.projects.some((p) => p.slug === where.slug)) {
+      // the server answers any screen-shaped address; one no screen registered shows the Overview at its own address
+      if (where.unknown) history.replaceState({}, '', `/app/${enc(where.slug)}${location.search}`);
       if (where.slug !== S.slug || !S.report) await openSite(where.slug);
       S.screen = where.screen;
       renderBar();

@@ -18,3 +18,6 @@ after `css/base.css` and the area files (`css/home.css`, `css/editor.css` and so
 - Every screen must work at phone width with no horizontal scroll. Add `@media (max-width: 720px)` rules in your own
   file.
 - Each stylesheet is fetched with a version query string, so a new deploy is picked up on the next page load.
+- `css/print.css` (the printable report) is the one stylesheet loaded with `media="print"`: its rules apply only when
+  printing. Every other file here and in `css/` styles the app on screen; put print rules for your feature in an
+  `@media print { ... }` block.

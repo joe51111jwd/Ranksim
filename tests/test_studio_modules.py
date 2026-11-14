@@ -67,8 +67,8 @@ def test_every_import_resolves_and_is_exported():
 
 def test_hooks_api_matches_the_build_plan():
     exported = _exports(JS / "hooks.js")
-    for name in ("on", "call", "collect", "registerScreen", "registerOverviewTile", "registerEditorPanel", "registerEditorTool",
-                 "registerSettingsSection", "registerSearchColumn"):
+    for name in ("on", "call", "collect", "registerScreen", "registerOverviewTile", "registerTile", "registerEditorPanel",
+                 "registerEditorTool", "registerSettingsSection", "registerSearchColumn"):
         assert name in exported, name
     text = (JS / "hooks.js").read_text(encoding="utf-8")
     for event in ("report-loaded", "editor-ready", "draft-changed", "test-finished"):
@@ -80,6 +80,69 @@ def test_hooks_api_matches_the_build_plan():
                  "request", "get", "post", "api", "stream", "S", "parseLocation", "pathFor", "navigate", "go", "link", "toast",
                  "openSheet", "closeSheet", "page", "footer"):
         assert name in core, name
+    # api carries the whole client, stream included (BUILD_PLAN 4.3: "api (get/post/stream)")
+    api_line = re.search(r"^export const api = \{([^}]*)\};", (JS / "core.js").read_text(encoding="utf-8"), re.M)
+    assert api_line and {"request", "get", "post", "stream"} <= {part.strip() for part in api_line.group(1).split(",")}
+
+
+# Which build session owns each core module (BUILD_PLAN section 5). core.js and hooks.js are the shared API.
+OWNER = {
+    "app.js": "shell", "core.js": "shell", "hooks.js": "shell", "screens/overview.js": "shell", "screens/settings.js": "shell",
+    "screens/searches.js": "discover", "screens/competitors.js": "discover", "screens/issues.js": "audit",
+    "editor/editor.js": "editor", "editor/preview.js": "editor", "editor/test.js": "predict", "editor/publish.js": "publish",
+}
+# The names core modules owned by different sessions import from each other (hooks.js "frozen module exports").
+FROZEN = {
+    "editor/editor.js": ("ED", "draftFor", "normalize", "paintFrame", "paintSide", "renderEditor", "syncFromFrame", "editorCtx", "getCompare"),
+    "editor/preview.js": ("facts",),
+    "editor/test.js": ("runTest", "renderResult"),
+    "editor/publish.js": ("publishButton",),
+    "screens/issues.js": ("issueRow",),
+}
+
+
+def test_frozen_module_exports_stay_exported_and_documented():
+    hooks = (JS / "hooks.js").read_text(encoding="utf-8")
+    frozen = hooks[hooks.index("frozen module exports"):]
+    for module, names in FROZEN.items():
+        exported = _exports(JS / module)
+        assert module in frozen, module
+        for name in names:
+            assert name in exported, f"{module} must keep exporting {name}"
+            assert re.search(rf"\b{name}\b", frozen), f"hooks.js must list {module} {name}"
+    # every import from a module another session owns is in the frozen list
+    for path in _modules():
+        rel = path.relative_to(JS).as_posix()
+        if rel.startswith("plugins/"):
+            continue
+        assert rel in OWNER, f"{rel} has no owner in BUILD_PLAN section 5"
+        for match in IMPORT.finditer(path.read_text(encoding="utf-8")):
+            target = (path.parent / match.group("spec")).resolve().relative_to(JS.resolve()).as_posix()
+            names = match.group("names") or ""
+            if target in ("core.js", "hooks.js") or OWNER.get(target) == OWNER[rel] or not names.startswith("{"):
+                continue
+            for item in names.strip("{} \n").split(","):
+                name = item.split(" as ")[0].strip()
+                if name:
+                    assert name in FROZEN.get(target, ()), f"{rel} imports {name} from {target}; add it to the frozen list"
+
+
+def test_screen_keys_have_the_shape_the_server_answers():
+    # the server answers /app/<slug>/<key> with the app for keys of this shape (p0-backend studio.SCREEN_KEY)
+    shape = r"[a-z0-9][a-z0-9_-]{0,39}"
+    literal = re.compile(r"""\bregisterScreen\(\s*(['"])([^'"]*)\1""")
+    keys = []
+    for path in _modules():
+        keys += [match.group(2) for match in literal.finditer(path.read_text(encoding="utf-8"))]
+    assert {"overview", "issues", "searches", "competitors", "editor", "settings"} <= set(keys)
+    assert all(re.fullmatch(shape, key) for key in keys), keys
+    assert f"/^{shape}$/" in (JS / "hooks.js").read_text(encoding="utf-8")  # registerScreen warns about any other key
+
+
+def test_settings_lists_server_plugin_schemas():
+    text = (JS / "screens" / "settings.js").read_text(encoding="utf-8")
+    assert "key: 'plugins'" in text and "'/api/v1/plugins'" in text
+    assert "plugins 80" in (JS / "hooks.js").read_text(encoding="utf-8")
 
 
 def test_no_inline_handlers_or_dashes_in_the_studio_files():

@@ -153,6 +153,25 @@ def test_shell_works_without_plugin_folders(local, tmp_path, monkeypatch):
     assert page.status_code == 200 and "/studio/js/plugins/" not in page.text and "/studio/css/plugins/" not in page.text
 
 
+def test_print_stylesheet_applies_only_when_printing(local, tmp_path, monkeypatch):
+    import shutil
+
+    static = tmp_path / "static"
+    shutil.copytree(studio.STATIC, static)
+    (static / "css" / "print.css").write_text(".foot { display: none; }\n", encoding="utf-8")
+    (static / "css" / "plugins" / "share.css").write_text("@media print { .share-x { display: none; } }\n", encoding="utf-8")
+    monkeypatch.setattr(studio, "STATIC", static)
+    monkeypatch.setattr(studio, "PLUGIN_JS", static / "js" / "plugins")
+    monkeypatch.setattr(studio, "PLUGIN_CSS", static / "css" / "plugins")
+    page = local["client"].get("/").text
+    links = re.findall(r"<link rel=\"stylesheet\"[^>]*>", page)
+    printed = [link for link in links if "/studio/css/print.css?v=" in link]
+    assert printed and all(link.endswith(' media="print">') for link in printed)
+    assert all("media=" not in link for link in links if link not in printed)
+    assert any("/studio/css/plugins/share.css?v=" in link for link in links)
+    assert local["client"].get("/studio/css/print.css").status_code == 200
+
+
 def test_classic_home_moved_to_projects_and_old_demo_link_still_redirects(local):
     client = local["client"]
     home = client.get("/projects")

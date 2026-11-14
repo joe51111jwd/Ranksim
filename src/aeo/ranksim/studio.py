@@ -59,11 +59,13 @@ def _shell(ui) -> str:
     new deploy restyles at once. Scripts are ES modules without query strings, because a module is keyed by its URL
     and every module must share one copy of core.js; /studio/ answers them with no-cache and an ETag instead.
     app.js comes before the plugins and boots on DOMContentLoaded, after every plugin has registered.
+    css/print.css (the printable report) loads with media="print", so its rules never restyle the app on screen.
     """
     from html import escape
 
     styles, modules, plugins = _shell_assets()
-    lines = [f'<link rel="stylesheet" href="/studio/{escape(name)}?v={_asset_version([path])}">' for name, path in styles]
+    media = {"css/print.css": ' media="print"'}
+    lines = [f'<link rel="stylesheet" href="/studio/{escape(name)}?v={_asset_version([path])}"{media.get(name, "")}>' for name, path in styles]
     lines += [f'<link rel="modulepreload" href="/studio/{escape(name)}">' for name, _path in modules if name != "js/app.js"]
     lines.append('<script type="module" src="/studio/js/app.js"></script>')
     lines += [f'<script type="module" src="/studio/{escape(name)}"></script>' for name, _path in plugins]
@@ -94,19 +96,6 @@ def _shell_assets() -> tuple[list[tuple[str, Path]], list[tuple[str, Path]], lis
     return css + listed(PLUGIN_CSS, "css/plugins", ".css"), modules, listed(PLUGIN_JS, "js/plugins", ".js")
 
 
-def _asset_version(paths=None) -> str:
-    """A short hash of the files' bytes (by default every file the shell lists). It changes whenever one changes."""
-    import hashlib
-
-    if paths is None:
-        styles, modules, plugins = _shell_assets()
-        paths = [path for _name, path in styles + modules + plugins]
-    digest = hashlib.sha256()
-    for path in paths:
-        digest.update(Path(path).read_bytes())
-    return digest.hexdigest()[:10]
-
-
 def _plain(part: str) -> bool:
     """A file or folder name that is safe to publish: letters, digits, dot, dash and underscore, no leading dot."""
     import re
@@ -135,6 +124,19 @@ def _asset_file(name: str) -> Path | None:
     if not path.is_relative_to(root) or not path.is_file():
         return None
     return path
+
+
+def _asset_version(paths=None) -> str:
+    """A short hash of the files' bytes (by default every file the shell lists). It changes whenever one changes."""
+    import hashlib
+
+    if paths is None:
+        styles, modules, plugins = _shell_assets()
+        paths = [path for _name, path in styles + modules + plugins]
+    digest = hashlib.sha256()
+    for path in paths:
+        digest.update(Path(path).read_bytes())
+    return digest.hexdigest()[:10]
 
 
 def _error(status: int, message: str) -> JSONResponse:

@@ -87,11 +87,16 @@ export function settleStreamedContent(doc) {
   }
 }
 
+/* The page as HTML. Everything the editor or a plugin adds to the preview is left out: nodes marked data-rs and
+   every data-rs-* attribute. */
 export function serialize(doc) {
   const root = doc.documentElement.cloneNode(true);
   root.querySelectorAll('[data-rs]').forEach((node) => node.remove());
-  root.querySelectorAll('[data-rs-reveal]').forEach((node) => node.removeAttribute('data-rs-reveal'));
-  root.querySelectorAll('[data-rs-pick]').forEach((node) => node.removeAttribute('data-rs-pick'));
+  for (const el of [root, ...root.querySelectorAll('*')]) {
+    for (const attr of Array.from(el.attributes)) {
+      if (attr.name.startsWith('data-rs-')) el.removeAttribute(attr.name);
+    }
+  }
   return `<!doctype html>\n${root.outerHTML}`;
 }
 

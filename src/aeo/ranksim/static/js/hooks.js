@@ -20,12 +20,14 @@
      core.js for the standard heading.
      ctx = { key, slug, report, project, params (URLSearchParams of the address), main (the <main> element) }
      Built-in keys and orders: overview 10, issues 20, searches 30, competitors 40, editor 50, settings 90 (nav false).
-     Note: the server only serves the shell for the built-in screen names, so a new screen opens from the top bar or
-     from go('<key>'); reloading its address needs the server's screen list to include the key.
+     A key is 1 to 40 lowercase letters, digits, - and _, starting with a letter or digit. The server answers
+     /app/<slug>/<key> with the app for any key of that shape, so a screen's address also works on a reload, in a new
+     tab and from a bookmark. An address whose key no screen registered opens the site's Overview and the address bar
+     is corrected to /app/<slug>.
 
    ---------------------------------------------------------------- overview
 
-   registerOverviewTile({ key, order, render(report, ctx) })
+   registerOverviewTile({ key, order, render(report, ctx) })   (registerTile is the same function)
      Adds a tile to the Overview bento. Return a <section class="tile ..."> (span-2, span-4, white, black...).
      ctx = { report, project, slug }
      Built-in keys and orders: search-data 0, first-page 10, average 20, backtest 30, issues 40, rankings 50,
@@ -35,8 +37,8 @@
 
    registerEditorPanel({ key, order, render(ctx) })
      Adds a tile to the editor's side column. Panels repaint whenever the draft changes, except the panel that holds
-     keyboard focus. Built-in keys and orders: open-progress 5 (while a new site is analyzed), test 10, snippet 20,
-     fields 30, stats 40.
+     keyboard focus: it stays as it is, and stays still on screen while the panels around it change height. Built-in
+     keys and orders: open-progress 5 (while a new site is analyzed), test 10, snippet 20, fields 30, stats 40.
 
    registerEditorTool({ key, order, render(ctx) })
      Adds a control to the editor toolbar (right side). Built-in keys and orders: mode 50, device 60.
@@ -47,11 +49,24 @@
      search        the current search, or '' before the site's report exists
      report, project, slug
      mode          'visual' or 'html';  device: 'desktop' or 'mobile'
-     draft         { text, url, base, loaded, touched, loading, failed }: base is the HTML as loaded
-     facts         { title, h1, meta, words, headings } of the draft
-     getHtml()     the current draft HTML (reads the live preview first)
+     draft         { text, url, base, loaded, touched, loading, failed }: base is the HTML as loaded, touched turns
+                   true at the first edit
+     facts         { title, h1, meta, words, headings } of draft.text, worked out again whenever draft.text changes
+     getHtml()     the draft HTML. Once the draft is touched it first reads back the live preview (Visual mode) or the
+                   code view (HTML mode). Before the first edit it is the page as loaded.
      setHtml(html) replaces the draft (cleaned like any page), repaints, fires 'draft-changed'
-     doc()         the live preview document in Visual mode, or null (HTML mode, or still loading)
+     edit(fn)      changes the page: calls fn(doc) with the live preview document, or with a parsed copy of the draft
+                   in HTML mode or while the preview loads, then saves the result as the draft, marks it touched,
+                   repaints the side column and fires 'draft-changed'. fn returns false to change nothing. Returns
+                   true when the draft changed.
+     doc()         the live preview document in Visual mode, or null (HTML mode, or still loading). Use it to read the
+                   page, find elements and draw on top of them, never to change content: the draft does not see a
+                   change made here until the person edits the page, and then saves it with their edit. Change content
+                   with edit(fn), replaceText() or setHtml().
+                   Everything a plugin adds to doc() must be marked so it is never saved, tested or published: put the
+                   data-rs attribute on every element it inserts (a pin, a style, an overlay) and name every attribute
+                   it sets on the page's own elements data-rs-<feature>. Serializing the draft drops [data-rs] elements
+                   and every data-rs-* attribute.
      select(sel, { scroll = true })  outlines and selects the element matching the CSS selector in the preview and
                    scrolls it into view. Returns the element, or null (no match, HTML mode, not loaded).
                    select(null) clears the outline.
@@ -66,7 +81,13 @@
    registerSettingsSection({ key, order, render(ctx) })
      Adds a section to Settings. Return a <section class="tile span-2"> (or span-4).
      ctx = { report, project, slug, reload() (reloads the report and project), rerender() }
-     Built-in keys and orders: refresh 10, gsc 20, searches 30, competitors 40, delete 90.
+     Built-in keys and orders: refresh 10, gsc 20, searches 30, competitors 40, plugins 80, delete 90.
+     The plugins section shows what GET /api/v1/plugins returns: every server plugin whose settings_schema() gave a
+     dict, and every plugin that failed to load. It is hidden when there is nothing to show. A schema is shown read
+     only as { title, description, fields: [{ key, label, value, help }] } (or JSON Schema `properties`, each with
+     title, description and value or default). A plugin that registers its own settings section with the plugin's
+     name as the key (for example 'gsc') is left out of this list, so settings that people change belong in such a
+     section with the plugin's own routes.
 
    registerSearchColumn({ key, order, header, cell(row) })
      Adds a column to the Searches list. `header` is its title; cell(row) returns text or a Node for one ranking row
@@ -83,6 +104,24 @@
                       HTML changes. Visual edits are debounced; HTML typing fires per change, so debounce heavy work.
      'test-finished'  { run, search, url, page, html, editor }  after Test changes returns. run is the API answer;
                       editor is the editor ctx, or null if the person already left the editor.
+
+   ---------------------------------------------------------------- frozen module exports
+
+   Core modules owned by different build sessions import these names from each other. They are part of this
+   contract: keep the names and signatures, and change one only together with every module that imports it. app.js
+   imports the modules statically, so a missing export stops the whole app from loading. Plugins use the hooks above.
+     editor/editor.js   ED  the editor's view state { mode, device, frame, code, refs, ready }
+                        draftFor(url) -> draft        normalize(html) -> html      paintFrame()      paintSide()
+                        renderEditor()                syncFromFrame()              editorCtx(extra?) -> ctx | null
+                        getCompare(q) -> Promise of the compare answer for a search
+     editor/preview.js  facts(html) -> { title, h1, meta, words, headings }
+     editor/test.js     runTest() -> Promise          renderResult(run, animate)
+     editor/publish.js  publishButton(draft) -> Node
+     screens/issues.js  issueRow(issue, compact) -> Node
+     Importers: app.js (draftFor, normalize, paintFrame, paintSide, renderEditor, publishButton), screens/overview.js
+     (issueRow), editor/test.js (ED, draftFor, editorCtx, getCompare, renderEditor, syncFromFrame, facts,
+     publishButton), editor/editor.js (renderResult, runTest), editor/publish.js (ED, draftFor, syncFromFrame).
+     tests/test_studio_modules.py checks this list against the imports.
 */
 
 const listeners = new Map();
@@ -155,12 +194,18 @@ const SECTIONS = registry('settings section');
 const COLUMNS = registry('search column');
 
 export function registerScreen(key, { label, nav = true, order = 100, render }) {
+  if (!/^[a-z0-9][a-z0-9_-]{0,39}$/.test(String(key))) {
+    console.error(`Ranksim: screen key '${key}' should be 1 to 40 lowercase letters, digits, - and _. Its address will not open on a reload.`);
+  }
   return SCREENS.add({ key, label: label || key, nav, order, render });
 }
 
 export function registerOverviewTile(spec) {
   return TILES.add(spec);
 }
+
+/* The short name the build plan uses for registerOverviewTile. */
+export const registerTile = registerOverviewTile;
 
 export function registerEditorPanel(spec) {
   return PANELS.add(spec);

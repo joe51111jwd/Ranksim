@@ -140,6 +140,25 @@ export function editorCtx(extra) {
   const draft = draftFor(pageUrl);
   const here = () => !!ED.refs && ED.refs.page === pageUrl;
   let known = null;
+  let knownText = null;
+  /* Runs fn(doc) on the live preview, or on a parsed copy of the draft in HTML mode or while the preview loads, then
+     saves the result as the draft. fn returning false means it changed nothing. */
+  const edit = (fn) => {
+    if (!here()) return false;
+    const live = liveDoc();
+    if (!live) syncFromFrame();
+    const doc = live || cleanDoc(draft.text);
+    if (fn(doc) === false) return false;
+    draft.text = serialize(doc);
+    if (!live) {
+      if (ED.mode === 'html' && ED.code) ED.code.value = tidy(draft.text);
+      else paintFrame();
+    }
+    draft.touched = true;
+    paintSide();
+    changed('api');
+    return true;
+  };
   const ctx = {
     page: pageUrl,
     report: S.report,
@@ -159,7 +178,10 @@ export function editorCtx(extra) {
       return ED.device;
     },
     get facts() {
-      if (!known) known = facts(draft.text);
+      if (!known || knownText !== draft.text) {
+        known = facts(draft.text);
+        knownText = draft.text;
+      }
       return known;
     },
     getHtml() {
@@ -202,28 +224,14 @@ export function editorCtx(extra) {
       if (el) el.scrollIntoView({ block: 'center', behavior: reduceMotion.matches ? 'auto' : 'smooth' });
       return el;
     },
+    edit,
     replaceText(selector, text) {
-      if (!here()) return false;
-      const live = liveDoc();
-      if (live) {
-        const el = find(live, selector);
-        if (!el) return false;
-        el.textContent = String(text);
-        draft.text = serialize(live);
-      } else {
-        syncFromFrame();
-        const doc = cleanDoc(draft.text);
+      return edit((doc) => {
         const el = find(doc, selector);
         if (!el) return false;
         el.textContent = String(text);
-        draft.text = serialize(doc);
-        if (ED.mode === 'html' && ED.code) ED.code.value = tidy(draft.text);
-        else paintFrame();
-      }
-      draft.touched = true;
-      paintSide();
-      changed('api');
-      return true;
+        return true;
+      });
     },
     repaint: () => paintSide(),
     test: () => runTest(),
@@ -427,7 +435,9 @@ function slotOf(entry, ctx) {
   return h('div', { class: 'panel-slot', dataset: { panel: entry.key || `panel-${entry.seq}` } }, renderEntry(entry, ctx));
 }
 
-/* Repaints every side panel. A panel that holds a focused field is left alone so typing is never interrupted. */
+/* Repaints every side panel. A panel that holds a focused field is left alone so typing is never interrupted, and it
+   is the node the browser keeps still on screen while the panels around it change height (at phone width the page
+   scrolls by that change instead of moving the field under the caret). */
 export function paintSide() {
   if (!ED.refs) return;
   const { side } = ED.refs;

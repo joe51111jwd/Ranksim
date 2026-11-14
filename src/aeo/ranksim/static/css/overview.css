@@ -1,4 +1,5 @@
-/* Overview: the bento tiles, squares, ring and bars. */
+/* Overview: the bento tiles, squares, ring and bars.
+   Owned with js/screens/overview.js: the session that owns that module edits this file. */
 
 .squares { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 14px; }
 .squares i { width: 18px; height: 18px; border-radius: 5px; background: var(--tile-2); }

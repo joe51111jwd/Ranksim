@@ -182,12 +182,13 @@ export function ring(value, big, small) {
 
 /* ------------------------------------------------------------------ api */
 
-/* JSON request. Errors carry .status and .problems. A 401 that asks for a login shows the sign-in screen. */
+/* JSON request. Every method but GET and HEAD sends the x-ranksim-csrf header, with or without a body. Errors carry
+   .status and .problems. A 401 that asks for a login shows the sign-in screen. */
 export async function request(method, path, body) {
   const options = { method, headers: { accept: 'application/json' }, credentials: 'same-origin' };
+  if (!/^(GET|HEAD)$/i.test(method)) options.headers['x-ranksim-csrf'] = CSRF;
   if (body !== undefined) {
     options.headers['content-type'] = 'application/json';
-    options.headers['x-ranksim-csrf'] = CSRF;
     options.body = JSON.stringify(body);
   }
   let response;
@@ -220,7 +221,8 @@ export async function request(method, path, body) {
 
 export const get = (path) => request('GET', path);
 export const post = (path, body) => request('POST', path, body);
-export const api = { request, get, post };
+/* The API client: api.get(path), api.post(path, body), api.request(method, path, body), api.stream(path, body, onEvent). */
+export const api = { request, get, post, stream };
 
 /* Lines of JSON from a streaming POST. onEvent gets each object as it arrives. Errors carry .status. */
 export async function stream(path, body, onEvent) {
@@ -321,14 +323,16 @@ export async function reloadSite() {
 
 const ALIASES = { studio: 'editor', rankings: 'searches', data: 'settings' };
 
-/* Where the address points: { slug, screen, params }. screen is 'home', 'open' (/edit?url=) or a registered key. */
+/* Where the address points: { slug, screen, params, unknown }. screen is 'home', 'open' (/edit?url=) or a registered
+   key. A key no screen registered gives 'overview' with unknown: true. */
 export function parseLocation() {
   const parts = location.pathname.split('/').filter(Boolean);
   const params = new URLSearchParams(location.search);
   if (parts[0] === 'edit') return { slug: null, screen: 'open', params };
   if (parts[0] === 'app' && parts[1]) {
     const raw = ALIASES[parts[2]] || parts[2];
-    return { slug: decodeURIComponent(parts[1]), screen: raw && screen(raw) ? raw : 'overview', params };
+    const known = !raw || !!screen(raw);
+    return { slug: decodeURIComponent(parts[1]), screen: raw && known ? raw : 'overview', params, unknown: !known };
   }
   return { slug: null, screen: 'home', params };
 }

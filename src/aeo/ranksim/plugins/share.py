@@ -1003,16 +1003,18 @@ def weekly_update(data: dict, report_url: str = "") -> dict:
     text += ["", "Thanks,", agency or "Your SEO team"]
 
     def para(value: str) -> str:
-        return f'<p style="margin:0 0 12px">{escape(value)}</p>'
+        return f"<p>{escape(value)}</p>"
 
     html = [para(f"Hi {name} team,"), para(intro), para(standing)]
     for title, items, empty in sections:
-        html.append(f'<p style="margin:16px 0 6px"><strong>{escape(title)}</strong></p>')
-        html.append("<ul style=\"margin:0 0 12px;padding-left:20px\">" + "".join(f"<li>{escape(item)}</li>" for item in items) + "</ul>" if items else para(empty))
+        html.append(f"<p><strong>{escape(title)}</strong></p>")
+        html.append("<ul>" + "".join(f"<li>{escape(item)}</li>" for item in items) + "</ul>" if items else para(empty))
     if report_url:
-        html.append(f'<p style="margin:16px 0 12px">Full report: <a href="{escape(report_url, quote=True)}">{escape(report_url)}</a></p>')
+        html.append(f'<p>Full report: <a href="{escape(report_url, quote=True)}">{escape(report_url)}</a></p>')
     html.append(para("Thanks,") + para(agency or "Your SEO team"))
-    return {"subject": subject, "text": "\n".join(text), "html": '<div style="font-family:Arial,sans-serif;font-size:14px;line-height:1.5">' + "".join(html) + "</div>"}
+    # Plain tags only: no inline styles, so the browser's clipboard step never trips a page policy, and Gmail
+    # applies its own fonts.
+    return {"subject": subject, "text": "\n".join(text), "html": "<div>" + "".join(html) + "</div>"}
 
 
 # ---------------------------------------------------------------------------

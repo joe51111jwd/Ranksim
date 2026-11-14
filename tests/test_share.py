@@ -809,7 +809,7 @@ def test_weekly_update_text_and_html():
     assert "On page one of Google for 4 of 6 searches we track (Google checked Nov 13, 2026)." in text
     assert "In progress. Writing it now" in text and "Full report: https://ranksim.example/r/abc.def" in text
     assert text.rstrip().endswith("Camarota SEO")
-    assert "<script>" not in html and "&lt;script&gt;" in html and 'href="https://ranksim.example/r/abc.def"' in html
+    assert "style=" not in html and "<script>" not in html and "&lt;script&gt;" in html and 'href="https://ranksim.example/r/abc.def"' in html
     for blob in (text, html, update["subject"]):
         assert not any(dash in blob for dash in DASHES)
         assert "PREDICTED" not in blob and "estimate" not in blob.lower()  # an email never carries a model estimate

@@ -32,8 +32,9 @@ when it registers, so every Studio pull and the classic screens use it with no e
   counter persists on Vercel (it is saved with the next `cloud.save()`, which every pull already does).
   Shape: `{"months": {"2026-11": {"searches": 12, "reused": 30, "capped": 0, "errors": 1}},
   "last_ok_at": iso, "last_error": "HTTP 403", "last_error_at": iso}`. Writes are atomic (temp file plus rename)
-  under a process lock. Two servers pulling at the same moment can undercount (last cloud save wins); the cap is a
-  guard, not an invoice.
+  under a process lock. Two servers pulling at the same moment can undercount (last cloud save wins); each process
+  keeps a high-water mark so its own count never goes back. The cap is a guard, not an invoice. A counter that cannot
+  be read fails closed for that search (no paid request); a health write that fails never discards a paid result.
 - Month: UTC calendar month. Every paid request attempt counts as one search, success or failure.
 - Cap: `RANKSIM_MONTHLY_SEARCH_CAP`, default 500 (Serper's free plan is 2,500 one-time credits). `0` blocks paid
   searches entirely.
@@ -65,7 +66,9 @@ Due selection: projects that are not synthetic or historical, schedule not off, 
 re-check attempt in the last 20 hours. Oldest check first. Each project runs only if the searches it would pay for fit
 in the remaining cap and the estimated time (its last pull's seconds, at least 30 s) fits in
 `RANKSIM_CRON_SECONDS` (default 240, under the 300 s `maxDuration`). The result lists every project with ran, skipped
-and why. Attempts are stored in `<project>/plugins/tracking/state.json`.
+and why. The first due project always runs (one pull fits in one call). Attempts and deferrals are stored in
+`<project>/plugins/tracking/state.json`; the attempt marker is saved to cloud storage before any paid request, and the
+counter again right after the Google step, so a run stopped at the time limit is not repeated uncounted.
 
 `vercel.json` gets `"crons": [{"path": "/api/v1/cron/recheck", "schedule": "17 9 * * *"}]`: once a day, which the
 Hobby plan allows. Vercel now calls crons a legacy feature that will migrate to `schedules`; the route works with both.

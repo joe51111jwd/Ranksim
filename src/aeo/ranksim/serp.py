@@ -230,6 +230,7 @@ class SerperProvider(SerpProvider):
 
 FEATURE_LIST_MAX = 10
 FEATURE_TEXT_MAX = 300
+FEATURE_URL_MAX = 2048
 FEATURE_KEYS = (
     "people_also_ask", "related_searches", "answer_box", "knowledge_panel",
     "top_stories", "videos", "images", "sitelinks",
@@ -243,8 +244,20 @@ def _txt(value) -> str:
 
 
 def _link(value) -> str:
-    text = _txt(value)
-    return text if text.startswith(("http://", "https://")) else ""
+    """A whole http(s) URL, never cut short: a URL too long to keep is dropped instead."""
+    if not isinstance(value, str):
+        return ""
+    text = value.strip()
+    if not text.startswith(("http://", "https://")) or len(text) > FEATURE_URL_MAX or any(char.isspace() for char in text):
+        return ""
+    return text
+
+
+def _int(value, default: int) -> int:
+    try:
+        return int(float(value))
+    except (TypeError, ValueError):
+        return default
 
 
 def _items(value) -> list:
@@ -321,7 +334,7 @@ def _features_serper(payload: dict) -> dict:
         for item in _items(payload.get("images")) if isinstance(item, dict)
     ])
     found["sitelinks"] = _clip([
-        _sitelinks(int(item.get("position") or index), _link(item.get("link")), item.get("sitelinks"))
+        _sitelinks(_int(item.get("position"), index), _link(item.get("link")), item.get("sitelinks"))
         for index, item in enumerate(_items(payload.get("organic")), start=1) if isinstance(item, dict)
     ])
     return found
@@ -370,7 +383,7 @@ def _features_serpapi(payload: dict) -> dict:
         links = item.get("sitelinks")
         if isinstance(links, dict):
             links = [*_items(links.get("inline")), *_items(links.get("expanded"))]
-        rows.append(_sitelinks(int(item.get("position") or index), _link(item.get("link")), links))
+        rows.append(_sitelinks(_int(item.get("position"), index), _link(item.get("link")), links))
     found["sitelinks"] = _clip(rows)
     return found
 
@@ -413,7 +426,7 @@ def _features_dataforseo(payload: dict) -> dict:
                 elif kind == "images":
                     found["images"].extend(_compact({"title": _txt(row.get("alt") or row.get("title")), "url": _link(row.get("url") or row.get("image_url"))}) for row in inner)
                 elif kind == "organic":
-                    found["sitelinks"].append(_sitelinks(int(item.get("rank_group") or 0), _link(item.get("url")), item.get("links")))
+                    found["sitelinks"].append(_sitelinks(_int(item.get("rank_group"), 0), _link(item.get("url")), item.get("links")))
     for key in ("people_also_ask", "related_searches", "top_stories", "videos", "images", "sitelinks"):
         found[key] = _clip(found[key])
     return found

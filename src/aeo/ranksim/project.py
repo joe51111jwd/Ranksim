@@ -75,6 +75,7 @@ DEFAULT_ROOT = Path("data/projects")
 ROOT_ENV = "RANKSIM_PROJECTS_DIR"
 GOOGLE_KEYS = "SERPAPI_KEY, SERPER_API_KEY, or DATAFORSEO_LOGIN and DATAFORSEO_PASSWORD"
 NOT_RUN_GOOGLE = f"not run: needs {GOOGLE_KEYS}"
+NOT_PULLED_NOW = "not pulled now ("  # a search the search budget held back (aeo.ranksim.plugins.tracking)
 PULL_DATE_NOT_RECORDED = "pull date not recorded"
 SMARTCREW_SERP_SOURCE = "smartcrew/serp.csv (committed 2026-10-29, pull date not recorded)"
 FRESH_DAYS = 7
@@ -1419,6 +1420,7 @@ def _google_step(project, settings, previous, pull_id, depth, skip_google, serp_
     written = (now or datetime.now(timezone.utc)).isoformat(timespec="seconds")
     provider = None
     reason = ""
+    missing_why = NOT_RUN_GOOGLE  # why a search without results has none
     if not skip_google:
         provider, reason = _google_provider(settings, serp_provider)
     if provider is not None and budget is not None:
@@ -1428,7 +1430,9 @@ def _google_step(project, settings, previous, pull_id, depth, skip_google, serp_
             if callable(closer) and serp_provider is None:
                 closer()
             provider, reason = None, f"not run: {refusal}"
-            if not any(entry.results for entry in by_previous.values()) and not borrow_real_results(project):
+            missing_why = reason
+            has_own = any(by_previous.get(search) is not None and by_previous[search].results for search in project.searches)
+            if not has_own and not borrow_real_results(project):
                 budget.refuse(refusal)  # raises SearchCapError: nothing to carry, so say why plainly
     if provider is None:
         carried = [by_previous[search] for search in project.searches if search in by_previous and by_previous[search].results]
@@ -1438,7 +1442,7 @@ def _google_step(project, settings, previous, pull_id, depth, skip_google, serp_
                 searches = []
                 for search in project.searches:
                     entry = borrowed.get(search)
-                    searches.append(entry if entry is not None else SearchResults(search=search, results=[], source="", provider="", pulled_at=None, error=NOT_RUN_GOOGLE))
+                    searches.append(entry if entry is not None else SearchResults(search=search, results=[], source="", provider="", pulled_at=None, error=missing_why))
                 donors = sorted({entry.source.rsplit("copied from project ", 1)[-1].rstrip(")") for entry in borrowed.values()})
                 why = "skipped (--skip-google)" if skip_google else (reason or NOT_RUN_GOOGLE)
                 note = (
@@ -1448,7 +1452,7 @@ def _google_step(project, settings, previous, pull_id, depth, skip_google, serp_
                 )
                 missing = len(project.searches) - len(borrowed)
                 if missing:
-                    note += f" {missing} searches have no REAL results: {NOT_RUN_GOOGLE}."
+                    note += f" {missing} searches have no REAL results: {missing_why}."
                 snapshot = GoogleSnapshot(pull_id=pull_id, written_at=written, kind="carried", searches=searches, carried_from=None, note=note)
                 return snapshot, note
             raise ProviderConfigError(
@@ -1463,7 +1467,7 @@ def _google_step(project, settings, previous, pull_id, depth, skip_google, serp_
             if entry is not None and entry.results:
                 searches.append(copy.deepcopy(entry))
             else:
-                searches.append(SearchResults(search=search, results=[], source="", provider="", pulled_at=None, error=NOT_RUN_GOOGLE))
+                searches.append(SearchResults(search=search, results=[], source="", provider="", pulled_at=None, error=missing_why))
         why = "skipped (--skip-google)" if skip_google else (reason or NOT_RUN_GOOGLE)
         note = (
             f"Google step {why}. Using the REAL results saved in pull {previous.pull_id}: "
@@ -1471,7 +1475,7 @@ def _google_step(project, settings, previous, pull_id, depth, skip_google, serp_
         )
         missing = len(project.searches) - len(carried)
         if missing:
-            note += f" {missing} searches have no REAL results: {NOT_RUN_GOOGLE}."
+            note += f" {missing} searches have no REAL results: {missing_why}."
         snapshot = GoogleSnapshot(pull_id=pull_id, written_at=written, kind="carried", searches=searches, carried_from=previous.pull_id, note=note)
         return snapshot, note
     try:
@@ -1483,10 +1487,15 @@ def _google_step(project, settings, previous, pull_id, depth, skip_google, serp_
             closer()
     failed = [item for item in searches if item.error and not item.results]
     reused = [item for item in searches if item.search in reused]
-    note = f"REAL Google results pulled now from {provider.name} for {len(searches) - len(failed) - len(reused)} of {len(searches)} searches."
+    kept = [item for item in searches if item.error and item.results]
+    capped = [item for item in kept if item.error.startswith(NOT_PULLED_NOW)]
+    kept = [item for item in kept if not item.error.startswith(NOT_PULLED_NOW)]
+    pulled_now = len(searches) - len(failed) - len(reused) - len(kept) - len(capped)
+    note = f"REAL Google results pulled now from {provider.name} for {pulled_now} of {len(searches)} searches."
     if reused:
         note += f" {len(reused)} searches reused REAL results pulled within the last {budget.fresh_label} (kept their own pull date, not paid for again)."
-    kept = [item for item in searches if item.error and item.results]
+    if capped:
+        note += f" {len(capped)} searches were not pulled because the monthly search cap was reached, and kept their earlier REAL results with the earlier pull date."
     if kept:
         note += f" {len(kept)} searches failed now and kept their earlier REAL results, with the earlier pull date."
     if failed:
@@ -1566,7 +1575,10 @@ def _pull_google(project, provider, by_previous, depth, emit, budget=None, reuse
         earlier = by_previous.get(search)
         features: dict = {}
         if budget is not None:
-            verdict = budget.claim(search, earlier)  # "reuse", "call" (counted), or a refusal sentence
+            try:
+                verdict = budget.claim(search, earlier)  # "reuse", "call" (counted), or a refusal sentence
+            except Exception as exc:  # noqa: BLE001 - fail closed for this search, never for the whole pull
+                verdict = f"the search counter could not be read ({type(exc).__name__}), so no paid request was made"
             if verdict == "reuse":
                 kept = copy.deepcopy(earlier)
                 kept.error = ""
@@ -1577,7 +1589,7 @@ def _pull_google(project, provider, by_previous, depth, emit, budget=None, reuse
             if verdict != "call":
                 if earlier is not None and earlier.results:
                     kept = copy.deepcopy(earlier)
-                    kept.error = f"not pulled now ({verdict}); kept the earlier REAL results pulled {earlier.pulled_label}"
+                    kept.error = f"{NOT_PULLED_NOW}{verdict}); kept the earlier REAL results pulled {earlier.pulled_label}"
                     return kept
                 return SearchResults(search=search, results=[], source=provider.name, provider=provider.name, pulled_at=None, error=f"not pulled: {verdict}")
         try:
@@ -1588,14 +1600,14 @@ def _pull_google(project, provider, by_previous, depth, emit, budget=None, reuse
         except Exception as exc:  # noqa: BLE001 - one failed search must not end the pull
             error = _safe_error(exc)
             if budget is not None:
-                budget.record(ok=False, error=error)
+                _record(budget, ok=False, error=error)
             if earlier is not None and earlier.results:
                 kept = copy.deepcopy(earlier)
                 kept.error = f"fresh pull failed ({error}); kept the earlier REAL results pulled {earlier.pulled_label}"
                 return kept
             return SearchResults(search=search, results=[], source=provider.name, provider=provider.name, pulled_at=None, error=f"pull failed: {error}")
         if budget is not None:
-            budget.record(ok=True)
+            _record(budget, ok=True)
         results = []
         seen: set[str] = set()
         for hit in sorted(hits, key=lambda item: int(item.position)):
@@ -1627,6 +1639,14 @@ def _pull_google(project, provider, by_previous, depth, emit, budget=None, reuse
                 done += 1
                 emit("google", f"{item.search}: {len(item.results)} REAL results", done, len(project.searches))
     return [found[search] for search in project.searches]
+
+
+def _record(budget, **kwargs) -> None:
+    """Provider health bookkeeping. A counter file problem never discards a result already paid for."""
+    try:
+        budget.record(**kwargs)
+    except Exception:  # noqa: BLE001
+        pass
 
 
 def _provider_locale(name: str) -> tuple[str | None, str | None]:

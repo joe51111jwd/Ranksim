@@ -261,6 +261,63 @@ def test_pull_hits_the_cap_midway_and_keeps_earlier_results(tmp_path):
     assert len(capped) == len(SEARCHES) - 2
     assert all(item.results for item in capped)  # earlier REAL results kept, with their date
     assert report.searches_with_results == len(SEARCHES)
+    assert f"for 2 of {len(SEARCHES)} searches" in report.google_note  # capped rows are not called fresh
+    assert "not pulled because the monthly search cap was reached" in report.google_note
+    assert "failed now" not in report.google_note
+
+
+def test_cap_reason_names_the_cap_not_missing_keys(tmp_path):
+    settings = _settings(tmp_path)
+    project = _project(tmp_path / "projects", searches=["dirt work software"])
+    proj.pull(project, settings, serp_provider=FakeGoogle(), fetcher=FakeCrawler(), today=TODAY, engines=[])
+    project.searches = ["dirt work software", "a search never pulled"]
+    proj.save_project(project)
+    report = proj.pull(project, settings, serp_provider=FakeGoogle(), fetcher=FakeCrawler(), today=TODAY, budget=tracking.Budget(tmp_path / "projects", cap=0, fresh_hours=0), engines=[])
+    assert report.google_kind == "carried"
+    assert "SERPER_API_KEY" not in report.google_note and "monthly search cap reached" in report.google_note
+    empty = proj.latest_google(project).by_search()["a search never pulled"]
+    assert "monthly search cap reached" in empty.error
+
+
+class BrokenBudget(tracking.Budget):
+    def __init__(self, root, broken: str):
+        super().__init__(root, cap=100, fresh_hours=0)
+        self.broken = broken
+
+    def claim(self, search, earlier=None):
+        if self.broken == "claim":
+            raise OSError(28, "No space left on device")
+        return super().claim(search, earlier)
+
+    def record(self, **kwargs):
+        if self.broken == "record":
+            raise OSError(28, "No space left on device")
+        return super().record(**kwargs)
+
+
+def test_counter_errors_never_sink_a_pull(tmp_path):
+    settings = _settings(tmp_path)
+    project = _project(tmp_path / "projects")
+    report = proj.pull(project, settings, serp_provider=FakeGoogle(), fetcher=FakeCrawler(), today=TODAY, workers=2, budget=BrokenBudget(tmp_path / "projects", "record"), engines=[])
+    assert report.searches_with_results == len(SEARCHES)  # paid results kept although health bookkeeping failed
+    google = FakeGoogle()
+    report = proj.pull(project, settings, serp_provider=google, fetcher=FakeCrawler(), today=TODAY, workers=2, budget=BrokenBudget(tmp_path / "projects", "claim"), engines=[])
+    assert google.calls == []  # fails closed: no paid request without a working counter
+    assert all("search counter could not be read" in item.error for item in proj.latest_google(project).searches)
+    budget = tracking.Budget(tmp_path / "junk", cap=5, clock=Clock())
+    budget.path.parent.mkdir(parents=True)
+    budget.path.write_text(json.dumps({"months": {"2026-11": {"searches": "lots", "reused": None}}}))
+    assert budget.used() == 0 and budget.claim("x") == "call"
+
+
+def test_counter_never_goes_back_when_storage_swaps_in_an_older_file(tmp_path):
+    budget = tracking.Budget(tmp_path, cap=10, clock=Clock())
+    for _ in range(3):
+        budget.claim("x")
+    budget.path.write_text(json.dumps({"months": {"2026-11": {"searches": 1}}}))  # an older cloud version
+    assert budget.used() == 3
+    budget.claim("y")
+    assert json.loads(budget.path.read_text())["months"]["2026-11"]["searches"] == 4
 
 
 def test_pull_over_cap_carries_or_refuses(tmp_path):
@@ -388,6 +445,16 @@ def test_parse_features_serpapi_and_dataforseo():
     assert dfs["sitelinks"][0]["links"][0]["title"] == "Plans"
 
 
+def test_parse_features_keeps_whole_urls_and_survives_bad_positions():
+    long_url = "https://example.com/" + "x" * 400
+    found = parse_features("serper", {"peopleAlsoAsk": [{"question": "q", "link": long_url}], "relatedSearches": [{"query": "r"}]})
+    assert found["people_also_ask"][0]["url"] == long_url
+    huge = parse_features("serper", {"peopleAlsoAsk": [{"question": "q", "link": "https://e.com/" + "x" * 3000}]})
+    assert "url" not in huge["people_also_ask"][0]  # too long to keep: dropped, never cut short
+    odd = parse_features("serper", {"organic": [{"position": "1a", "link": "https://a.example/", "sitelinks": [{"title": "t", "link": "https://a.example/t"}]}], "relatedSearches": [{"query": "kept"}]})
+    assert odd["related_searches"] == ["kept"] and odd["sitelinks"][0]["position"] == 1
+
+
 def test_parse_features_is_defensive():
     assert parse_features("serper", None) == {}
     assert parse_features("brave", SERPER_PAYLOAD) == {}
@@ -489,6 +556,18 @@ def test_history_positions_and_changes(tmp_path):
     assert history["trend"][-1]["average"] == round((1 + 2 + 1) / 3, 1)
     assert history["schedule"] == "weekly"
     assert history["next_check_at"] == (NOW + timedelta(days=7)).isoformat(timespec="seconds")
+
+
+def test_trend_skips_pulls_that_only_repeat_older_checks(tmp_path):
+    project = _project(tmp_path / "projects", searches=["a"])
+    day1 = NOW - timedelta(days=3)
+    _write_snapshot(project, "20261111T000000Z", day1, {"a": [OURS]})
+    # an api pull whose row was reused (or kept after a failure) keeps the old pull date
+    _write_snapshot(project, "20261112T000000Z", NOW - timedelta(days=2), {"a": [OURS]}, pulled=day1)
+    _write_snapshot(project, "20261114T000000Z", NOW, {"a": ["https://x.example/", OURS]})
+    history = tracking.build_history(project, ws.WorkspaceMeta())
+    assert history["checks"] == 2 and [row["pull_id"] for row in history["trend"]] == ["20261111T000000Z", "20261114T000000Z"]
+    assert history["searches"][0]["change"] == "down"
 
 
 def test_history_down_and_none_and_depth(tmp_path):
@@ -630,6 +709,66 @@ def test_recheck_runs_due_projects_within_cap_and_time(tmp_path):
     assert result["used"] == 2 and result["cap"] == 4
     assert tracking.load_state(first)["last_result"] == "ok"
     assert "last_attempt_at" not in tracking.load_state(big)  # deferred projects are tried again next run
+
+
+def test_first_due_project_always_runs_and_deferrals_are_recorded(tmp_path):
+    ui = _ui(tmp_path, serper_api_key="fake-serper")
+    slow = _project(ui.root, slug="a-slow", searches=["one"])
+    other = _project(ui.root, slug="b-other", searches=["one"])
+    for project in (slow, other):
+        _write_snapshot(project, "20261001T000000Z", NOW - timedelta(days=40), {"one": [OURS]})
+        (Path(project.dir) / "pulls" / "20261001T000000Z" / "pull.json").write_text(json.dumps({"total_seconds": 500}))
+    ran: list[str] = []
+    result = tracking.recheck(ui, now=NOW, run_pull=lambda ui_, project: ran.append(project.slug) or {}, limit_seconds=240)
+    assert ran == ["a-slow"]  # longer than the soft limit, but nothing ran yet, so it runs
+    assert result["deferred"][0]["slug"] == "b-other"
+    state = tracking.load_state(other)
+    assert state["last_deferred"].startswith("out of time") and "last_attempt_at" not in state
+
+
+class FakeCloud:
+    enabled = True
+
+    def __init__(self):
+        self.saves = 0
+        self.refreshes = 0
+
+    def refresh(self, force=False):
+        self.refreshes += 1
+
+    def save(self):
+        self.saves += 1
+
+
+def test_recheck_saves_the_attempt_before_paying_and_after_the_google_step(tmp_path):
+    ui = _ui(tmp_path, serper_api_key="fake-serper")
+    ui.cloud = FakeCloud()
+    _project(ui.root, slug="p", searches=["one"])
+    saves_at_pull: list[int] = []
+
+    def run_pull(ui_, project):
+        saves_at_pull.append(ui.cloud.saves)
+        events = tracking._PullEvents(ui)
+        for step in ("google", "google", "crawl", "crawl", "train", "store"):
+            events.put({"type": "progress", "step": step})
+        assert ui.cloud.saves == saves_at_pull[0] + 1  # once, right after Google
+        return {}
+
+    tracking.recheck(ui, now=NOW, run_pull=run_pull, limit_seconds=600)
+    assert ui.cloud.refreshes == 1 and saves_at_pull == [1] and ui.cloud.saves == 3
+
+
+def test_recheck_lock_is_released_when_state_cannot_be_saved(tmp_path, monkeypatch):
+    ui = _ui(tmp_path, serper_api_key="fake-serper")
+    _project(ui.root, slug="p", searches=["one"])
+
+    def broken(project, state):
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(tracking, "save_state", broken)
+    result = tracking.recheck(ui, now=NOW, run_pull=lambda *_: pytest.fail("must not pull"), limit_seconds=600)
+    assert result["ran"][0]["ok"] is False and "state not saved" in result["ran"][0]["error"]
+    assert ui.jobs.project_lock("p").acquire(blocking=False)
 
 
 def test_recheck_records_failures_and_needs_a_provider(tmp_path):

@@ -30,6 +30,7 @@ DEFAULT_CAP = 500
 DEFAULT_FRESH_HOURS = 6.0
 DEFAULT_CRON_SECONDS = 240.0
 MIN_PULL_SECONDS = 30.0
+COUNTERS = ("searches", "reused", "capped", "errors")
 USAGE_DIR = ".tracking"
 USAGE_FILE = "usage.json"
 PLUGIN_DIR = ("plugins", "tracking")
@@ -90,6 +91,13 @@ def _env_number(name: str, default: float, *, minimum: float = 0.0) -> float:
     except ValueError:
         return default
     return value if value >= minimum else default
+
+
+def _count(value) -> int:
+    try:
+        return max(0, int(float(value)))
+    except (TypeError, ValueError):
+        return 0
 
 
 def _file_lock(path: Path) -> threading.Lock:
@@ -153,6 +161,9 @@ class Budget:
         self._fresh_hours = fresh_hours
         self.clock = clock or _now
         self._lock = _file_lock(self.path)
+        # The highest count this process has seen per month. Cloud storage can swap in an older usage.json (the last
+        # save wins); the count never goes back below what this process already counted.
+        self._seen: dict[str, dict[str, int]] = {}
 
     # settings are read at call time so a changed env var applies without a restart
     @property
@@ -186,8 +197,24 @@ class Budget:
 
     def month(self, data: dict | None = None) -> dict:
         data = data if data is not None else self.usage()
-        row = data["months"].get(month_key(self.clock())) or {}
-        return {key: int(row.get(key) or 0) for key in ("searches", "reused", "capped", "errors")}
+        key = month_key(self.clock())
+        row = data["months"].get(key)
+        row = row if isinstance(row, dict) else {}
+        seen = self._seen.get(key, {})
+        return {name: max(_count(row.get(name)), seen.get(name, 0)) for name in COUNTERS}
+
+    def _merge_month(self, data: dict) -> dict:
+        """The month row to write: the file's counts, never below this process's high-water mark."""
+        key = month_key(self.clock())
+        merged = self.month(data)
+        data["months"][key] = merged
+        return merged
+
+    def _remember(self, data: dict) -> None:
+        key = month_key(self.clock())
+        self._seen[key] = dict(data["months"][key])
+        for old in sorted(self._seen)[:-2]:
+            self._seen.pop(old, None)
 
     def used(self) -> int:
         return self.month()["searches"]
@@ -233,18 +260,20 @@ class Budget:
 
     def _bump(self, **changes) -> None:
         with self._lock:
-            data = self.usage()
-            key = month_key(self.clock())
-            row = data["months"].setdefault(key, {})
-            for name, value in changes.items():
-                if name in {"searches", "reused", "capped", "errors"}:
-                    row[name] = int(row.get(name) or 0) + int(value)
-                else:
-                    data[name] = value
-            # keep a year of months; older rows are history nobody reads
-            for old in sorted(data["months"])[:-12]:
-                data["months"].pop(old, None)
-            _write_json(self.path, data)
+            self._bump_locked(self.usage(), **changes)
+
+    def _bump_locked(self, data: dict, **changes) -> None:
+        row = self._merge_month(data)
+        for name, value in changes.items():
+            if name in COUNTERS:
+                row[name] = row[name] + int(value)
+            else:
+                data[name] = value
+        # keep a year of months; older rows are history nobody reads
+        for old in sorted(data["months"])[:-12]:
+            data["months"].pop(old, None)
+        self._remember(data)
+        _write_json(self.path, data)
 
     def claim(self, search: str, earlier=None) -> str:
         """'reuse' (fresh earlier results), 'call' (one paid request, counted now), or a refusal sentence."""
@@ -259,12 +288,6 @@ class Budget:
                 return verdict
             self._bump_locked(data, searches=1)
             return "call"
-
-    def _bump_locked(self, data: dict, **changes) -> None:
-        row = data["months"].setdefault(month_key(self.clock()), {})
-        for name, value in changes.items():
-            row[name] = int(row.get(name) or 0) + int(value)
-        _write_json(self.path, data)
 
     def record(self, *, ok: bool, error: str = "") -> None:
         """Provider health: the time of the last good answer, or the last error (an HTTP code, never a URL)."""
@@ -462,18 +485,22 @@ def build_history(project, meta=None, *, snapshots=None) -> dict:
         written = parse_time(snapshot.written_at)
         ranked: list[int] = []
         counted = 0
+        fresh = 0
         for entry in snapshot.searches:
             if entry.search not in per_search or not entry.results:
                 continue
             moment = parse_time(entry.pulled_at) or written
             if moment is None:
                 continue
-            per_search[entry.search][_iso(moment)] = (moment, entry)  # the same pull date twice is one check
+            key = _iso(moment)
+            if key not in per_search[entry.search]:
+                fresh += 1  # a reused or kept copy repeats an older check: it is not a new one
+            per_search[entry.search][key] = (moment, entry)  # the same pull date twice is one check
             counted += 1
             position, _url = _best(entry.results, lambda item: project.is_our_url(item.url))
             if position is not None:
                 ranked.append(position)
-        if counted and written is not None:
+        if fresh and written is not None:
             trend.append(
                 {
                     "at": _iso(written),
@@ -646,14 +673,21 @@ def due_projects(root: str | Path, *, now: datetime | None = None) -> tuple[list
 
 
 def _estimate_seconds(project) -> float:
-    from aeo.ranksim.project import load_pull_report
+    """The newest recorded pull time, at least MIN_PULL_SECONDS."""
+    from aeo.ranksim.project import list_pulls
 
     try:
-        report = load_pull_report(project)
+        pulls = list_pulls(project)
     except Exception:  # noqa: BLE001
-        report = None
-    seconds = float(getattr(report, "total_seconds", 0) or 0) if report is not None else 0.0
-    return max(MIN_PULL_SECONDS, seconds)
+        pulls = []
+    for info in reversed(pulls):
+        try:
+            seconds = float(info.total_seconds or 0)
+        except (TypeError, ValueError):
+            continue
+        if seconds > 0:
+            return max(MIN_PULL_SECONDS, seconds)
+    return MIN_PULL_SECONDS
 
 
 def _studio_run_pull():
@@ -664,13 +698,47 @@ def _studio_run_pull():
     return _run_pull
 
 
+class _PullEvents:
+    """Progress sink for a re-check pull. Saves to cloud storage once, right after the Google step, so the search
+    counter survives even if the function is stopped at its time limit while pages are still being fetched."""
+
+    def __init__(self, ui) -> None:
+        self.ui = ui
+        self.saved = False
+        self.seen_google = False
+
+    def put(self, event) -> None:
+        step = event.get("step") if isinstance(event, dict) else None
+        if step == "google":
+            self.seen_google = True
+        elif self.seen_google and not self.saved and step not in (None, "store"):
+            self.saved = True
+            _cloud_save(self.ui)
+
+
+def _cloud_save(ui) -> str:
+    """Save to cloud storage when it is on. Returns an error name, or empty."""
+    cloud = getattr(ui, "cloud", None)
+    if cloud is None or not getattr(cloud, "enabled", False):
+        return ""
+    try:
+        cloud.save()
+    except Exception as exc:  # noqa: BLE001 - reported, never fatal
+        return type(exc).__name__
+    return ""
+
+
 def _default_run_pull(ui, project) -> dict:
     """The same pull a person starts in the Studio, Google on, AI engines off. Saves to cloud storage itself."""
-    return _studio_run_pull()(ui, project, True, queue.Queue())
+    return _studio_run_pull()(ui, project, True, _PullEvents(ui))
 
 
 def recheck(ui, *, now: datetime | None = None, run_pull=None, monotonic=time.monotonic, limit_seconds: float | None = None) -> dict:
-    """Re-pull Google for due projects, oldest first, within the monthly cap and the function time limit."""
+    """Re-pull Google for due projects, oldest first, within the monthly cap and the function time limit.
+
+    The first due project always runs (one pull fits in one function call). Later ones run only while their
+    estimated time still fits. A project held back by the cap or the clock is recorded and tried again next run.
+    """
     from aeo.ranksim.project import latest_google, load_project
 
     started = monotonic()
@@ -689,50 +757,75 @@ def recheck(ui, *, now: datetime | None = None, run_pull=None, monotonic=time.mo
     due, skipped = due_projects(ui.root, now=now)
     result["skipped"] = skipped
     touched = False
+
+    def defer(project, slug: str, reason: str) -> None:
+        nonlocal touched
+        result["deferred"].append({"slug": slug, "reason": reason})
+        if project is None:
+            return
+        try:
+            state = load_state(project)
+            state.update({"last_deferred_at": _iso(now), "last_deferred": reason})
+            save_state(project, state)
+            touched = True
+        except OSError:
+            pass
+
     for item in due:
-        project = load_project(item.slug, root=ui.root)
-        previous = latest_google(project)
-        by_previous = previous.by_search() if previous else {}
-        needed = budget.needed(project.searches, by_previous)
-        remaining = budget.remaining()
-        if needed > remaining:
-            result["deferred"].append({"slug": item.slug, "reason": f"needs {needed} searches, {remaining} left this month"})
+        try:
+            project = load_project(item.slug, root=ui.root)
+            previous = latest_google(project)
+            by_previous = previous.by_search() if previous else {}
+            needed = budget.needed(project.searches, by_previous)
+            remaining = budget.remaining()
+        except Exception as exc:  # noqa: BLE001 - one broken project must not stop the others
+            result["ran"].append({"slug": item.slug, "ok": False, "reason": item.reason, "error": _scrub(ui, f"{type(exc).__name__}: could not be read")})
             continue
-        estimate = _estimate_seconds(project)
-        elapsed = monotonic() - started
-        if elapsed + estimate > limit:
-            result["deferred"].append({"slug": item.slug, "reason": "out of time for this run, next run picks it up"})
+        if needed > remaining:
+            defer(project, item.slug, f"needs {needed} searches, {remaining} left this month")
+            continue
+        if result["ran"] and monotonic() - started + _estimate_seconds(project) > limit:
+            defer(project, item.slug, "out of time for this run, next run picks it up")
             continue
         lock = ui.jobs.project_lock(item.slug) if getattr(ui, "jobs", None) is not None else None
         if lock is not None and not lock.acquire(blocking=False):
-            result["deferred"].append({"slug": item.slug, "reason": "a pull is already running"})
+            defer(project, item.slug, "a pull is already running")
             continue
-        state = load_state(project)
-        state["last_attempt_at"] = _iso(now)
-        save_state(project, state)
-        touched = True
         began = monotonic()
         try:
-            summary = run_pull(ui, project)
-            outcome = {"slug": item.slug, "ok": True, "reason": item.reason, "summary": _short_summary(summary)}
-            state.update({"last_result": "ok", "last_error": "", "last_ok_at": _iso(now)})
-        except Exception as exc:  # noqa: BLE001 - one project failing must not stop the others
-            message = _scrub(ui, f"{type(exc).__name__}: {str(exc)[:300]}")
-            outcome = {"slug": item.slug, "ok": False, "reason": item.reason, "error": message}
-            state.update({"last_result": "error", "last_error": message})
+            state = load_state(project)
+            state["last_attempt_at"] = _iso(now)
+            save_state(project, state)
+            touched = True
+            # the attempt marker reaches storage before any paid request, so a run stopped at its time limit is
+            # not repeated by the next instance as if it never happened
+            stored = _cloud_save(ui)
+            if stored:
+                result.setdefault("storage_errors", []).append(stored)
+            try:
+                summary = run_pull(ui, project)
+                outcome = {"slug": item.slug, "ok": True, "reason": item.reason, "summary": _short_summary(summary)}
+                state.update({"last_result": "ok", "last_error": "", "last_ok_at": _iso(now)})
+            except Exception as exc:  # noqa: BLE001 - one project failing must not stop the others
+                message = _scrub(ui, f"{type(exc).__name__}: {str(exc)[:300]}")
+                outcome = {"slug": item.slug, "ok": False, "reason": item.reason, "error": message}
+                state.update({"last_result": "error", "last_error": message})
+            state.pop("last_deferred", None)
+            state.pop("last_deferred_at", None)
+            save_state(project, state)
+        except OSError as exc:
+            outcome = {"slug": item.slug, "ok": False, "reason": item.reason, "error": f"state not saved ({type(exc).__name__})"}
         finally:
             if lock is not None:
                 lock.release()
         outcome["seconds"] = round(monotonic() - began, 1)
-        save_state(project, state)
         result["ran"].append(outcome)
     result["used"] = budget.used()
     result["cap"] = budget.cap
-    if touched and cloud is not None and getattr(cloud, "enabled", False):
-        try:
-            cloud.save()
-        except Exception as exc:  # noqa: BLE001 - reported, the pulls themselves already saved
-            result["storage_error"] = type(exc).__name__
+    if touched:
+        stored = _cloud_save(ui)
+        if stored:
+            result["storage_error"] = stored
     return result
 
 

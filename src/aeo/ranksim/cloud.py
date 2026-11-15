@@ -46,7 +46,8 @@ memory, a compacting save also carries the delta so caught-up instances never do
 are moved into place rather than copied, and SQLite sorts in memory. All temp files live in .cloud/tmp, are removed
 on every failure path, and whatever a killed process left is removed at the next process's first storage call. One
 sync or save runs at a time per working folder. A full disk is handled by removing temp files and retrying; if it is
-still full, the local copy is dropped and loaded again from storage once. Measured (tests/test_disk.py, 30 MB of
+still full, the base and bookkeeping are dropped and storage is merged into the working copy again, once (the working
+database and project files are never deleted: other threads write them without the lock). Measured (tests/test_disk.py, 30 MB of
 projects): about 135 MB at rest and at every step's peak with a 70 MB database, 208 MB with a 120 MB one.
 
 Nothing here runs unless BLOB_READ_WRITE_TOKEN is set (or a store is passed in, as the tests do).
@@ -224,18 +225,12 @@ class CloudState:
                     pass
 
     def _wipe(self) -> None:
-        """Forget the local copy entirely (the disk is full even after the sweep): the next sync is a cold one."""
-        _dispose_engines(self.db_file)
-        if self.data_dir.is_dir():
-            for path in self.data_dir.iterdir():
-                if path.is_dir() and not path.is_symlink():
-                    shutil.rmtree(path, ignore_errors=True)
-                else:
-                    path.unlink(missing_ok=True)
-        for suffix in ("", "-wal", "-shm", "-journal"):
-            Path(f"{self.db_file}{suffix}").unlink(missing_ok=True)
+        """The disk is still full after the sweep. Drop the base and the bookkeeping (.cloud), never the working
+        database or project files: request and job threads write those without this lock, and their writes must not
+        land in deleted files. The next sync is a cold one that merges storage into the working copy (local files and
+        rows are kept and saved next, since nothing counts as agreed any more)."""
+        shutil.rmtree(self._meta_dir, ignore_errors=True)
         self._sweep()
-        self.projects_dir.mkdir(parents=True, exist_ok=True)
         self._seq, self._version, self._manifest = 0, None, _empty_manifest()
         self._installed, self._db, self._db_clean = {}, {"snapshot": None, "applied": []}, None
         self._hash_cache.clear()
@@ -316,7 +311,7 @@ class CloudState:
             try:
                 changed = self._sync_recovering(now)
             except (StoreError, KeyError, OSError, ValueError, tarfile.TarError, sqlite3.Error) as exc:
-                self._failed_at = now
+                self._failed_at = self.clock()  # when the attempt ended: requests queued on the lock meanwhile back off
                 self.last_error = f"Could not read storage: {type(exc).__name__}."
                 print(f"ranksim: {self.last_error} ({str(exc)[:200]})", flush=True)
                 raise CloudError(self.last_error) from exc
@@ -328,8 +323,8 @@ class CloudState:
             return changed
 
     def _sync_recovering(self, now: float) -> bool:
-        """_sync, and when the disk is full: remove temp files and try again; still full: drop the local copy and
-        load it again from storage, once. (Unsaved local changes cannot be saved on a full disk either.)"""
+        """_sync, and when the disk is full: remove temp files and try again; still full: drop the base and the
+        bookkeeping and sync again from scratch, once, merging storage into the working copy (nothing local is lost)."""
         try:
             return self._sync(now)
         except Exception as exc:  # noqa: BLE001 - only a full disk is handled here
@@ -342,7 +337,7 @@ class CloudState:
         except Exception as exc:  # noqa: BLE001
             if not _disk_full(exc):
                 raise
-            print("ranksim: the disk is still full; clearing the local copy and loading it again from storage.", flush=True)
+            print("ranksim: the disk is still full; dropping the base copy and syncing again from scratch.", flush=True)
         self._wipe()
         self._sync(now)
         return True
@@ -405,22 +400,48 @@ class CloudState:
             for slug, seq in sorted((manifest.get("projects") or {}).items()):
                 if SLUG_RE.match(slug) and self._installed.get(slug, {}).get("seq") != seq:
                     wanted.setdefault(int(seq), []).append(slug)
-            for seq, slugs in sorted(wanted.items()):
-                # One pass over each save object, unpacking only the folders of the projects taken from it.
-                prefixes = tuple(f"p/{slug}/" for slug in slugs)
-                staging = self._temp("projects")
-                try:
-                    _unpack(saves.path(seq), staging, lambda name: name.startswith(prefixes))
-                    for slug in slugs:
-                        changed |= self._merge_project(slug, seq, staging / "p" / slug, saves)
-                finally:
-                    shutil.rmtree(staging, ignore_errors=True)
             db = manifest.get("db") or {}
             needs_db = db.get("snapshot") and (db["snapshot"] != self._db.get("snapshot") or any(d not in self._db.get("applied", []) for d in db.get("deltas") or []))
             keep = ({int(db["snapshot"])} | {int(d) for d in db.get("deltas") or []}) if needs_db else set()
+            saves.keep = keep
+            staging = self._temp("projects")
+            try:
+                # 1. Each save that is a project's newest: one pass, only those projects' folders, then delete it
+                #    (unless the database step needs it). Disk holds the unpacked files plus one save at a time.
+                folders: dict[str, tuple[int, Path]] = {}
+                for seq, slugs in sorted(wanted.items()):
+                    prefixes = tuple(f"p/{slug}/" for slug in slugs)
+                    _unpack(saves.path(seq), staging / f"s{seq}", lambda name: name.startswith(prefixes))
+                    if seq not in keep:
+                        saves.drop(seq)
+                    for slug in slugs:
+                        folders[slug] = (seq, staging / f"s{seq}" / "p" / slug)
+                # 2. Files a save did not repack because they were unchanged live in older saves. Fetch each such
+                #    save once, unpack exactly the files needed from it, delete it. However long the chain, disk
+                #    holds the project files plus one save.
+                needs: dict[int, set[str]] = {}
+                for slug, (seq, folder) in folders.items():
+                    try:
+                        meta = json.loads((folder / VERSION_FILE).read_text("utf-8"))
+                    except (OSError, ValueError):
+                        continue  # _merge_project reports it
+                    base = self._installed.get(slug, {}).get("files", {})
+                    for rel, digest in (meta.get("files") or {}).items():
+                        holder = int((meta.get("at") or {}).get(rel, seq))
+                        if holder != seq and digest != base.get(rel):
+                            needs.setdefault(holder, set()).add(f"p/{slug}/{rel}")
+                held = staging / "held"
+                for holder, names in sorted(needs.items()):
+                    _unpack(saves.path(holder), held / str(holder), lambda name: name in names)
+                    if holder not in keep:
+                        saves.drop(holder)
+                for slug, (seq, folder) in sorted(folders.items()):
+                    changed |= self._merge_project(slug, seq, folder, saves, held=held)
+            finally:
+                shutil.rmtree(staging, ignore_errors=True)
             for seq in list(saves.paths):
                 if seq not in keep:
-                    saves.drop(seq)  # projects are done: free the disk before the database is unpacked
+                    saves.drop(seq)  # projects are done (normally nothing is left to drop here): free the disk before the database is unpacked
             if needs_db:
                 self._apply_db(db, saves)
                 changed = True
@@ -478,7 +499,7 @@ class CloudState:
         self._version = chain_name(seq)
         return changed
 
-    def _merge_project(self, slug: str, seq: int, folder: Path, saves: "_Saves") -> bool:
+    def _merge_project(self, slug: str, seq: int, folder: Path, saves: "_Saves", held: Path | None = None) -> bool:
         """Merge one project folder unpacked from save seq. folder is ours to consume: files are moved, not copied."""
         meta_file = folder / VERSION_FILE
         if not meta_file.is_file():
@@ -495,9 +516,13 @@ class CloudState:
             holder = at.get(rel)
             if holder is None or holder == seq:
                 return None
+            if held is not None and (held / str(holder) / "p" / slug / rel).is_file():
+                return held / str(holder) / "p" / slug / rel  # unpacked ahead by the cold sync
             if holder not in staged:
                 staged[holder] = self._temp(f"refs-{holder}")
                 _unpack(saves.path(holder), staged[holder], lambda name: name.startswith(f"p/{slug}/"))
+                if holder not in saves.keep:
+                    saves.drop(holder)  # its files for this project are unpacked: free the disk now
             target = staged[holder] / "p" / slug / rel
             return target if target.is_file() else None
 
@@ -551,6 +576,7 @@ class CloudState:
             _dispose_engines(self.db_file)  # idle pooled connections must not hold a lock while rows are merged
             merge_sqlite(self.db_file, minus, plus)
         if self._base_db.is_file():
+            _base_add_columns(self._base_db, self.db_file)
             _base_apply(self._base_db, minus, plus)
         self._db_clean = _stat_sig(self.db_file) if clean else None
 
@@ -586,6 +612,7 @@ class CloudState:
                 clean = self._db_is_clean()
                 _dispose_engines(self.db_file)  # idle pooled connections must not hold a lock while rows are merged
                 if self._base_db.is_file():  # the snapshot's changes since the base, as a delta; base updated in place
+                    _base_add_columns(self._base_db, self.db_file)
                     make_base_delta(theirs, self._base_db, minus, plus)
                     _unlink_db(theirs)
                     merge_sqlite(self.db_file, minus, plus)
@@ -637,17 +664,21 @@ class CloudState:
         return self.save()
 
     def update_auth(self, **changes) -> dict:
-        """Change the shared login state (revocation, global lockout) and save it now (one put)."""
-        auth = self._extra.setdefault("auth", {})
-        for key, value in changes.items():
-            auth[key] = max(auth.get(key) or 0, value)
-        if self.enabled:
-            self.save()
-        return self.auth
+        """Change the shared login state (revocation, global lockout) and save it now (one put). Under the lock: a save
+        in flight resets _extra when its upload lands, which would drop a change made meanwhile."""
+        with self._lock:
+            auth = self._extra.setdefault("auth", {})
+            for key, value in changes.items():
+                auth[key] = max(auth.get(key) or 0, value)
+            if self.enabled:
+                self.save()
+            return self.auth
 
     def record_job(self, record: dict) -> None:
-        """Carry a finished or paused job's record in the next save's manifest (the job's own data save)."""
-        self._extra.setdefault("jobs", {})[record["id"]] = record
+        """Carry a finished or paused job's record in the next save's manifest (the job's own data save). Under the
+        lock, so a save already uploading cannot drop it (it goes into the next save)."""
+        with self._lock:
+            self._extra.setdefault("jobs", {})[record["id"]] = record
 
     def _projects_changed(self) -> dict:
         changed: dict[str, tuple[dict, dict]] = {}
@@ -704,6 +735,8 @@ class CloudState:
             if self.db_file.is_file() and not self._db_is_clean():
                 sig_before = _stat_sig(self.db_file)
                 has_base = bool(self._db.get("snapshot")) and self._base_db.is_file()
+                if has_base:
+                    _base_add_columns(self._base_db, self.db_file)
                 if not has_base:
                     db_kind = "full"
                 elif make_base_delta(self.db_file, self._base_db, minus, plus):
@@ -910,11 +943,11 @@ class CloudState:
                 self.projects_dir.mkdir(parents=True, exist_ok=True)
                 for slug in sorted(path.name for path in incoming.iterdir() if path.is_dir() and SLUG_RE.match(path.name)):
                     theirs = _manifest(_Scope(incoming / slug, recursive=True), {})
-                    _merge_files(self._scope(slug), bases.get(slug, {}), incoming / slug, theirs, self._hash_cache)
+                    _merge_files(self._scope(slug), bases.get(slug, {}), incoming / slug, theirs, self._hash_cache, move=True)
                     seen[slug] = theirs
                 loose = _manifest(_Scope(incoming, recursive=False), {})
                 if loose:
-                    _merge_files(self._scope(LOOSE), bases.get(LOOSE, {}), incoming, loose, self._hash_cache)
+                    _merge_files(self._scope(LOOSE), bases.get(LOOSE, {}), incoming, loose, self._hash_cache, move=True)
                     seen[LOOSE] = loose
             incoming_db = staging / "rank.db"
             if incoming_db.is_file():
@@ -1085,6 +1118,7 @@ class _Saves:
     def __init__(self, state: "CloudState") -> None:
         self.state = state
         self.paths: dict[int, Path] = {}
+        self.keep: set[int] = set()  # saves a later step still needs (not dropped after their projects are unpacked)
 
     def path(self, seq: int) -> Path:
         """The save's file; KeyError when the store does not have it."""
@@ -1699,6 +1733,49 @@ def _base_apply(base: Path, minus: Path, plus: Path) -> None:
                 pos += 1
                 rows.append((table, _row_hash(names, values), values[gi] if gi is not None else None, pos, _row_pack(names, values)))
             conn.executemany("INSERT OR IGNORE INTO rows VALUES (?, ?, ?, ?, ?)", rows)
+        conn.execute("COMMIT")
+    except BaseException:
+        if conn.in_transaction:
+            conn.execute("ROLLBACK")
+        raise
+    finally:
+        conn.close()
+
+
+def _base_add_columns(base: Path, db_file: Path) -> None:
+    """A deploy added a column to a table of the working database (ALTER TABLE ... ADD COLUMN, which gives every
+    existing row the column's default). Give the base the same column with the same value, so an edit of that column
+    counts as a change and deltas carry it, instead of the column being compared nowhere and shipped blank."""
+    if not Path(base).is_file() or not Path(db_file).is_file():
+        return
+    conn = sqlite3.connect(str(base), timeout=30, isolation_level=None)
+    try:
+        conn.execute("ATTACH DATABASE ? AS w", (str(db_file),))
+        known = {tbl: json.loads(names) for tbl, names in conn.execute("SELECT tbl, names FROM main.tables")}
+        changes: dict[str, list] = {}
+        for table in _tables(conn, "w"):
+            if table not in known:
+                continue
+            info = conn.execute(f"PRAGMA w.table_info({_q(table)})").fetchall()
+            missing = [(name, default) for _cid, name, _type, _nn, default, _pk in info if name not in known[table]]
+            if missing:
+                changes[table] = missing
+        conn.execute("DETACH DATABASE w")
+        if not changes:
+            return
+        conn.execute("BEGIN IMMEDIATE")
+        for table, missing in changes.items():
+            defaults = {name: (conn.execute(f"SELECT {default}").fetchone()[0] if default is not None else None) for name, default in missing}
+            names = known[table] + [name for name, _default in missing]
+            updates = []
+            for rowid, body in conn.execute("SELECT rowid, body FROM rows WHERE tbl = ?", (table,)).fetchall():
+                row = _row_unpack(body)
+                for name, value in defaults.items():
+                    row.setdefault(name, value)
+                values = [row.get(name) for name in names]
+                updates.append((_row_hash(names, values), _row_pack(names, values), rowid))
+            conn.executemany("UPDATE rows SET h = ?, body = ? WHERE rowid = ?", updates)
+            conn.execute("UPDATE tables SET names = ? WHERE tbl = ?", (json.dumps(names), table))
         conn.execute("COMMIT")
     except BaseException:
         if conn.in_transaction:

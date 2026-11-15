@@ -119,6 +119,6 @@ production token) right after the deploy.
 - `/tmp` (512 MB): the database is kept once plus a compact base (about half its size); no sync or save writes a
   second full copy. With 30 MB of projects: about 135 MB at rest and at peak with a 70 MB database, 208 MB with 120 MB
   (`tests/test_disk.py`). Leftover temp files from a killed instance are removed at start-up; a full disk is retried
-  after cleanup, then the local copy is reloaded.
+  after cleanup, then the base is dropped and storage merged into the working copy again (local work is kept).
 - The function keeps `maxDuration` 300. Long analyses pause at 240 s and continue in the next request.
 - `vercel.json` keeps the daily cron `17 9 * * *` (Hobby allows one run a day).

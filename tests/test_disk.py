@@ -326,11 +326,18 @@ def test_a_full_disk_is_recovered_by_removing_temp_files(tmp_path, systmp, monke
     assert _leftovers(tmp_path / "b" / "ranksim") == []
 
 
-def test_a_disk_still_full_wipes_the_local_copy_and_loads_it_again_once(tmp_path, systmp, monkeypatch):
+def test_a_disk_still_full_drops_only_the_bookkeeping_and_keeps_writes_in_flight(tmp_path, systmp, monkeypatch):
+    """Review item 1: the last-resort recovery must not delete the working db or project files, which request and
+    job threads write without the cloud lock. A writer holding a connection across it, a row and a file written just
+    before it, all reach storage with the next save."""
     store, a, b = _small_pair(tmp_path)
     b.refresh(force=True)
-    junk = b.projects_dir / "demo" / "huge.bin"  # something filled the disk that is not a temp file
-    junk.write_bytes(b"x" * 1000)
+    local = b.projects_dir / "demo" / "local.json"  # written by a request just before the wipe, not saved yet
+    local.write_text("{}")
+    writer = sqlite3.connect(str(b.db_file))  # a job's connection, open across the wipe
+    writer.execute("INSERT INTO rs_keywords VALUES ('before wipe', 'demo', '2026-11-15')")
+    writer.commit()
+    inode = b.db_file.stat().st_ino
     conn = sqlite3.connect(str(a.db_file))
     conn.execute("INSERT INTO rs_keywords VALUES ('later', 'demo', '2026-11-14')")
     conn.commit()
@@ -346,10 +353,20 @@ def test_a_disk_still_full_wipes_the_local_copy_and_loads_it_again_once(tmp_path
 
     monkeypatch.setattr(cloud, "merge_sqlite", merge)
     assert b.refresh(force=True)
-    assert not junk.exists()  # the local copy was dropped
-    assert _rows(b.db_file, "rs_keywords") == _rows(a.db_file, "rs_keywords")
+    assert len(calls) >= 3  # catch-up, retry after the sweep, then the sync from scratch
+    assert b.db_file.stat().st_ino == inode  # the same file: the writer's connection still writes into it
+    writer.execute("INSERT INTO rs_keywords VALUES ('after wipe', 'demo', '2026-11-15')")
+    writer.commit()
+    writer.close()
+    assert local.read_text() == "{}"
     assert (b.projects_dir / "demo" / "page.html").read_text() == "<p>one</p>"
     assert b.stamp == a.stamp
+    monkeypatch.setattr(cloud, "merge_sqlite", real)
+    assert b.save()  # nothing counts as agreed after the wipe: the local rows and file go up
+    a.refresh(force=True)
+    keywords = {row[0] for row in sqlite3.connect(str(a.db_file)).execute("SELECT query FROM rs_keywords")}
+    assert {"before wipe", "after wipe", "later"} <= keywords
+    assert (a.projects_dir / "demo" / "local.json").read_text() == "{}"
 
     conn = sqlite3.connect(str(a.db_file))
     conn.execute("INSERT INTO rs_keywords VALUES ('again', 'demo', '2026-11-14')")
@@ -359,7 +376,7 @@ def test_a_disk_still_full_wipes_the_local_copy_and_loads_it_again_once(tmp_path
     a.save()
     monkeypatch.setattr(cloud, "merge_sqlite", lambda *a, **k: (_ for _ in ()).throw(sqlite3.OperationalError("database or disk is full")))
     monkeypatch.setattr(cloud, "_base_build", lambda *a, **k: (_ for _ in ()).throw(OSError(errno.ENOSPC, "full")))
-    with pytest.raises(cloud.CloudError):  # a disk that stays full: one wipe and reload, then a plain error
+    with pytest.raises(cloud.CloudError):  # a disk that stays full: one recovery, then a plain error
         b.refresh(force=True)
     assert _leftovers(tmp_path / "b" / "ranksim") == []
 
@@ -476,3 +493,217 @@ def test_a_delta_against_the_compact_base_matches_one_against_a_full_copy(tmp_pa
         again = tmp_path / f"again-m{trial}.db", tmp_path / f"again-p{trial}.db"
         if trial < 4:
             assert cloud.make_base_delta(new, compact, *again) == 0
+
+
+# -- regressions from the review of the /tmp fix (docs/reviews/storage-tmp-fix.md) -----------------
+
+
+def test_a_cold_sync_holds_one_history_save_at_a_time_and_fetches_each_once(tmp_path, systmp, monkeypatch):
+    """Review item 2: files that later saves did not repack live in older saves. A fresh instance's cold sync must
+    not keep every such save on disk at once (that grows with every pull, forever)."""
+    monkeypatch.setattr(cloud, "COMPACT_DELTAS", 3)
+    store = MemoryStore()
+    a = _instance(tmp_path / "a", store)
+    _make_db(a.db_file, 1)
+    pulls = a.projects_dir / "demo" / "pulls"
+    for n in range(20):  # every pull adds its own folder; earlier pulls' files stay where they were saved
+        (pulls / f"p{n}").mkdir(parents=True)
+        (pulls / f"p{n}" / "data.json").write_text(_text(200_000))
+        conn = sqlite3.connect(str(a.db_file))
+        conn.execute("INSERT INTO rs_keywords VALUES (?, 'demo', '2026-11-15')", (f"pull {n}",))
+        conn.commit()
+        conn.close()
+        assert a.save()
+    held, fetched = [0], []
+    real_path, real_fetch = cloud._Saves.path, store.fetch
+
+    def path(self, seq):
+        found = real_path(self, seq)
+        held[0] = max(held[0], len(self.paths))
+        return found
+
+    def fetch(name, target):
+        fetched.append(name)
+        return real_fetch(name, target)
+
+    monkeypatch.setattr(cloud._Saves, "path", path)
+    monkeypatch.setattr(store, "fetch", fetch)
+    b = _instance(tmp_path / "b", store)
+    assert b.refresh(force=True)
+    for n in range(20):
+        assert (b.projects_dir / "demo" / "pulls" / f"p{n}" / "data.json").read_text() == (pulls / f"p{n}" / "data.json").read_text()
+    manifest_db = b._manifest["db"]
+    kept_for_db = 1 + len(manifest_db.get("deltas") or [])
+    assert held[0] <= kept_for_db + 1, f"{held[0]} saves on disk at once"
+    assert len(fetched) == len(set(fetched)), "a save was downloaded twice"
+    assert _rows(b.db_file, "rs_keywords") == _rows(a.db_file, "rs_keywords")
+    assert _leftovers(tmp_path / "b" / "ranksim") == []
+
+
+def test_the_failure_backoff_counts_from_the_end_of_a_failed_sync(tmp_path, systmp):
+    """Review item 3: a sync that fails slowly (Blob timeouts) must still hold the backoff for requests that queued
+    behind it, instead of each of them repeating it."""
+    now = [1000.0]
+    calls: list[str] = []
+
+    class Hanging(MemoryStore):
+        def _slow(self, name):
+            calls.append(name)
+            now[0] += 60.0  # one timed-out call
+            raise StoreError("timed out")
+
+        def get(self, name):
+            return self._slow(name)
+
+        def head(self, name):
+            return self._slow(name)
+
+    state = CloudState(data_dir=tmp_path / "b" / "ranksim", db_file=tmp_path / "b" / "ranksim" / "rank.db", enabled=True, store=Hanging(), clock=lambda: now[0])
+    with pytest.raises(cloud.CloudError):
+        state.refresh()
+    first = len(calls)
+    assert first >= 1
+    with pytest.raises(cloud.CloudError):  # queued right behind it: answered from the backoff, no storage call
+        state.refresh()
+    assert len(calls) == first
+    now[0] += cloud.FAILURE_BACKOFF_SECONDS + 1
+    with pytest.raises(cloud.CloudError):
+        state.refresh()
+    assert len(calls) > first
+
+
+def test_a_job_record_or_sign_out_everywhere_during_a_save_is_kept(tmp_path, systmp):
+    """Review item 5: record_job and update_auth wait for a save in flight instead of being dropped by its reset."""
+    store = MemoryStore()
+    a = _instance(tmp_path / "a", store)
+    _make_db(a.db_file, 1)
+    (a.projects_dir / "demo").mkdir(parents=True)
+    (a.projects_dir / "demo" / "page.html").write_text("one")
+    a.save()
+    uploading, release = threading.Event(), threading.Event()
+    real_put = store.put
+
+    def put(name, body, **kwargs):
+        if name.startswith(cloud.CHAIN_PREFIX) and not release.is_set():
+            uploading.set()
+            release.wait(5)
+        return real_put(name, body, **kwargs)
+
+    store.put = put
+    (a.projects_dir / "demo" / "page.html").write_text("two")
+    saver = threading.Thread(target=a.save)
+    saver.start()
+    assert uploading.wait(5)
+    recorder = threading.Thread(target=lambda: (a.record_job({"id": "job123", "status": "done", "updated": 1.0}), a.save()))
+    revoker = threading.Thread(target=lambda: a.update_auth(revoked_ms=12345))
+    recorder.start()
+    revoker.start()
+    time.sleep(0.2)
+    release.set()
+    for thread in (saver, recorder, revoker):
+        thread.join(10)
+    store.put = real_put
+    b = _instance(tmp_path / "b", store)
+    b.refresh(force=True)
+    assert b.job_record("job123") is not None
+    assert b.auth.get("revoked_ms") == 12345
+
+
+def test_the_legacy_import_never_writes_temp_files_into_project_folders(tmp_path, systmp, monkeypatch):
+    """Review item 6: files from an old-format tarball are moved into place from .cloud/tmp (swept at start-up), so
+    a process killed mid-import leaves nothing inside a project folder."""
+    import io
+    import tarfile
+
+    old = tmp_path / "old"
+    (old / "projects" / "foo").mkdir(parents=True)
+    (old / "projects" / "foo" / "page.html").write_text("legacy")
+    (old / "projects" / "loose.txt").write_text("loose")
+    _make_db(old / "rank.db", 1)
+    buffer = io.BytesIO()
+    with tarfile.open(fileobj=buffer, mode="w:gz") as archive:
+        for path in sorted((old / "projects").rglob("*")):
+            if path.is_file():
+                archive.add(path, arcname=str(path.relative_to(old)), recursive=False)
+        archive.add(old / "rank.db", arcname="rank.db")
+    store = MemoryStore()
+    name = f"{cloud.LEGACY_PREFIX}00000000000000000001-aaa.tgz"
+    store.put(name, buffer.getvalue())
+    store.put(cloud.LEGACY_POINTER, name.encode())
+    real_copy = shutil.copyfile
+
+    def copyfile(src, dst, *args, **kwargs):
+        assert ".ranksim-tmp-" not in str(dst), f"temp file written into a project folder: {dst}"
+        return real_copy(src, dst, *args, **kwargs)
+
+    monkeypatch.setattr(cloud.shutil, "copyfile", copyfile)
+    b = _instance(tmp_path / "b", store)
+    assert b.refresh(force=True)
+    assert (b.projects_dir / "foo" / "page.html").read_text() == "legacy"
+    assert (b.projects_dir / "loose.txt").read_text() == "loose"
+
+
+def test_a_new_column_is_compared_and_carried_by_deltas(tmp_path, systmp):
+    """Review item 4: a deploy adds a column (ALTER TABLE ... ADD COLUMN on every instance). An edit of only that
+    column must upload, and another instance must get the value, not the column's default."""
+    store = MemoryStore()
+    a, b = _instance(tmp_path / "a", store), _instance(tmp_path / "b", store)
+    _make_db(a.db_file, 1)
+    a.save()
+    b.refresh(force=True)
+    for state in (a, b):  # the deploy's migration, run by each instance's engine
+        conn = sqlite3.connect(str(state.db_file))
+        conn.execute("ALTER TABLE rs_keywords ADD COLUMN note TEXT DEFAULT ''")
+        conn.commit()
+        conn.close()
+    conn = sqlite3.connect(str(a.db_file))
+    conn.execute("UPDATE rs_keywords SET note = 'only the new column' WHERE query = 'query 1'")
+    conn.commit()
+    conn.close()
+    assert a.save(), "an edit of only the new column must upload"
+    b.refresh(force=True)
+    note = sqlite3.connect(str(b.db_file)).execute("SELECT note FROM rs_keywords WHERE query = 'query 1'").fetchone()[0]
+    assert note == "only the new column"
+    conn = sqlite3.connect(str(b.db_file))
+    conn.execute("UPDATE rs_keywords SET note = 'from b', project = 'other' WHERE query = 'query 2'")
+    conn.commit()
+    conn.close()
+    assert b.save()
+    a.refresh(force=True)
+    rows = dict(sqlite3.connect(str(a.db_file)).execute("SELECT query, note FROM rs_keywords WHERE query IN ('query 1', 'query 2')").fetchall())
+    assert rows == {"query 1": "only the new column", "query 2": "from b"}
+    assert a.save() is None and b.save() is None  # settled
+
+
+def test_the_cookie_check_never_syncs_storage_on_the_event_loop(tmp_path):
+    """Review item 7: on a cold instance Access.valid syncs storage; the middlewares run it in the threadpool."""
+    import asyncio
+
+    from fastapi.testclient import TestClient
+
+    from aeo.ranksim.serve import create_app
+    from tests.test_serve_project import make_settings
+
+    settings = make_settings(tmp_path)
+    app = create_app(settings=settings, database=settings.ranksim_database_url, projects_root=tmp_path / "projects", public_demo=False, access_password="pw-123456", access_secret="test-secret")
+    client = TestClient(app)
+    from tests.test_hosted import _post, _token
+
+    assert _post(client, "/api/v1/login", {"password": "pw-123456"}, _token(client)).status_code == 200
+    on_loop: list[bool] = []
+
+    class ColdCloud:
+        stamp, _checked, auth = 0, None, {}
+
+        def refresh(self, **_kwargs):
+            try:
+                asyncio.get_running_loop()
+                on_loop.append(True)
+            except RuntimeError:
+                on_loop.append(False)
+            return False
+
+    app.state.ui.access.shared = ColdCloud()
+    client.get("/api/v1/projects")
+    assert on_loop, "the cold cookie check did not run"
+    assert not any(on_loop), "storage was synced on the event loop thread"

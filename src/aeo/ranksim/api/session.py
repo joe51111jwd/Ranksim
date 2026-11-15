@@ -48,7 +48,7 @@ def register(app: FastAPI, ui) -> None:
             everywhere = bool((await _json_body(request, 1024)).get("everywhere"))
         except Exception:  # noqa: BLE001 - an empty or odd body is a plain sign out
             everywhere = False
-        if everywhere and ui.access.enabled and _signed_in(ui, request):
+        if everywhere and ui.access.enabled and await run_in_threadpool(_signed_in, ui, request):
             await run_in_threadpool(ui.access.revoke_all)  # every session on every instance, this one included
         response = JSONResponse({"ok": True, "everywhere": everywhere})
         response.delete_cookie(COOKIE, path="/")

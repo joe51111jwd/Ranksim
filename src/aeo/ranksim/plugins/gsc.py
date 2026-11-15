@@ -1421,7 +1421,7 @@ def register(app, ui) -> None:
         params = request.query_params
         if ui.public_demo or not oauth_config()["ready"]:
             return back(None, "not_configured")
-        signed_in = common._signed_in(ui, request)
+        signed_in = await run_in_threadpool(common._signed_in, ui, request)
         try:
             payload = check_state(ui, request, params.get("state") or "", bind_session=signed_in)
         except GscError as exc:

@@ -1,6 +1,6 @@
 """Disk use of cloud storage on a serverless /tmp (Vercel: 512 MB, shared by everything the instance writes).
 
-Measured with a 70 MB rank database and 30 MB of project files: a cold sync, a catch-up of one delta, a save, and a
+Measured with a 70 MB rank database (RANKSIM_DISK_TEST_DB_MB=120 for a bigger run) and 30 MB of project files: a cold sync, a catch-up of one delta, a save, and a
 full snapshot merged into an instance with unsaved rows. Peak use is the sum of file sizes under the instance's
 working folder and the system temp folder, sampled continuously and right before every rename and delete (the
 moments a temp file is at its largest).
@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import errno
 import os
+import random
 import shutil
 import sqlite3
 import tempfile
@@ -24,11 +25,12 @@ from aeo.ranksim.cloud import CloudState
 from aeo.ranksim.objects import MemoryStore, StoreError
 
 MB = 1024 * 1024
-DB_MB = 70
+DB_MB = int(os.environ.get("RANKSIM_DISK_TEST_DB_MB") or 70)  # 120 for a manual run at production-plus size
 PROJECT_MB = 30
-# Steady state is the working db, its base copy and the projects (170 MB). The budget allows one more full database
-# copy in flight plus slack, and stays far below Vercel's 512 MB.
-BUDGET = 2 * DB_MB * MB + PROJECT_MB * MB + 100 * MB
+# At rest: the working db, the compact base (about half the db's size) and the projects. Every sync and save stays
+# within that plus a little: no step holds a second full copy of the database on disk. With a 120 MB db the budget is
+# 247 MB (measured 208 MB); Vercel's /tmp is 512 MB.
+BUDGET = int(1.6 * DB_MB * MB) + PROJECT_MB * MB + 25 * MB
 
 
 def _sizes(roots) -> int:
@@ -88,8 +90,21 @@ class Peak:
         self.monkeypatch.undo()
 
 
+WORDS = [os.urandom(4).hex()[: 3 + n % 6] for n in range(2000)]
+WEIGHTS = [1 / (rank + 1) for rank in range(len(WORDS))]  # word frequencies follow Zipf's law, as in real text
+TAGS = ["<p>", "</p>", "<li>", "</li>", '<a href="/x">', "</a>", "<h2>", "</h2>", "<div class=\"c\">", "</div>"]
+
+
 def _text(size: int) -> str:
-    return os.urandom(size // 2).hex()  # compresses about 2:1, like stored pages
+    """Page-like text: words from a large vocabulary inside markup. Compresses about 3.5:1, like the live database
+    (66 MB packs to 19 MB)."""
+    rng, parts, total = random.Random(size ^ len(WORDS) ^ int.from_bytes(os.urandom(4), "big")), [], 0
+    while total < size:
+        words = rng.choices(WORDS, WEIGHTS, k=64)
+        words[rng.randrange(64)] = rng.choice(TAGS)
+        parts.extend(words)
+        total += sum(len(word) + 1 for word in words)
+    return " ".join(parts)[:size]
 
 
 def _make_db(path: Path, megabytes: int) -> None:
@@ -190,6 +205,8 @@ def test_peak_disk_use_stays_bounded_with_a_70_mb_database(tmp_path, systmp, mon
     peaks["snapshot merge"] = meter.peak
     assert _rows(b.db_file, "rs_keywords") == 552
 
+    peaks["at rest"] = _sizes([b_root])
+    print(f"base copy {(b_root / 'ranksim' / '.cloud' / 'base.rows').stat().st_size / MB:.0f} MB")
     report = ", ".join(f"{name} {size / MB:.0f} MB" for name, size in peaks.items())
     print(f"peak disk use: {report}")
     for name, size in peaks.items():
@@ -204,7 +221,7 @@ def test_peak_disk_use_stays_bounded_with_a_70_mb_database(tmp_path, systmp, mon
 
 def _leftovers(root: Path) -> list[str]:
     """Files under a working folder that are neither data nor the bookkeeping that is meant to stay."""
-    keep = {"rank.db", "rank.db-wal", "rank.db-shm", ".cloud/state.json", ".cloud/base.db"}
+    keep = {"rank.db", "rank.db-wal", "rank.db-shm", ".cloud/state.json", ".cloud/base.rows"}
     found = []
     for path in root.rglob("*"):
         if path.is_dir():
@@ -255,7 +272,7 @@ def test_a_failed_sync_leaves_no_temp_files(tmp_path, systmp, monkeypatch, where
         monkeypatch.setattr(cloud, "_merge_files", lambda *a, **k: (_ for _ in ()).throw(KeyError("gone")))
     else:
         monkeypatch.setattr(cloud, "merge_sqlite", lambda *a, **k: (_ for _ in ()).throw(boom))
-        monkeypatch.setattr(cloud, "_copy_db", lambda *a, **k: (_ for _ in ()).throw(boom))
+        monkeypatch.setattr(cloud, "_base_build", lambda *a, **k: (_ for _ in ()).throw(boom))
     with pytest.raises(cloud.CloudError):
         b.refresh(force=True)
     assert _leftovers(tmp_path / "b" / "ranksim") == []
@@ -309,11 +326,18 @@ def test_a_full_disk_is_recovered_by_removing_temp_files(tmp_path, systmp, monke
     assert _leftovers(tmp_path / "b" / "ranksim") == []
 
 
-def test_a_disk_still_full_wipes_the_local_copy_and_loads_it_again_once(tmp_path, systmp, monkeypatch):
+def test_a_disk_still_full_drops_only_the_bookkeeping_and_keeps_writes_in_flight(tmp_path, systmp, monkeypatch):
+    """Review item 1: the last-resort recovery must not delete the working db or project files, which request and
+    job threads write without the cloud lock. A writer holding a connection across it, a row and a file written just
+    before it, all reach storage with the next save."""
     store, a, b = _small_pair(tmp_path)
     b.refresh(force=True)
-    junk = b.projects_dir / "demo" / "huge.bin"  # something filled the disk that is not a temp file
-    junk.write_bytes(b"x" * 1000)
+    local = b.projects_dir / "demo" / "local.json"  # written by a request just before the wipe, not saved yet
+    local.write_text("{}")
+    writer = sqlite3.connect(str(b.db_file))  # a job's connection, open across the wipe
+    writer.execute("INSERT INTO rs_keywords VALUES ('before wipe', 'demo', '2026-11-15')")
+    writer.commit()
+    inode = b.db_file.stat().st_ino
     conn = sqlite3.connect(str(a.db_file))
     conn.execute("INSERT INTO rs_keywords VALUES ('later', 'demo', '2026-11-14')")
     conn.commit()
@@ -329,10 +353,20 @@ def test_a_disk_still_full_wipes_the_local_copy_and_loads_it_again_once(tmp_path
 
     monkeypatch.setattr(cloud, "merge_sqlite", merge)
     assert b.refresh(force=True)
-    assert not junk.exists()  # the local copy was dropped
-    assert _rows(b.db_file, "rs_keywords") == _rows(a.db_file, "rs_keywords")
+    assert len(calls) >= 3  # catch-up, retry after the sweep, then the sync from scratch
+    assert b.db_file.stat().st_ino == inode  # the same file: the writer's connection still writes into it
+    writer.execute("INSERT INTO rs_keywords VALUES ('after wipe', 'demo', '2026-11-15')")
+    writer.commit()
+    writer.close()
+    assert local.read_text() == "{}"
     assert (b.projects_dir / "demo" / "page.html").read_text() == "<p>one</p>"
     assert b.stamp == a.stamp
+    monkeypatch.setattr(cloud, "merge_sqlite", real)
+    assert b.save()  # nothing counts as agreed after the wipe: the local rows and file go up
+    a.refresh(force=True)
+    keywords = {row[0] for row in sqlite3.connect(str(a.db_file)).execute("SELECT query FROM rs_keywords")}
+    assert {"before wipe", "after wipe", "later"} <= keywords
+    assert (a.projects_dir / "demo" / "local.json").read_text() == "{}"
 
     conn = sqlite3.connect(str(a.db_file))
     conn.execute("INSERT INTO rs_keywords VALUES ('again', 'demo', '2026-11-14')")
@@ -341,8 +375,8 @@ def test_a_disk_still_full_wipes_the_local_copy_and_loads_it_again_once(tmp_path
     monkeypatch.setattr(cloud, "merge_sqlite", real)
     a.save()
     monkeypatch.setattr(cloud, "merge_sqlite", lambda *a, **k: (_ for _ in ()).throw(sqlite3.OperationalError("database or disk is full")))
-    monkeypatch.setattr(cloud, "_copy_db", lambda *a, **k: (_ for _ in ()).throw(OSError(errno.ENOSPC, "full")))
-    with pytest.raises(cloud.CloudError):  # a disk that stays full: one wipe and reload, then a plain error
+    monkeypatch.setattr(cloud, "_base_build", lambda *a, **k: (_ for _ in ()).throw(OSError(errno.ENOSPC, "full")))
+    with pytest.raises(cloud.CloudError):  # a disk that stays full: one recovery, then a plain error
         b.refresh(force=True)
     assert _leftovers(tmp_path / "b" / "ranksim") == []
 
@@ -353,7 +387,7 @@ def test_a_full_disk_during_a_save_is_retried_after_removing_temp_files(tmp_path
     conn.execute("INSERT INTO rs_keywords VALUES ('later', 'demo', '2026-11-14')")
     conn.commit()
     conn.close()
-    real, calls = cloud.make_delta, []
+    real, calls = cloud.make_base_delta, []
 
     def make_delta(*args, **kwargs):
         calls.append(1)
@@ -361,7 +395,7 @@ def test_a_full_disk_during_a_save_is_retried_after_removing_temp_files(tmp_path
             raise OSError(errno.ENOSPC, "No space left on device")
         return real(*args, **kwargs)
 
-    monkeypatch.setattr(cloud, "make_delta", make_delta)
+    monkeypatch.setattr(cloud, "make_base_delta", make_delta)
     assert a.save()
     assert len(calls) == 2
     assert _leftovers(tmp_path / "a" / "ranksim") == []
@@ -403,3 +437,273 @@ def test_one_sync_at_a_time_per_instance(tmp_path, systmp):
     assert errors == []
     assert gets.count(cloud.chain_name(1)) == 1
     assert _leftovers(tmp_path / "b" / "ranksim") == []
+
+
+def test_a_delta_against_the_compact_base_matches_one_against_a_full_copy(tmp_path):
+    """make_base_delta (working db against the compact base) produces the same minus and plus rows as make_delta
+    (against a full copy), for keyed rows, append-only rows, grouped Google results and a column the base lacks."""
+    rng = random.Random(7)
+
+    def build(path, pages, logs, serp):
+        conn = sqlite3.connect(str(path))
+        conn.execute("CREATE TABLE rs_pages (url TEXT PRIMARY KEY, html TEXT, fetched_at TEXT)")
+        conn.execute("CREATE TABLE rs_log (id INTEGER PRIMARY KEY, what TEXT, n INTEGER)")
+        conn.execute("CREATE TABLE rs_serp (id INTEGER PRIMARY KEY, query TEXT, position INTEGER, url TEXT, fetched_at TEXT)")
+        conn.executemany("INSERT INTO rs_pages VALUES (?, ?, ?)", pages)
+        conn.executemany("INSERT INTO rs_log VALUES (?, ?, ?)", logs)
+        conn.executemany("INSERT INTO rs_serp VALUES (?, ?, ?, ?, ?)", serp)
+        conn.commit()
+        conn.close()
+
+    for trial in range(5):
+        pages = [(f"u{n}", f"html {rng.random()}", "2026-11-01") for n in range(60)]
+        logs = [(n, f"w{n}", rng.randrange(5)) for n in range(1, 40)]
+        serp = [(n, f"q{n % 7}", n % 10, f"u{n}", "2026-11-01") for n in range(1, 50)]
+        base, new = tmp_path / f"base{trial}.db", tmp_path / f"new{trial}.db"
+        build(base, pages, logs, serp)
+        pages2 = [p for p in pages if rng.random() > 0.1]
+        pages2 = [(u, h if rng.random() > 0.2 else h + " changed", f) for u, h, f in pages2] + [(f"n{trial}{k}", "new", "2026-11-14") for k in range(5)]
+        logs2 = [l for l in logs if rng.random() > 0.1] + [(100 + k, "added", k) for k in range(4)]
+        serp2 = [s for s in serp if s[1] != "q3"] + [(200 + k, "q3", k, f"x{k}", "2026-11-14") for k in range(3)]
+        build(new, pages2, logs2, serp2)
+        if trial == 4:  # the working db gained a column the base does not have
+            conn = sqlite3.connect(str(new))
+            conn.execute("ALTER TABLE rs_log ADD COLUMN extra TEXT")
+            conn.commit()
+            conn.close()
+        compact = tmp_path / f"base{trial}.rows"
+        cloud._base_build(base, compact)
+        results = []
+        for maker, ancestor, tag in ((cloud.make_delta, base, "full"), (cloud.make_base_delta, compact, "compact")):
+            minus, plus = tmp_path / f"m-{tag}-{trial}.db", tmp_path / f"p-{tag}-{trial}.db"
+            count = maker(new, ancestor, minus, plus)
+            rows = {}
+            for label, path in (("minus", minus), ("plus", plus)):
+                conn = sqlite3.connect(str(path))
+                for (table,) in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall():
+                    rows[(label, table)] = sorted(conn.execute(f'SELECT * FROM "{table}"').fetchall(), key=repr)
+                conn.close()
+            results.append((count, rows))
+        assert results[0] == results[1], f"trial {trial}"
+        assert results[0][0] > 0
+
+        # applying the delta to the compact base gives the compact base of the new database
+        minus, plus = tmp_path / f"m-compact-{trial}.db", tmp_path / f"p-compact-{trial}.db"
+        cloud._base_apply(compact, minus, plus)
+        again = tmp_path / f"again-m{trial}.db", tmp_path / f"again-p{trial}.db"
+        if trial < 4:
+            assert cloud.make_base_delta(new, compact, *again) == 0
+
+
+# -- regressions from the review of the /tmp fix (docs/reviews/storage-tmp-fix.md) -----------------
+
+
+def test_a_cold_sync_holds_one_history_save_at_a_time_and_fetches_each_once(tmp_path, systmp, monkeypatch):
+    """Review item 2: files that later saves did not repack live in older saves. A fresh instance's cold sync must
+    not keep every such save on disk at once (that grows with every pull, forever)."""
+    monkeypatch.setattr(cloud, "COMPACT_DELTAS", 3)
+    store = MemoryStore()
+    a = _instance(tmp_path / "a", store)
+    _make_db(a.db_file, 1)
+    pulls = a.projects_dir / "demo" / "pulls"
+    for n in range(20):  # every pull adds its own folder; earlier pulls' files stay where they were saved
+        (pulls / f"p{n}").mkdir(parents=True)
+        (pulls / f"p{n}" / "data.json").write_text(_text(200_000))
+        conn = sqlite3.connect(str(a.db_file))
+        conn.execute("INSERT INTO rs_keywords VALUES (?, 'demo', '2026-11-15')", (f"pull {n}",))
+        conn.commit()
+        conn.close()
+        assert a.save()
+    held, fetched = [0], []
+    real_path, real_fetch = cloud._Saves.path, store.fetch
+
+    def path(self, seq):
+        found = real_path(self, seq)
+        held[0] = max(held[0], len(self.paths))
+        return found
+
+    def fetch(name, target):
+        fetched.append(name)
+        return real_fetch(name, target)
+
+    monkeypatch.setattr(cloud._Saves, "path", path)
+    monkeypatch.setattr(store, "fetch", fetch)
+    b = _instance(tmp_path / "b", store)
+    assert b.refresh(force=True)
+    for n in range(20):
+        assert (b.projects_dir / "demo" / "pulls" / f"p{n}" / "data.json").read_text() == (pulls / f"p{n}" / "data.json").read_text()
+    manifest_db = b._manifest["db"]
+    kept_for_db = 1 + len(manifest_db.get("deltas") or [])
+    assert held[0] <= kept_for_db + 1, f"{held[0]} saves on disk at once"
+    assert len(fetched) == len(set(fetched)), "a save was downloaded twice"
+    assert _rows(b.db_file, "rs_keywords") == _rows(a.db_file, "rs_keywords")
+    assert _leftovers(tmp_path / "b" / "ranksim") == []
+
+
+def test_the_failure_backoff_counts_from_the_end_of_a_failed_sync(tmp_path, systmp):
+    """Review item 3: a sync that fails slowly (Blob timeouts) must still hold the backoff for requests that queued
+    behind it, instead of each of them repeating it."""
+    now = [1000.0]
+    calls: list[str] = []
+
+    class Hanging(MemoryStore):
+        def _slow(self, name):
+            calls.append(name)
+            now[0] += 60.0  # one timed-out call
+            raise StoreError("timed out")
+
+        def get(self, name):
+            return self._slow(name)
+
+        def head(self, name):
+            return self._slow(name)
+
+    state = CloudState(data_dir=tmp_path / "b" / "ranksim", db_file=tmp_path / "b" / "ranksim" / "rank.db", enabled=True, store=Hanging(), clock=lambda: now[0])
+    with pytest.raises(cloud.CloudError):
+        state.refresh()
+    first = len(calls)
+    assert first >= 1
+    with pytest.raises(cloud.CloudError):  # queued right behind it: answered from the backoff, no storage call
+        state.refresh()
+    assert len(calls) == first
+    now[0] += cloud.FAILURE_BACKOFF_SECONDS + 1
+    with pytest.raises(cloud.CloudError):
+        state.refresh()
+    assert len(calls) > first
+
+
+def test_a_job_record_or_sign_out_everywhere_during_a_save_is_kept(tmp_path, systmp):
+    """Review item 5: record_job and update_auth wait for a save in flight instead of being dropped by its reset."""
+    store = MemoryStore()
+    a = _instance(tmp_path / "a", store)
+    _make_db(a.db_file, 1)
+    (a.projects_dir / "demo").mkdir(parents=True)
+    (a.projects_dir / "demo" / "page.html").write_text("one")
+    a.save()
+    uploading, release = threading.Event(), threading.Event()
+    real_put = store.put
+
+    def put(name, body, **kwargs):
+        if name.startswith(cloud.CHAIN_PREFIX) and not release.is_set():
+            uploading.set()
+            release.wait(5)
+        return real_put(name, body, **kwargs)
+
+    store.put = put
+    (a.projects_dir / "demo" / "page.html").write_text("two")
+    saver = threading.Thread(target=a.save)
+    saver.start()
+    assert uploading.wait(5)
+    recorder = threading.Thread(target=lambda: (a.record_job({"id": "job123", "status": "done", "updated": 1.0}), a.save()))
+    revoker = threading.Thread(target=lambda: a.update_auth(revoked_ms=12345))
+    recorder.start()
+    revoker.start()
+    time.sleep(0.2)
+    release.set()
+    for thread in (saver, recorder, revoker):
+        thread.join(10)
+    store.put = real_put
+    b = _instance(tmp_path / "b", store)
+    b.refresh(force=True)
+    assert b.job_record("job123") is not None
+    assert b.auth.get("revoked_ms") == 12345
+
+
+def test_the_legacy_import_never_writes_temp_files_into_project_folders(tmp_path, systmp, monkeypatch):
+    """Review item 6: files from an old-format tarball are moved into place from .cloud/tmp (swept at start-up), so
+    a process killed mid-import leaves nothing inside a project folder."""
+    import io
+    import tarfile
+
+    old = tmp_path / "old"
+    (old / "projects" / "foo").mkdir(parents=True)
+    (old / "projects" / "foo" / "page.html").write_text("legacy")
+    (old / "projects" / "loose.txt").write_text("loose")
+    _make_db(old / "rank.db", 1)
+    buffer = io.BytesIO()
+    with tarfile.open(fileobj=buffer, mode="w:gz") as archive:
+        for path in sorted((old / "projects").rglob("*")):
+            if path.is_file():
+                archive.add(path, arcname=str(path.relative_to(old)), recursive=False)
+        archive.add(old / "rank.db", arcname="rank.db")
+    store = MemoryStore()
+    name = f"{cloud.LEGACY_PREFIX}00000000000000000001-aaa.tgz"
+    store.put(name, buffer.getvalue())
+    store.put(cloud.LEGACY_POINTER, name.encode())
+    real_copy = shutil.copyfile
+
+    def copyfile(src, dst, *args, **kwargs):
+        assert ".ranksim-tmp-" not in str(dst), f"temp file written into a project folder: {dst}"
+        return real_copy(src, dst, *args, **kwargs)
+
+    monkeypatch.setattr(cloud.shutil, "copyfile", copyfile)
+    b = _instance(tmp_path / "b", store)
+    assert b.refresh(force=True)
+    assert (b.projects_dir / "foo" / "page.html").read_text() == "legacy"
+    assert (b.projects_dir / "loose.txt").read_text() == "loose"
+
+
+def test_a_new_column_is_compared_and_carried_by_deltas(tmp_path, systmp):
+    """Review item 4: a deploy adds a column (ALTER TABLE ... ADD COLUMN on every instance). An edit of only that
+    column must upload, and another instance must get the value, not the column's default."""
+    store = MemoryStore()
+    a, b = _instance(tmp_path / "a", store), _instance(tmp_path / "b", store)
+    _make_db(a.db_file, 1)
+    a.save()
+    b.refresh(force=True)
+    for state in (a, b):  # the deploy's migration, run by each instance's engine
+        conn = sqlite3.connect(str(state.db_file))
+        conn.execute("ALTER TABLE rs_keywords ADD COLUMN note TEXT DEFAULT ''")
+        conn.commit()
+        conn.close()
+    conn = sqlite3.connect(str(a.db_file))
+    conn.execute("UPDATE rs_keywords SET note = 'only the new column' WHERE query = 'query 1'")
+    conn.commit()
+    conn.close()
+    assert a.save(), "an edit of only the new column must upload"
+    b.refresh(force=True)
+    note = sqlite3.connect(str(b.db_file)).execute("SELECT note FROM rs_keywords WHERE query = 'query 1'").fetchone()[0]
+    assert note == "only the new column"
+    conn = sqlite3.connect(str(b.db_file))
+    conn.execute("UPDATE rs_keywords SET note = 'from b', project = 'other' WHERE query = 'query 2'")
+    conn.commit()
+    conn.close()
+    assert b.save()
+    a.refresh(force=True)
+    rows = dict(sqlite3.connect(str(a.db_file)).execute("SELECT query, note FROM rs_keywords WHERE query IN ('query 1', 'query 2')").fetchall())
+    assert rows == {"query 1": "only the new column", "query 2": "from b"}
+    assert a.save() is None and b.save() is None  # settled
+
+
+def test_the_cookie_check_never_syncs_storage_on_the_event_loop(tmp_path):
+    """Review item 7: on a cold instance Access.valid syncs storage; the middlewares run it in the threadpool."""
+    import asyncio
+
+    from fastapi.testclient import TestClient
+
+    from aeo.ranksim.serve import create_app
+    from tests.test_serve_project import make_settings
+
+    settings = make_settings(tmp_path)
+    app = create_app(settings=settings, database=settings.ranksim_database_url, projects_root=tmp_path / "projects", public_demo=False, access_password="pw-123456", access_secret="test-secret")
+    client = TestClient(app)
+    from tests.test_hosted import _post, _token
+
+    assert _post(client, "/api/v1/login", {"password": "pw-123456"}, _token(client)).status_code == 200
+    on_loop: list[bool] = []
+
+    class ColdCloud:
+        stamp, _checked, auth = 0, None, {}
+
+        def refresh(self, **_kwargs):
+            try:
+                asyncio.get_running_loop()
+                on_loop.append(True)
+            except RuntimeError:
+                on_loop.append(False)
+            return False
+
+    app.state.ui.access.shared = ColdCloud()
+    client.get("/api/v1/projects")
+    assert on_loop, "the cold cookie check did not run"
+    assert not any(on_loop), "storage was synced on the event loop thread"

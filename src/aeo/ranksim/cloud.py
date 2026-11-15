@@ -36,17 +36,19 @@ merges only what the old instance changed since the import (against ranksim/v2/l
 newer edits on the new side are kept, and importing the same tarball twice changes nothing. Old objects are never
 deleted, so going back to an older deployment still finds them.
 
-Disk. Vercel's /tmp holds 512 MB for everything. The working folder keeps the projects, the rank database and its
-base copy (.cloud/base.db, the last state every instance agreed on: deltas are made against it and merges use it as
-the common ancestor). A sync or save adds at most one more full database copy: catch-up reads each save straight from
-the store's stream in one pass (the object never lands on disk), a cold sync streams each save it needs to one file
-that is deleted once used, only the members needed are unpacked, files are moved into place rather than copied, the
-base copy is replaced by a rename, deltas are read from the working database directly, and SQLite sorts in memory.
-All temp files live in .cloud/tmp, are removed on every failure path, and whatever a killed process left is removed
-at the next process's first storage call. One sync or save runs at a time per working folder. A full disk is handled
-by removing temp files and retrying; if it is still full, the local copy is dropped and loaded again from storage
-once. Measured with a 70 MB database and 30 MB of projects: about 175 MB at rest and during a cold sync or a delta,
-246 MB while a full snapshot is made or merged (tests/test_disk.py).
+Disk. Vercel's /tmp holds 512 MB for everything. The working folder keeps the projects, the rank database and a
+compact base (.cloud/base.rows: per row, a hash and the row compressed; about half the database's size), the last
+state every instance agreed on: deltas are made against it and merges use it as the common ancestor. No sync or save
+writes a second full copy of the database: catch-up reads each save straight from the store's stream in one pass, a
+cold sync streams each save it needs to one file that is deleted once used and takes the snapshot as the working
+database by a rename, deltas are found by scanning the working database once, a full snapshot for upload is taken in
+memory, a compacting save also carries the delta so caught-up instances never download the snapshot, project files
+are moved into place rather than copied, and SQLite sorts in memory. All temp files live in .cloud/tmp, are removed
+on every failure path, and whatever a killed process left is removed at the next process's first storage call. One
+sync or save runs at a time per working folder. A full disk is handled by removing temp files and retrying; if it is
+still full, the base and bookkeeping are dropped and storage is merged into the working copy again, once (the working
+database and project files are never deleted: other threads write them without the lock). Measured (tests/test_disk.py, 30 MB of
+projects): about 135 MB at rest and at every step's peak with a 70 MB database, 208 MB with a 120 MB one.
 
 Nothing here runs unless BLOB_READ_WRITE_TOKEN is set (or a store is passed in, as the tests do).
 """
@@ -59,6 +61,7 @@ import gzip
 import hashlib
 import io
 import json
+import marshal
 import os
 import re
 import secrets
@@ -67,6 +70,7 @@ import sqlite3
 import tarfile
 import threading
 import time
+import zlib
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -184,7 +188,8 @@ class CloudState:
 
     @property
     def _base_db(self) -> Path:
-        return self._meta_dir / "base.db"
+        """The compact base (see "the base copy" below): row hashes and compressed rows, not a second database."""
+        return self._meta_dir / "base.rows"
 
     @property
     def _tmp_dir(self) -> Path:
@@ -205,6 +210,7 @@ class CloudState:
             (self.data_dir.parent, f".{self.data_dir.name}-legacy-*"),
             (self._meta_dir, ".*"),  # .base.db.<hex>.tmp, .state-*.json, and older .snap-/.minus-/.plus-/.refs- temps
             (self.db_file.parent, f".{self.db_file.name}.*.tmp"),
+            (self._meta_dir, "base.db*"),  # the full base copy of earlier versions
         ]
         for folder, pattern in spots:
             if not folder.is_dir():
@@ -219,18 +225,12 @@ class CloudState:
                     pass
 
     def _wipe(self) -> None:
-        """Forget the local copy entirely (the disk is full even after the sweep): the next sync is a cold one."""
-        _dispose_engines(self.db_file)
-        if self.data_dir.is_dir():
-            for path in self.data_dir.iterdir():
-                if path.is_dir() and not path.is_symlink():
-                    shutil.rmtree(path, ignore_errors=True)
-                else:
-                    path.unlink(missing_ok=True)
-        for suffix in ("", "-wal", "-shm", "-journal"):
-            Path(f"{self.db_file}{suffix}").unlink(missing_ok=True)
+        """The disk is still full after the sweep. Drop the base and the bookkeeping (.cloud), never the working
+        database or project files: request and job threads write those without this lock, and their writes must not
+        land in deleted files. The next sync is a cold one that merges storage into the working copy (local files and
+        rows are kept and saved next, since nothing counts as agreed any more)."""
+        shutil.rmtree(self._meta_dir, ignore_errors=True)
         self._sweep()
-        self.projects_dir.mkdir(parents=True, exist_ok=True)
         self._seq, self._version, self._manifest = 0, None, _empty_manifest()
         self._installed, self._db, self._db_clean = {}, {"snapshot": None, "applied": []}, None
         self._hash_cache.clear()
@@ -269,7 +269,7 @@ class CloudState:
             data = json.loads((self._meta_dir / "state.json").read_text("utf-8"))
         except (OSError, ValueError):
             return
-        if data.get("v") != 3:
+        if data.get("v") != 4:
             return  # an earlier layout: start over from the store
         self._installed = dict(data.get("installed") or {})
         self._db = dict(data.get("db") or {"snapshot": None, "applied": []})
@@ -281,7 +281,7 @@ class CloudState:
     def _save_meta(self) -> None:
         self._meta_dir.mkdir(parents=True, exist_ok=True)
         temp = self._meta_dir / f".state-{secrets.token_hex(4)}.json"
-        state = {"v": 3, "seq": self._seq, "manifest": self._manifest, "installed": self._installed, "db": self._db, "db_clean": self._db_clean}
+        state = {"v": 4, "seq": self._seq, "manifest": self._manifest, "installed": self._installed, "db": self._db, "db_clean": self._db_clean}
         temp.write_text(json.dumps(state), "utf-8")
         os.replace(temp, self._meta_dir / "state.json")
 
@@ -311,7 +311,7 @@ class CloudState:
             try:
                 changed = self._sync_recovering(now)
             except (StoreError, KeyError, OSError, ValueError, tarfile.TarError, sqlite3.Error) as exc:
-                self._failed_at = now
+                self._failed_at = self.clock()  # when the attempt ended: requests queued on the lock meanwhile back off
                 self.last_error = f"Could not read storage: {type(exc).__name__}."
                 print(f"ranksim: {self.last_error} ({str(exc)[:200]})", flush=True)
                 raise CloudError(self.last_error) from exc
@@ -323,8 +323,8 @@ class CloudState:
             return changed
 
     def _sync_recovering(self, now: float) -> bool:
-        """_sync, and when the disk is full: remove temp files and try again; still full: drop the local copy and
-        load it again from storage, once. (Unsaved local changes cannot be saved on a full disk either.)"""
+        """_sync, and when the disk is full: remove temp files and try again; still full: drop the base and the
+        bookkeeping and sync again from scratch, once, merging storage into the working copy (nothing local is lost)."""
         try:
             return self._sync(now)
         except Exception as exc:  # noqa: BLE001 - only a full disk is handled here
@@ -337,7 +337,7 @@ class CloudState:
         except Exception as exc:  # noqa: BLE001
             if not _disk_full(exc):
                 raise
-            print("ranksim: the disk is still full; clearing the local copy and loading it again from storage.", flush=True)
+            print("ranksim: the disk is still full; dropping the base copy and syncing again from scratch.", flush=True)
         self._wipe()
         self._sync(now)
         return True
@@ -400,22 +400,48 @@ class CloudState:
             for slug, seq in sorted((manifest.get("projects") or {}).items()):
                 if SLUG_RE.match(slug) and self._installed.get(slug, {}).get("seq") != seq:
                     wanted.setdefault(int(seq), []).append(slug)
-            for seq, slugs in sorted(wanted.items()):
-                # One pass over each save object, unpacking only the folders of the projects taken from it.
-                prefixes = tuple(f"p/{slug}/" for slug in slugs)
-                staging = self._temp("projects")
-                try:
-                    _unpack(saves.path(seq), staging, lambda name: name.startswith(prefixes))
-                    for slug in slugs:
-                        changed |= self._merge_project(slug, seq, staging / "p" / slug, saves)
-                finally:
-                    shutil.rmtree(staging, ignore_errors=True)
             db = manifest.get("db") or {}
             needs_db = db.get("snapshot") and (db["snapshot"] != self._db.get("snapshot") or any(d not in self._db.get("applied", []) for d in db.get("deltas") or []))
             keep = ({int(db["snapshot"])} | {int(d) for d in db.get("deltas") or []}) if needs_db else set()
+            saves.keep = keep
+            staging = self._temp("projects")
+            try:
+                # 1. Each save that is a project's newest: one pass, only those projects' folders, then delete it
+                #    (unless the database step needs it). Disk holds the unpacked files plus one save at a time.
+                folders: dict[str, tuple[int, Path]] = {}
+                for seq, slugs in sorted(wanted.items()):
+                    prefixes = tuple(f"p/{slug}/" for slug in slugs)
+                    _unpack(saves.path(seq), staging / f"s{seq}", lambda name: name.startswith(prefixes))
+                    if seq not in keep:
+                        saves.drop(seq)
+                    for slug in slugs:
+                        folders[slug] = (seq, staging / f"s{seq}" / "p" / slug)
+                # 2. Files a save did not repack because they were unchanged live in older saves. Fetch each such
+                #    save once, unpack exactly the files needed from it, delete it. However long the chain, disk
+                #    holds the project files plus one save.
+                needs: dict[int, set[str]] = {}
+                for slug, (seq, folder) in folders.items():
+                    try:
+                        meta = json.loads((folder / VERSION_FILE).read_text("utf-8"))
+                    except (OSError, ValueError):
+                        continue  # _merge_project reports it
+                    base = self._installed.get(slug, {}).get("files", {})
+                    for rel, digest in (meta.get("files") or {}).items():
+                        holder = int((meta.get("at") or {}).get(rel, seq))
+                        if holder != seq and digest != base.get(rel):
+                            needs.setdefault(holder, set()).add(f"p/{slug}/{rel}")
+                held = staging / "held"
+                for holder, names in sorted(needs.items()):
+                    _unpack(saves.path(holder), held / str(holder), lambda name: name in names)
+                    if holder not in keep:
+                        saves.drop(holder)
+                for slug, (seq, folder) in sorted(folders.items()):
+                    changed |= self._merge_project(slug, seq, folder, saves, held=held)
+            finally:
+                shutil.rmtree(staging, ignore_errors=True)
             for seq in list(saves.paths):
                 if seq not in keep:
-                    saves.drop(seq)  # projects are done: free the disk before the database is unpacked
+                    saves.drop(seq)  # projects are done (normally nothing is left to drop here): free the disk before the database is unpacked
             if needs_db:
                 self._apply_db(db, saves)
                 changed = True
@@ -440,6 +466,8 @@ class CloudState:
                     elif member.name.startswith("p/") and (member.isfile() or member.isdir()):
                         archive.extract(member, staging, filter="data")
                     elif member.name in parts and member.isfile():
+                        if member.name == "db.full" and {"db.minus", "db.plus"} <= found:
+                            continue  # a compacting save: the delta before it is all a caught-up instance needs
                         with open(parts[member.name], "wb") as out:
                             shutil.copyfileobj(archive.extractfile(member), out, 1 << 20)
                         found.add(member.name)
@@ -451,13 +479,17 @@ class CloudState:
                     if folder.is_dir() and SLUG_RE.match(folder.name):
                         changed |= self._merge_project(folder.name, seq, folder, saves)
             shutil.rmtree(staging, ignore_errors=True)
-            if "db.full" in found:
+            snapshot_here = int((manifest.get("db") or {}).get("snapshot") or 0) == seq
+            if "db.minus" in found and "db.plus" in found:
+                self._apply_delta(parts["db.minus"], parts["db.plus"])
+                if snapshot_here:
+                    self._db = {"snapshot": seq, "applied": []}
+                else:
+                    self._db.setdefault("applied", []).append(seq)
+                changed = True
+            elif "db.full" in found:
                 self._merge_full(parts["db.full"])
                 self._db = {"snapshot": seq, "applied": []}
-                changed = True
-            elif "db.minus" in found and "db.plus" in found:
-                self._apply_delta(parts["db.minus"], parts["db.plus"])
-                self._db.setdefault("applied", []).append(seq)
                 changed = True
         finally:
             shutil.rmtree(staging, ignore_errors=True)
@@ -467,7 +499,7 @@ class CloudState:
         self._version = chain_name(seq)
         return changed
 
-    def _merge_project(self, slug: str, seq: int, folder: Path, saves: "_Saves") -> bool:
+    def _merge_project(self, slug: str, seq: int, folder: Path, saves: "_Saves", held: Path | None = None) -> bool:
         """Merge one project folder unpacked from save seq. folder is ours to consume: files are moved, not copied."""
         meta_file = folder / VERSION_FILE
         if not meta_file.is_file():
@@ -484,9 +516,13 @@ class CloudState:
             holder = at.get(rel)
             if holder is None or holder == seq:
                 return None
+            if held is not None and (held / str(holder) / "p" / slug / rel).is_file():
+                return held / str(holder) / "p" / slug / rel  # unpacked ahead by the cold sync
             if holder not in staged:
                 staged[holder] = self._temp(f"refs-{holder}")
                 _unpack(saves.path(holder), staged[holder], lambda name: name.startswith(f"p/{slug}/"))
+                if holder not in saves.keep:
+                    saves.drop(holder)  # its files for this project are unpacked: free the disk now
             target = staged[holder] / "p" / slug / rel
             return target if target.is_file() else None
 
@@ -534,47 +570,62 @@ class CloudState:
         clean = self._db_is_clean()
         if not self.db_file.is_file() or self.db_file.stat().st_size == 0:
             if self._base_db.is_file():
-                _copy_db(self._base_db, self.db_file)
+                _dispose_engines(self.db_file)
+                _base_restore(self._base_db, self.db_file)
         if self.db_file.is_file():
             _dispose_engines(self.db_file)  # idle pooled connections must not hold a lock while rows are merged
             merge_sqlite(self.db_file, minus, plus)
         if self._base_db.is_file():
-            merge_sqlite(self._base_db, minus, plus)
+            _base_add_columns(self._base_db, self.db_file)
+            _base_apply(self._base_db, minus, plus)
         self._db_clean = _stat_sig(self.db_file) if clean else None
 
     def _db_is_clean(self) -> bool:
         return self._db.get("snapshot") is not None and _stat_sig(self.db_file) == self._db_clean
 
     def _merge_full(self, theirs: Path) -> None:
-        """Three-way merge of a full database snapshot into the local db (local unsaved rows are kept). theirs is a
-        temp file of ours: it becomes the new base copy by a rename, so no third full copy is written.
+        """Bring in a full database snapshot (theirs, a temp file of ours). A fresh instance takes it as its working
+        database by a rename. Otherwise the snapshot's changes since the base are merged in as a delta (local unsaved
+        rows are kept), the base takes the same delta, and theirs is deleted.
 
-        Why two full copies (the working db and base.db) stay on disk: base.db is the last state every instance
-        agreed on. Saves upload the row-level difference between the working db and base.db (a few KB instead of the
-        whole file, which the Blob budget needs), and merges use it as the common ancestor, so a row deleted on one
-        side is deleted on the other instead of coming back. The working db changes under the app at any time, so it
-        cannot stand in for it."""
+        Why a base at all: it is the last state every instance agreed on. Saves upload the row-level difference
+        between the working db and the base (a few KB instead of the whole file, which the Blob budget needs), and
+        merges use it as the common ancestor, so a row deleted on one side is deleted on the other instead of coming
+        back. It is kept compact (row hashes plus compressed rows), not as a second copy of the database."""
         self._meta_dir.mkdir(parents=True, exist_ok=True)
         self.db_file.parent.mkdir(parents=True, exist_ok=True)
-        if not self.db_file.is_file() or self.db_file.stat().st_size == 0 or _no_rows(self.db_file):
-            _dispose_engines(self.db_file)  # a fresh instance: the snapshot replaces the empty file the app created
-            _copy_db(theirs, self.db_file)
-            clean = True
-        else:
-            clean = self._db_is_clean()
-            base = self._base_db if self._base_db.is_file() else None
-            _dispose_engines(self.db_file)  # idle pooled connections must not hold a lock while rows are merged
-            merge_sqlite(self.db_file, base, theirs)
-        self._install_base(theirs)
-        self._db_clean = _stat_sig(self.db_file) if clean else None
-
-    def _install_base(self, source: Path) -> None:
-        """Make source (a temp database file of ours, on the same disk) the base copy: a rename, not a copy."""
-        _checkpoint(source)
-        for suffix in ("-wal", "-shm", "-journal"):
-            Path(f"{self._base_db}{suffix}").unlink(missing_ok=True)
-            Path(f"{source}{suffix}").unlink(missing_ok=True)
-        os.replace(source, self._base_db)
+        base_tmp = self._temp("base", ".rows")
+        minus, plus = self._temp("minus", ".db"), self._temp("plus", ".db")
+        try:
+            if not self.db_file.is_file() or self.db_file.stat().st_size == 0 or _no_rows(self.db_file):
+                _unlink_db(self._base_db)  # an old base belongs to a database that is gone
+                _base_build(theirs, base_tmp)  # before theirs moves: exactly the snapshot, nothing the app adds later
+                os.replace(base_tmp, self._base_db)
+                _dispose_engines(self.db_file)  # a fresh instance: the snapshot replaces the empty file the app created
+                _checkpoint(theirs)
+                for suffix in ("-wal", "-shm", "-journal"):
+                    Path(f"{self.db_file}{suffix}").unlink(missing_ok=True)
+                    Path(f"{theirs}{suffix}").unlink(missing_ok=True)
+                os.replace(theirs, self.db_file)
+                clean = True
+            else:
+                clean = self._db_is_clean()
+                _dispose_engines(self.db_file)  # idle pooled connections must not hold a lock while rows are merged
+                if self._base_db.is_file():  # the snapshot's changes since the base, as a delta; base updated in place
+                    _base_add_columns(self._base_db, self.db_file)
+                    make_base_delta(theirs, self._base_db, minus, plus)
+                    _unlink_db(theirs)
+                    merge_sqlite(self.db_file, minus, plus)
+                    _base_apply(self._base_db, minus, plus)
+                else:
+                    merge_sqlite(self.db_file, None, theirs)
+                    _base_build(theirs, base_tmp)
+                    _unlink_db(theirs)
+                    os.replace(base_tmp, self._base_db)
+            self._db_clean = _stat_sig(self.db_file) if clean else None
+        finally:
+            for path in (base_tmp, minus, plus):
+                _unlink_db(path)
 
     # -- writing ---------------------------------------------------------------------------------
 
@@ -613,17 +664,21 @@ class CloudState:
         return self.save()
 
     def update_auth(self, **changes) -> dict:
-        """Change the shared login state (revocation, global lockout) and save it now (one put)."""
-        auth = self._extra.setdefault("auth", {})
-        for key, value in changes.items():
-            auth[key] = max(auth.get(key) or 0, value)
-        if self.enabled:
-            self.save()
-        return self.auth
+        """Change the shared login state (revocation, global lockout) and save it now (one put). Under the lock: a save
+        in flight resets _extra when its upload lands, which would drop a change made meanwhile."""
+        with self._lock:
+            auth = self._extra.setdefault("auth", {})
+            for key, value in changes.items():
+                auth[key] = max(auth.get(key) or 0, value)
+            if self.enabled:
+                self.save()
+            return self.auth
 
     def record_job(self, record: dict) -> None:
-        """Carry a finished or paused job's record in the next save's manifest (the job's own data save)."""
-        self._extra.setdefault("jobs", {})[record["id"]] = record
+        """Carry a finished or paused job's record in the next save's manifest (the job's own data save). Under the
+        lock, so a save already uploading cannot drop it (it goes into the next save)."""
+        with self._lock:
+            self._extra.setdefault("jobs", {})[record["id"]] = record
 
     def _projects_changed(self) -> dict:
         changed: dict[str, tuple[dict, dict]] = {}
@@ -671,27 +726,34 @@ class CloudState:
         """Pack and create save number seq. Returns its name, or None when the number was taken first."""
         projects = self._projects_changed()
         name = chain_name(seq)
-        snap, minus, plus = self._temp("snap", ".db"), self._temp("minus", ".db"), self._temp("plus", ".db")
-        db_kind, sig_before = None, None
+        minus, plus = self._temp("minus", ".db"), self._temp("plus", ".db")
+        base_tmp = self._temp("base", ".rows")
+        db_kind, sig_before, memory, snap_bytes = None, None, None, b""
         try:
             manifest = json.loads(json.dumps(self._manifest))
             db = manifest.setdefault("db", {"snapshot": None, "deltas": [], "sizes": {}})
             if self.db_file.is_file() and not self._db_is_clean():
                 sig_before = _stat_sig(self.db_file)
-                if not self._db.get("snapshot") or not self._base_db.is_file():
+                has_base = bool(self._db.get("snapshot")) and self._base_db.is_file()
+                if has_base:
+                    _base_add_columns(self._base_db, self.db_file)
+                if not has_base:
                     db_kind = "full"
-                elif make_delta(self.db_file, self._base_db, minus, plus):
-                    # The delta is read from the working db in one read transaction (a consistent view, no third full
-                    # copy on disk). After the upload, base.db takes it exactly as every reader applies it.
+                elif make_base_delta(self.db_file, self._base_db, minus, plus):
+                    # Read from the working db in one read transaction (a consistent view, no full copy on disk).
+                    # After the upload the base takes the delta exactly as every reader applies it.
                     delta_size = minus.stat().st_size + plus.stat().st_size
                     sizes = db.get("sizes") or {}
                     total = sum(int(sizes.get(str(d), 0)) for d in db.get("deltas") or []) + delta_size
                     snapshot_size = max(COMPACT_FLOOR_BYTES, int(sizes.get(str(db.get("snapshot")), 0)))
-                    db_kind = "full" if len(db.get("deltas") or []) >= COMPACT_DELTAS or total > COMPACT_RATIO * snapshot_size else "delta"
-                if db_kind == "full":
-                    _unlink_db(minus)
-                    _unlink_db(plus)
-                    _sqlite_copy(self.db_file, snap)
+                    db_kind = "compact" if len(db.get("deltas") or []) >= COMPACT_DELTAS or total > COMPACT_RATIO * snapshot_size else "delta"
+                if db_kind in ("full", "compact"):
+                    # A full snapshot for cold starts, taken in memory. A compacting save also carries the delta
+                    # from the same snapshot, so instances that are caught up apply a few rows, not the whole file.
+                    memory = _snapshot(self.db_file)
+                    if db_kind == "compact":
+                        make_base_delta(memory, self._base_db, minus, plus)
+                    snap_bytes = memory.serialize()
             if not projects and db_kind is None and not self._extra:
                 if sig_before is not None:
                     self._db_clean = sig_before  # same rows as the base: nothing to upload
@@ -699,8 +761,8 @@ class CloudState:
             manifest["v"], manifest["seq"] = 3, seq
             for slug in projects:
                 manifest.setdefault("projects", {})[slug] = seq
-            if db_kind == "full":
-                db["snapshot"], db["deltas"], db["sizes"] = seq, [], {str(seq): snap.stat().st_size}
+            if db_kind in ("full", "compact"):
+                db["snapshot"], db["deltas"], db["sizes"] = seq, [], {str(seq): len(snap_bytes)}
             elif db_kind == "delta":
                 db["deltas"] = list(db.get("deltas") or []) + [seq]
                 db.setdefault("sizes", {})[str(seq)] = minus.stat().st_size + plus.stat().st_size
@@ -747,11 +809,14 @@ class CloudState:
                     _add_bytes(archive, f"p/{slug}/{VERSION_FILE}", json.dumps(meta, sort_keys=True).encode("utf-8"))
                     for rel, data in contents.items():
                         _add_bytes(archive, f"p/{slug}/{rel}", data)
-                if db_kind == "full":
-                    archive.add(snap, arcname="db.full", recursive=False)
-                elif db_kind == "delta":
+                if db_kind in ("delta", "compact"):  # the delta first: a caught-up reader skips the snapshot after it
                     archive.add(minus, arcname="db.minus", recursive=False)
                     archive.add(plus, arcname="db.plus", recursive=False)
+                if db_kind in ("full", "compact"):
+                    info = tarfile.TarInfo("db.full")
+                    info.size, info.mtime = len(snap_bytes), int(time.time())
+                    archive.addfile(info, io.BytesIO(snap_bytes))
+                    snap_bytes = b""  # the compressed copy in the buffer is enough
             try:
                 self.store.put(name, buffer.getvalue(), content_type="application/gzip")
             except ObjectExists:
@@ -760,12 +825,13 @@ class CloudState:
             for slug, (files, meta) in projects.items():
                 self._installed[slug] = {"seq": seq, "files": files, "deleted": meta["deleted"], "at": dict(meta.get("at") or {})}
             if db_kind == "full":
-                self._install_base(snap)
-            elif db_kind == "delta":
-                merge_sqlite(self._base_db, minus, plus)
+                _base_build(memory, base_tmp)
+                os.replace(base_tmp, self._base_db)
+            elif db_kind in ("delta", "compact"):
+                _base_apply(self._base_db, minus, plus)
             if db_kind is not None:
                 self._db_clean = sig_before
-                if db_kind == "full":
+                if db_kind in ("full", "compact"):
                     self._db = {"snapshot": seq, "applied": []}
                 else:
                     self._db.setdefault("applied", []).append(seq)
@@ -783,7 +849,9 @@ class CloudState:
                     pass
             return name
         finally:
-            for path in (snap, minus, plus):
+            if memory is not None:
+                memory.close()
+            for path in (minus, plus, base_tmp):
                 _unlink_db(path)
 
     def _prunable(self, manifest: dict, seq: int) -> list[int]:
@@ -875,11 +943,11 @@ class CloudState:
                 self.projects_dir.mkdir(parents=True, exist_ok=True)
                 for slug in sorted(path.name for path in incoming.iterdir() if path.is_dir() and SLUG_RE.match(path.name)):
                     theirs = _manifest(_Scope(incoming / slug, recursive=True), {})
-                    _merge_files(self._scope(slug), bases.get(slug, {}), incoming / slug, theirs, self._hash_cache)
+                    _merge_files(self._scope(slug), bases.get(slug, {}), incoming / slug, theirs, self._hash_cache, move=True)
                     seen[slug] = theirs
                 loose = _manifest(_Scope(incoming, recursive=False), {})
                 if loose:
-                    _merge_files(self._scope(LOOSE), bases.get(LOOSE, {}), incoming, loose, self._hash_cache)
+                    _merge_files(self._scope(LOOSE), bases.get(LOOSE, {}), incoming, loose, self._hash_cache, move=True)
                     seen[LOOSE] = loose
             incoming_db = staging / "rank.db"
             if incoming_db.is_file():
@@ -1050,6 +1118,7 @@ class _Saves:
     def __init__(self, state: "CloudState") -> None:
         self.state = state
         self.paths: dict[int, Path] = {}
+        self.keep: set[int] = set()  # saves a later step still needs (not dropped after their projects are unpacked)
 
     def path(self, seq: int) -> Path:
         """The save's file; KeyError when the store does not have it."""
@@ -1550,6 +1619,313 @@ def make_delta(new: Path, base: Path | None, minus: Path, plus: Path) -> int:
     finally:
         conn.close()
     return max(total, 0)
+
+
+# -- the base copy: the last database state every instance agreed on, kept compact ------------------
+#
+# A second full copy of the rank database would double its footprint on /tmp. The base keeps, per table, one entry per
+# row: a hash of the row's content (to find what changed) and the row compressed (to ship deleted or replaced rows in a
+# delta's minus part). That is a fraction of the database's size, and deltas are found by scanning the working database
+# once instead of comparing two full copies. Hashes and the encoding (marshal version 2, which never shares references,
+# so equal values always encode alike) never leave the instance.
+
+BASE_SCHEMA = (
+    "CREATE TABLE IF NOT EXISTS {s}.tables (tbl TEXT PRIMARY KEY, sql TEXT, names TEXT)",
+    "CREATE TABLE IF NOT EXISTS {s}.rows (tbl TEXT NOT NULL, h BLOB NOT NULL, g, pos INTEGER, body BLOB NOT NULL)",
+    "CREATE UNIQUE INDEX IF NOT EXISTS {s}.rows_h ON rows (tbl, h)",
+    "CREATE INDEX IF NOT EXISTS {s}.rows_g ON rows (tbl, g)",
+)
+
+
+def _base_schema(conn, schema: str = "main") -> None:
+    for statement in BASE_SCHEMA:
+        conn.execute(statement.format(s=schema))
+
+
+def _row_hash(names, values) -> bytes:
+    return hashlib.sha1(marshal.dumps(tuple(sorted(zip(names, values))), 2)).digest()
+
+
+def _row_pack(names, values) -> bytes:
+    return zlib.compress(marshal.dumps((tuple(names), tuple(values)), 2), 3)  # half the time of level 6, 7% bigger
+
+
+def _row_unpack(body: bytes) -> dict:
+    names, values = marshal.loads(zlib.decompress(body))
+    return dict(zip(names, values))
+
+
+def _connect_source(source) -> tuple:
+    """(connection, close it after?) for a database path or an open connection."""
+    if isinstance(source, sqlite3.Connection):
+        return source, False
+    return sqlite3.connect(str(source), timeout=30, isolation_level=None), True
+
+
+def _base_build(source, target: Path) -> None:
+    """Write the base of a whole database (a path, or an open connection such as an in-memory snapshot) to target."""
+    _unlink_db(target)
+    src, close = _connect_source(source)
+    out = sqlite3.connect(str(target), isolation_level=None)
+    try:
+        out.execute("PRAGMA page_size=1024")  # compressed rows end mid-page: small pages waste less of each
+        _base_schema(out)
+        out.execute("BEGIN")
+        pos = 0
+        for table, sql in _tables(src, "main").items():
+            names = [name for name, _type, _pk in _columns(src, "main", table)]
+            if not names:
+                continue
+            out.execute("INSERT OR REPLACE INTO tables VALUES (?, ?, ?)", (table, sql, json.dumps(names)))
+            group = GROUPED.get(table)
+            gi = names.index(group) if group in names else None
+            rows = []
+            for values in src.execute(f"SELECT {', '.join(_q(n) for n in names)} FROM main.{_q(table)}"):
+                pos += 1
+                rows.append((table, _row_hash(names, values), values[gi] if gi is not None else None, pos, _row_pack(names, values)))
+                if len(rows) >= 500:
+                    out.executemany("INSERT OR IGNORE INTO rows VALUES (?, ?, ?, ?, ?)", rows)
+                    rows.clear()
+            out.executemany("INSERT OR IGNORE INTO rows VALUES (?, ?, ?, ?, ?)", rows)
+        out.execute("COMMIT")
+    except BaseException:
+        out.close()
+        _unlink_db(target)
+        raise
+    finally:
+        if close:
+            src.close()
+    out.close()
+
+
+def _base_apply(base: Path, minus: Path, plus: Path) -> None:
+    """Apply a delta to the base: drop the rows of minus, add the rows of plus (exactly what every reader does)."""
+    conn = sqlite3.connect(str(base), timeout=30, isolation_level=None)
+    try:
+        conn.execute("PRAGMA temp_store=MEMORY")
+        _base_schema(conn)
+        conn.execute("ATTACH DATABASE ? AS m", (str(minus),))
+        conn.execute("ATTACH DATABASE ? AS p", (str(plus),))
+        conn.execute("BEGIN IMMEDIATE")
+        known = {tbl: json.loads(names) for tbl, names in conn.execute("SELECT tbl, names FROM tables")}
+
+        def layout(schema: str, table: str) -> list[str]:
+            # Hash over the columns the base knows for this table (a delta carries only the columns both sides had).
+            cols = [name for name, _type, _pk in _columns(conn, schema, table)]
+            return [c for c in cols if c in known[table]] if table in known else cols
+
+        for table in _tables(conn, "m"):
+            names = layout("m", table)
+            if names:
+                gone = [(table, _row_hash(names, values)) for values in conn.execute(f"SELECT {', '.join(_q(n) for n in names)} FROM m.{_q(table)}")]
+                conn.executemany("DELETE FROM rows WHERE tbl = ? AND h = ?", gone)
+        pos = conn.execute("SELECT coalesce(max(pos), 0) FROM rows").fetchone()[0]
+        for table, sql in _tables(conn, "p").items():
+            names = layout("p", table)
+            if not names:
+                continue
+            if table not in known:
+                conn.execute("INSERT OR REPLACE INTO tables VALUES (?, ?, ?)", (table, sql, json.dumps(names)))
+            group = GROUPED.get(table)
+            gi = names.index(group) if group in names else None
+            rows = []
+            for values in conn.execute(f"SELECT {', '.join(_q(n) for n in names)} FROM p.{_q(table)}"):
+                pos += 1
+                rows.append((table, _row_hash(names, values), values[gi] if gi is not None else None, pos, _row_pack(names, values)))
+            conn.executemany("INSERT OR IGNORE INTO rows VALUES (?, ?, ?, ?, ?)", rows)
+        conn.execute("COMMIT")
+    except BaseException:
+        if conn.in_transaction:
+            conn.execute("ROLLBACK")
+        raise
+    finally:
+        conn.close()
+
+
+def _base_add_columns(base: Path, db_file: Path) -> None:
+    """A deploy added a column to a table of the working database (ALTER TABLE ... ADD COLUMN, which gives every
+    existing row the column's default). Give the base the same column with the same value, so an edit of that column
+    counts as a change and deltas carry it, instead of the column being compared nowhere and shipped blank."""
+    if not Path(base).is_file() or not Path(db_file).is_file():
+        return
+    conn = sqlite3.connect(str(base), timeout=30, isolation_level=None)
+    try:
+        conn.execute("ATTACH DATABASE ? AS w", (str(db_file),))
+        known = {tbl: json.loads(names) for tbl, names in conn.execute("SELECT tbl, names FROM main.tables")}
+        changes: dict[str, list] = {}
+        for table in _tables(conn, "w"):
+            if table not in known:
+                continue
+            info = conn.execute(f"PRAGMA w.table_info({_q(table)})").fetchall()
+            missing = [(name, default) for _cid, name, _type, _nn, default, _pk in info if name not in known[table]]
+            if missing:
+                changes[table] = missing
+        conn.execute("DETACH DATABASE w")
+        if not changes:
+            return
+        conn.execute("BEGIN IMMEDIATE")
+        for table, missing in changes.items():
+            defaults = {name: (conn.execute(f"SELECT {default}").fetchone()[0] if default is not None else None) for name, default in missing}
+            names = known[table] + [name for name, _default in missing]
+            updates = []
+            for rowid, body in conn.execute("SELECT rowid, body FROM rows WHERE tbl = ?", (table,)).fetchall():
+                row = _row_unpack(body)
+                for name, value in defaults.items():
+                    row.setdefault(name, value)
+                values = [row.get(name) for name in names]
+                updates.append((_row_hash(names, values), _row_pack(names, values), rowid))
+            conn.executemany("UPDATE rows SET h = ?, body = ? WHERE rowid = ?", updates)
+            conn.execute("UPDATE tables SET names = ? WHERE tbl = ?", (json.dumps(names), table))
+        conn.execute("COMMIT")
+    except BaseException:
+        if conn.in_transaction:
+            conn.execute("ROLLBACK")
+        raise
+    finally:
+        conn.close()
+
+
+def _base_restore(base: Path, target: Path) -> None:
+    """Rebuild a database from the base (the working database went missing)."""
+    _unlink_db(target)
+    conn = sqlite3.connect(str(target), isolation_level=None)
+    try:
+        conn.execute("ATTACH DATABASE ? AS bs", (str(base),))
+        conn.execute("BEGIN")
+        for table, sql, _names in conn.execute("SELECT tbl, sql, names FROM bs.tables").fetchall():
+            conn.execute(sql)
+            for (body,) in conn.execute("SELECT body FROM bs.rows WHERE tbl = ? ORDER BY pos", (table,)).fetchall():
+                row = _row_unpack(body)
+                conn.execute(f"INSERT INTO main.{_q(table)} ({', '.join(_q(n) for n in row)}) VALUES ({', '.join('?' * len(row))})", tuple(row.values()))
+        conn.execute("COMMIT")
+    finally:
+        conn.close()
+
+
+def make_base_delta(new, base: Path | None, minus: Path, plus: Path) -> int:
+    """make_delta against the compact base: plus holds the rows new has and the base lacks, minus the rows the base has
+    and new lacks, under the same rules (rows compared on the columns both have; a search's Google results move as a
+    whole group; tables in the same order). new is a path or an open connection, read in one read transaction (a
+    consistent view while the app keeps writing). Returns how many rows changed (0: nothing to save)."""
+    for path in (minus, plus):
+        _unlink_db(path)
+    conn, close = _connect_source(new)
+    total = 0
+    try:
+        conn.execute("PRAGMA temp_store=MEMORY")
+        conn.execute("ATTACH DATABASE ? AS m", (str(minus),))
+        conn.execute("ATTACH DATABASE ? AS p", (str(plus),))
+        has_base = base is not None and Path(base).is_file()
+        conn.execute("ATTACH DATABASE ? AS bs", (str(base) if has_base else ":memory:",))
+        if not has_base:
+            _base_schema(conn, "bs")
+        conn.execute("BEGIN")
+        known = {tbl: json.loads(names) for tbl, names in conn.execute("SELECT tbl, names FROM bs.tables")}
+        for table, sql in _tables(conn, "main").items():
+            conn.execute(_in_schema(sql, table, "m"))
+            conn.execute(_in_schema(sql, table, "p"))
+            cols = [name for name, _type, _pk in _columns(conn, "main", table)]
+            base_names = known.get(table)
+            shared = [c for c in cols if c in base_names] if base_names is not None else cols
+            if not shared:
+                continue
+            names, q = ", ".join(_q(c) for c in shared), _q(table)
+            group = GROUPED.get(table) if GROUPED.get(table) in shared else None
+            gi = shared.index(group) if group else None
+            order = " ORDER BY rowid" if group else (" ORDER BY " + _q("id") if "id" in shared else "")
+            # base rows: hash over the shared columns -> stored hash
+            stored: dict[bytes, bytes] = {}
+            if base_names is not None and set(base_names) == set(shared):
+                for (h,) in conn.execute("SELECT h FROM bs.rows WHERE tbl = ?", (table,)):
+                    stored[h] = h
+            elif base_names is not None:
+                for h, body in conn.execute("SELECT h, body FROM bs.rows WHERE tbl = ?", (table,)):
+                    row = _row_unpack(body)
+                    stored[_row_hash(shared, [row.get(c) for c in shared])] = h
+            seen: set[bytes] = set()
+            groups: set = set()
+            insert_p = f"INSERT INTO p.{q} ({names}) VALUES ({', '.join('?' * len(shared))})"
+            insert_m = f"INSERT INTO m.{q} ({names}) VALUES ({', '.join('?' * len(shared))})"
+            added = []
+            for values in conn.execute(f"SELECT {names} FROM main.{q}{order}"):
+                h = _row_hash(shared, values)
+                if h in seen:
+                    continue
+                seen.add(h)
+                if h not in stored:
+                    if group:
+                        groups.add(values[gi])
+                    else:
+                        added.append(values)
+                        if len(added) >= 500:
+                            conn.executemany(insert_p, added)
+                            total += len(added)
+                            added.clear()
+            if added:
+                conn.executemany(insert_p, added)
+                total += len(added)
+            missing = [h for computed, h in stored.items() if computed not in seen]
+            removed = []
+            for start in range(0, len(missing), 500):
+                chunk = missing[start : start + 500]
+                marks = ", ".join("?" * len(chunk))
+                for pos, body in conn.execute(f"SELECT pos, body FROM bs.rows WHERE tbl = ? AND h IN ({marks})", (table, *chunk)):
+                    row = _row_unpack(body)
+                    values = tuple(row.get(c) for c in shared)
+                    if group:
+                        groups.add(values[gi])
+                    else:
+                        removed.append((pos, values))
+            if group:
+                if not groups:
+                    continue
+                rows = [values for values in conn.execute(f"SELECT {names} FROM main.{q} ORDER BY rowid") if values[gi] in groups]
+                conn.executemany(insert_p, rows)
+                total += len(rows)
+                old = []
+                for value in groups:
+                    for pos, body in conn.execute("SELECT pos, body FROM bs.rows WHERE tbl = ? AND g IS ?", (table, value)):
+                        row = _row_unpack(body)
+                        old.append((pos, tuple(row.get(c) for c in shared)))
+                old.sort(key=lambda item: item[0])
+                conn.executemany(insert_m, [values for _pos, values in old])
+                total += len(old)
+                continue
+            if "id" in shared:
+                at = shared.index("id")
+                removed.sort(key=lambda item: (item[1][at] is not None, item[1][at] if item[1][at] is not None else 0))
+            else:
+                removed.sort(key=lambda item: item[0])
+            conn.executemany(insert_m, [values for _pos, values in removed])
+            total += len(removed)
+        conn.execute("COMMIT")
+    except BaseException:
+        if conn.in_transaction:
+            conn.execute("ROLLBACK")
+        raise
+    finally:
+        for schema in ("m", "p", "bs"):
+            try:
+                conn.execute(f"DETACH DATABASE {schema}")
+            except sqlite3.Error:
+                pass
+        if close:
+            conn.close()
+    return total
+
+
+def _snapshot(db_file: Path) -> sqlite3.Connection:
+    """A consistent copy of the database in memory (no third full copy on disk)."""
+    src = sqlite3.connect(str(db_file), timeout=30)
+    mem = sqlite3.connect(":memory:", isolation_level=None)
+    try:
+        src.backup(mem)
+    except BaseException:
+        mem.close()
+        raise
+    finally:
+        src.close()
+    return mem
 
 
 def _sqlite_copy(source: Path, target: Path) -> None:

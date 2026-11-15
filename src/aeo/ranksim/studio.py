@@ -213,7 +213,7 @@ def register(app: FastAPI, ui) -> None:
         # A signed-out request gets here only on a login_exempt route (a share link, a cron), before that route has
         # checked its token, so it never forces a check and its cookie hint is ignored: anyone could send either, and
         # Vercel Hobby blocks Blob for 30 days past its monthly cap. It still gets the routine cold-start check.
-        trusted = _signed_in(ui, request)
+        trusted = await run_in_threadpool(_signed_in, ui, request)  # may sync storage on a cold instance: never on the event loop
         if not trusted and not _share_link_shape(path):
             # Signed out and not a well-formed share link (the cron route checks its secret and syncs by itself; the
             # share catch-all and anything else answer without project data): no storage call at all, so anonymous
@@ -252,7 +252,7 @@ def register(app: FastAPI, ui) -> None:
     @app.middleware("http")
     async def _require_login(request: Request, call_next):
         # A plugin route marked endpoint.login_exempt checks its own token (a share link, a cron secret).
-        if ui.access.enabled and not _is_open(request.url.path) and not _signed_in(ui, request) and not plugins.is_login_exempt(app, request.scope):
+        if ui.access.enabled and not _is_open(request.url.path) and not await run_in_threadpool(_signed_in, ui, request) and not plugins.is_login_exempt(app, request.scope):
             if request.url.path.startswith("/api/"):
                 return JSONResponse({"error": "Sign in first.", "login": True}, status_code=401)
             return RedirectResponse("/", status_code=303)

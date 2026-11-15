@@ -22,6 +22,7 @@ Google Autocomplete is deliberately not used: its terms do not clearly permit au
 
 from __future__ import annotations
 
+import functools
 import math
 import re
 import unicodedata
@@ -169,8 +170,10 @@ BRAND_AFFIXES = ("hq", "app", "inc", "co", "get", "try", "use", "the", "my", "go
 
 def clean(text: str) -> str:
     """Lowercase words only: "All-in-1 Dirt Work Software!" gives "all in one dirt work software"."""
-    value = unicodedata.normalize("NFKD", (text or "").lower())
-    value = "".join(char for char in value if not unicodedata.combining(char))  # "münchen" gives "munchen"
+    value = (text or "").lower()
+    if not value.isascii():  # NFKD changes nothing in ASCII text, so plain text skips the slow part
+        value = unicodedata.normalize("NFKD", value)
+        value = "".join(char for char in value if not unicodedata.combining(char))  # "münchen" gives "munchen"
     value = value.replace("&amp;", "&").replace("’", "").replace("'", "").replace("&", " and ")
     value = re.sub(r"[^\w ]+|_", " ", value)
     value = re.sub(r"\s+", " ", value).strip()
@@ -194,7 +197,12 @@ def stem(word: str) -> str:
 
 
 def stems(text: str) -> list[str]:
-    return [stem(word) for word in clean(text).split()]
+    return list(_stems(text or ""))
+
+
+@functools.lru_cache(maxsize=50_000)
+def _stems(text: str) -> tuple[str, ...]:
+    return tuple(stem(word) for word in clean(text).split())
 
 
 def content_stems(text: str) -> set[str]:
@@ -478,7 +486,8 @@ class Found:
 
     @property
     def sources(self) -> list[str]:
-        return sorted({item.source for item in self.sightings}, key=lambda name: -self.by_source().get(name, 0))
+        weights = self.by_source()
+        return sorted({item.source for item in self.sightings}, key=lambda name: (-weights.get(name, 0), name))  # ties by name, never set order
 
     def by_source(self) -> dict[str, float]:
         totals: dict[str, float] = defaultdict(float)

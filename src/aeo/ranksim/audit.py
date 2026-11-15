@@ -35,7 +35,7 @@ import threading
 import unicodedata
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
-from functools import cached_property
+from functools import cached_property, lru_cache
 from statistics import median
 from typing import Callable, Iterable
 from urllib.parse import unquote, urljoin, urlsplit
@@ -46,6 +46,9 @@ from bs4.element import CData, Comment, Declaration, Doctype, ProcessingInstruct
 from aeo.ranksim.site import SitePage, page_facts
 
 log = logging.getLogger(__name__)
+
+# Changes with this file, so a deploy with new checks never serves results cached by the old ones.
+AUDIT_VERSION = hashlib.sha1(open(__file__, "rb").read()).hexdigest()[:12]
 
 TITLE_MAX = 60
 TITLE_MIN = 25
@@ -164,6 +167,7 @@ def plural(count: int, noun: str) -> str:
     return f"{count:,} {noun}" + ("" if count == 1 else "s")
 
 
+@lru_cache(maxsize=65536)
 def _split(url: str):
     try:
         parts = urlsplit(url or "")
@@ -358,11 +362,13 @@ def trim_sentences(text: str, limit: int = META_TARGET) -> str:
     return kept if len(kept) >= 50 else (clean_cut(text, limit) or "")
 
 
+@lru_cache(maxsize=65536)
 def path_of(url: str) -> str:
     parts = _split(url or "")
     return (parts.path or "/") + (f"?{parts.query}" if parts.query else "")
 
 
+@lru_cache(maxsize=65536)
 def url_key(url: str) -> str:
     """One spelling per page: no scheme, no www, no query, no fragment, no trailing slash, lower-case host.
     /?try=home and / are the same page, and so are www.example.com and example.com."""
@@ -372,6 +378,7 @@ def url_key(url: str) -> str:
     return f"{host}{path}"
 
 
+@lru_cache(maxsize=65536)
 def host_of(url: str) -> str:
     return (_split(url or "").hostname or "").lower().removeprefix("www.")
 
@@ -897,7 +904,7 @@ class AuditContext:
     html: dict[str, str] | None = None  # raw HTML by URL; loaded from database when None
     robots_txt: str | None = None
     statuses: dict[str, object] = field(default_factory=dict)  # crawl status by URL: 404, "error", "fetched"
-    brand: str = ""
+    brand_hint: str = ""  # the brand when known; otherwise worked out from the pages on first use
     readable: list[SitePage] = field(init=False)
     own_by_url: dict[str, SitePage] = field(init=False)
 
@@ -934,8 +941,11 @@ class AuditContext:
         self._facts_by_key = {url_key(page.url): page for page in self.facts_only}
         self._site_by_key = {url_key(page.url): page for page in self.pages}
         self._docs_by_key = {url_key(url): doc for url, doc in parsed_docs.items()}
-        if not self.brand:
-            self.brand = guess_brand(self.parsed, getattr(self.project, "name", "") or "")
+
+    @cached_property
+    def brand(self) -> str:
+        """The site's brand. Lazy: guessing it reads every page's title, and a cached audit never needs that."""
+        return self.brand_hint or guess_brand(self.parsed, getattr(self.project, "name", "") or "")
 
     @cached_property
     def robots(self):
@@ -2456,7 +2466,7 @@ def _run_builtin(ctx: AuditContext, checks: Iterable[CheckFn]) -> list[dict]:
             log.exception("audit check %s failed; running it page by page", getattr(run, "__name__", run))
             found = []
             for page in ctx.parsed:  # one odd page must not hide the check's issues on every other page
-                single = AuditContext(ctx.project, [page], ctx.rankings, {}, html={}, robots_txt=ctx.robots_txt, statuses=ctx.statuses, brand=ctx.brand)
+                single = AuditContext(ctx.project, [page], ctx.rankings, {}, html={}, robots_txt=ctx.robots_txt, statuses=ctx.statuses, brand_hint=ctx.brand)
                 single._docs_by_key = ctx._docs_by_key
                 try:
                     found.extend(run(single) or [])
@@ -2489,10 +2499,58 @@ def _cache_key(ctx: AuditContext) -> str | None:
             digest.update(json.dumps([page.url, page.title, page.meta, page.h1, page.h1_count, page.words]).encode())
         project = ctx.project
         digest.update(json.dumps([getattr(project, "domain", None), getattr(project, "site", None), getattr(project, "name", None)], default=str).encode())
-        digest.update(json.dumps([ctx.rankings, ctx.robots_txt, {str(k): str(v) for k, v in ctx.statuses.items()}, ctx.brand, [getattr(fn, "__qualname__", "") for fn in CHECKS]], sort_keys=True, default=str).encode())
+        rankings = [{key: value for key, value in row.items() if key != "predicted"} for row in ctx.rankings]  # the audit never reads the model's guess
+        digest.update(json.dumps([AUDIT_VERSION, rankings, ctx.robots_txt, {str(k): str(v) for k, v in ctx.statuses.items()}, ctx.brand_hint, [getattr(fn, "__qualname__", "") for fn in CHECKS]], sort_keys=True, default=str).encode())
         return digest.hexdigest()
     except (TypeError, ValueError):
         return None
+
+
+DISK_KEEP = 4  # results kept per project: the current pages plus a few recent versions
+
+
+def _disk_file(project):
+    """plugins/audit/issues.json under the project folder, saved with the project like any plugin data."""
+    if project is None or not getattr(project, "dir", None):
+        return None
+    try:
+        from aeo.ranksim import plugins
+
+        return plugins.data_dir(project, "audit") / "issues.json"
+    except Exception:  # noqa: BLE001 - no folder means no disk cache, never a failed audit
+        return None
+
+
+def _disk_get(project, key: str) -> str | None:
+    path = _disk_file(project)
+    if path is None:
+        return None
+    try:
+        stored = json.loads(path.read_text(encoding="utf-8"))
+        hit = stored.get("results", {}).get(key)
+        return hit if isinstance(hit, str) else None
+    except (OSError, ValueError, AttributeError):
+        return None
+
+
+def _disk_put(project, key: str, value: str) -> None:
+    path = _disk_file(project)
+    if path is None:
+        return
+    try:
+        try:
+            results = json.loads(path.read_text(encoding="utf-8")).get("results", {})
+        except (OSError, ValueError, AttributeError):
+            results = {}
+        results.pop(key, None)
+        results[key] = value
+        while len(results) > DISK_KEEP:
+            results.pop(next(iter(results)))
+        temp = path.with_suffix(".tmp")
+        temp.write_text(json.dumps({"version": AUDIT_VERSION, "results": results}), encoding="utf-8")
+        temp.replace(path)
+    except OSError:
+        log.warning("audit: could not write the cache for %s", getattr(project, "slug", project))
 
 
 def run_audit(ctx: AuditContext, *, checks: Iterable[CheckFn] | None = None) -> list[dict]:
@@ -2503,15 +2561,20 @@ def run_audit(ctx: AuditContext, *, checks: Iterable[CheckFn] | None = None) -> 
     key = _cache_key(ctx) if checks is None else None
     with _CACHE_LOCK:
         hit = _CACHE.get(key) if key is not None else None
+    if hit is None and key is not None:
+        hit = _disk_get(ctx.project, key)
     if hit is not None:
         issues = json.loads(hit)
     else:
         issues = finalize(_run_builtin(ctx, list(checks) if checks is not None else list(CHECKS)))
         if key is not None:
-            with _CACHE_LOCK:
-                while len(_CACHE) >= _CACHE_SIZE:
-                    _CACHE.pop(next(iter(_CACHE)))
-                _CACHE[key] = json.dumps(issues)
+            hit = json.dumps(issues)
+            _disk_put(ctx.project, key, hit)
+    if key is not None and hit is not None:
+        with _CACHE_LOCK:
+            while len(_CACHE) >= _CACHE_SIZE:
+                _CACHE.pop(next(iter(_CACHE)))
+            _CACHE[key] = hit
     if checks is None:
         extra = _plugin_issues(ctx)
         for issue in extra:
@@ -2541,7 +2604,7 @@ def audit_html(
 ) -> list[dict]:
     """Audit pages given as {url: html} or PageDoc objects (tests and tools)."""
     page_docs = [PageDoc(url, html) for url, html in pages.items()] if isinstance(pages, dict) else list(pages)
-    ctx = AuditContext(project, page_docs, rankings or [], dict(docs or {}), html={}, robots_txt=robots_txt, statuses=statuses or {}, brand=brand)
+    ctx = AuditContext(project, page_docs, rankings or [], dict(docs or {}), html={}, robots_txt=robots_txt, statuses=statuses or {}, brand_hint=brand)
     return run_audit(ctx)
 
 

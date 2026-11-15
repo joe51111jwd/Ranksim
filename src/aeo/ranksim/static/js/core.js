@@ -184,6 +184,9 @@ export function ring(value, big, small) {
 
 /* JSON request. Every method but GET and HEAD sends the x-ranksim-csrf header, with or without a body. Errors carry
    .status and .problems. A 401 that asks for a login shows the sign-in screen. */
+const RETRY_STATUS = new Set([502, 503, 504]);
+export const RETRY_WAITS = [1500, 4000];
+
 export async function request(method, path, body) {
   const options = { method, headers: { accept: 'application/json' }, credentials: 'same-origin' };
   if (!/^(GET|HEAD)$/i.test(method)) options.headers['x-ranksim-csrf'] = CSRF;
@@ -192,10 +195,17 @@ export async function request(method, path, body) {
     options.body = JSON.stringify(body);
   }
   let response;
-  try {
-    response = await fetch(path, options);
-  } catch (_err) {
-    throw new Error('Could not reach Ranksim. Check the connection and try again.');
+  /* A cold server can answer 502 or 504 while it starts. A read is safe to repeat, so GET retries twice before the
+     error shows. Writes never retry on their own. */
+  const retries = /^(GET|HEAD)$/i.test(method) ? RETRY_WAITS : [];
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      response = await fetch(path, options);
+    } catch (_err) {
+      throw new Error('Could not reach Ranksim. Check the connection and try again.');
+    }
+    if (!RETRY_STATUS.has(response.status) || attempt >= retries.length) break;
+    await sleep(retries[attempt]);
   }
   let data = null;
   try {
@@ -298,7 +308,44 @@ function loaded() {
   call('report-loaded', { report: S.report, project: S.project, slug: S.slug });
 }
 
-export async function openSite(slug, { keepDrafts = false } = {}) {
+/* The report for a site. On a fresh server the first report can take a minute: the server answers
+   202 { building: true, job } and Ranksim polls every 3 s until the report is ready, showing what is happening.
+   onBuilding(message) is called while it waits. */
+export const REPORT_POLL_MS = 3000;
+const REPORT_WAIT_MS = 10 * 60 * 1000;
+
+export async function loadReport(slug, { onBuilding } = {}) {
+  const started = Date.now();
+  for (;;) {
+    const data = await api.get(`/api/v1/projects/${enc(slug)}/report`);
+    if (!data || !data.building) return data;
+    const project = (S.projects || []).find((p) => p.slug === slug);
+    const message = `Building the report for ${project ? project.site : slug}. This takes about a minute the first time.`;
+    if (onBuilding) onBuilding(message);
+    else showBuilding(message);
+    if (data.job) {
+      const job = await api.get(`/api/v1/jobs/${enc(data.job)}`).catch(() => null);
+      const status = job && (job.status || (job.job && job.job.status));
+      if (status === 'failed') throw new Error((job && (job.error || (job.job && job.job.error))) || 'The report could not be built. Try again.');
+    }
+    if (Date.now() - started > REPORT_WAIT_MS) throw new Error('The report is still building. Try again in a minute.');
+    await sleep(REPORT_POLL_MS);
+  }
+}
+
+/* The building line on the loading skeleton (made once, then updated in place so screen readers hear it once). */
+function showBuilding(message) {
+  const box = main.querySelector('.skeleton');
+  if (!box) return;
+  let note = box.querySelector('.sk-building');
+  if (!note) {
+    note = h('p', { class: 'sk-building', role: 'status' });
+    box.querySelector('.head').after(note);
+  }
+  if (note.textContent !== message) note.textContent = message;
+}
+
+export async function openSite(slug, { keepDrafts = false, onBuilding } = {}) {
   S.slug = slug;
   S.compare.clear();
   S.pages.clear();
@@ -308,7 +355,7 @@ export async function openSite(slug, { keepDrafts = false } = {}) {
   S.project = null;
   shell.renderBar();
   if (!keepDrafts) clear(main).append(skeleton(parseLocation().screen));
-  const [report, project] = await Promise.all([api.get(`/api/v1/projects/${enc(slug)}/report`), api.get(`/api/v1/projects/${enc(slug)}`)]);
+  const [report, project] = await Promise.all([loadReport(slug, { onBuilding }), api.get(`/api/v1/projects/${enc(slug)}`)]);
   S.report = report;
   S.project = project;
   loaded();
@@ -318,7 +365,7 @@ export async function reloadSite() {
   if (!S.slug) return;
   S.compare.clear();
   S.pages.clear();
-  const [report, project] = await Promise.all([api.get(`/api/v1/projects/${enc(S.slug)}/report`), api.get(`/api/v1/projects/${enc(S.slug)}`)]);
+  const [report, project] = await Promise.all([loadReport(S.slug, { onBuilding: (message) => toastOnce(message) }), api.get(`/api/v1/projects/${enc(S.slug)}`)]);
   S.report = report;
   S.project = project;
   await loadProjects();
@@ -380,6 +427,13 @@ window.addEventListener('popstate', () => {
 /* ------------------------------------------------------------------ toast */
 
 let toastTimer = 0;
+let lastToast = '';
+function toastOnce(message) {
+  if (message === lastToast) return;
+  lastToast = message;
+  toast(message);
+}
+
 export function toast(message) {
   const el = document.getElementById('toast');
   el.textContent = message;

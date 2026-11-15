@@ -326,59 +326,57 @@ def test_a_full_disk_is_recovered_by_removing_temp_files(tmp_path, systmp, monke
     assert _leftovers(tmp_path / "b" / "ranksim") == []
 
 
-def test_a_disk_still_full_drops_only_the_bookkeeping_and_keeps_writes_in_flight(tmp_path, systmp, monkeypatch):
-    """Review item 1: the last-resort recovery must not delete the working db or project files, which request and
-    job threads write without the cloud lock. A writer holding a connection across it, a row and a file written just
-    before it, all reach storage with the next save."""
+def test_a_disk_still_full_keeps_the_agreed_state_and_backs_off(tmp_path, systmp, monkeypatch):
+    """Second review, findings 3, 8, 9, 10: there is no last-resort wipe. While the disk stays full a refresh fails
+    and backs off, keeping the stamp, the base, state.json and the shared auth state (a revoked cookie stays revoked).
+    Once space is free it catches up in a couple of store calls, and the local row and file written meanwhile reach
+    the other instance with the next save."""
     store, a, b = _small_pair(tmp_path)
     b.refresh(force=True)
-    local = b.projects_dir / "demo" / "local.json"  # written by a request just before the wipe, not saved yet
+    b.update_auth(revoked_ms=777)
+    local = b.projects_dir / "demo" / "local.json"
     local.write_text("{}")
-    writer = sqlite3.connect(str(b.db_file))  # a job's connection, open across the wipe
-    writer.execute("INSERT INTO rs_keywords VALUES ('before wipe', 'demo', '2026-11-15')")
+    writer = sqlite3.connect(str(b.db_file))  # a job's connection, open throughout
+    writer.execute("INSERT INTO rs_keywords VALUES ('written on b', 'demo', '2026-11-15')")
     writer.commit()
-    inode = b.db_file.stat().st_ino
     conn = sqlite3.connect(str(a.db_file))
     conn.execute("INSERT INTO rs_keywords VALUES ('later', 'demo', '2026-11-14')")
     conn.commit()
     conn.close()
     a.save()
-    real, calls = cloud.merge_sqlite, []
-
-    def merge(*args, **kwargs):
-        calls.append(1)
-        if len(calls) <= 2:
-            raise sqlite3.OperationalError("database or disk is full")
-        return real(*args, **kwargs)
-
-    monkeypatch.setattr(cloud, "merge_sqlite", merge)
+    stamp, auth = b.stamp, dict(b.auth)
+    meta = b._meta_dir
+    base_bytes, state_bytes = (meta / "base.rows").read_bytes(), (meta / "state.json").read_bytes()
+    full = sqlite3.OperationalError("database or disk is full")
+    real = cloud.merge_sqlite
+    monkeypatch.setattr(cloud, "merge_sqlite", lambda *a, **k: (_ for _ in ()).throw(full))
+    with pytest.raises(cloud.CloudError):
+        b.refresh(force=True)
+    assert b.stamp == stamp and b.auth == auth and b.auth.get("revoked_ms") == 777
+    assert (meta / "base.rows").read_bytes() == base_bytes
+    assert (meta / "state.json").read_bytes() == state_bytes
+    assert local.read_text() == "{}"
+    assert _leftovers(tmp_path / "b" / "ranksim") == []
+    calls: list[str] = []
+    real_get = store.get  # MemoryStore's open and fetch read through get
+    monkeypatch.setattr(store, "get", lambda name: (calls.append(name), real_get(name))[1])
+    assert b.refresh() is False  # an ordinary request right after: not due, no storage call
+    with pytest.raises(cloud.CloudError):  # a request whose cookie says it is behind: the backoff answers
+        b.refresh(hint=b.stamp + 1)
+    assert calls == []
+    monkeypatch.setattr(cloud, "merge_sqlite", real)  # space is free again
     assert b.refresh(force=True)
-    assert len(calls) >= 3  # catch-up, retry after the sweep, then the sync from scratch
-    assert b.db_file.stat().st_ino == inode  # the same file: the writer's connection still writes into it
-    writer.execute("INSERT INTO rs_keywords VALUES ('after wipe', 'demo', '2026-11-15')")
+    assert len(calls) <= 2
+    assert b.stamp == a.stamp
+    writer.execute("INSERT INTO rs_keywords VALUES ('after', 'demo', '2026-11-15')")
     writer.commit()
     writer.close()
-    assert local.read_text() == "{}"
-    assert (b.projects_dir / "demo" / "page.html").read_text() == "<p>one</p>"
-    assert b.stamp == a.stamp
-    monkeypatch.setattr(cloud, "merge_sqlite", real)
-    assert b.save()  # nothing counts as agreed after the wipe: the local rows and file go up
+    assert b.save()
     a.refresh(force=True)
     keywords = {row[0] for row in sqlite3.connect(str(a.db_file)).execute("SELECT query FROM rs_keywords")}
-    assert {"before wipe", "after wipe", "later"} <= keywords
+    assert {"written on b", "after", "later"} <= keywords
     assert (a.projects_dir / "demo" / "local.json").read_text() == "{}"
-
-    conn = sqlite3.connect(str(a.db_file))
-    conn.execute("INSERT INTO rs_keywords VALUES ('again', 'demo', '2026-11-14')")
-    conn.commit()
-    conn.close()
-    monkeypatch.setattr(cloud, "merge_sqlite", real)
-    a.save()
-    monkeypatch.setattr(cloud, "merge_sqlite", lambda *a, **k: (_ for _ in ()).throw(sqlite3.OperationalError("database or disk is full")))
-    monkeypatch.setattr(cloud, "_base_build", lambda *a, **k: (_ for _ in ()).throw(OSError(errno.ENOSPC, "full")))
-    with pytest.raises(cloud.CloudError):  # a disk that stays full: one recovery, then a plain error
-        b.refresh(force=True)
-    assert _leftovers(tmp_path / "b" / "ranksim") == []
+    assert a.auth.get("revoked_ms") == 777
 
 
 def test_a_full_disk_during_a_save_is_retried_after_removing_temp_files(tmp_path, systmp, monkeypatch):

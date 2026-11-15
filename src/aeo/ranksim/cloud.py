@@ -45,9 +45,14 @@ database by a rename, deltas are found by scanning the working database once, a 
 memory, a compacting save also carries the delta so caught-up instances never download the snapshot, project files
 are moved into place rather than copied, and SQLite sorts in memory. All temp files live in .cloud/tmp, are removed
 on every failure path, and whatever a killed process left is removed at the next process's first storage call. One
-sync or save runs at a time per working folder. A full disk is handled by removing temp files and retrying; if it is
-still full, the base and bookkeeping are dropped and storage is merged into the working copy again, once (the working
-database and project files are never deleted: other threads write them without the lock). Measured (tests/test_disk.py, 30 MB of
+sync or save runs at a time per working folder. A full disk is handled by removing temp files and retrying once;
+if it is still full the refresh fails and backs off. Nothing else is ever deleted to make room: the agreed state
+(seq, installed files, the base, state.json) and the working copy are always kept, because a sync without the agreed
+state would count a stale working copy as local edits and revert other instances' work. A merge never marks the
+working database clean (a row the app commits meanwhile would count as saved); the next save scans and decides.
+Instances on different schemas (a deploy that adds a column, while old instances finish jobs or a preview shares the
+store) are handled: incoming columns are added to the working database before a merge, the base gains a column the
+working database has, and a narrower delta narrows the base table first. Measured (tests/test_disk.py, 30 MB of
 projects): about 135 MB at rest and at every step's peak with a 70 MB database, 208 MB with a 120 MB one.
 
 Nothing here runs unless BLOB_READ_WRITE_TOKEN is set (or a store is passed in, as the tests do).
@@ -224,17 +229,6 @@ class CloudState:
                 except OSError:
                     pass
 
-    def _wipe(self) -> None:
-        """The disk is still full after the sweep. Drop the base and the bookkeeping (.cloud), never the working
-        database or project files: request and job threads write those without this lock, and their writes must not
-        land in deleted files. The next sync is a cold one that merges storage into the working copy (local files and
-        rows are kept and saved next, since nothing counts as agreed any more)."""
-        shutil.rmtree(self._meta_dir, ignore_errors=True)
-        self._sweep()
-        self._seq, self._version, self._manifest = 0, None, _empty_manifest()
-        self._installed, self._db, self._db_clean = {}, {"snapshot": None, "applied": []}, None
-        self._hash_cache.clear()
-
     @property
     def stamp(self) -> int:
         """The newest save this instance knows (its chain number). The app sends it to the browser as a hint."""
@@ -323,8 +317,9 @@ class CloudState:
             return changed
 
     def _sync_recovering(self, now: float) -> bool:
-        """_sync, and when the disk is full: remove temp files and try again; still full: drop the base and the
-        bookkeeping and sync again from scratch, once, merging storage into the working copy (nothing local is lost)."""
+        """_sync, and when the disk is full: remove temp files and try once more. Still full: the error reaches
+        refresh(), which backs off. The agreed state (seq, installed files, the base, state.json) is always kept: a
+        sync without it would treat a stale working copy as local edits and revert other instances' work."""
         try:
             return self._sync(now)
         except Exception as exc:  # noqa: BLE001 - only a full disk is handled here
@@ -332,15 +327,7 @@ class CloudState:
                 raise
             print(f"ranksim: the disk is full while reading storage ({str(exc)[:120]}); removing temp files.", flush=True)
         self._sweep()
-        try:
-            return self._sync(now)
-        except Exception as exc:  # noqa: BLE001
-            if not _disk_full(exc):
-                raise
-            print("ranksim: the disk is still full; dropping the base copy and syncing again from scratch.", flush=True)
-        self._wipe()
-        self._sync(now)
-        return True
+        return self._sync(now)
 
     def _sync(self, now: float) -> bool:
         if self._seq == 0:
@@ -567,18 +554,20 @@ class CloudState:
 
     def _apply_delta(self, minus: Path, plus: Path) -> None:
         self._meta_dir.mkdir(parents=True, exist_ok=True)
-        clean = self._db_is_clean()
         if not self.db_file.is_file() or self.db_file.stat().st_size == 0:
             if self._base_db.is_file():
                 _dispose_engines(self.db_file)
                 _base_restore(self._base_db, self.db_file)
         if self.db_file.is_file():
             _dispose_engines(self.db_file)  # idle pooled connections must not hold a lock while rows are merged
+            _add_columns_like(self.db_file, plus)  # a column this instance's engine has not added yet: keep its values
             merge_sqlite(self.db_file, minus, plus)
         if self._base_db.is_file():
             _base_add_columns(self._base_db, self.db_file)
             _base_apply(self._base_db, minus, plus)
-        self._db_clean = _stat_sig(self.db_file) if clean else None
+        # Never "clean" after a merge: a row the app commits while it runs would count as saved. The next save scans
+        # (make_base_delta takes the stat first) and marks it clean when nothing differs from the base.
+        self._db_clean = None
 
     def _db_is_clean(self) -> bool:
         return self._db.get("snapshot") is not None and _stat_sig(self.db_file) == self._db_clean
@@ -609,8 +598,9 @@ class CloudState:
                 os.replace(theirs, self.db_file)
                 clean = True
             else:
-                clean = self._db_is_clean()
+                clean = False  # see _apply_delta: never clean after a merge into the working db
                 _dispose_engines(self.db_file)  # idle pooled connections must not hold a lock while rows are merged
+                _add_columns_like(self.db_file, theirs)
                 if self._base_db.is_file():  # the snapshot's changes since the base, as a delta; base updated in place
                     _base_add_columns(self._base_db, self.db_file)
                     make_base_delta(theirs, self._base_db, minus, plus)
@@ -1708,6 +1698,26 @@ def _base_apply(base: Path, minus: Path, plus: Path) -> None:
         conn.execute("ATTACH DATABASE ? AS p", (str(plus),))
         conn.execute("BEGIN IMMEDIATE")
         known = {tbl: json.loads(names) for tbl, names in conn.execute("SELECT tbl, names FROM tables")}
+        # A delta from an instance on an older schema lacks columns the base has. Narrow that table's entries to the
+        # delta's columns first, so its minus rows match exactly and its plus rows sit next to entries of the same
+        # shape. _base_add_columns widens the base again before the next save, and the working db's real values for
+        # those columns then travel as ordinary changes.
+        for schema in ("m", "p"):
+            for table in _tables(conn, schema):
+                if table not in known:
+                    continue
+                theirs = {name for name, _type, _pk in _columns(conn, schema, table)}
+                names = [c for c in known[table] if c in theirs]
+                if not names or names == known[table]:
+                    continue
+                updates = []
+                for rowid, body in conn.execute("SELECT rowid, body FROM rows WHERE tbl = ?", (table,)).fetchall():
+                    row = _row_unpack(body)
+                    values = [row.get(c) for c in names]
+                    updates.append((_row_hash(names, values), _row_pack(names, values), rowid))
+                conn.executemany("UPDATE OR REPLACE rows SET h = ?, body = ? WHERE rowid = ?", updates)
+                conn.execute("UPDATE tables SET names = ? WHERE tbl = ?", (json.dumps(names), table))
+                known[table] = names
 
         def layout(schema: str, table: str) -> list[str]:
             # Hash over the columns the base knows for this table (a delta carries only the columns both sides had).
@@ -1781,6 +1791,33 @@ def _base_add_columns(base: Path, db_file: Path) -> None:
         if conn.in_transaction:
             conn.execute("ROLLBACK")
         raise
+    finally:
+        conn.close()
+
+
+def _add_columns_like(target: Path, source: Path) -> None:
+    """Give the working database every column that an incoming delta or snapshot has and it lacks (another instance
+    already ran a migration this instance's engine has not run yet), with the same type and default, so merging keeps
+    the column's values instead of dropping them. The engine's own migration finds the column there and skips it."""
+    if not Path(target).is_file() or not Path(source).is_file():
+        return
+    conn = sqlite3.connect(str(target), timeout=30)
+    try:
+        conn.execute("ATTACH DATABASE ? AS s", (str(source),))
+        ours = _tables(conn, "main")
+        added = False
+        for table in _tables(conn, "s"):
+            if table not in ours:
+                continue
+            have = {row[1] for row in conn.execute(f"PRAGMA main.table_info({_q(table)})")}
+            for _cid, name, kind, _notnull, default, _pk in conn.execute(f"PRAGMA s.table_info({_q(table)})").fetchall():
+                if name not in have:
+                    tail = f" DEFAULT {default}" if default is not None else ""
+                    conn.execute(f"ALTER TABLE main.{_q(table)} ADD COLUMN {_q(name)} {kind or ''}{tail}")
+                    added = True
+        if added:
+            conn.commit()
+        conn.execute("DETACH DATABASE s")
     finally:
         conn.close()
 

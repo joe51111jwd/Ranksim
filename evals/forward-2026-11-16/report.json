@@ -1,0 +1,2645 @@
+{
+  "before_day": "2026-11-13",
+  "before_sha256": "c90318e2dc3c386e36d93da0dee27cccbef58b8b34a91014743b3843c369585a",
+  "caveats": [
+    "Queries that did not return 10 REAL rows: excavation software has 9 REAL rows.",
+    "Spearman is defined on 30 of 30 queries with at least two REAL rows.",
+    "HTML on disk: 85 distinct files, 89 manifest URLs with a file, 148 manifest rows. Manifest rows by recorded reason. An empty reason on a row that has a file is counted as file_present: {\"challenge_page\": 10, \"error:SSLError\": 1, \"file_present\": 89, \"http_403\": 7, \"http_429\": 9, \"robots_disallow\": 32}. The loader attached 89 URLs. REAL rows with HTML: 192. REAL rows with no HTML: 107. A missing page adds no BM25F push. Its frozen coefficient is 0.",
+    "Persistence-ranked-last Spearman is defined on 29 queries and undefined for: best all-in-one dirt work and excavation software. Full coverage Spearman is defined on 30 queries."
+  ],
+  "code_commit": "3ad26130b1d093d64b21c08f8907b789ed61f37e",
+  "coverage": {
+    "content_missing_rows": 107,
+    "html_rows": 192,
+    "new_rows": 100,
+    "new_with_domain_seen": 86,
+    "outcome_rows": 299,
+    "queries": 30,
+    "scored_rows": 299,
+    "surviving_rows": 199
+  },
+  "domain_context": [
+    {
+      "bucket": "surviving",
+      "position": 6,
+      "query": "all in 1 dirt work software",
+      "url": "https://www.smartcrewhq.com/all-in-one-dirt-work/"
+    },
+    {
+      "bucket": "new",
+      "position": 1,
+      "query": "all in one dirt work management software",
+      "url": "https://www.smartcrewhq.com/best-all-in-one-dirt-work-and-excavation-software/"
+    },
+    {
+      "bucket": "new",
+      "position": 7,
+      "query": "all in one dirt work management software",
+      "url": "https://www.smartcrewhq.com/dirt-work-software-with-crm/"
+    },
+    {
+      "bucket": "new",
+      "position": 6,
+      "query": "all in one dirt work software",
+      "url": "https://www.smartcrewhq.com/all-in-one-dirt-work/"
+    },
+    {
+      "bucket": "new",
+      "position": 9,
+      "query": "all in one dirtwork software",
+      "url": "https://www.smartcrewhq.com/earthwork-software/"
+    },
+    {
+      "bucket": "surviving",
+      "position": 1,
+      "query": "all in one excavation software",
+      "url": "https://www.smartcrewhq.com/best-all-in-one-dirt-work-and-excavation-software/"
+    },
+    {
+      "bucket": "surviving",
+      "position": 4,
+      "query": "all in one heavy civil software",
+      "url": "https://www.smartcrewhq.com/heavy-civil-construction-software/"
+    },
+    {
+      "bucket": "new",
+      "position": 2,
+      "query": "all-in-one heavy civil construction software",
+      "url": "https://www.smartcrewhq.com/all-in-one-heavy-civil-software/"
+    },
+    {
+      "bucket": "surviving",
+      "position": 5,
+      "query": "b2w alternative",
+      "url": "https://www.smartcrewhq.com/compare/b2w-alternative/"
+    },
+    {
+      "bucket": "surviving",
+      "position": 6,
+      "query": "best all in 1 dirt work software",
+      "url": "https://www.smartcrewhq.com/blog/best-excavation-software-20-50-employees/"
+    },
+    {
+      "bucket": "new",
+      "position": 1,
+      "query": "best all in one dirt work management software",
+      "url": "https://www.smartcrewhq.com/best-all-in-one-dirt-work-and-excavation-software/"
+    },
+    {
+      "bucket": "new",
+      "position": 6,
+      "query": "best all in one dirt work management software",
+      "url": "https://www.smartcrewhq.com/all-in-one-dirt-work/"
+    },
+    {
+      "bucket": "surviving",
+      "position": 9,
+      "query": "best all in one dirt work software",
+      "url": "https://www.smartcrewhq.com/blog/best-excavation-software-20-50-employees/"
+    },
+    {
+      "bucket": "new",
+      "position": 1,
+      "query": "best all in one excavation software",
+      "url": "https://www.smartcrewhq.com/best-all-in-one-dirt-work-and-excavation-software/"
+    },
+    {
+      "bucket": "new",
+      "position": 7,
+      "query": "best all in one excavation software",
+      "url": "https://www.smartcrewhq.com/best-all-in-one-dirt-work-software/"
+    },
+    {
+      "bucket": "surviving",
+      "position": 7,
+      "query": "best all in one heavy civil software",
+      "url": "https://www.smartcrewhq.com/all-in-one-heavy-civil-software/"
+    },
+    {
+      "bucket": "new",
+      "position": 8,
+      "query": "best all-in-one dirt work and excavation software",
+      "url": "https://www.smartcrewhq.com/blog/best-excavation-software-20-50-employees/"
+    },
+    {
+      "bucket": "new",
+      "position": 3,
+      "query": "best all-in-one dirt work management software",
+      "url": "https://www.smartcrewhq.com/blog/best-excavation-software-20-50-employees/"
+    },
+    {
+      "bucket": "new",
+      "position": 1,
+      "query": "best all-in-one dirtworks software",
+      "url": "https://www.smartcrewhq.com/all-in-one-dirt-work-software/"
+    },
+    {
+      "bucket": "surviving",
+      "position": 2,
+      "query": "best all-in-one dirtworks software",
+      "url": "https://www.smartcrewhq.com/all-in-one-dirt-work/"
+    },
+    {
+      "bucket": "surviving",
+      "position": 7,
+      "query": "best heavy civil construction software",
+      "url": "https://www.smartcrewhq.com/heavy-civil-construction-software/"
+    },
+    {
+      "bucket": "surviving",
+      "position": 7,
+      "query": "dirt work contractor software",
+      "url": "https://www.smartcrewhq.com/blog/best-software-small-dirt-work-contractors/"
+    },
+    {
+      "bucket": "new",
+      "position": 2,
+      "query": "dirt work management software",
+      "url": "https://www.smartcrewhq.com/dirtwork-software/"
+    },
+    {
+      "bucket": "surviving",
+      "position": 2,
+      "query": "dirt work software with crm",
+      "url": "https://www.smartcrewhq.com/dirt-work-software-with-crm/"
+    },
+    {
+      "bucket": "new",
+      "position": 9,
+      "query": "excavation contractor software",
+      "url": "https://www.smartcrewhq.com/blog/best-work-order-software-excavation-contractors/"
+    },
+    {
+      "bucket": "new",
+      "position": 4,
+      "query": "hcss alternative",
+      "url": "https://www.smartcrewhq.com/compare/hcss-alternative/"
+    },
+    {
+      "bucket": "surviving",
+      "position": 8,
+      "query": "hcss alternative",
+      "url": "https://www.smartcrewhq.com/compare/hcss-heavybid-alternative/"
+    },
+    {
+      "bucket": "new",
+      "position": 6,
+      "query": "hcss heavybid alternative",
+      "url": "https://www.smartcrewhq.com/compare/hcss-heavybid-alternative/"
+    },
+    {
+      "bucket": "surviving",
+      "position": 3,
+      "query": "hcss heavyjob alternative",
+      "url": "https://www.smartcrewhq.com/compare/hcss-heavyjob-alternative/"
+    }
+  ],
+  "domain_context_count": 29,
+  "domain_context_host": "smartcrewhq.com",
+  "gate": {
+    "chance": 0.5,
+    "checks": {
+      "beats_chance_on_new_vs_surviving": true,
+      "beats_persistence_ranked_last_on_all_pairs": true,
+      "new_vs_surviving_pairs_at_least_minimum": true
+    },
+    "combined_all_pairwise": 0.757644,
+    "min_new_vs_surviving_pairs": 100,
+    "new_vs_surviving_pairs": 415,
+    "new_vs_surviving_pairwise": 0.679518,
+    "pass": true,
+    "persistence_all_pairwise": 0.63833,
+    "ranker_change": "none"
+  },
+  "history_days": [
+    "2026-11-06",
+    "2026-11-09",
+    "2026-11-11",
+    "2026-11-13"
+  ],
+  "html": {
+    "attached": true,
+    "empty_files": 0,
+    "html_files": 89,
+    "missing_files": 0
+  },
+  "label": "PREDICTED scores against REAL positions",
+  "ledger": {
+    "head": "fa4929a575cb745cfe52269954477b4b75703183d43c4510d8383664806d3db2",
+    "rows": 1199
+  },
+  "metrics": {
+    "bm25": {
+      "all": {
+        "correct": 607,
+        "pairs": 1341,
+        "pairwise": 0.452647,
+        "queries": 30,
+        "ties": 168,
+        "wrong": 566
+      },
+      "mean_spearman": 0.029049,
+      "ndcg_at_10": 0.609226,
+      "ndcg_queries": 30,
+      "new_vs_new": {
+        "correct": 111,
+        "pairs": 242,
+        "pairwise": 0.458678,
+        "queries": 19,
+        "ties": 22,
+        "wrong": 109
+      },
+      "new_vs_surviving": {
+        "correct": 199,
+        "pairs": 415,
+        "pairwise": 0.479518,
+        "queries": 25,
+        "ties": 61,
+        "wrong": 155
+      },
+      "spearman_queries": 30,
+      "surviving_surviving": {
+        "correct": 297,
+        "pairs": 684,
+        "pairwise": 0.434211,
+        "queries": 27,
+        "ties": 85,
+        "wrong": 302
+      }
+    },
+    "full_coverage": {
+      "all": {
+        "correct": 1016,
+        "pairs": 1341,
+        "pairwise": 0.757644,
+        "queries": 30,
+        "ties": 3,
+        "wrong": 322
+      },
+      "mean_spearman": 0.627421,
+      "ndcg_at_10": 0.852882,
+      "ndcg_queries": 30,
+      "new_vs_new": {
+        "correct": 139,
+        "pairs": 242,
+        "pairwise": 0.57438,
+        "queries": 19,
+        "ties": 3,
+        "wrong": 100
+      },
+      "new_vs_surviving": {
+        "correct": 282,
+        "pairs": 415,
+        "pairwise": 0.679518,
+        "queries": 25,
+        "ties": 0,
+        "wrong": 133
+      },
+      "spearman_queries": 30,
+      "surviving_surviving": {
+        "correct": 595,
+        "pairs": 684,
+        "pairwise": 0.869883,
+        "queries": 27,
+        "ties": 0,
+        "wrong": 89
+      }
+    },
+    "persistence_ranked_last": {
+      "all": {
+        "correct": 856,
+        "pairs": 1341,
+        "pairwise": 0.63833,
+        "queries": 30,
+        "ties": 242,
+        "wrong": 243
+      },
+      "mean_spearman": 0.544684,
+      "ndcg_at_10": 0.83765,
+      "ndcg_queries": 30,
+      "new_vs_new": {
+        "correct": 0,
+        "pairs": 242,
+        "pairwise": 0.0,
+        "queries": 19,
+        "ties": 242,
+        "wrong": 0
+      },
+      "new_vs_surviving": {
+        "correct": 261,
+        "pairs": 415,
+        "pairwise": 0.628916,
+        "queries": 25,
+        "ties": 0,
+        "wrong": 154
+      },
+      "spearman_queries": 29,
+      "surviving_surviving": {
+        "correct": 595,
+        "pairs": 684,
+        "pairwise": 0.869883,
+        "queries": 27,
+        "ties": 0,
+        "wrong": 89
+      }
+    }
+  },
+  "outcome_day": "2026-11-16",
+  "overlap": {
+    "before_keys": 298,
+    "before_rows": 298,
+    "before_rows_still_present": 199,
+    "outcome_keys": 299,
+    "outcome_rows": 299,
+    "outcome_rows_seen_before": 199
+  },
+  "pair_coverage": {
+    "outcome_pairs": 1341,
+    "predicted_pairs": 1341,
+    "share": 1.0
+  },
+  "params_sha256": "caa475734e4dafdd3b929a66ca99f6f5283d29109876be31a016a49f354b0e13",
+  "per_query": {
+    "full_coverage": {
+      "all": {
+        "all in 1 dirt work software": [
+          38,
+          7,
+          0
+        ],
+        "all in one dirt work management software": [
+          31,
+          14,
+          0
+        ],
+        "all in one dirt work software": [
+          42,
+          3,
+          0
+        ],
+        "all in one dirtwork software": [
+          28,
+          17,
+          0
+        ],
+        "all in one excavation software": [
+          41,
+          4,
+          0
+        ],
+        "all in one heavy civil software": [
+          43,
+          2,
+          0
+        ],
+        "all-in-one heavy civil construction software": [
+          33,
+          12,
+          0
+        ],
+        "b2w alternative": [
+          44,
+          1,
+          0
+        ],
+        "best all in 1 dirt work software": [
+          21,
+          23,
+          1
+        ],
+        "best all in one dirt work management software": [
+          35,
+          10,
+          0
+        ],
+        "best all in one dirt work software": [
+          42,
+          3,
+          0
+        ],
+        "best all in one excavation software": [
+          18,
+          26,
+          1
+        ],
+        "best all in one heavy civil software": [
+          41,
+          4,
+          0
+        ],
+        "best all-in-one dirt work and excavation software": [
+          22,
+          22,
+          1
+        ],
+        "best all-in-one dirt work management software": [
+          35,
+          10,
+          0
+        ],
+        "best all-in-one dirtworks software": [
+          30,
+          15,
+          0
+        ],
+        "best dirt work software": [
+          29,
+          16,
+          0
+        ],
+        "best excavation software": [
+          44,
+          1,
+          0
+        ],
+        "best heavy civil construction software": [
+          41,
+          4,
+          0
+        ],
+        "best heavy construction software": [
+          40,
+          5,
+          0
+        ],
+        "dirt work contractor software": [
+          32,
+          13,
+          0
+        ],
+        "dirt work management software": [
+          29,
+          16,
+          0
+        ],
+        "dirt work software with crm": [
+          32,
+          13,
+          0
+        ],
+        "excavation company software": [
+          40,
+          5,
+          0
+        ],
+        "excavation contractor software": [
+          38,
+          7,
+          0
+        ],
+        "excavation software": [
+          29,
+          7,
+          0
+        ],
+        "hcss alternative": [
+          33,
+          12,
+          0
+        ],
+        "hcss heavybid alternative": [
+          26,
+          19,
+          0
+        ],
+        "hcss heavyjob alternative": [
+          27,
+          18,
+          0
+        ],
+        "heavy civil field management software": [
+          32,
+          13,
+          0
+        ]
+      },
+      "new_vs_new": {
+        "all in one dirt work management software": [
+          2,
+          1,
+          0
+        ],
+        "all in one dirtwork software": [
+          19,
+          17,
+          0
+        ],
+        "all in one excavation software": [
+          1,
+          0,
+          0
+        ],
+        "all-in-one heavy civil construction software": [
+          7,
+          3,
+          0
+        ],
+        "best all in 1 dirt work software": [
+          0,
+          0,
+          1
+        ],
+        "best all in one dirt work management software": [
+          2,
+          1,
+          0
+        ],
+        "best all in one excavation software": [
+          5,
+          4,
+          1
+        ],
+        "best all-in-one dirt work and excavation software": [
+          22,
+          22,
+          1
+        ],
+        "best all-in-one dirt work management software": [
+          12,
+          3,
+          0
+        ],
+        "best all-in-one dirtworks software": [
+          14,
+          1,
+          0
+        ],
+        "best dirt work software": [
+          4,
+          6,
+          0
+        ],
+        "best heavy civil construction software": [
+          0,
+          1,
+          0
+        ],
+        "dirt work management software": [
+          20,
+          16,
+          0
+        ],
+        "excavation company software": [
+          0,
+          1,
+          0
+        ],
+        "excavation contractor software": [
+          2,
+          1,
+          0
+        ],
+        "hcss alternative": [
+          4,
+          2,
+          0
+        ],
+        "hcss heavybid alternative": [
+          16,
+          12,
+          0
+        ],
+        "hcss heavyjob alternative": [
+          7,
+          8,
+          0
+        ],
+        "heavy civil field management software": [
+          2,
+          1,
+          0
+        ]
+      },
+      "new_vs_surviving": {
+        "all in 1 dirt work software": [
+          7,
+          2,
+          0
+        ],
+        "all in one dirt work management software": [
+          13,
+          8,
+          0
+        ],
+        "all in one dirt work software": [
+          8,
+          1,
+          0
+        ],
+        "all in one dirtwork software": [
+          9,
+          0,
+          0
+        ],
+        "all in one excavation software": [
+          14,
+          2,
+          0
+        ],
+        "all in one heavy civil software": [
+          8,
+          1,
+          0
+        ],
+        "all-in-one heavy civil construction software": [
+          18,
+          7,
+          0
+        ],
+        "best all in 1 dirt work software": [
+          4,
+          12,
+          0
+        ],
+        "best all in one dirt work management software": [
+          14,
+          7,
+          0
+        ],
+        "best all in one excavation software": [
+          9,
+          16,
+          0
+        ],
+        "best all in one heavy civil software": [
+          6,
+          3,
+          0
+        ],
+        "best all-in-one dirt work management software": [
+          17,
+          7,
+          0
+        ],
+        "best all-in-one dirtworks software": [
+          14,
+          10,
+          0
+        ],
+        "best dirt work software": [
+          17,
+          8,
+          0
+        ],
+        "best heavy civil construction software": [
+          13,
+          3,
+          0
+        ],
+        "best heavy construction software": [
+          7,
+          2,
+          0
+        ],
+        "dirt work management software": [
+          9,
+          0,
+          0
+        ],
+        "dirt work software with crm": [
+          6,
+          3,
+          0
+        ],
+        "excavation company software": [
+          12,
+          4,
+          0
+        ],
+        "excavation contractor software": [
+          17,
+          4,
+          0
+        ],
+        "excavation software": [
+          6,
+          2,
+          0
+        ],
+        "hcss alternative": [
+          16,
+          8,
+          0
+        ],
+        "hcss heavybid alternative": [
+          10,
+          6,
+          0
+        ],
+        "hcss heavyjob alternative": [
+          15,
+          9,
+          0
+        ],
+        "heavy civil field management software": [
+          13,
+          8,
+          0
+        ]
+      },
+      "surviving_surviving": {
+        "all in 1 dirt work software": [
+          31,
+          5,
+          0
+        ],
+        "all in one dirt work management software": [
+          16,
+          5,
+          0
+        ],
+        "all in one dirt work software": [
+          34,
+          2,
+          0
+        ],
+        "all in one excavation software": [
+          26,
+          2,
+          0
+        ],
+        "all in one heavy civil software": [
+          35,
+          1,
+          0
+        ],
+        "all-in-one heavy civil construction software": [
+          8,
+          2,
+          0
+        ],
+        "b2w alternative": [
+          44,
+          1,
+          0
+        ],
+        "best all in 1 dirt work software": [
+          17,
+          11,
+          0
+        ],
+        "best all in one dirt work management software": [
+          19,
+          2,
+          0
+        ],
+        "best all in one dirt work software": [
+          42,
+          3,
+          0
+        ],
+        "best all in one excavation software": [
+          4,
+          6,
+          0
+        ],
+        "best all in one heavy civil software": [
+          35,
+          1,
+          0
+        ],
+        "best all-in-one dirt work management software": [
+          6,
+          0,
+          0
+        ],
+        "best all-in-one dirtworks software": [
+          2,
+          4,
+          0
+        ],
+        "best dirt work software": [
+          8,
+          2,
+          0
+        ],
+        "best excavation software": [
+          44,
+          1,
+          0
+        ],
+        "best heavy civil construction software": [
+          28,
+          0,
+          0
+        ],
+        "best heavy construction software": [
+          33,
+          3,
+          0
+        ],
+        "dirt work contractor software": [
+          32,
+          13,
+          0
+        ],
+        "dirt work software with crm": [
+          26,
+          10,
+          0
+        ],
+        "excavation company software": [
+          28,
+          0,
+          0
+        ],
+        "excavation contractor software": [
+          19,
+          2,
+          0
+        ],
+        "excavation software": [
+          23,
+          5,
+          0
+        ],
+        "hcss alternative": [
+          13,
+          2,
+          0
+        ],
+        "hcss heavybid alternative": [
+          0,
+          1,
+          0
+        ],
+        "hcss heavyjob alternative": [
+          5,
+          1,
+          0
+        ],
+        "heavy civil field management software": [
+          17,
+          4,
+          0
+        ]
+      }
+    },
+    "persistence_ranked_last": {
+      "all": {
+        "all in 1 dirt work software": [
+          40,
+          5,
+          0
+        ],
+        "all in one dirt work management software": [
+          22,
+          20,
+          3
+        ],
+        "all in one dirt work software": [
+          39,
+          6,
+          0
+        ],
+        "all in one dirtwork software": [
+          0,
+          9,
+          36
+        ],
+        "all in one excavation software": [
+          38,
+          6,
+          1
+        ],
+        "all in one heavy civil software": [
+          39,
+          6,
+          0
+        ],
+        "all-in-one heavy civil construction software": [
+          25,
+          10,
+          10
+        ],
+        "b2w alternative": [
+          44,
+          1,
+          0
+        ],
+        "best all in 1 dirt work software": [
+          21,
+          23,
+          1
+        ],
+        "best all in one dirt work management software": [
+          30,
+          12,
+          3
+        ],
+        "best all in one dirt work software": [
+          42,
+          3,
+          0
+        ],
+        "best all in one excavation software": [
+          13,
+          22,
+          10
+        ],
+        "best all in one heavy civil software": [
+          38,
+          7,
+          0
+        ],
+        "best all-in-one dirt work and excavation software": [
+          0,
+          0,
+          45
+        ],
+        "best all-in-one dirt work management software": [
+          21,
+          9,
+          15
+        ],
+        "best all-in-one dirtworks software": [
+          15,
+          15,
+          15
+        ],
+        "best dirt work software": [
+          27,
+          8,
+          10
+        ],
+        "best excavation software": [
+          44,
+          1,
+          0
+        ],
+        "best heavy civil construction software": [
+          44,
+          0,
+          1
+        ],
+        "best heavy construction software": [
+          42,
+          3,
+          0
+        ],
+        "dirt work contractor software": [
+          32,
+          13,
+          0
+        ],
+        "dirt work management software": [
+          9,
+          0,
+          36
+        ],
+        "dirt work software with crm": [
+          29,
+          16,
+          0
+        ],
+        "excavation company software": [
+          44,
+          0,
+          1
+        ],
+        "excavation contractor software": [
+          40,
+          2,
+          3
+        ],
+        "excavation software": [
+          29,
+          7,
+          0
+        ],
+        "hcss alternative": [
+          22,
+          17,
+          6
+        ],
+        "hcss heavybid alternative": [
+          10,
+          7,
+          28
+        ],
+        "hcss heavyjob alternative": [
+          24,
+          6,
+          15
+        ],
+        "heavy civil field management software": [
+          33,
+          9,
+          3
+        ]
+      },
+      "new_vs_new": {
+        "all in one dirt work management software": [
+          0,
+          0,
+          3
+        ],
+        "all in one dirtwork software": [
+          0,
+          0,
+          36
+        ],
+        "all in one excavation software": [
+          0,
+          0,
+          1
+        ],
+        "all-in-one heavy civil construction software": [
+          0,
+          0,
+          10
+        ],
+        "best all in 1 dirt work software": [
+          0,
+          0,
+          1
+        ],
+        "best all in one dirt work management software": [
+          0,
+          0,
+          3
+        ],
+        "best all in one excavation software": [
+          0,
+          0,
+          10
+        ],
+        "best all-in-one dirt work and excavation software": [
+          0,
+          0,
+          45
+        ],
+        "best all-in-one dirt work management software": [
+          0,
+          0,
+          15
+        ],
+        "best all-in-one dirtworks software": [
+          0,
+          0,
+          15
+        ],
+        "best dirt work software": [
+          0,
+          0,
+          10
+        ],
+        "best heavy civil construction software": [
+          0,
+          0,
+          1
+        ],
+        "dirt work management software": [
+          0,
+          0,
+          36
+        ],
+        "excavation company software": [
+          0,
+          0,
+          1
+        ],
+        "excavation contractor software": [
+          0,
+          0,
+          3
+        ],
+        "hcss alternative": [
+          0,
+          0,
+          6
+        ],
+        "hcss heavybid alternative": [
+          0,
+          0,
+          28
+        ],
+        "hcss heavyjob alternative": [
+          0,
+          0,
+          15
+        ],
+        "heavy civil field management software": [
+          0,
+          0,
+          3
+        ]
+      },
+      "new_vs_surviving": {
+        "all in 1 dirt work software": [
+          9,
+          0,
+          0
+        ],
+        "all in one dirt work management software": [
+          6,
+          15,
+          0
+        ],
+        "all in one dirt work software": [
+          5,
+          4,
+          0
+        ],
+        "all in one dirtwork software": [
+          0,
+          9,
+          0
+        ],
+        "all in one excavation software": [
+          12,
+          4,
+          0
+        ],
+        "all in one heavy civil software": [
+          4,
+          5,
+          0
+        ],
+        "all-in-one heavy civil construction software": [
+          17,
+          8,
+          0
+        ],
+        "best all in 1 dirt work software": [
+          4,
+          12,
+          0
+        ],
+        "best all in one dirt work management software": [
+          11,
+          10,
+          0
+        ],
+        "best all in one excavation software": [
+          9,
+          16,
+          0
+        ],
+        "best all in one heavy civil software": [
+          3,
+          6,
+          0
+        ],
+        "best all-in-one dirt work management software": [
+          15,
+          9,
+          0
+        ],
+        "best all-in-one dirtworks software": [
+          13,
+          11,
+          0
+        ],
+        "best dirt work software": [
+          19,
+          6,
+          0
+        ],
+        "best heavy civil construction software": [
+          16,
+          0,
+          0
+        ],
+        "best heavy construction software": [
+          9,
+          0,
+          0
+        ],
+        "dirt work management software": [
+          9,
+          0,
+          0
+        ],
+        "dirt work software with crm": [
+          3,
+          6,
+          0
+        ],
+        "excavation company software": [
+          16,
+          0,
+          0
+        ],
+        "excavation contractor software": [
+          21,
+          0,
+          0
+        ],
+        "excavation software": [
+          6,
+          2,
+          0
+        ],
+        "hcss alternative": [
+          9,
+          15,
+          0
+        ],
+        "hcss heavybid alternative": [
+          10,
+          6,
+          0
+        ],
+        "hcss heavyjob alternative": [
+          19,
+          5,
+          0
+        ],
+        "heavy civil field management software": [
+          16,
+          5,
+          0
+        ]
+      },
+      "surviving_surviving": {
+        "all in 1 dirt work software": [
+          31,
+          5,
+          0
+        ],
+        "all in one dirt work management software": [
+          16,
+          5,
+          0
+        ],
+        "all in one dirt work software": [
+          34,
+          2,
+          0
+        ],
+        "all in one excavation software": [
+          26,
+          2,
+          0
+        ],
+        "all in one heavy civil software": [
+          35,
+          1,
+          0
+        ],
+        "all-in-one heavy civil construction software": [
+          8,
+          2,
+          0
+        ],
+        "b2w alternative": [
+          44,
+          1,
+          0
+        ],
+        "best all in 1 dirt work software": [
+          17,
+          11,
+          0
+        ],
+        "best all in one dirt work management software": [
+          19,
+          2,
+          0
+        ],
+        "best all in one dirt work software": [
+          42,
+          3,
+          0
+        ],
+        "best all in one excavation software": [
+          4,
+          6,
+          0
+        ],
+        "best all in one heavy civil software": [
+          35,
+          1,
+          0
+        ],
+        "best all-in-one dirt work management software": [
+          6,
+          0,
+          0
+        ],
+        "best all-in-one dirtworks software": [
+          2,
+          4,
+          0
+        ],
+        "best dirt work software": [
+          8,
+          2,
+          0
+        ],
+        "best excavation software": [
+          44,
+          1,
+          0
+        ],
+        "best heavy civil construction software": [
+          28,
+          0,
+          0
+        ],
+        "best heavy construction software": [
+          33,
+          3,
+          0
+        ],
+        "dirt work contractor software": [
+          32,
+          13,
+          0
+        ],
+        "dirt work software with crm": [
+          26,
+          10,
+          0
+        ],
+        "excavation company software": [
+          28,
+          0,
+          0
+        ],
+        "excavation contractor software": [
+          19,
+          2,
+          0
+        ],
+        "excavation software": [
+          23,
+          5,
+          0
+        ],
+        "hcss alternative": [
+          13,
+          2,
+          0
+        ],
+        "hcss heavybid alternative": [
+          0,
+          1,
+          0
+        ],
+        "hcss heavyjob alternative": [
+          5,
+          1,
+          0
+        ],
+        "heavy civil field management software": [
+          17,
+          4,
+          0
+        ]
+      }
+    }
+  },
+  "pooled": {
+    "baseline_correct": 1718,
+    "baseline_pairs": 2673,
+    "baseline_pairwise": 0.6427235316124205,
+    "baseline_ties": 447,
+    "baseline_wrong": 508,
+    "combined_ci": [
+      0.7043188540889883,
+      0.7978865868525602
+    ],
+    "combined_correct": 2008,
+    "combined_pairs": 2673,
+    "combined_pairwise": 0.7512158623269735,
+    "combined_ties": 6,
+    "combined_wrong": 659,
+    "draws": 2000,
+    "margin": 0.108492330714553,
+    "margin_ci": [
+      0.05950533160278923,
+      0.16237872761921976
+    ],
+    "queries": 30,
+    "seed": 20261116,
+    "unit": "query"
+  },
+  "prior_per_query": {
+    "full_coverage": {
+      "all": {
+        "all in 1 dirt work software": [
+          29,
+          16,
+          0
+        ],
+        "all in one dirt work management software": [
+          29,
+          16,
+          0
+        ],
+        "all in one dirt work software": [
+          42,
+          3,
+          0
+        ],
+        "all in one dirtwork software": [
+          23,
+          22,
+          0
+        ],
+        "all in one excavation software": [
+          29,
+          16,
+          0
+        ],
+        "all in one heavy civil software": [
+          36,
+          9,
+          0
+        ],
+        "all-in-one heavy civil construction software": [
+          32,
+          13,
+          0
+        ],
+        "b2w alternative": [
+          41,
+          4,
+          0
+        ],
+        "best all in 1 dirt work software": [
+          38,
+          7,
+          0
+        ],
+        "best all in one dirt work management software": [
+          22,
+          22,
+          1
+        ],
+        "best all in one dirt work software": [
+          40,
+          5,
+          0
+        ],
+        "best all in one excavation software": [
+          35,
+          10,
+          0
+        ],
+        "best all in one heavy civil software": [
+          44,
+          1,
+          0
+        ],
+        "best all-in-one dirt work and excavation software": [
+          21,
+          22,
+          2
+        ],
+        "best all-in-one dirt work management software": [
+          41,
+          4,
+          0
+        ],
+        "best all-in-one dirtworks software": [
+          25,
+          20,
+          0
+        ],
+        "best dirt work software": [
+          27,
+          18,
+          0
+        ],
+        "best excavation software": [
+          40,
+          5,
+          0
+        ],
+        "best heavy civil construction software": [
+          34,
+          11,
+          0
+        ],
+        "best heavy construction software": [
+          40,
+          5,
+          0
+        ],
+        "dirt work contractor software": [
+          30,
+          15,
+          0
+        ],
+        "dirt work management software": [
+          28,
+          17,
+          0
+        ],
+        "dirt work software with crm": [
+          29,
+          16,
+          0
+        ],
+        "excavation company software": [
+          29,
+          7,
+          0
+        ],
+        "excavation contractor software": [
+          39,
+          6,
+          0
+        ],
+        "excavation software": [
+          32,
+          4,
+          0
+        ],
+        "hcss alternative": [
+          38,
+          7,
+          0
+        ],
+        "hcss heavybid alternative": [
+          34,
+          11,
+          0
+        ],
+        "hcss heavyjob alternative": [
+          35,
+          10,
+          0
+        ],
+        "heavy civil field management software": [
+          30,
+          15,
+          0
+        ]
+      },
+      "new_vs_new": {
+        "all in 1 dirt work software": [
+          0,
+          1,
+          0
+        ],
+        "all in one dirt work management software": [
+          4,
+          2,
+          0
+        ],
+        "all in one dirt work software": [
+          1,
+          0,
+          0
+        ],
+        "all in one dirtwork software": [
+          9,
+          6,
+          0
+        ],
+        "all in one excavation software": [
+          2,
+          1,
+          0
+        ],
+        "all in one heavy civil software": [
+          2,
+          1,
+          0
+        ],
+        "all-in-one heavy civil construction software": [
+          19,
+          9,
+          0
+        ],
+        "b2w alternative": [
+          1,
+          0,
+          0
+        ],
+        "best all in 1 dirt work software": [
+          1,
+          0,
+          0
+        ],
+        "best all in one dirt work management software": [
+          0,
+          5,
+          1
+        ],
+        "best all in one dirt work software": [
+          2,
+          1,
+          0
+        ],
+        "best all in one excavation software": [
+          0,
+          1,
+          0
+        ],
+        "best all in one heavy civil software": [
+          6,
+          0,
+          0
+        ],
+        "best all-in-one dirt work and excavation software": [
+          21,
+          22,
+          2
+        ],
+        "best all-in-one dirtworks software": [
+          7,
+          3,
+          0
+        ],
+        "best dirt work software": [
+          8,
+          7,
+          0
+        ],
+        "best heavy civil construction software": [
+          0,
+          3,
+          0
+        ],
+        "dirt work contractor software": [
+          1,
+          0,
+          0
+        ],
+        "dirt work management software": [
+          0,
+          3,
+          0
+        ],
+        "dirt work software with crm": [
+          1,
+          2,
+          0
+        ],
+        "excavation company software": [
+          1,
+          2,
+          0
+        ],
+        "excavation contractor software": [
+          0,
+          1,
+          0
+        ],
+        "hcss alternative": [
+          5,
+          1,
+          0
+        ],
+        "hcss heavybid alternative": [
+          26,
+          10,
+          0
+        ],
+        "hcss heavyjob alternative": [
+          1,
+          0,
+          0
+        ],
+        "heavy civil field management software": [
+          2,
+          1,
+          0
+        ]
+      },
+      "new_vs_surviving": {
+        "all in 1 dirt work software": [
+          7,
+          9,
+          0
+        ],
+        "all in one dirt work management software": [
+          14,
+          10,
+          0
+        ],
+        "all in one dirt work software": [
+          14,
+          2,
+          0
+        ],
+        "all in one dirtwork software": [
+          12,
+          12,
+          0
+        ],
+        "all in one excavation software": [
+          12,
+          9,
+          0
+        ],
+        "all in one heavy civil software": [
+          15,
+          6,
+          0
+        ],
+        "all-in-one heavy civil construction software": [
+          13,
+          3,
+          0
+        ],
+        "b2w alternative": [
+          13,
+          3,
+          0
+        ],
+        "best all in 1 dirt work software": [
+          13,
+          3,
+          0
+        ],
+        "best all in one dirt work management software": [
+          8,
+          16,
+          0
+        ],
+        "best all in one dirt work software": [
+          18,
+          3,
+          0
+        ],
+        "best all in one excavation software": [
+          10,
+          6,
+          0
+        ],
+        "best all in one heavy civil software": [
+          23,
+          1,
+          0
+        ],
+        "best all-in-one dirt work management software": [
+          6,
+          3,
+          0
+        ],
+        "best all-in-one dirtworks software": [
+          12,
+          13,
+          0
+        ],
+        "best dirt work software": [
+          15,
+          9,
+          0
+        ],
+        "best excavation software": [
+          6,
+          3,
+          0
+        ],
+        "best heavy civil construction software": [
+          15,
+          6,
+          0
+        ],
+        "best heavy construction software": [
+          8,
+          1,
+          0
+        ],
+        "dirt work contractor software": [
+          8,
+          8,
+          0
+        ],
+        "dirt work management software": [
+          12,
+          9,
+          0
+        ],
+        "dirt work software with crm": [
+          15,
+          6,
+          0
+        ],
+        "excavation company software": [
+          14,
+          4,
+          0
+        ],
+        "excavation contractor software": [
+          12,
+          4,
+          0
+        ],
+        "excavation software": [
+          5,
+          3,
+          0
+        ],
+        "hcss alternative": [
+          20,
+          4,
+          0
+        ],
+        "hcss heavybid alternative": [
+          8,
+          1,
+          0
+        ],
+        "hcss heavyjob alternative": [
+          13,
+          3,
+          0
+        ],
+        "heavy civil field management software": [
+          13,
+          8,
+          0
+        ]
+      },
+      "surviving_surviving": {
+        "all in 1 dirt work software": [
+          22,
+          6,
+          0
+        ],
+        "all in one dirt work management software": [
+          11,
+          4,
+          0
+        ],
+        "all in one dirt work software": [
+          27,
+          1,
+          0
+        ],
+        "all in one dirtwork software": [
+          2,
+          4,
+          0
+        ],
+        "all in one excavation software": [
+          15,
+          6,
+          0
+        ],
+        "all in one heavy civil software": [
+          19,
+          2,
+          0
+        ],
+        "all-in-one heavy civil construction software": [
+          0,
+          1,
+          0
+        ],
+        "b2w alternative": [
+          27,
+          1,
+          0
+        ],
+        "best all in 1 dirt work software": [
+          24,
+          4,
+          0
+        ],
+        "best all in one dirt work management software": [
+          14,
+          1,
+          0
+        ],
+        "best all in one dirt work software": [
+          20,
+          1,
+          0
+        ],
+        "best all in one excavation software": [
+          25,
+          3,
+          0
+        ],
+        "best all in one heavy civil software": [
+          15,
+          0,
+          0
+        ],
+        "best all-in-one dirt work management software": [
+          35,
+          1,
+          0
+        ],
+        "best all-in-one dirtworks software": [
+          6,
+          4,
+          0
+        ],
+        "best dirt work software": [
+          4,
+          2,
+          0
+        ],
+        "best excavation software": [
+          34,
+          2,
+          0
+        ],
+        "best heavy civil construction software": [
+          19,
+          2,
+          0
+        ],
+        "best heavy construction software": [
+          32,
+          4,
+          0
+        ],
+        "dirt work contractor software": [
+          21,
+          7,
+          0
+        ],
+        "dirt work management software": [
+          16,
+          5,
+          0
+        ],
+        "dirt work software with crm": [
+          13,
+          8,
+          0
+        ],
+        "excavation company software": [
+          14,
+          1,
+          0
+        ],
+        "excavation contractor software": [
+          27,
+          1,
+          0
+        ],
+        "excavation software": [
+          27,
+          1,
+          0
+        ],
+        "hcss alternative": [
+          13,
+          2,
+          0
+        ],
+        "hcss heavyjob alternative": [
+          21,
+          7,
+          0
+        ],
+        "heavy civil field management software": [
+          15,
+          6,
+          0
+        ]
+      }
+    },
+    "persistence_ranked_last": {
+      "all": {
+        "all in 1 dirt work software": [
+          27,
+          17,
+          1
+        ],
+        "all in one dirt work management software": [
+          21,
+          18,
+          6
+        ],
+        "all in one dirt work software": [
+          38,
+          6,
+          1
+        ],
+        "all in one dirtwork software": [
+          18,
+          12,
+          15
+        ],
+        "all in one excavation software": [
+          26,
+          16,
+          3
+        ],
+        "all in one heavy civil software": [
+          36,
+          6,
+          3
+        ],
+        "all-in-one heavy civil construction software": [
+          13,
+          4,
+          28
+        ],
+        "b2w alternative": [
+          40,
+          4,
+          1
+        ],
+        "best all in 1 dirt work software": [
+          34,
+          10,
+          1
+        ],
+        "best all in one dirt work management software": [
+          22,
+          17,
+          6
+        ],
+        "best all in one dirt work software": [
+          39,
+          3,
+          3
+        ],
+        "best all in one excavation software": [
+          27,
+          17,
+          1
+        ],
+        "best all in one heavy civil software": [
+          39,
+          0,
+          6
+        ],
+        "best all-in-one dirt work and excavation software": [
+          0,
+          0,
+          45
+        ],
+        "best all-in-one dirt work management software": [
+          44,
+          1,
+          0
+        ],
+        "best all-in-one dirtworks software": [
+          14,
+          21,
+          10
+        ],
+        "best dirt work software": [
+          13,
+          17,
+          15
+        ],
+        "best excavation software": [
+          43,
+          2,
+          0
+        ],
+        "best heavy civil construction software": [
+          37,
+          5,
+          3
+        ],
+        "best heavy construction software": [
+          37,
+          8,
+          0
+        ],
+        "dirt work contractor software": [
+          36,
+          8,
+          1
+        ],
+        "dirt work management software": [
+          29,
+          13,
+          3
+        ],
+        "dirt work software with crm": [
+          26,
+          16,
+          3
+        ],
+        "excavation company software": [
+          30,
+          3,
+          3
+        ],
+        "excavation contractor software": [
+          40,
+          4,
+          1
+        ],
+        "excavation software": [
+          29,
+          7,
+          0
+        ],
+        "hcss alternative": [
+          35,
+          4,
+          6
+        ],
+        "hcss heavybid alternative": [
+          8,
+          1,
+          36
+        ],
+        "hcss heavyjob alternative": [
+          31,
+          13,
+          1
+        ],
+        "heavy civil field management software": [
+          30,
+          12,
+          3
+        ]
+      },
+      "new_vs_new": {
+        "all in 1 dirt work software": [
+          0,
+          0,
+          1
+        ],
+        "all in one dirt work management software": [
+          0,
+          0,
+          6
+        ],
+        "all in one dirt work software": [
+          0,
+          0,
+          1
+        ],
+        "all in one dirtwork software": [
+          0,
+          0,
+          15
+        ],
+        "all in one excavation software": [
+          0,
+          0,
+          3
+        ],
+        "all in one heavy civil software": [
+          0,
+          0,
+          3
+        ],
+        "all-in-one heavy civil construction software": [
+          0,
+          0,
+          28
+        ],
+        "b2w alternative": [
+          0,
+          0,
+          1
+        ],
+        "best all in 1 dirt work software": [
+          0,
+          0,
+          1
+        ],
+        "best all in one dirt work management software": [
+          0,
+          0,
+          6
+        ],
+        "best all in one dirt work software": [
+          0,
+          0,
+          3
+        ],
+        "best all in one excavation software": [
+          0,
+          0,
+          1
+        ],
+        "best all in one heavy civil software": [
+          0,
+          0,
+          6
+        ],
+        "best all-in-one dirt work and excavation software": [
+          0,
+          0,
+          45
+        ],
+        "best all-in-one dirtworks software": [
+          0,
+          0,
+          10
+        ],
+        "best dirt work software": [
+          0,
+          0,
+          15
+        ],
+        "best heavy civil construction software": [
+          0,
+          0,
+          3
+        ],
+        "dirt work contractor software": [
+          0,
+          0,
+          1
+        ],
+        "dirt work management software": [
+          0,
+          0,
+          3
+        ],
+        "dirt work software with crm": [
+          0,
+          0,
+          3
+        ],
+        "excavation company software": [
+          0,
+          0,
+          3
+        ],
+        "excavation contractor software": [
+          0,
+          0,
+          1
+        ],
+        "hcss alternative": [
+          0,
+          0,
+          6
+        ],
+        "hcss heavybid alternative": [
+          0,
+          0,
+          36
+        ],
+        "hcss heavyjob alternative": [
+          0,
+          0,
+          1
+        ],
+        "heavy civil field management software": [
+          0,
+          0,
+          3
+        ]
+      },
+      "new_vs_surviving": {
+        "all in 1 dirt work software": [
+          5,
+          11,
+          0
+        ],
+        "all in one dirt work management software": [
+          10,
+          14,
+          0
+        ],
+        "all in one dirt work software": [
+          11,
+          5,
+          0
+        ],
+        "all in one dirtwork software": [
+          16,
+          8,
+          0
+        ],
+        "all in one excavation software": [
+          11,
+          10,
+          0
+        ],
+        "all in one heavy civil software": [
+          17,
+          4,
+          0
+        ],
+        "all-in-one heavy civil construction software": [
+          13,
+          3,
+          0
+        ],
+        "b2w alternative": [
+          13,
+          3,
+          0
+        ],
+        "best all in 1 dirt work software": [
+          10,
+          6,
+          0
+        ],
+        "best all in one dirt work management software": [
+          8,
+          16,
+          0
+        ],
+        "best all in one dirt work software": [
+          19,
+          2,
+          0
+        ],
+        "best all in one excavation software": [
+          2,
+          14,
+          0
+        ],
+        "best all in one heavy civil software": [
+          24,
+          0,
+          0
+        ],
+        "best all-in-one dirt work management software": [
+          9,
+          0,
+          0
+        ],
+        "best all-in-one dirtworks software": [
+          8,
+          17,
+          0
+        ],
+        "best dirt work software": [
+          9,
+          15,
+          0
+        ],
+        "best excavation software": [
+          9,
+          0,
+          0
+        ],
+        "best heavy civil construction software": [
+          18,
+          3,
+          0
+        ],
+        "best heavy construction software": [
+          5,
+          4,
+          0
+        ],
+        "dirt work contractor software": [
+          15,
+          1,
+          0
+        ],
+        "dirt work management software": [
+          13,
+          8,
+          0
+        ],
+        "dirt work software with crm": [
+          13,
+          8,
+          0
+        ],
+        "excavation company software": [
+          16,
+          2,
+          0
+        ],
+        "excavation contractor software": [
+          13,
+          3,
+          0
+        ],
+        "excavation software": [
+          2,
+          6,
+          0
+        ],
+        "hcss alternative": [
+          22,
+          2,
+          0
+        ],
+        "hcss heavybid alternative": [
+          8,
+          1,
+          0
+        ],
+        "hcss heavyjob alternative": [
+          10,
+          6,
+          0
+        ],
+        "heavy civil field management software": [
+          15,
+          6,
+          0
+        ]
+      },
+      "surviving_surviving": {
+        "all in 1 dirt work software": [
+          22,
+          6,
+          0
+        ],
+        "all in one dirt work management software": [
+          11,
+          4,
+          0
+        ],
+        "all in one dirt work software": [
+          27,
+          1,
+          0
+        ],
+        "all in one dirtwork software": [
+          2,
+          4,
+          0
+        ],
+        "all in one excavation software": [
+          15,
+          6,
+          0
+        ],
+        "all in one heavy civil software": [
+          19,
+          2,
+          0
+        ],
+        "all-in-one heavy civil construction software": [
+          0,
+          1,
+          0
+        ],
+        "b2w alternative": [
+          27,
+          1,
+          0
+        ],
+        "best all in 1 dirt work software": [
+          24,
+          4,
+          0
+        ],
+        "best all in one dirt work management software": [
+          14,
+          1,
+          0
+        ],
+        "best all in one dirt work software": [
+          20,
+          1,
+          0
+        ],
+        "best all in one excavation software": [
+          25,
+          3,
+          0
+        ],
+        "best all in one heavy civil software": [
+          15,
+          0,
+          0
+        ],
+        "best all-in-one dirt work management software": [
+          35,
+          1,
+          0
+        ],
+        "best all-in-one dirtworks software": [
+          6,
+          4,
+          0
+        ],
+        "best dirt work software": [
+          4,
+          2,
+          0
+        ],
+        "best excavation software": [
+          34,
+          2,
+          0
+        ],
+        "best heavy civil construction software": [
+          19,
+          2,
+          0
+        ],
+        "best heavy construction software": [
+          32,
+          4,
+          0
+        ],
+        "dirt work contractor software": [
+          21,
+          7,
+          0
+        ],
+        "dirt work management software": [
+          16,
+          5,
+          0
+        ],
+        "dirt work software with crm": [
+          13,
+          8,
+          0
+        ],
+        "excavation company software": [
+          14,
+          1,
+          0
+        ],
+        "excavation contractor software": [
+          27,
+          1,
+          0
+        ],
+        "excavation software": [
+          27,
+          1,
+          0
+        ],
+        "hcss alternative": [
+          13,
+          2,
+          0
+        ],
+        "hcss heavyjob alternative": [
+          21,
+          7,
+          0
+        ],
+        "heavy civil field management software": [
+          15,
+          6,
+          0
+        ]
+      }
+    }
+  },
+  "prior_window": {
+    "note": "The 2026-11-13 window was recomputed with the frozen history ending 2026-11-11 and the snapshot HTML. Pair counts, NDCG@10, and Spearman match the published report. The line was not refit. Those recomputed per-query counts are the first window of the pooled bootstrap."
+  },
+  "provenance": {
+    "before_sha256": "c90318e2dc3c386e36d93da0dee27cccbef58b8b34a91014743b3843c369585a",
+    "credits": 30,
+    "end": "2026-11-16T08:39:03.847081-05:00",
+    "gl": [
+      "us"
+    ],
+    "hl": [
+      "en"
+    ],
+    "num": [
+      10
+    ],
+    "outcome_sha256": "fe518b6ea1d0491bc1ea08f7e03cf7735745a63ac56de9d11be73576c0053043",
+    "requests": 30,
+    "requests_sha256": "1f19983e24db727bdbf8cb919cd8a6c03cb39ef9af533d04ef576b68e2553a41",
+    "response_sha256": [
+      "e4823e610f3afe62ddafd66fe31fdcb3980f75fb13f6793332d19efcfdca6223",
+      "26605f73e4206b8113f42fa5dea2aea7cb921b07d98473832fa82db180314055",
+      "57816e1696967c6a6a93f4eb52bde3f68d09d021b07bcbefb728494a9ff37b70",
+      "0a14ebaec19aad6c5abc41828d2f65bddb0b4b94dba038b8cf3cb467b27aa7a7",
+      "5ef86ee935825e4ec81769bfe6333870f5f80939bf62a21a0f6c07bdbf4f4605",
+      "8ed9e0ef19a2114efb549f484af3d16d73ef174e139a4cd3e6d7085612dd9b0c",
+      "6f9fbf623450e36106b7e70fbba9b28ed6d087d88ff9225bccdcfb849874b532",
+      "9152a543e95b330ec5226b3f13d9c94c2794e8406fa215de24f294345856b705",
+      "b0b66ab1df8a3de1522eaa6ca02d1e7f0be38b1c296340c1f0e666c752f1f415",
+      "cbd75143ad181b8678621827b532b01f058166073b6e2dee0a1554a1cf3d51b7",
+      "0209808660c20c0a689106248efe0f7a27f91ebc42ab248ca3ea4065e3a656f8",
+      "290fa3cb74f3fd13133386e48482c08eda36f30988e0f30e952c8aa8275af8ec",
+      "84a4ffdd7c867e4ace5f4e9d91aa14500ba9b62395c515023913acc2771d7ceb",
+      "af39dab215bbf0c89bb5fd97e059fe010a8b4edca25ee64391861c7573b75217",
+      "44fed49c65ff4ee9c7dfdb7d90b356c856eecbcc3066d0e436c7c131cf3f43d9",
+      "13e463d152641676c73ccdc71c773cedfdf17b828c5f6eb312c9910589c26123",
+      "da4dda01037d3be8b7e96d92ae72836ecaca39922ddb971b19f8a6125c9e7fce",
+      "86e20aaa9e0f32fca852069ae2d9af97ae8a810d5411921d78e418033772eb05",
+      "dd216344d617f4e78dd1d9e1e3dc9dbd675e30461131d1040288495d2c1383aa",
+      "d2a1290e49cec645eb7f509aee4fd23640fae6a36a9e0f40a4d2a78a97c0427c",
+      "638f3f94388df0f281c24d7aba1f057b3aa6522d8bdc081db18f2b342fdddb76",
+      "13a4f01715c1057108a4e2cf0e84717b329c80a50f8699e3d2f830c9581c7813",
+      "9a09eba04bf650daf8f6cf8c339a95cd943d32cecc24a9240712e258525d2e69",
+      "51dfedbc9b1f3d8bdda97bbb3b48cd500ec4a2fb0b08928fc9d9c683752a8d39",
+      "a04f1d3bc98c8004972725af26f4d88aa844490a29ad4ae9c73f847109cfbcb3",
+      "845df99fbdc096079990b6fb66b294bf776fe0315fd69ceffdbf67522d13cc1b",
+      "5f6a47b0b49525e34d6a8cd3a7433f463e39156b906fa87db5d44944d6b923cd",
+      "4e50134d96cbb348c1234d856b86d3f41819b65a59db69816b668fd4aa8ceeed",
+      "f9bc6488f620e6dc392e2bc2caa1afca82743118d5c0c9496c04d7dfe7c918ba",
+      "1bd9178f91a43c824cc60bef09962c9619cf3de76c77e869d3b32ad19fc5eda9"
+    ],
+    "start": "2026-11-16T08:37:44.801010-05:00",
+    "statuses": {
+      "200": 30
+    }
+  },
+  "scorer_sha256": "78ea55c93de65a364064f191ad9071caea7e8139f6a686ee89b422001af95f88",
+  "snapshot_sha256": "fe518b6ea1d0491bc1ea08f7e03cf7735745a63ac56de9d11be73576c0053043",
+  "window_totals": [
+    {
+      "baseline_correct": 862,
+      "baseline_pairs": 1332,
+      "combined_correct": 992,
+      "combined_pairs": 1332,
+      "name": "2026-11-11 to 2026-11-13"
+    },
+    {
+      "baseline_correct": 856,
+      "baseline_pairs": 1341,
+      "combined_correct": 1016,
+      "combined_pairs": 1341,
+      "name": "2026-11-13 to 2026-11-16"
+    }
+  ]
+}

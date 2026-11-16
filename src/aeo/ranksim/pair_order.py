@@ -1326,7 +1326,7 @@ def _best_alpha(rows: list[Row], base_scores: list[float]) -> float:
     return best_alpha
 
 
-def _fit_lgbm(rows: list[Row], names: list[str], *, monotone: bool, family: str) -> BoostingModel:
+def _fit_lgbm(rows: list[Row], names: list[str], *, monotone: bool, family: str, seed: int = 0) -> BoostingModel:
     import lightgbm as lgb
 
     means, stds = _mean_std(rows, names)
@@ -1360,7 +1360,9 @@ def _fit_lgbm(rows: list[Row], names: list[str], *, monotone: bool, family: str)
         "feature_fraction": 0.9,
         "verbosity": -1,
         "label_gain": ",".join(str(value) for value in range(11)),
-        "seed": 0,
+        "seed": int(seed),
+        "feature_fraction_seed": int(seed),
+        "bagging_seed": int(seed),
         "deterministic": True,
         "force_col_wise": True,
         "num_threads": 1,
@@ -1390,7 +1392,7 @@ def _score_location(scores: list[float]) -> tuple[float, float]:
     return mean, std if std > 1e-12 else 1.0
 
 
-def fit_experiment(name: str, rows: list[Row]) -> object:
+def fit_experiment(name: str, rows: list[Row], *, seed: int = 0) -> object:
     """Fit one pre-specified family. Rows are training transitions only."""
     if not rows:
         raise ValueError(f"{name} has no training rows")
@@ -1484,7 +1486,7 @@ def fit_experiment(name: str, rows: list[Row]) -> object:
         return TwoHeadModel(survivor=survivor, new=new_model, bias=bias, family=name)
     if name in {"lambdamart", "lambdamart_monotone"}:
         used = _usable_features(rows, full)
-        return _fit_lgbm(rows, used, monotone=name == "lambdamart_monotone", family=name)
+        return _fit_lgbm(rows, used, monotone=name == "lambdamart_monotone", family=name, seed=seed)
     if name == "blend_persistence":
         used = _usable_features(rows, full)
         base = _fit_ridge_pairs(rows, used, 10.0, _unit_weight)
@@ -1519,7 +1521,7 @@ def fit_experiment(name: str, rows: list[Row]) -> object:
     if name == "ensemble_ridge_lambdamart":
         used = _usable_features(rows, full)
         left = _fit_ridge_pairs(rows, used, 10.0, _unit_weight)
-        right = _fit_lgbm(rows, used, monotone=False, family=name)
+        right = _fit_lgbm(rows, used, monotone=False, family=name, seed=seed)
         left.family = name
         left_mean, left_std = _score_location(left.predict(rows))
         right_mean, right_std = _score_location(right.predict(rows))

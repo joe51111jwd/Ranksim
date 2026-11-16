@@ -52,3 +52,26 @@ python scripts/score_forward_pair.py \
   --snapshot path/to/NEXT \
   --offpage-cache evals/preregistered/forward-pair-2026-11-16/offpage.tsv
 ```
+
+## Position metrics
+
+The same command prints exact position, within one position, mean absolute error, range coverage, and confident #1. Label: PREDICTED. Every organic row is counted.
+
+The point prediction frozen from the early windows is yesterday's position for a URL that was already listed, and position 10 for a new URL. Monotone LambdaMART ranks are printed beside that. They lost the early-window comparison on exact hits.
+
+Ranges are at most 3 positions wide. Offsets in `position-calibration.json` were chosen to reach 95% coverage on Nov 9 query-group residuals and Nov 11 forward residuals. A 90% rule is stored and printed as a reference. On those calibration rows the widest legal range covers 0.647, so the 95% rule and the 90% rule are the same offsets. Nov 13 and Nov 16 did not choose them.
+
+Held-out coverage of that frozen range is 187/298 (0.628) on Nov 13 and 180/299 (0.602) on Nov 16. Exact hits are 100/298 (0.336) and 106/299 (0.355) for the persistence point, and lower for the ranker. Within one position is about 0.57 to 0.58. Mean absolute error is about 2.1 positions for persistence and about 1.6 for the ranker. The 85% exact target and the 95% range target are not met.
+
+Confident #1 uses a score gap of 0.7528, the best early-window precision (0.829). The 0.90 precision target was not reached on the early windows, so the stricter threshold is the same gap. On Nov 16 that call is right on 11/19 queries (0.579) and is made on 19/30 queries. Naming yesterday's #1 is right on 17/30 (0.567) and is made on every query.
+
+Across the five snapshots the #1 URL is the same on the next day for 22/30, 21/30, 16/30, and 17/30 queries. The #2 URL stays #2 on 13/30 to 16/30. The #3 URL stays #3 on 10/30 to 14/30. A top-3 URL is still in the top 3 on the next day about 60% to 67% of the time. The top rank moves often enough that it is not a fixed lock. #2 and #3 are not stable.
+
+The position-range gate on the next snapshot passes only when all of these are true:
+
+1. The pairwise gate above passes.
+2. Every organic row receives a point and a range.
+3. Every range is at most 3 positions wide.
+4. The share of rows whose real position falls inside the frozen 95% range is at least 0.95.
+
+The 90% range is reported and is not the gate. Exact-position accuracy, mean absolute error, and confident-#1 precision are reported with the persistence baseline. They are not a second cutoff. One snapshot of these 30 queries is not a general forecast of Google. The Nov 13 and Nov 16 files do not clear the 95% range bar.

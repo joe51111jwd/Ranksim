@@ -28,10 +28,117 @@ from aeo.ranksim.pair_order import (
     load_pages,
     load_serp_snapshot,
 )
+from aeo.ranksim.position_metrics import (
+    apply_ranges,
+    confident_top,
+    persistence_top_calls,
+    position_record,
+    predict_positions,
+    ranks_from_scores,
+    top_margins,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_MODEL = ROOT / "evals/preregistered/forward-pair-2026-11-16/model-next.json"
 DEFAULT_CACHE = ROOT / "evals/preregistered/forward-pair-2026-11-16/offpage.tsv"
+
+
+def _rate(block: dict, key: str) -> str:
+    value = block[key]
+    rows = block["rows"]
+    if value is None or not rows:
+        return "n/a"
+    if key in {"mae", "mean_width"}:
+        return f"{value:.3f} on {rows} rows"
+    return f"{round(value * rows)}/{rows} ({value:.3f})"
+
+
+def _print_position_metrics(rows, scores, history, calibration: dict) -> dict:
+    """Point, range, and confident-#1 metrics. The calibration file is not refit."""
+    method = calibration["point_method"]
+    buckets = [row.bucket for row in rows]
+    selected = predict_positions(method, rows, scores)
+    model_positions = ranks_from_scores(rows, scores)
+    persistence = predict_positions("persistence_last", rows, scores)
+    selected_ranges = apply_ranges(selected, buckets, calibration["range_rule"])
+    selected_reference = apply_ranges(selected, buckets, calibration["range_rule_90"])
+    model_ranges = apply_ranges(model_positions, buckets, calibration["range_rule"])
+    persistence_ranges = apply_ranges(persistence, buckets, calibration["range_rule"])
+    selected_record = position_record(rows, selected, selected_ranges)
+    reference_record = position_record(rows, selected, selected_reference)
+    model_record = position_record(rows, model_positions, model_ranges)
+    persistence_record = position_record(rows, persistence, persistence_ranges)
+    margins = top_margins(rows, scores, model_positions)
+    confident = [
+        confident_top(margins, float(item["threshold"])) for item in calibration["confident_thresholds"]
+    ]
+    previous = history[-1]
+    persistence_calls = confident_top(
+        [
+            {**record, "margin": 1.0}
+            for record in persistence_top_calls(
+                [(row.query, row.url_key, row.position) for row in previous.rows],
+                [(row.query, row.url_key, row.position) for row in rows],
+            )
+        ],
+        0.0,
+    )
+    print("Position metrics. Label: PREDICTED. Ranges are at most 3 positions wide.")
+    print(f"Point method frozen from the early windows: {method}.")
+    for name, record in (
+        ("selected", selected_record),
+        ("model rank", model_record),
+        ("persistence last position", persistence_record),
+    ):
+        print(
+            f"{name}: exact {_rate(record['all'], 'exact')}, within 1 {_rate(record['all'], 'within_1')}, "
+            f"MAE {_rate(record['all'], 'mae')}."
+        )
+        print(
+            f"  95% range coverage {_rate(record['all'], 'range_coverage')}, mean width {_rate(record['all'], 'mean_width')}, "
+            f"surviving {_rate(record['surviving'], 'range_coverage')}, new {_rate(record['new'], 'range_coverage')}."
+        )
+    print(
+        f"90% reference range on the selected points: coverage {_rate(reference_record['all'], 'range_coverage')}, "
+        f"mean width {_rate(reference_record['all'], 'mean_width')}."
+    )
+    for item, block in zip(calibration["confident_thresholds"], confident, strict=True):
+        precision = "n/a" if block["precision"] is None else f"{block['correct']}/{block['calls']} ({block['precision']:.3f})"
+        coverage = "n/a" if block["coverage"] is None else f"{block['calls']}/{block['queries']} ({block['coverage']:.3f})"
+        print(f"Confident #1 at threshold {item['threshold']:.4f} (early target {item['target']:.2f}): precision {precision}, coverage {coverage}.")
+    base_precision = "n/a" if persistence_calls["precision"] is None else f"{persistence_calls['correct']}/{persistence_calls['calls']} ({persistence_calls['precision']:.3f})"
+    print(f"Persistence yesterday #1: precision {base_precision}, coverage {persistence_calls['calls']}/{persistence_calls['queries']}.")
+    coverage = selected_record["all"]["range_coverage"]
+    width = selected_record["all"]["mean_width"]
+    range_pass = coverage is not None and coverage >= 0.95 and width is not None and width <= 3.0
+    print(
+        "Position-range gate (coverage at least 95%, width at most 3): "
+        + ("pass" if range_pass else "fail")
+        + f". Coverage {None if coverage is None else round(coverage, 3)}."
+    )
+    return {
+        "point_method": method,
+        "selected": {key: _slim(selected_record[key]) for key in ("all", "surviving", "new")},
+        "model_rank": _slim(model_record["all"]),
+        "persistence": _slim(persistence_record["all"]),
+        "reference_90_coverage": reference_record["all"]["range_coverage"],
+        "confident": [
+            {
+                "threshold": item["threshold"],
+                "target": item["target"],
+                "precision": block["precision"],
+                "coverage": block["coverage"],
+                "calls": block["calls"],
+                "queries": block["queries"],
+            }
+            for item, block in zip(calibration["confident_thresholds"], confident, strict=True)
+        ],
+        "range_gate_pass": range_pass,
+    }
+
+
+def _slim(block: dict) -> dict:
+    return {key: block[key] for key in ("rows", "exact", "within_1", "mae", "range_coverage", "mean_width")}
 
 
 def _pair(block: dict) -> str:
@@ -96,6 +203,17 @@ def main(argv: list[str] | None = None) -> int:
     rho = predicted["spearman"]
     print(f"NDCG@10: {'n/a' if ndcg is None else f'{ndcg:.6f}'}. Spearman: {'n/a' if rho is None else f'{rho:.6f}'}.")
     print(f"Persistence-ranked-last: {_pair(persistence['blocks']['all'])}")
+    calibration_path = args.model.parent / "position-calibration.json"
+    position_report = None
+    if calibration_path.is_file():
+        if manifest.is_file():
+            listed = json.loads(manifest.read_text(encoding="utf-8")).get("sha256") or {}
+            expected = listed.get("position-calibration.json")
+            digest = hashlib.sha256(calibration_path.read_bytes()).hexdigest()
+            if expected and digest != expected:
+                raise SystemExit(f"position-calibration.json sha256 {digest} does not match the frozen manifest")
+        calibration = json.loads(calibration_path.read_text(encoding="utf-8"))
+        position_report = _print_position_metrics(rows, scores, history, calibration)
     if args.json_out:
         payload = {
             "label": "PREDICTED",
@@ -107,6 +225,7 @@ def main(argv: list[str] | None = None) -> int:
             "ndcg_at_10": predicted["ndcg_at_10"],
             "spearman": predicted["spearman"],
             "persistence_ranked_last": persistence["blocks"],
+            "position": position_report,
         }
         args.json_out.parent.mkdir(parents=True, exist_ok=True)
         args.json_out.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")

@@ -1,0 +1,13 @@
+{
+  "label": "PREDICTED",
+  "outcome_date": "2026-11-17",
+  "family": "lambdamart_monotone",
+  "model": "evals/preregistered/forward-pair-2026-11-16/model-next.json",
+  "model_sha256": "bc4de5022a44c91bdb481c46f28c5374ee5477d1990d55931a21a4ce0e2a8ea7",
+  "diagnostic_model_sha256": "c4619100d0f9db5d4dbeb563e416284631f76589cd1b4f428a60e8fb88de30f3",
+  "diagnostic_note": "2026-11-16 three-pull numbers used model-heldout-nov16 and are DIAGNOSTIC. They were not used to choose model-next.",
+  "absent_rank": 11,
+  "deep_ranks_used_only_at_or_below": 11,
+  "bootstrap_seed": 20261116,
+  "bootstrap_draws": 1000
+}

@@ -157,3 +157,18 @@ New-vs-new is the slice that moved. On 2026-11-16 the published frozen line scor
 Surviving-vs-surviving did not move past Google's own day-to-day agreement. Persistence scores 595/684 (0.869883) on 2026-11-16. The selected model scores 581/684 (0.849415), because it sometimes reorders a survivor and is wrong. When a survivor pair flips and both URLs are still present on the next snapshot, 34% to 44% of those flips reverse. The direction is mostly not repeatable.
 
 On 2026-11-16, 90% is 1207/1341. Keeping the 595 persistence-correct survivor pairs and scoring every remaining pair right would be 1252/1341 (0.933632), so 90% is numerically possible. It would require about 612/657 (0.931507) on pairs that include a new URL. The selected model gets 458/657 (0.697109) on those pairs. That gap, not the survivor cap alone, is why 90% was not reached. The pages are already the top 10. Title, body, domain history, Tranco, Majestic, and the Common Crawl host graph do not order them much past 0.70 once yesterday's order is used for the URLs that stayed.
+
+## Consensus, 2026-11-16, DIAGNOSTIC
+
+Three pulls of the same 30 queries on 2026-11-16 (16:26, 16:57, 17:29 ET). A missing URL counts as 11. Deep ranks fill an absence only at 11 or worse. The ceiling is one pull predicting the median of the other two. The model row is `model-heldout-nov16`, fit through 2026-11-13. It has not seen these labels. The pairwise selection had already looked at the 16:26 pull, so this block is DIAGNOSTIC and was not used to choose `model-next.json`. Full write-up: `evals/preregistered/consensus-2026-11-17/preregistration.md`.
+
+Leave-one-out, 30 queries. The model ranks URLs inside the consensus set, so its exact-match bar is harder when the consensus position is outside that set.
+
+| | Exact | 3-wide | Top-3 recall | Number one |
+| --- | --- | --- | --- | --- |
+| Ceiling | 374/1207 (0.310) [0.218, 0.410] | 625/1207 (0.518) [0.423, 0.625] | 165/224 (0.737) [0.614, 0.847] | 59/90 (0.656) [0.500, 0.800] |
+| Persistence | 283/1207 (0.234) [0.176, 0.300] | 585/1207 (0.485) [0.413, 0.561] | 151/224 (0.674) [0.551, 0.800] | 53/90 (0.589) [0.433, 0.744] |
+| Model through Nov 13 | 188/1207 (0.156) [0.120, 0.201] | 487/1207 (0.403) [0.341, 0.470] | 169/224 (0.754) [0.662, 0.845] | 51/90 (0.567) [0.411, 0.722] |
+
+The ceiling is the upper bound of one real pull. Persistence does not beat it on this comparable score. The model's top-3 recall point estimate is higher than persistence and the intervals overlap. Exact position does not beat persistence. No new model was fit on this consensus.
+

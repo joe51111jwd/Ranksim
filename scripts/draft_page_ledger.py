@@ -267,7 +267,7 @@ def _predict(query: str, url: str, view: PageView, serp: dict, history, pages, m
 
 
 def _before_cell(entry: dict) -> str:
-    if entry["kind"] == "new":
+    if entry["kind"] == "new" and entry.get("before_position") is None:
         return "new"
     shown = entry.get("before_shown") or []
     deep = entry.get("before_deep")
@@ -288,9 +288,127 @@ def _before_cell(entry: dict) -> str:
     return text
 
 
+def _append_baseline(args: argparse.Namespace) -> int:
+    """Score queries that were waiting on a baseline. Earlier frozen rows stay as they were."""
+    if not args.out.is_file():
+        raise SystemExit(f"No ledger to append to: {args.out}")
+    entries = [json.loads(line) for line in args.out.read_text(encoding="utf-8").splitlines() if line.strip()]
+    pending = [entry for entry in entries if entry.get("status") == "no_baseline"]
+    serp = _read_serp(args.append_baseline)
+    history = [load_serp_snapshot(path) for path in args.history]
+    pages = load_pages(args.html_dir)
+    offpage = load_offpage_cache(args.offpage_cache)
+    model = load_model(args.model)
+    model_sha = hashlib.sha256(args.model.read_bytes()).hexdigest()
+    if model_sha != "c4619100d0f9db5d4dbeb563e416284631f76589cd1b4f428a60e8fb88de30f3":
+        raise SystemExit(f"Refusing to freeze against a different model hash: {model_sha}")
+    seen_pairs = {(row.query, row.url_key) for snap in history for row in snap.rows}
+    stamped = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+    by_query = {entry["query"]: entry for entry in pending}
+    added = []
+    for page in PAGES:
+        extract_path = args.extract_dir / f"{page['slug']}.json"
+        payload = json.loads(extract_path.read_text(encoding="utf-8"))
+        view = _view(payload)
+        digest = text_sha256(view.title, view.h1, view.headings, view.body)
+        url = _page_url(page["slug"])
+        for query in page["queries"]:
+            if query not in by_query or query not in serp:
+                continue
+            predicted = _predict(query, url, view, serp, history, pages, model, offpage, seen_pairs)
+            before = _before(url, query, [serp], {})
+            if page["kind"] == "new" and before["before_position"] is None:
+                before = {
+                    "before_position": None,
+                    "before_shown": [],
+                    "before_pulls": 1,
+                    "before_deep": None,
+                    "before_source": "new_url",
+                }
+            bound = prediction_sha256(
+                source_head=HEAD,
+                model_sha256=model_sha,
+                url=url,
+                query=query,
+                position=predicted["predicted_position"],
+                low=predicted["range_low"] if predicted["range_low"] is not None else 0,
+                high=predicted["range_high"] if predicted["range_high"] is not None else 0,
+                text_sha256=digest,
+            )
+            entry = {
+                "label": "PREDICTED",
+                "status": "frozen",
+                "timestamp": stamped,
+                "source_repo": "joe51111jwd/Smart-Crew-Website",
+                "source_head": HEAD,
+                "source_pr": 41,
+                "url": url,
+                "kind": page["kind"],
+                "query": query,
+                "text_sha256": digest,
+                "model_sha256": model_sha,
+                "model_path": "evals/preregistered/forward-pair-2026-11-16/model-heldout-nov16.json",
+                "prediction_sha256": bound,
+                "candidate_set": "2026-11-16 20:16 ET PR41 baseline top 10, draft injected when absent",
+                **predicted,
+                **before,
+                "core_update_through": CORE_UPDATE_THROUGH,
+                "core_update_note": CORE_UPDATE_NOTE,
+                "score_at": "publish+7, publish+14, publish+28",
+                "publish_date": None,
+            }
+            added.append(entry)
+    if len(added) != len(pending):
+        missing = sorted(set(entry["query"] for entry in pending) - set(entry["query"] for entry in added))
+        raise SystemExit(f"Baseline did not cover every open query: {missing}")
+    added_by_query = {entry["query"]: entry for entry in added}
+    merged = [added_by_query.get(entry["query"], entry) if entry.get("status") == "no_baseline" else entry for entry in entries]
+    # A no_baseline row is replaced only when the query matches. Keep frozen rows byte-for-byte via the original dict.
+    with args.out.open("w", encoding="utf-8") as handle:
+        for entry in merged:
+            handle.write(json.dumps(entry, ensure_ascii=False) + "\n")
+    summary = args.out.with_suffix(".md")
+    text = summary.read_text(encoding="utf-8")
+    marker = "## Target searches with no baseline in the 100-query set"
+    if marker not in text:
+        raise SystemExit(f"{summary} has no section to update")
+    head, _tail = text.split(marker, 1)
+    lines = [
+        marker,
+        "",
+        "Scored from the Nov 16 20:16 ET baseline pull. The table is below.",
+        "",
+        "## Baseline pull, 2026-11-16 20:16 ET",
+        "",
+        f"Label: PREDICTED. Frozen at {stamped}. Same model and SmartCrew head as the rows above.",
+        "One pull, 35 searches. The candidate set is that pull's top 10, with the draft text injected.",
+        "None of the 16 target URLs were in these top 10s. A different SmartCrew URL, the pricing blog, was at position 6 for `workyard vs smartcrew`.",
+        "",
+        "| Page | Kind | Query | Before | PREDICTED | Range |",
+        "| --- | --- | --- | ---: | ---: | --- |",
+    ]
+    for entry in added:
+        before = _before_cell(entry)
+        if entry["range_low"] is None:
+            span = "behind top 10"
+        else:
+            span = f"{entry['range_low']}-{entry['range_high']}"
+        lines.append(
+            f"| `{entry['url'].replace(HOST, '')}` | {entry['kind']} | {entry['query']} | {before} | {entry['predicted_position']} | {span} |"
+        )
+    summary.write_text(head + "\n".join(lines) + "\n", encoding="utf-8")
+    print(f"Froze {len(added)} baseline rows at {stamped}")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="PREDICTED draft-page ledger. Does not refit.")
-    parser.add_argument("--serp", type=Path, required=True)
+    parser.add_argument("--serp", type=Path, help="Top-10 file for the original 100-query ledger.")
+    parser.add_argument(
+        "--append-baseline",
+        type=Path,
+        help="A later top-10 file for queries that were left as no_baseline. Appends those rows and leaves earlier freezes unchanged.",
+    )
     parser.add_argument("--pull", action="append", type=Path, default=[])
     parser.add_argument("--deep", type=Path)
     parser.add_argument("--extract-dir", type=Path, required=True)
@@ -300,6 +418,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--offpage-cache", type=Path, default=CACHE)
     parser.add_argument("--out", type=Path, required=True)
     args = parser.parse_args(argv)
+    if args.append_baseline:
+        return _append_baseline(args)
+    if args.serp is None:
+        raise SystemExit("--serp is required unless --append-baseline is set")
     serp = _read_serp(args.serp)
     pulls = [serp] + [_read_serp(path) for path in args.pull]
     deep = _all_ranks(args.deep)

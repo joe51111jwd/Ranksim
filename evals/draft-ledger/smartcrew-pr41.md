@@ -52,40 +52,48 @@ Rewrites record the current live position. New URLs have no before position.
 
 ## Target searches with no baseline in the 100-query set
 
-These need a pull before merge. No position was frozen for them.
+Scored from the Nov 16 20:16 ET baseline pull. The table is below.
 
-- `workyard` → /compare/workyard-alternative/ (new)
-- `workyard pricing` → /compare/workyard-alternative/ (new)
-- `workyard reviews` → /compare/workyard-alternative/ (new)
-- `workyard competitors` → /compare/workyard-alternative/ (new)
-- `workyard vs smartcrew` → /compare/workyard-alternative/ (new)
-- `agtek` → /compare/agtek-alternative/ (new)
-- `agtek pricing` → /compare/agtek-alternative/ (new)
-- `trimble viewpoint` → /compare/trimble-viewpoint-alternative/ (new)
-- `trimble viewpoint pricing` → /compare/trimble-viewpoint-alternative/ (new)
-- `assignar` → /compare/assignar-alternative/ (new)
-- `assignar pricing` → /compare/assignar-alternative/ (new)
-- `assignar competitors` → /compare/assignar-alternative/ (new)
-- `busybusy` → /compare/busybusy-alternative/ (rewrite)
-- `busybusy pricing` → /compare/busybusy-alternative/ (rewrite)
-- `busybusy reviews` → /compare/busybusy-alternative/ (rewrite)
-- `busybusy competitors` → /compare/busybusy-alternative/ (rewrite)
-- `hcss` → /compare/hcss-alternative/ (rewrite)
-- `heavy job` → /compare/hcss-heavyjob-alternative/ (rewrite)
-- `heavybid` → /compare/hcss-heavybid-alternative/ (rewrite)
-- `raken` → /compare/raken-alternative/ (rewrite)
-- `raken pricing` → /compare/raken-alternative/ (rewrite)
-- `raken reviews` → /compare/raken-alternative/ (rewrite)
-- `raken competitors` → /compare/raken-alternative/ (rewrite)
-- `b2w` → /compare/b2w-alternative/ (rewrite)
-- `quoteiq` → /compare/quoteiq-alternative/ (rewrite)
-- `quoteiq pricing` → /compare/quoteiq-alternative/ (rewrite)
-- `quoteiq reviews` → /compare/quoteiq-alternative/ (rewrite)
-- `construction time tracking` → /features/construction-time-tracking/ (rewrite)
-- `time clock app for construction` → /features/construction-time-tracking/ (rewrite)
-- `construction time tracking app` → /features/construction-time-tracking/ (rewrite)
-- `construction equipment maintenance software` → /features/heavy-equipment-maintenance-software/ (rewrite)
-- `heavy equipment fleet management software` → /features/heavy-equipment-maintenance-software/ (rewrite)
-- `construction management software` → /all-in-one-dirt-work-software/ (rewrite)
-- `project management software for construction` → /all-in-one-dirt-work-software/ (rewrite)
-- `construction management app` → /all-in-one-dirt-work-software/ (rewrite)
+## Baseline pull, 2026-11-16 20:16 ET
+
+Label: PREDICTED. Frozen at 2026-11-17T01:24:24+00:00. Same model and SmartCrew head as the rows above.
+One pull, 35 searches. The candidate set is that pull's top 10, with the draft text injected.
+None of the 16 target URLs were in these top 10s. A different SmartCrew URL, the pricing blog, was at position 6 for `workyard vs smartcrew`.
+
+| Page | Kind | Query | Before | PREDICTED | Range |
+| --- | --- | --- | ---: | ---: | --- |
+| `/compare/workyard-alternative/` | new | workyard | new | 7 | 5-7 |
+| `/compare/workyard-alternative/` | new | workyard pricing | new | 4 | 2-4 |
+| `/compare/workyard-alternative/` | new | workyard reviews | new | 10 | 8-10 |
+| `/compare/workyard-alternative/` | new | workyard competitors | new | 6 | 4-6 |
+| `/compare/workyard-alternative/` | new | workyard vs smartcrew | new | 6 | 4-6 |
+| `/compare/agtek-alternative/` | new | agtek | new | 5 | 3-5 |
+| `/compare/agtek-alternative/` | new | agtek pricing | new | 6 | 4-6 |
+| `/compare/trimble-viewpoint-alternative/` | new | trimble viewpoint | new | 9 | 7-9 |
+| `/compare/trimble-viewpoint-alternative/` | new | trimble viewpoint pricing | new | 7 | 5-7 |
+| `/compare/assignar-alternative/` | new | assignar | new | 6 | 4-6 |
+| `/compare/assignar-alternative/` | new | assignar pricing | new | 8 | 6-8 |
+| `/compare/assignar-alternative/` | new | assignar competitors | new | 6 | 4-6 |
+| `/compare/busybusy-alternative/` | rewrite | busybusy | not in the pulled top 10s | 6 | 4-6 |
+| `/compare/busybusy-alternative/` | rewrite | busybusy pricing | not in the pulled top 10s | 4 | 2-4 |
+| `/compare/busybusy-alternative/` | rewrite | busybusy reviews | not in the pulled top 10s | 9 | 7-9 |
+| `/compare/busybusy-alternative/` | rewrite | busybusy competitors | not in the pulled top 10s | 6 | 4-6 |
+| `/compare/hcss-alternative/` | rewrite | hcss | not in the pulled top 10s | 5 | 3-5 |
+| `/compare/hcss-heavyjob-alternative/` | rewrite | heavy job | not in the pulled top 10s | 10 | 8-10 |
+| `/compare/hcss-heavybid-alternative/` | rewrite | heavybid | not in the pulled top 10s | 11 | behind top 10 |
+| `/compare/raken-alternative/` | rewrite | raken | not in the pulled top 10s | 7 | 5-7 |
+| `/compare/raken-alternative/` | rewrite | raken pricing | not in the pulled top 10s | 5 | 3-5 |
+| `/compare/raken-alternative/` | rewrite | raken reviews | not in the pulled top 10s | 8 | 6-8 |
+| `/compare/raken-alternative/` | rewrite | raken competitors | not in the pulled top 10s | 5 | 3-5 |
+| `/compare/b2w-alternative/` | rewrite | b2w | not in the pulled top 10s | 8 | 6-8 |
+| `/compare/quoteiq-alternative/` | rewrite | quoteiq | not in the pulled top 10s | 7 | 5-7 |
+| `/compare/quoteiq-alternative/` | rewrite | quoteiq pricing | not in the pulled top 10s | 8 | 6-8 |
+| `/compare/quoteiq-alternative/` | rewrite | quoteiq reviews | not in the pulled top 10s | 10 | 8-10 |
+| `/features/construction-time-tracking/` | rewrite | construction time tracking | not in the pulled top 10s | 6 | 4-6 |
+| `/features/construction-time-tracking/` | rewrite | time clock app for construction | not in the pulled top 10s | 4 | 2-4 |
+| `/features/construction-time-tracking/` | rewrite | construction time tracking app | not in the pulled top 10s | 3 | 1-3 |
+| `/features/heavy-equipment-maintenance-software/` | rewrite | construction equipment maintenance software | not in the pulled top 10s | 5 | 3-5 |
+| `/features/heavy-equipment-maintenance-software/` | rewrite | heavy equipment fleet management software | not in the pulled top 10s | 4 | 2-4 |
+| `/all-in-one-dirt-work-software/` | rewrite | construction management software | not in the pulled top 10s | 11 | behind top 10 |
+| `/all-in-one-dirt-work-software/` | rewrite | project management software for construction | not in the pulled top 10s | 10 | 8-10 |
+| `/all-in-one-dirt-work-software/` | rewrite | construction management app | not in the pulled top 10s | 7 | 5-7 |

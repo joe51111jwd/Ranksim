@@ -1,0 +1,146 @@
+{
+  "label": "PREDICTED",
+  "max_width": 3,
+  "center_coefficients": [
+    -1.4684698146286943,
+    4.179777446457671,
+    0.7336577757051159,
+    -0.3562530435874089,
+    0.33295415450186905
+  ],
+  "width_coefficients": [
+    4.517392379653186,
+    -1.1398010594119625,
+    -0.21968260052773586,
+    0.16428507895502253,
+    0.10428283231059857
+  ],
+  "feature_order": [
+    "intercept",
+    "seen",
+    "position",
+    "url_volatility",
+    "query_volatility"
+  ],
+  "cut1": 1.684328959003786,
+  "cut2": 2.1973751202085015,
+  "abstain_above": null,
+  "fit_windows": [
+    "2026-11-06 to 2026-11-09",
+    "2026-11-09 to 2026-11-11"
+  ],
+  "cut_window": "2026-11-11 to 2026-11-13",
+  "not_used_for_selection": [
+    "2026-11-16",
+    "2026-11-17",
+    "2026-11-18"
+  ],
+  "cuts_tried": 5,
+  "cut_quantiles": [
+    [
+      0.2,
+      0.5
+    ],
+    [
+      0.25,
+      0.5
+    ],
+    [
+      0.33,
+      0.67
+    ],
+    [
+      0.4,
+      0.7
+    ],
+    [
+      0.5,
+      0.75
+    ]
+  ],
+  "selection_coverage": 0.3549618320610687,
+  "selection_persistence_pm1_coverage": 0.5763358778625954,
+  "selection_gap": -0.22137404580152675,
+  "curve": [
+    {
+      "abstain_above": 2.100883773848092,
+      "answered_fraction": 0.42938931297709926,
+      "coverage": 0.4888888888888889,
+      "containment": 0.4888888888888889,
+      "mean_winkler": 13.11111111111111,
+      "mean_width": 1.4222222222222223,
+      "answered": 225.0,
+      "urls": 524.0
+    },
+    {
+      "abstain_above": 2.1973751202085015,
+      "answered_fraction": 0.4618320610687023,
+      "coverage": 0.4669421487603306,
+      "containment": 0.4669421487603306,
+      "mean_winkler": 13.446280991735538,
+      "mean_width": 1.462809917355372,
+      "answered": 242.0,
+      "urls": 524.0
+    },
+    {
+      "abstain_above": 2.3754393935815585,
+      "answered_fraction": 0.549618320610687,
+      "coverage": 0.4409722222222222,
+      "containment": 0.4409722222222222,
+      "mean_winkler": 13.930555555555555,
+      "mean_width": 1.7083333333333333,
+      "answered": 288.0,
+      "urls": 524.0
+    },
+    {
+      "abstain_above": 2.603143750440879,
+      "answered_fraction": 0.648854961832061,
+      "coverage": 0.43823529411764706,
+      "containment": 0.43823529411764706,
+      "mean_winkler": 14.464705882352941,
+      "mean_width": 1.9058823529411764,
+      "answered": 340.0,
+      "urls": 524.0
+    },
+    {
+      "abstain_above": 2.8076414350734105,
+      "answered_fraction": 0.7633587786259542,
+      "coverage": 0.4,
+      "containment": 0.4,
+      "mean_winkler": 15.27,
+      "mean_width": 2.07,
+      "answered": 400.0,
+      "urls": 524.0
+    },
+    {
+      "abstain_above": 3.091394262234236,
+      "answered_fraction": 0.8473282442748091,
+      "coverage": 0.38738738738738737,
+      "containment": 0.38738738738738737,
+      "mean_winkler": 15.788288288288289,
+      "mean_width": 2.1621621621621623,
+      "answered": 444.0,
+      "urls": 524.0
+    },
+    {
+      "abstain_above": 3.222107162697937,
+      "answered_fraction": 0.9007633587786259,
+      "coverage": 0.3686440677966102,
+      "containment": 0.3686440677966102,
+      "mean_winkler": 16.576271186440678,
+      "mean_width": 2.211864406779661,
+      "answered": 472.0,
+      "urls": 524.0
+    },
+    {
+      "abstain_above": null,
+      "answered_fraction": 1.0,
+      "coverage": 0.3549618320610687,
+      "containment": 0.3549618320610687,
+      "mean_winkler": 17.270992366412212,
+      "mean_width": 2.2900763358778624,
+      "answered": 524.0,
+      "urls": 524.0
+    }
+  ]
+}

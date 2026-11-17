@@ -182,7 +182,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--label", default="PREDICTED", choices=("PREDICTED", "DIAGNOSTIC"))
     parser.add_argument("--expect-sha256", default="", help="If set, the model file must match this hash.")
     parser.add_argument("--json-out", type=Path)
-    parser.add_argument("--band-calibration", type=Path, help="Frozen band rule. Prints an added diagnostic and does not change the Nov 17 gate.")
+    parser.add_argument("--band-calibration", type=Path, help="Frozen wide-band rule. Prints an added diagnostic and does not change the Nov 17 gate.")
+    parser.add_argument("--tight-calibration", type=Path, help="Frozen width-3 band rule. Prints an added diagnostic and does not change the Nov 17 gate.")
     parser.add_argument("--previous-pull", action="append", type=Path, default=[], help="Earlier same-day pulls that form yesterday's observed band.")
     args = parser.parse_args(argv)
     pulls = [_read_serp(path) for path in args.pull]
@@ -259,6 +260,8 @@ def main(argv: list[str] | None = None) -> int:
         args.json_out.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
     if args.band_calibration:
         _print_band_diagnostic(args, queries, pulls, deep)
+    if args.tight_calibration:
+        _print_tight_diagnostic(args, queries, pulls, deep)
     return 0
 
 
@@ -332,6 +335,57 @@ def _print_band_diagnostic(args, queries, pulls, deep) -> None:
             f"coverage {fmt('coverage_hits', 'coverage_count')}; "
             f"containment {fmt('contained', 'urls')}; width {fmt('width', 'urls')}; "
             f"#1 Brier {fmt('brier_one', 'brier_count')}; top-3 Brier {fmt('brier_top3', 'brier_count')}"
+        )
+
+
+def _print_tight_diagnostic(args, queries, pulls, deep) -> None:
+    """ADDED DIAGNOSTIC. Width at most 3. Not the Nov 17 gate and not the ±6 band gate."""
+    import math
+
+    from aeo.ranksim.pair_order import load_serp_snapshot
+    from aeo.ranksim.tight_bands import issue_band, summarize
+
+    root = Path(__file__).resolve().parents[1]
+    if str(root) not in sys.path:
+        sys.path.insert(0, str(root))
+    from scripts.run_tight_bands import _baselines, _index, multi_examples
+
+    calibration = json.loads(Path(args.tight_calibration).read_text(encoding="utf-8"))
+    if not args.history:
+        raise SystemExit("--tight-calibration needs --history for the days before this one")
+    history = [_index(load_serp_snapshot(path)) for path in args.history]
+    # Score only the queries in every current pull. Features come from history, not from these pulls.
+    rows = [row for row in multi_examples(history, pulls, deep) if row.query in set(queries)]
+    threshold = calibration["abstain_above"]
+    if threshold is None:
+        threshold = math.inf
+    issued = [
+        (
+            row,
+            issue_band(
+                row,
+                center_coefficients=calibration["center_coefficients"],
+                width_coefficients=calibration["width_coefficients"],
+                cut1=calibration["cut1"],
+                cut2=calibration["cut2"],
+                abstain_above=threshold,
+            ),
+        )
+        for row in rows
+    ]
+    baselines = _baselines(rows)
+    print("ADDED DIAGNOSTIC, tight band, width at most 3. Not the 2026-11-17 gate. Label: PREDICTED.")
+    for name, group in (
+        ("model", issued),
+        ("persistence ±1", baselines["persistence_pm1"]),
+        ("last band clipped to width 3", baselines["last_band_width3"]),
+    ):
+        totals = summarize(group)
+        fraction = totals["answered_fraction"]
+        print(
+            f"  {name}: coverage {totals['coverage']:.3f}; "
+            f"answered {fraction:.3f} ({totals['answered']:.0f}/{totals['urls']:.0f}); "
+            f"Winkler {totals['mean_winkler']:.3f}; mean width {totals['mean_width']:.3f}"
         )
 
 

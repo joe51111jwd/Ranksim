@@ -1,0 +1,59 @@
+{
+  "label": "PREDICTED",
+  "alpha": 0.2,
+  "winkler": "inclusive width plus (2/alpha) times the distance outside the band, averaged over pull positions including imputed 11s",
+  "persistence_k": 6,
+  "persistence": {
+    "k": 6,
+    "low_offset": -6,
+    "high_offset": 6,
+    "calibration_winkler": 14.41388174807198,
+    "calibration_coverage": 0.8676092544987146,
+    "calibration_mean_width": 11.380462724935732
+  },
+  "model_rule": {
+    "by_bucket": true,
+    "global": {
+      "low_offset": -5,
+      "high_offset": 5,
+      "calibration_winkler": 13.827763496143959,
+      "calibration_coverage": 0.8521850899742931,
+      "calibration_mean_width": 9.84318766066838,
+      "calibration_containment": 0.8521850899742931
+    },
+    "surviving": {
+      "low_offset": -5,
+      "high_offset": 5,
+      "calibration_winkler": 13.347386172006745,
+      "calibration_coverage": 0.8583473861720068,
+      "calibration_mean_width": 9.688026981450253,
+      "calibration_containment": 0.8583473861720068
+    },
+    "new": {
+      "low_offset": -6,
+      "high_offset": 6,
+      "calibration_winkler": 15.243243243243244,
+      "calibration_coverage": 0.8810810810810811,
+      "calibration_mean_width": 11.891891891891891,
+      "calibration_containment": 0.8810810810810811
+    },
+    "calibration_winkler": 13.798200514138818,
+    "calibration_coverage": 0.8637532133676092,
+    "calibration_mean_width": 10.212082262210798
+  },
+  "family": "lambdamart_monotone",
+  "model": "evals/preregistered/forward-pair-2026-11-16/model-next.json",
+  "model_sha256": "bc4de5022a44c91bdb481c46f28c5374ee5477d1990d55931a21a4ce0e2a8ea7",
+  "diagnostic_model_sha256": "c4619100d0f9db5d4dbeb563e416284631f76589cd1b4f428a60e8fb88de30f3",
+  "calibration_windows": [
+    "2026-11-09 query-group CV",
+    "2026-11-09 to 2026-11-11 forward"
+  ],
+  "not_used_for_calibration": [
+    "2026-11-13",
+    "2026-11-16",
+    "2026-11-17",
+    "2026-11-18"
+  ],
+  "nov17_gate_unchanged": true
+}

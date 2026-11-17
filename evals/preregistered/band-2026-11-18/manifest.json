@@ -1,0 +1,13 @@
+{
+  "label": "PREDICTED",
+  "outcome_date": "2026-11-18",
+  "family": "lambdamart_monotone",
+  "model": "evals/preregistered/forward-pair-2026-11-16/model-next.json",
+  "model_sha256": "bc4de5022a44c91bdb481c46f28c5374ee5477d1990d55931a21a4ce0e2a8ea7",
+  "sha256": {
+    "band-calibration.json": "f05eca375fa6d476e9fb51b5a6365219a316120707eed3533a57d02a09cdcabf"
+  },
+  "persistence_k": 6,
+  "alpha": 0.2,
+  "nov17_gate_unchanged": true
+}

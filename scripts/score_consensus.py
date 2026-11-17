@@ -182,6 +182,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--label", default="PREDICTED", choices=("PREDICTED", "DIAGNOSTIC"))
     parser.add_argument("--expect-sha256", default="", help="If set, the model file must match this hash.")
     parser.add_argument("--json-out", type=Path)
+    parser.add_argument("--band-calibration", type=Path, help="Frozen band rule. Prints an added diagnostic and does not change the Nov 17 gate.")
+    parser.add_argument("--previous-pull", action="append", type=Path, default=[], help="Earlier same-day pulls that form yesterday's observed band.")
     args = parser.parse_args(argv)
     pulls = [_read_serp(path) for path in args.pull]
     deep = _deep_ranks(args.deep)
@@ -255,7 +257,82 @@ def main(argv: list[str] | None = None) -> int:
             "ceiling": {name: pool(ceiling_scores)[name] for name in ("exact", "within_range", "observed", "top3_precision", "top3_recall", "number_one")},
         }
         args.json_out.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    if args.band_calibration:
+        _print_band_diagnostic(args, queries, pulls, deep)
     return 0
+
+
+def _print_band_diagnostic(args, queries, pulls, deep) -> None:
+    """ADDED DIAGNOSTIC. The Nov 17 gate does not read this block."""
+    from collections import defaultdict
+
+    from aeo.ranksim.bands import (
+        collect_bands,
+        last_observed_band,
+        model_band,
+        persistence_band,
+        previous_records,
+        score_url,
+    )
+    from aeo.ranksim.position_metrics import bootstrap_rate
+
+    calibration = json.loads(Path(args.band_calibration).read_text(encoding="utf-8"))
+    k = int(calibration["persistence_k"])
+    rule = calibration["model_rule"]
+    prev_files = list(args.previous_pull)
+    if args.previous:
+        prev_files.append(args.previous)
+    prev_pulls = [_read_serp(path) for path in prev_files]
+    previous = previous_records(prev_pulls, {}, queries)
+    bands = []
+    for query in queries:
+        bands.extend(collect_bands(query, [pull[query] for pull in pulls], deep.get(query, {}), previous.get(query, {})))
+    ranks = {}
+    if args.history and args.model.is_file():
+        grouped = defaultdict(list)
+        for band in bands:
+            grouped[band.query].append(band)
+        predicted = _model_predictions(grouped, args.history, args.html_dir, args.model, args.offpage_cache)
+        for query, rows in grouped.items():
+            for row, rank in zip(rows, predicted[query], strict=True):
+                ranks[(query, row.url_key)] = rank
+    print("ADDED DIAGNOSTIC. Not the 2026-11-17 gate. Label: PREDICTED.")
+    print(f"Persistence half-width k={k}. Model offsets are the frozen band calibration.")
+    systems = ("persistence", "last_band", "model")
+    grouped_scores = {name: defaultdict(list) for name in systems}
+    for band in bands:
+        bucket = "new" if band.previous_consensus is None else "surviving"
+        specs = {
+            "persistence": persistence_band(band, k),
+            "last_band": last_observed_band(band),
+            "model": model_band(ranks.get((band.query, band.url_key), 11), rule, bucket),
+        }
+        for name, (low, high) in specs.items():
+            grouped_scores[name][band.query].append(score_url(band, low, high))
+    for name in systems:
+        grouped = grouped_scores[name]
+
+        def pairs(key_num: str, key_den: str, grouped=grouped) -> list[tuple[float, float]]:
+            return [
+                (sum(item[key_num] for item in grouped[query]), sum(item[key_den] for item in grouped[query]))
+                for query in sorted(grouped)
+            ]
+
+        def fmt(key_num: str, key_den: str) -> str:
+            rows = pairs(key_num, key_den)
+            numerator = sum(item[0] for item in rows)
+            denominator = sum(item[1] for item in rows)
+            if denominator == 0:
+                return "n/a"
+            low, high = bootstrap_rate(rows)
+            return f"{numerator / denominator:.3f} [{low:.3f}, {high:.3f}] n={denominator:.0f}"
+
+        print(
+            f"  {name}: Winkler {fmt('winkler', 'winkler_count')}; "
+            f"coverage {fmt('coverage_hits', 'coverage_count')}; "
+            f"containment {fmt('contained', 'urls')}; width {fmt('width', 'urls')}; "
+            f"#1 Brier {fmt('brier_one', 'brier_count')}; top-3 Brier {fmt('brier_top3', 'brier_count')}"
+        )
 
 
 if __name__ == "__main__":

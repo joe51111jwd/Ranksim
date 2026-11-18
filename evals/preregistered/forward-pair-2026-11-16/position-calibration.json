@@ -1,0 +1,80 @@
+{
+  "label": "PREDICTED",
+  "point_method": "persistence_last",
+  "family": "lambdamart_monotone",
+  "range_target": 0.95,
+  "range_rule": {
+    "target": 0.95,
+    "by_bucket": true,
+    "calibration_coverage": 0.6470588235294118,
+    "calibration_mean_width": 2.8789915966386554,
+    "global": {
+      "low_offset": -1,
+      "high_offset": 1,
+      "calibration_coverage": 0.6168067226890757,
+      "calibration_mean_width": 2.5680672268907565
+    },
+    "surviving": {
+      "low_offset": -1,
+      "high_offset": 1,
+      "calibration_coverage": 0.7560975609756098,
+      "calibration_mean_width": 2.824390243902439
+    },
+    "new": {
+      "low_offset": -2,
+      "high_offset": 0,
+      "calibration_coverage": 0.40540540540540543,
+      "calibration_mean_width": 3.0
+    }
+  },
+  "range_rule_90": {
+    "target": 0.9,
+    "by_bucket": true,
+    "calibration_coverage": 0.6470588235294118,
+    "calibration_mean_width": 2.8789915966386554,
+    "global": {
+      "low_offset": -1,
+      "high_offset": 1,
+      "calibration_coverage": 0.6168067226890757,
+      "calibration_mean_width": 2.5680672268907565
+    },
+    "surviving": {
+      "low_offset": -1,
+      "high_offset": 1,
+      "calibration_coverage": 0.7560975609756098,
+      "calibration_mean_width": 2.824390243902439
+    },
+    "new": {
+      "low_offset": -2,
+      "high_offset": 0,
+      "calibration_coverage": 0.40540540540540543,
+      "calibration_mean_width": 3.0
+    }
+  },
+  "confident_thresholds": [
+    {
+      "target": 0.8,
+      "threshold": 0.7528,
+      "calibration_precision": 0.8285714285714286,
+      "calibration_coverage": 0.5833333333333334,
+      "calibration_calls": 35,
+      "calibration_queries": 60
+    },
+    {
+      "target": 0.9,
+      "threshold": 0.7528,
+      "calibration_precision": 0.8285714285714286,
+      "calibration_coverage": 0.5833333333333334,
+      "calibration_calls": 35,
+      "calibration_queries": 60
+    }
+  ],
+  "calibration_windows": [
+    "2026-11-09 query-group CV",
+    "2026-11-09 to 2026-11-11 forward"
+  ],
+  "not_used_for_calibration": [
+    "2026-11-13",
+    "2026-11-16"
+  ]
+}

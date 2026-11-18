@@ -1,0 +1,13 @@
+{
+  "label": "PREDICTED",
+  "outcome_date": "2026-11-18",
+  "max_width": 3,
+  "sha256": {
+    "tight-calibration.json": "5a6ecf15ed5ced9719d5cf0db175050b40ae1091e72f60533db2f1b8b80ce21f"
+  },
+  "fit_through": "2026-11-11",
+  "cuts_chosen_on": "2026-11-13",
+  "not_used_for_selection": ["2026-11-16", "2026-11-17", "2026-11-18"],
+  "wide_band_gate_unchanged": true,
+  "nov17_gate_unchanged": true
+}

@@ -1,0 +1,13 @@
+{
+  "family": "lambdamart_monotone",
+  "label": "PREDICTED",
+  "selected_by": "min of the 2026-11-09 query-group CV and the 2026-11-09 to 2026-11-11 forward combined pairwise, then the mean, new-vs-new, new-vs-surviving, and the simpler family",
+  "sha256": {
+    "model-heldout-nov13.json": "3e3f331fb213569d29050aeae799099c12bf757843e2b155db49b92e15f76ca8",
+    "model-heldout-nov16.json": "c4619100d0f9db5d4dbeb563e416284631f76589cd1b4f428a60e8fb88de30f3",
+    "model-next.json": "bc4de5022a44c91bdb481c46f28c5374ee5477d1990d55931a21a4ce0e2a8ea7",
+    "offpage.tsv": "9395c9c84935d9e46ffc1c69c6cf30af5936623e7102dd981b45b8f4e7a87f21",
+    "position-calibration.json": "cd0453d0207a75c961aa8a62bca74f8dfe2a3e92777a1d63c88cd549573fd34d"
+  },
+  "position_range_target": 0.95
+}

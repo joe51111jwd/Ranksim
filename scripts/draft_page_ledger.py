@@ -23,6 +23,7 @@ from aeo.ranksim.draft_ledger import (
     CORE_UPDATE_THROUGH,
     missing_queries,
     prediction_sha256,
+    score_dates,
     text_sha256,
 )
 from aeo.ranksim.pair_order import (
@@ -148,6 +149,13 @@ PAGES = [
             "best all in one heavy civil software",
             "best construction software for dirtwork",
         ],
+    },
+    {
+        "slug": "compare/clockshark-alternative",
+        "kind": "rewrite",
+        # The search map does not give ClockShark a volume row. These are the page keyword
+        # and the same shopping variants the other compare pages own.
+        "queries": ["clockshark alternative", "clockshark", "clockshark pricing", "clockshark reviews", "clockshark competitors"],
     },
 ]
 
@@ -288,6 +296,145 @@ def _before_cell(entry: dict) -> str:
     return text
 
 
+def _candidate_tables(specs: list[str]) -> list[tuple[str, dict]]:
+    """Each spec is serp.csv|ISO-time. Later times win when a query is in more than one file."""
+    ranked = []
+    for spec in specs:
+        path_text, _, stamp = spec.partition("|")
+        path = Path(path_text)
+        if not stamp:
+            raise SystemExit(f"--candidate needs path|ISO-time, got {spec}")
+        ranked.append((stamp, path, _read_serp(path)))
+    ranked.sort()
+    return [(stamp, table) for stamp, _path, table in ranked]
+
+
+def _refreeze_head(args: argparse.Namespace) -> int:
+    """Append rows for a new source head. Existing ledger lines are not rewritten."""
+    if not args.out.is_file():
+        raise SystemExit(f"No ledger to append to: {args.out}")
+    if not args.candidate:
+        raise SystemExit("--refreeze-head needs at least one --candidate")
+    original = args.out.read_text(encoding="utf-8")
+    history = [load_serp_snapshot(path) for path in args.history]
+    pages = load_pages(args.html_dir) if args.html_dir is not None else {}
+    for spec in args.candidate:
+        sibling = Path(spec.partition("|")[0]).parent
+        if (sibling / "html_manifest.csv").is_file():
+            try:
+                pages.update(load_pages(sibling))
+            except ValueError:
+                continue
+    offpage = load_offpage_cache(args.offpage_cache)
+    model = load_model(args.model)
+    model_sha = hashlib.sha256(args.model.read_bytes()).hexdigest()
+    if model_sha != "c4619100d0f9db5d4dbeb563e416284631f76589cd1b4f428a60e8fb88de30f3":
+        raise SystemExit(f"Refusing to freeze against a different model hash: {model_sha}")
+    seen_pairs = {(row.query, row.url_key) for snap in history for row in snap.rows}
+    stamped = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+    publish = datetime.fromisoformat(args.publish)
+    dates = score_dates(publish.date())
+    tables = _candidate_tables(args.candidate)
+    deep = _all_ranks(args.deep)
+    added = []
+    for page in PAGES:
+        extract_path = args.extract_dir / f"{page['slug']}.json"
+        if not extract_path.is_file():
+            raise SystemExit(f"Missing extract {extract_path}")
+        payload = json.loads(extract_path.read_text(encoding="utf-8"))
+        view = _view(payload)
+        digest = text_sha256(view.title, view.h1, view.headings, view.body)
+        url = _page_url(page["slug"])
+        for query in page["queries"]:
+            chosen = None
+            for stamp, table in tables:
+                if query in table:
+                    chosen = (stamp, table)
+            base = {
+                "label": "PREDICTED",
+                "timestamp": stamped,
+                "source_repo": "joe51111jwd/Smart-Crew-Website",
+                "source_head": args.refreeze_head,
+                "source_pr": 41,
+                "url": url,
+                "kind": page["kind"],
+                "query": query,
+                "text_sha256": digest,
+                "model_sha256": model_sha,
+                "model_path": "evals/preregistered/forward-pair-2026-11-16/model-heldout-nov16.json",
+                "core_update_through": CORE_UPDATE_THROUGH,
+                "core_update_note": CORE_UPDATE_NOTE,
+                "publish_date": args.publish,
+                "publish_note": "About 10 minutes after the 9:57 PM ET merge on Nov 17. Not indexed yet.",
+                "score_at": dates,
+            }
+            if chosen is None:
+                added.append({**base, "status": "no_baseline", "predicted_position": None, "range_low": None, "range_high": None, "before_position": None})
+                continue
+            stamp, table = chosen
+            predicted = _predict(query, url, view, table, history, pages, model, offpage, seen_pairs)
+            before = _before(url, query, [table], deep)
+            if page["kind"] == "new" and before["before_position"] is None:
+                before = {"before_position": None, "before_shown": [], "before_pulls": 1, "before_deep": None, "before_source": "new_url"}
+            bound = prediction_sha256(
+                source_head=args.refreeze_head,
+                model_sha256=model_sha,
+                url=url,
+                query=query,
+                position=predicted["predicted_position"],
+                low=predicted["range_low"] if predicted["range_low"] is not None else 0,
+                high=predicted["range_high"] if predicted["range_high"] is not None else 0,
+                text_sha256=digest,
+            )
+            added.append(
+                {
+                    **base,
+                    "status": "frozen",
+                    "prediction_sha256": bound,
+                    "candidate_set": f"latest available pull at {stamp}",
+                    **predicted,
+                    **before,
+                }
+            )
+    with args.out.open("a", encoding="utf-8") as handle:
+        for entry in added:
+            handle.write(json.dumps(entry, ensure_ascii=False) + "\n")
+    if args.out.read_text(encoding="utf-8")[: len(original)] != original:
+        raise SystemExit("Refreeze rewrote earlier ledger bytes")
+    summary = args.out.with_suffix(".md")
+    lines = [
+        "",
+        f"## Freeze at merge, head `{args.refreeze_head}`",
+        "",
+        "Label: PREDICTED. The cbb50da rows above are unchanged.",
+        f"Frozen at {stamped}. Publish time about {args.publish}. Not indexed yet.",
+        f"Score dates: publish+7 {dates['plus_7']}, publish+14 {dates['plus_14']}, publish+28 {dates['plus_28']}.",
+        CORE_UPDATE_NOTE,
+        "Candidate set for each search is the latest pull that contains it. Nov 17 pulls were not on disk, so these are Nov 16 pulls.",
+        "ClockShark is included because that compare page was rewritten at this head. The search map does not give it a volume row; the targets are its keyword and the same shopping variants as the other compare pages.",
+        "",
+        "| Page | Kind | Query | Before | PREDICTED | Range | Candidate |",
+        "| --- | --- | --- | ---: | ---: | --- | --- |",
+    ]
+    for entry in added:
+        if entry["status"] != "frozen":
+            continue
+        before = _before_cell(entry)
+        span = "behind top 10" if entry["range_low"] is None else f"{entry['range_low']}-{entry['range_high']}"
+        lines.append(
+            f"| `{entry['url'].replace(HOST, '')}` | {entry['kind']} | {entry['query']} | {before} | {entry['predicted_position']} | {span} | {entry['candidate_set'].replace('latest available pull at ', '')} |"
+        )
+    missing = [entry for entry in added if entry["status"] != "frozen"]
+    if missing:
+        lines.extend(["", "No pull contains these searches, so no position was frozen:", ""])
+        for entry in missing:
+            lines.append(f"- `{entry['query']}` → {entry['url'].replace(HOST, '')}")
+    with summary.open("a", encoding="utf-8") as handle:
+        handle.write("\n".join(lines) + "\n")
+    print(f"Appended {len(added)} rows at {stamped} for {args.refreeze_head}")
+    return 0
+
+
 def _append_baseline(args: argparse.Namespace) -> int:
     """Score queries that were waiting on a baseline. Earlier frozen rows stay as they were."""
     if not args.out.is_file():
@@ -417,7 +564,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--model", type=Path, default=MODEL)
     parser.add_argument("--offpage-cache", type=Path, default=CACHE)
     parser.add_argument("--out", type=Path, required=True)
+    parser.add_argument("--refreeze-head", default="", help="Append a new freeze for this source head. Earlier rows stay byte-for-byte.")
+    parser.add_argument("--publish", default="2026-11-18T03:07:00+00:00")
+    parser.add_argument("--candidate", action="append", default=[], help="serp.csv|ISO-time. The latest time that contains a query is its candidate set.")
     args = parser.parse_args(argv)
+    if args.refreeze_head:
+        return _refreeze_head(args)
     if args.append_baseline:
         return _append_baseline(args)
     if args.serp is None:

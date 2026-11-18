@@ -1,0 +1,23 @@
+{
+  "label": "PREDICTED",
+  "model": "evals/preregistered/forward-pair-2026-11-16/model-next.json",
+  "model_sha256": "bc4de5022a44c91bdb481c46f28c5374ee5477d1990d55931a21a4ce0e2a8ea7",
+  "selection_model_nov16": "evals/preregistered/forward-pair-2026-11-16/model-heldout-nov16.json",
+  "median_new_position": 7,
+  "seen_band_half_width_cap": 2,
+  "seen_band_rule": "half width is min(cap, round(mean absolute move across earlier days))",
+  "median_without_nov16": 7,
+  "insertion": "count of surviving URLs with a higher model score; ties among new URLs break by model score then url key",
+  "content_change": "page text hash differs on both days",
+  "selection_through": "2026-11-16",
+  "not_used_for_selection": [
+    "2026-11-17",
+    "2026-11-19"
+  ],
+  "nov16_best_baseline": "domain",
+  "nov16_difference_using_early_median": [
+    0.11290322580645157,
+    -0.0714285714285714,
+    0.25925925925925924
+  ]
+}

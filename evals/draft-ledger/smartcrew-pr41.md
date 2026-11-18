@@ -186,3 +186,15 @@ No pull contains these searches, so no position was frozen:
 - `clockshark pricing` → /compare/clockshark-alternative/
 - `clockshark reviews` → /compare/clockshark-alternative/
 - `clockshark competitors` → /compare/clockshark-alternative/
+
+### ClockShark shopping variants, frozen after publish
+
+Label: PREDICTED. Frozen at 2026-11-18T03:20:08+00:00, after publish (2026-11-18T03:07:00Z) and before any smartcrewhq.com appearance.
+Candidate set: the 22:13 ET Nov 17 pull. smartcrewhq.com is not in these top 10s. Same head `c9b0eaed31588d8cba6aedb5ff5d3d71392a8759` and the same model as the merge freeze above.
+
+| Page | Kind | Query | Before | PREDICTED | Range |
+| --- | --- | --- | ---: | ---: | --- |
+| `/compare/clockshark-alternative/` | rewrite | clockshark | not in this top 10 | 2 | 1-2 |
+| `/compare/clockshark-alternative/` | rewrite | clockshark pricing | not in this top 10 | 5 | 3-5 |
+| `/compare/clockshark-alternative/` | rewrite | clockshark reviews | not in this top 10 | 4 | 2-4 |
+| `/compare/clockshark-alternative/` | rewrite | clockshark competitors | not in this top 10 | 7 | 5-7 |

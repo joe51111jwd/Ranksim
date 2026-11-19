@@ -1,0 +1,61 @@
+# Pre-registration: Target 1, new-URL placement (Claude goal run)
+
+Label: PREDICTED. Written 2026-11-19 before any day after 2026-11-17 was read. Nothing here changes an earlier gate, the SmartCrew PR 41 ledger, or the product ranker. The earlier team's own Nov 19 hybrid gate (`evals/preregistered/hybrid-2026-11-19/`) is a different test and is not touched.
+
+## The target, from GOAL.md
+
+"On rows where a URL is new to the query's top 30 or whose page content changed materially, predict its consensus position. Pass = within-3 accuracy beats the best of {domain prior, position 7, position 11} with the CI of the difference above 0, on at least two held-out days not used for any design choice."
+
+## What is frozen
+
+The sha256 of every file below is in `manifest.json` in this folder. `scripts/claude/score_heldout.py` refuses to score when a hash differs, when the freeze is not committed, or when it is not pushed.
+
+- `scripts/claude/t1_placement.py` and `evals/claude/t1-placement/params.json` (the predictor)
+- `scripts/claude/rsdata.py`, `scripts/claude/metrics.py`, `scripts/claude/heldout.py`, `scripts/claude/score_heldout.py`
+
+The predictor is not refit on a held-out day.
+
+## Truth and rows
+
+A day's consensus position is the median over the pulls of that day's main pull session, a missing URL counts as 11, and a URL needs a strict majority of the pulls to be in the top 10 (`rsdata.consensus_table`).
+
+Rows are the consensus top-10 rows of the outcome day, split by what the stored history says about the (search, URL) pair before that day (`rsdata.placement_rows`):
+
+- **Strict new (the primary class).** The URL was never seen for this search in any stored list before the outcome day, and the search has a deep list (top 20 to 30) in its history. This is the brief's "new to the query's top 30" as far as the stored data can check it. The only deep list is from 2026-11-16, so "top 30" means: not in the Nov 16 top 20 to 30, and not in any top-10 pull on any earlier day.
+- **Reentrant (secondary, reported).** Seen before for this search but not in the previous pulled day's consensus top 10.
+- **New without a deep history (reported).** New on a search that has no deep list. Not counted as strict.
+- **Survivors** are not target rows.
+
+**Rows whose page content changed materially.** For a page that already ranks, yesterday's position is known before the prediction date, so the honest bar is persistence, not the brief's three baselines. No content-based adjustment beat persistence on design data (see Target 2). So this run's prediction for a changed page is its previous position, and those rows are reported in their own table with persistence as an extra baseline. They are never pooled into the pass decision below, because pooling would let persistence manufacture a win over "position 7".
+
+## The predictor (PREDICTED), from `params.json`
+
+A fixed rule with no learned weights. It reads only days before the outcome day, plus the row's search text and URL.
+
+- New URL: the best consensus position its site held on this search yesterday. If the site was not in yesterday's top 10, the site's position in the deep list. If neither, position 9. The result is clipped to 2 through 9.
+- Reentrant URL: its own position in the deep list. If it is not there, its last top-10 position. If neither, position 7. The result is clipped to 3 through 7.
+
+## Metrics
+
+- **band3 (primary).** The repo's 3-wide band: the truth is one of the three positions starting at max(1, prediction minus 1). This is the metric of the earlier hybrid gate, which is where the brief's baseline list comes from.
+- **err3 (secondary reading, always reported).** Absolute error of 3 or less. On design days "position 7" alone is right about 83% of the time under this reading, because 7 plus or minus 3 covers positions 4 through 10. A pass on err3 is not required and is not expected.
+
+Baselines, fixed by the brief: the domain prior (the best consensus position of the same site on the same search on the previous pulled day, 11 if none, as in the earlier hybrid gate), position 7, and position 11. The best of the three is chosen on the scored rows themselves, which favours the baselines. One extra reference is reported and is not part of the brief's set: position 9, the best single position for newcomers on design days.
+
+Intervals: 95% query bootstrap, 2000 draws, seed 20261119, paired difference on the same rows.
+
+## Held-out days
+
+2026-11-18 (pulled by the earlier team before this run, never read during design, original 30 searches) and every later day pulled in this run with a pull session for the 100 searches (2026-11-19, 2026-11-20, and 2026-11-21 if pulled). Every pulled day is scored and reported. None is dropped.
+
+## Pass rule
+
+On the strict-new rows, on band3:
+
+- **Per-day pass (the strict reading of the brief).** On at least two held-out days, each with at least 20 rows from at least 10 searches, the model minus the best baseline has a lower bound above 0.
+- **Pooled pass (the lenient reading).** Pooled over all held-out days, at least two days and at least 40 rows from at least 10 searches, the model minus the best baseline has a lower bound above 0.
+- **Target 1 passes** when either holds. The report says which one, gives both, gives the err3 reading, and gives the model minus the position-9 reference. If the model beats the brief's baselines but not position 9, the report says the gain is only "newcomers land low on page one".
+
+## Design numbers and what we expect
+
+Filled from the worker notes at freeze time: see the section "Design numbers" below.

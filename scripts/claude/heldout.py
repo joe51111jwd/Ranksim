@@ -103,6 +103,32 @@ def t3_frame(rows: pd.DataFrame, cons: pd.DataFrame, day_a: str, day_b: str, sco
     return frame
 
 
+def t3_frame_pairs(rows: pd.DataFrame, cons: pd.DataFrame, day_a: str, day_b: str, call_flips) -> pd.DataFrame:
+    """Same table as t3_frame for a pair-level rule: call_flips(history, query, pairs, day_b) -> list[bool]."""
+    pairs = rs.flip_pairs(cons, day_a, day_b)
+    if pairs.empty:
+        return pairs
+    history = history_before(rows, day_b)
+    calls = []
+    for query, group in pairs.groupby("query", sort=True):
+        listed = list(zip(group["key_x"], group["key_y"], strict=True))
+        flags = call_flips(history, query, listed, day_b)
+        if len(flags) != len(listed):
+            raise AssertionError("pair rule returned the wrong number of calls")
+        calls.extend((query, key_x, key_y, bool(flag)) for (key_x, key_y), flag in zip(listed, flags, strict=True))
+    called = pd.DataFrame(calls, columns=["query", "key_x", "key_y", "calls_flip"])
+    frame = pairs.merge(called, on=["query", "key_x", "key_y"], how="left", validate="one_to_one")
+    frame["flipped"] = frame["flipped"].astype(bool)
+    frame["correct"] = (frame["calls_flip"] == frame["flipped"]).astype(int)
+    frame["persist_correct"] = (~frame["flipped"]).astype(int)
+    return frame
+
+
+# A flip-accuracy pass needs this many flipped pairs spread over this many queries.
+T3_MIN_FLIPS = 100
+T3_MIN_FLIP_QUERIES = 20
+
+
 def t3_summary(frame: pd.DataFrame) -> dict:
     flipped = frame[frame["flipped"]]
     steady = frame[~frame["flipped"]]
@@ -119,7 +145,14 @@ def t3_summary(frame: pd.DataFrame) -> dict:
         "all_pairs_diff": all_diff,
         "flip_calls": int(len(called)),
         "flip_call_precision": m.bootstrap_rate(called.assign(hit=called["flipped"].astype(int)), "hit") if len(called) else None,
-        "goal_criterion_pass": bool(flip_acc["lo"] is not None and flip_acc["lo"] > 0.5),
+        "flip_queries": int(flipped["query"].nunique()),
+        "big_enough": bool(len(flipped) >= T3_MIN_FLIPS and flipped["query"].nunique() >= T3_MIN_FLIP_QUERIES),
+        "goal_criterion_pass": bool(
+            len(flipped) >= T3_MIN_FLIPS
+            and flipped["query"].nunique() >= T3_MIN_FLIP_QUERIES
+            and flip_acc["lo"] is not None
+            and flip_acc["lo"] > 0.5
+        ),
         "guard_pass": bool(all_diff["diff"] is not None and all_diff["diff"] >= 0),
     }
 

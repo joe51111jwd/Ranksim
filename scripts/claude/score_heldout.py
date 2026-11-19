@@ -111,19 +111,26 @@ def _print_t3(name: str, summary: dict) -> None:
         print(f"    flip call precision {m.fmt_rate(summary['flip_call_precision'])}")
 
 
+T3_SCORERS = ("A", "B")
+
+
+def _t3_frame(scorer: str, rows: pd.DataFrame, cons: pd.DataFrame, day_a: str, day_b: str) -> pd.DataFrame:
+    if scorer == "A":
+        from scripts.claude import t3_movers
+
+        return ho.t3_frame(rows, cons, day_a, day_b, t3_movers.score_urls)
+    from scripts.claude import t3_contested
+
+    return ho.t3_frame_pairs(rows, cons, day_a, day_b, t3_contested.call_flips)
+
+
 def score_t3(day_a: str, day_b: str) -> dict:
+    """Score both frozen scorers: A (pull-majority order) and B (a contested pair flips)."""
     if day_b < FIRST_HELDOUT_DAY:
         raise SystemExit("Not a held-out day.")
     manifest = require_frozen("t3")
-    from scripts.claude import t3_movers
-
     rows, cons, groups = _load(day_b)
-    frame = ho.t3_frame(rows, cons, day_a, day_b, t3_movers.score_urls)
-    if frame.empty:
-        raise SystemExit(f"No pairs to score on {day_a} -> {day_b}.")
-    frame["grp"] = frame["query"].map(groups)
     OUT.mkdir(parents=True, exist_ok=True)
-    frame.to_csv(OUT / f"t3-{day_a}_{day_b}-pairs.csv", index=False)
     report = {
         "label": "PREDICTED",
         "target": "t3",
@@ -131,13 +138,23 @@ def score_t3(day_a: str, day_b: str) -> dict:
         "day_b": day_b,
         "gap_days": rs.calendar_gap(day_a, day_b),
         "manifest_frozen_at": manifest.get("frozen_at_utc"),
-        "slices": {"all": ho.t3_summary(frame)},
+        "scorers": {},
     }
     print(f"T3 held-out transition {day_a} -> {day_b} (PREDICTED)")
-    _print_t3("all", report["slices"]["all"])
-    for group, part in frame.groupby("grp"):
-        report["slices"][group] = ho.t3_summary(part)
-        _print_t3(group, report["slices"][group])
+    for scorer in T3_SCORERS:
+        frame = _t3_frame(scorer, rows, cons, day_a, day_b)
+        if frame.empty:
+            raise SystemExit(f"No pairs to score on {day_a} -> {day_b}.")
+        frame["grp"] = frame["query"].map(groups)
+        frame["scorer"] = scorer
+        frame.to_csv(OUT / f"t3{scorer}-{day_a}_{day_b}-pairs.csv", index=False)
+        slices = {"all": ho.t3_summary(frame)}
+        print(f" scorer {scorer}")
+        _print_t3("all", slices["all"])
+        for group, part in frame.groupby("grp"):
+            slices[group] = ho.t3_summary(part)
+            _print_t3(group, slices[group])
+        report["scorers"][scorer] = slices
     (OUT / f"t3-{day_a}_{day_b}.json").write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
     return report
 
@@ -153,16 +170,19 @@ def pooled() -> dict:
         for name, part in _t1_slices(frame).items():
             report["t1"]["slices"][name] = ho.t1_summary(part)
             _print_t1(name, report["t1"]["slices"][name])
-    t3_files = sorted(OUT.glob("t3-*-pairs.csv"))
-    if t3_files:
+    for scorer in T3_SCORERS:
+        t3_files = sorted(OUT.glob(f"t3{scorer}-*-pairs.csv"))
+        if not t3_files:
+            continue
         frame = pd.concat([pd.read_csv(path) for path in t3_files], ignore_index=True)
         consecutive = frame[(pd.to_datetime(frame["day_b"]) - pd.to_datetime(frame["day_a"])).dt.days == 1]
-        report["t3"] = {"transitions": sorted({f"{a}->{b}" for a, b in zip(frame["day_a"], frame["day_b"], strict=True)}), "slices": {}}
-        print(f"T3 pooled over {report['t3']['transitions']} (PREDICTED)")
+        block = {"transitions": sorted({f"{a}->{b}" for a, b in zip(frame["day_a"], frame["day_b"], strict=True)}), "slices": {}}
+        print(f"T3 scorer {scorer} pooled over {block['transitions']} (PREDICTED)")
         for name, part in (("consecutive_days", consecutive), ("all_transitions", frame)):
             if len(part):
-                report["t3"]["slices"][name] = ho.t3_summary(part)
-                _print_t3(name, report["t3"]["slices"][name])
+                block["slices"][name] = ho.t3_summary(part)
+                _print_t3(name, block["slices"][name])
+        report[f"t3{scorer}"] = block
     (OUT / "pooled.json").write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
     return report
 

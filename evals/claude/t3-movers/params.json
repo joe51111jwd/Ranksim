@@ -1,0 +1,12 @@
+{
+  "name": "t3-kemeny-pullmajority-v1",
+  "target": "kemeny",
+  "prev_weight": 0.1,
+  "prev_half_life": 2.0,
+  "margin": 0.0,
+  "deep_as_pull": false,
+  "convention": "lower score = predicted better day_b rank; scores are PREDICTED",
+  "chosen_on": "design data only (snapshot days <= 2026-11-17), see evals/claude/t3-movers/notes.md",
+  "prev_weight_note": "Earlier days break exact day_a ties only. A day_a pull moves a pair's weighted margin by 0.5 or 0, an earlier pull by at most 0.5 * its weight; prev_cap 0.9 keeps the earlier total below 1, so a strict day_a majority always wins. 0.1 rather than 0.001 so an earlier-day margin beats the 1e-3 consensus tie-break in the Kemeny objective.",
+  "prev_cap": 0.9
+}

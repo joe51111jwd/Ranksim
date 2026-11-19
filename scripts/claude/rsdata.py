@@ -30,7 +30,7 @@ DESIGN_MAX_DATE = "2026-11-17"
 _SKIP_SOURCES = ("smartcrew-index-deep:2026-11-16",)
 _DEEP_SUFFIX = ":abspos"
 # A different query list pulled once for keyword research. Not part of any day series.
-_SKIP_PREFIXES = ("keyword-sample:",)
+_SKIP_PREFIXES = ("keyword-sample:", "claude-smoke:")
 
 
 def connect(db: Path | str = DB) -> sqlite3.Connection:

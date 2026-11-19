@@ -2,7 +2,7 @@
 
 Branch `claude/goal-ranksim-works`. Brief: `GOAL.md`. Every model number below is PREDICTED and comes from a script in `scripts/claude/`. Real Google positions come from Serper and are labeled REAL or "truth".
 
-Status: IN PROGRESS. This file is updated after every meaningful experiment. The final report and the plain-English summary go at the bottom when the run ends.
+Status: IN PROGRESS (round 2 started Nov 19, 14:20 ET). This file is updated after every meaningful experiment. The final report and the plain-English summary go at the bottom when the run ends.
 
 ## 0. Ground rules used in this run
 
@@ -114,3 +114,17 @@ Script `scripts/claude/t2_counterfactual.py`, output `evals/claude/t2-edits/coun
 | Higher page given the lower page's title, H1, headings and body: score goes down | 462/1440 (0.321) [0.279, 0.363] |
 
 History features carry 94% of the ranker's gain and on-page content 3.3%. It cannot tell which of two versions of a page is better. That is the central product gap: nothing in the current model responds to an edit.
+
+## 4. Round 2 (started Nov 19, 14:20 ET): research, theory, build, held-out test, repeat
+
+Round 2 brief: `GOAL.md`, section "Round 2". The order of work is research, then a written theory (`evals/claude/theory.md`), then a reviewer attack on the theory, then the build, then a frozen held-out test. Each loop is logged below with its theory, what was built, the held-out result, and why it failed or passed.
+
+### 4.0 Round 1 freeze and today's data (Nov 19, 14:20 to 14:45 ET). Done.
+
+- The three round 1 preregistrations are frozen with sha256 manifests in commit `4c8b557`. The predictor files are byte-identical to commit `e91637d`, which was pushed at 08:27 ET on Nov 19. No held-out day had been read at the freeze.
+- A fact found at the start of round 2: the earlier team's daily collector pulled the original 30 searches on Nov 19 between 09:38 and 10:51 ET (source `daily:2026-11-19`, 831 rows, the third pull stopped early). That was after `e91637d` was pushed and before this run wrote any "written before the pull" file. Each preregistration has a dated addendum that says so. Nov 19 for the original 30 is scored as pulled, like Nov 18.
+- The frozen predictors' answers for Nov 19 were written and pushed before this run pulled anything (`evals/claude/ahead/ahead-2026-11-19.json.gz`, sha256 `b3e5d229...`).
+- This run pulls the 70 added searches three times on Nov 19 (14:38, about 15:12, about 15:46 ET), 70 credits each. Serper balance before: 1,101. The raw responses are in the append-only store and in `evals/claude/serp/2026-11-19/`.
+- Tests at the start of round 2: 485 passed, 6 failed. The 6 are the same DNS failures in `tests/test_layered_fetch.py` as before.
+- Held-out days are still unread. Nothing dated Nov 18 or later is scored until the round 2 loop 1 predictors are frozen too, so both rounds are scored on days neither has seen.
+

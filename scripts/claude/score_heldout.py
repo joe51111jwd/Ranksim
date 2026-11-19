@@ -55,6 +55,62 @@ def require_frozen(target: str) -> dict:
     return manifest
 
 
+def check_ahead_t1(frame: pd.DataFrame, day: str, payload: dict | None = None) -> dict:
+    """Compare scored Target 1 predictions with the file written before the day was pulled."""
+    from scripts.claude import predict_ahead
+
+    payload = payload if payload is not None else predict_ahead.load(day)
+    if payload is None:
+        return {"ahead_file": False}
+    checked = mismatches = 0
+    for row in frame.itertuples(index=False):
+        block = payload["t1"].get(row.query)
+        if block is None or block["prev_day"] != row.prev_day:
+            continue
+        if row.klass == "new":
+            expected = block["new_by_site"].get(row.site, block["new_by_site"][predict_ahead.UNSEEN_SITE])
+        else:
+            expected = block["reentrant_by_key"].get(row.key)
+            if expected is None:
+                continue
+        checked += 1
+        mismatches += int(int(expected) != int(row.pred))
+    if mismatches:
+        raise SystemExit(f"{mismatches} Target 1 predictions differ from the file written before the pull.")
+    return {"ahead_file": True, "checked": checked, "rows": int(len(frame)), "mismatches": 0}
+
+
+def check_ahead_t3(frame: pd.DataFrame, scorer: str, day_b: str, payload: dict | None = None) -> dict:
+    """Compare scored Target 3 flip calls with the file written before the day was pulled."""
+    from scripts.claude import predict_ahead
+
+    payload = payload if payload is not None else predict_ahead.load(day_b)
+    if payload is None:
+        return {"ahead_file": False}
+    checked = mismatches = 0
+    lookups: dict[str, dict] = {}
+    for row in frame.itertuples(index=False):
+        block = payload["t3"].get(row.query)
+        if block is None or block["day_a"] != row.day_a:
+            continue
+        if scorer == "A":
+            scores = block["scores_a"]
+            if row.key_x not in scores or row.key_y not in scores:
+                continue
+            expected = scores[row.key_y] < scores[row.key_x]
+        else:
+            if row.query not in lookups:
+                lookups[row.query] = {(x, y): bool(flag) for x, y, flag in block["flips_b"]}
+            if (row.key_x, row.key_y) not in lookups[row.query]:
+                continue
+            expected = lookups[row.query][(row.key_x, row.key_y)]
+        checked += 1
+        mismatches += int(bool(expected) != bool(row.calls_flip))
+    if mismatches:
+        raise SystemExit(f"{mismatches} Target 3 calls differ from the file written before the pull.")
+    return {"ahead_file": True, "checked": checked, "pairs": int(len(frame)), "mismatches": 0}
+
+
 def _load(day: str) -> tuple[pd.DataFrame, pd.DataFrame, dict[str, str]]:
     rows = rs.load_rows(day)
     cons = rs.consensus_table(rows)
@@ -98,7 +154,9 @@ def score_t1(day: str) -> dict:
     OUT.mkdir(parents=True, exist_ok=True)
     frame.to_csv(OUT / f"t1-{day}-rows.csv", index=False)
     report = {"label": "PREDICTED", "target": "t1", "day": day, "manifest_frozen_at": manifest.get("frozen_at_utc"), "slices": {}}
+    report["ahead_check"] = check_ahead_t1(frame, day)
     print(f"T1 held-out day {day} (PREDICTED)")
+    print(f"  written-before-the-pull check: {json.dumps(report['ahead_check'])}")
     for name, part in _t1_slices(frame).items():
         report["slices"][name] = ho.t1_summary(part)
         _print_t1(name, report["slices"][name])
@@ -156,7 +214,9 @@ def score_t3(day_a: str, day_b: str) -> dict:
         frame["scorer"] = scorer
         frame.to_csv(OUT / f"t3{scorer}-{day_a}_{day_b}-pairs.csv", index=False)
         slices = {"all": ho.t3_summary(frame)}
+        slices["ahead_check"] = check_ahead_t3(frame, scorer, day_b)
         print(f" scorer {scorer}")
+        print(f"  written-before-the-pull check: {json.dumps(slices['ahead_check'])}")
         _print_t3("all", slices["all"])
         for group, part in frame.groupby("grp"):
             slices[group] = ho.t3_summary(part)

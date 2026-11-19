@@ -67,3 +67,50 @@ What this says:
 - Scorer B meets the brief's literal wording on design data, but it is 10 to 16 points worse than persistence over all pairs. It is a volatility flag, not an order predictor. Reversing yesterday's order would score 100% on the same wording.
 
 Decision: both scorers are frozen and scored on held-out days (`evals/preregistered/claude-t3-movers/`). Target 3 counts as passed only if one scorer meets the brief's wording and is no worse than persistence on all pairs. Expected result, stated before scoring: A fails the wording, B fails the guard.
+
+### 3.3 Target 2 design: edit direction (design days only, not a test). Done.
+
+Worker notes: `evals/claude/t2-edits/notes.md`. Scripts: `scripts/claude/t2_changes.py`, `t2_dataset.py`, `t2_direction.py`, `t2_eval.py`. My own scoring code reproduces the worker's numbers on the changed rows.
+
+How many real changed pages exist through Nov 17:
+
+- 303 same-method fetch pairs of the same URL on different days. 262 are usable (both versions have at least 50 words of main text).
+- 13 material changes under the frozen rule (title or H1 changed, or a body edit of at least 250 tokens and 2%). The rule flags 0 of 54 same-day re-fetches, so it does not fire on rotating widgets and dates.
+- 28 (search, URL) rows with a material change. 17 of them moved (7 up, 10 down). They come from 10 URLs on 4 sites. 8 of the 13 changed pages are the client's own site.
+- The brief asks for n of 40 or more. Design data has 17.
+
+Direction accuracy, PREDICTED, forward in time:
+
+| Rows | Larger class | Position-only rule (never reads the page) | Frozen rule (position plus content diff) | Content diff alone |
+| --- | --- | --- | --- | --- |
+| 17 changed and moved | 10/17 (0.588) | 12/17 (0.706) [0.462, 0.895] | 11/17 (0.647) [0.438, 0.846] | 10/17 (0.588) |
+| 437 unchanged and moved | 265/437 (0.606) | 303/437 (0.693) [0.647, 0.736] | same | n/a |
+
+- Frozen rule minus position-only on the 17 changed rows: -0.059 [-0.222, +0.143]. The content step fired on 7 rows and was right on 4.
+- Position-only accuracy on changed rows minus unchanged rows: +0.007 [-0.224, +0.222]. Changed pages are no more predictable than unchanged ones.
+- A rule that never looks at the page already clears the brief's literal bar (beats the larger class, lower bound above 0.55 on all moved rows). Most of that edge is the boundary: a URL outside the top 10 can only go up and a URL at 1 can only go down. Inside the top 10 it is 0.664 against 0.651 for "always down".
+- So the preregistration adds a guard: Target 2 only counts as passed when the content-aware rule beats the position-only rule on the same rows.
+
+Yield: 0.018 material changes per URL per day (0.008 without the client's site). The current tracked set gives about 16 changed-and-moved rows a week. Reaching n of 40 takes about 2.5 weeks. Showing that content beats position takes 8 to 70 weeks on the current set, depending on effect size, and about 6.6 times less if all roughly 650 URLs of the 100 searches are re-fetched daily.
+
+### 3.4 Could the client's own edits fill the gap? No. Done.
+
+Scout note: `evals/claude/t2-edits/smartcrew_scout.md` (read-only, days through Nov 17).
+
+- The SmartCrew site repo on this machine has exact before and after content for every edit, and 68 commits touched page copy between Oct 25 and Nov 18.
+- But only about 12 (search, page) rows have a material edit, at least 20 hours before the next pull, a rank before and after, and a move. They sit on 4 pages and 2 edit days. 10 of the 12 are a page entering or leaving the top 10.
+- Edits ship in sitewide batches during a Google core update (Nov 10 to about Nov 24). Rows with no edit moved as often (85%) as rows with one (84%). A model that always says "up" would win.
+- One fact for the earlier team: SmartCrew PR 41 was merged and deployed on Nov 17 at 22:05 ET. The PR 41 draft ledger in this repo still says "not merged". This run does not touch that ledger.
+
+### 3.5 Counterfactual pairwise diagnostic. DIAGNOSTIC ONLY, not proof. Done.
+
+Script `scripts/claude/t2_counterfactual.py`, output `evals/claude/t2-edits/counterfactual.json`. The frozen ranker `model-next.json` (hash checked) on the 70 added searches, which it was not trained on (training files re-hashed and checked). 1,440 pairs of pages that both rank and both have stored HTML. PREDICTED.
+
+| Check | Result |
+| --- | --- |
+| Ranker puts the higher page first | 842/1440 (0.585) [0.549, 0.621] |
+| Lower page given the higher page's title, H1 and headings: score goes up | 450/1440 (0.312) [0.263, 0.358]. Unchanged in 63% of pairs |
+| Lower page given the higher page's title, H1, headings and body: score goes up | 714/1440 (0.496) [0.456, 0.537] |
+| Higher page given the lower page's title, H1, headings and body: score goes down | 462/1440 (0.321) [0.279, 0.363] |
+
+History features carry 94% of the ranker's gain and on-page content 3.3%. It cannot tell which of two versions of a page is better. That is the central product gap: nothing in the current model responds to an edit.

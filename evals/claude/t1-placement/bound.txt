@@ -1,0 +1,15 @@
+design o30+rev new cells=27 | err3: in-sample cell optimum 264/303 (0.871) vs c7 248 (0.818) vs dp 170 | band3: in-sample cell optimum 169/303 (0.558) vs c7 103 (0.340) vs dp 90
+   2026-11-09 n=97 err3 in-sample optimum 89 vs c7 81 diff +0.082 [+0.029, +0.134]
+   2026-11-11 n=65 err3 in-sample optimum 59 vs c7 53 diff +0.092 [+0.014, +0.181]
+   2026-11-13 n=68 err3 in-sample optimum 59 vs c7 53 diff +0.088 [+0.022, +0.174]
+   2026-11-16 n=30 err3 in-sample optimum 28 vs c7 25 diff +0.100 [+0.000, +0.188]
+   2026-11-17 n=43 err3 in-sample optimum 39 vs c7 36 diff +0.070 [-0.100, +0.203]
+design o30+rev reentrant cells=38 | err3: in-sample cell optimum 125/132 (0.947) vs c7 101 (0.765) vs dp 80 | band3: in-sample cell optimum 104/132 (0.788) vs c7 38 (0.288) vs dp 39
+   2026-11-11 n=23 err3 in-sample optimum 23 vs c7 15 diff +0.348 [+0.133, +0.519]
+   2026-11-13 n=36 err3 in-sample optimum 34 vs c7 28 diff +0.167 [+0.057, +0.280]
+   2026-11-16 n=32 err3 in-sample optimum 31 vs c7 24 diff +0.219 [+0.000, +0.400]
+   2026-11-17 n=41 err3 in-sample optimum 40 vs c7 34 diff +0.146 [+0.054, +0.256]
+emu new cells=12 | err3: in-sample cell optimum 18/19 (0.947) vs c7 15 (0.789) vs dp 16 | band3: in-sample cell optimum 17/19 (0.895) vs c7 7 (0.368) vs dp 9
+   emu n=19 err3 in-sample optimum 18 vs c7 15 diff +0.158 [+0.000, +0.294]
+emu reentrant cells=19 | err3: in-sample cell optimum 33/33 (1.000) vs c7 27 (0.818) vs dp 13 | band3: in-sample cell optimum 27/33 (0.818) vs c7 10 (0.303) vs dp 8
+   emu n=33 err3 in-sample optimum 33 vs c7 27 diff +0.182 [+0.071, +0.296]

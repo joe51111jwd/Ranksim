@@ -33,7 +33,9 @@ Rows are the consensus top-10 rows of the outcome day, split by what the stored 
 A fixed rule with no learned weights. It reads only days before the outcome day, plus the row's search text and URL.
 
 - New URL: the best consensus position its site held on this search yesterday. If the site was not in yesterday's top 10, the site's position in the deep list. If neither, position 9. The result is clipped to 2 through 9.
-- Reentrant URL: its own position in the deep list. If it is not there, its last top-10 position. If neither, position 7. The result is clipped to 3 through 7.
+- Reentrant URL: its own position in the deep list. If it is not there, its last top-10 position. If neither, position 7. The result is clipped to 2 through 9.
+
+The only fitted number is the default 9 for a new URL. It was the best single band3 position on every prefix of the design days. The clip costs nothing: scored rows always sit at 1 through 10, so a prediction of 1 covers the same band as 2, and 10 or 11 cover less than 9.
 
 ## Metrics
 
@@ -56,6 +58,26 @@ On the strict-new rows, on band3:
 - **Pooled pass (the lenient reading).** Pooled over all held-out days, at least two days and at least 40 rows from at least 10 searches, the model minus the best baseline has a lower bound above 0.
 - **Target 1 passes** when either holds. The report says which one, gives both, gives the err3 reading, and gives the model minus the position-9 reference. If the model beats the brief's baselines but not position 9, the report says the gain is only "newcomers land low on page one".
 
-## Design numbers and what we expect
+## Design numbers (days through 2026-11-17, not a test)
 
-Filled from the worker notes at freeze time: see the section "Design numbers" below.
+From `evals/claude/t1-placement/notes.md`, reproduced with `scripts/claude/heldout.py`. band3, model minus the best of the brief's three baselines on the same rows. The rule family was chosen after looking at every design slice, so these numbers lean high.
+
+| Slice | Rows | Model | Best baseline | Difference | Model minus position 9 |
+| --- | ---: | --- | --- | --- | --- |
+| New, original 30, Nov 16 and 17 (three-pull truth) | 35 | 18 (0.514) | domain prior 11 | +0.200 [+0.057, +0.361] | -0.029 [-0.257, +0.175] |
+| New, strict, Nov 17 only | 5 | 5 | domain prior 3 | +0.400 [+0.000, +0.800] | +0.600 |
+| New, strict, emulation of the added searches (history cut to one pull plus the deep list) | 19 | 16 (0.842) | domain prior 9 | +0.368 [+0.176, +0.571] | +0.316 [+0.062, +0.545] |
+| New, every design slice pooled (mostly single-pull days with no deep list) | 303 | 148 (0.488) | position 7: 103 | +0.149 [+0.075, +0.232] | +0.056 [+0.009, +0.104] |
+| Reentrant, every design slice pooled | 132 | 81 (0.614) | domain prior 39 | +0.318 [+0.186, +0.447] | +0.174 [+0.000, +0.331] |
+
+Under err3 the same predictions lose to position 7 on new rows (pooled -0.092 [-0.136, -0.043]). That is built in: with the truth between 1 and 10, a prediction of 7 covers seven positions and a prediction of 9 covers five.
+
+Strict-new rows are rare. Design data has 5 real ones (Nov 17) and 19 emulated ones scored against the same Nov 17 outcome.
+
+## What we expect (PREDICTED, stated before scoring)
+
+- Nov 18 will have about 5 strict-new rows, too few to count as a day.
+- Nov 19 is the first look at the 70 added searches after a three-day gap. If it has 30 or more strict-new rows, the worker's simulation puts the chance of a per-day pass between 0.40 and 0.82. Later days will again have few strict-new rows, because Nov 19 itself becomes history.
+- So a per-day pass on two days is unlikely for lack of rows, and a pooled pass is possible.
+- Most of any gain over the brief's baselines will come from predicting 9 instead of 7 or 11. The gain over position 9 is expected to be small.
+- The err3 reading is expected to fail.

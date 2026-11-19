@@ -1,10 +1,12 @@
 """Freeze and verify the files a preregistered test depends on.
 
   python scripts/claude/freeze.py write  evals/preregistered/claude-<name> file1 file2 ...
+  python scripts/claude/freeze.py closure evals/preregistered/claude-<name> module1 module2 -- extra_file ...
   python scripts/claude/freeze.py verify evals/preregistered/claude-<name>
 
 `write` records the sha256 of every listed file (paths relative to the repo root)
-in <dir>/manifest.json. `verify` recomputes them and exits non-zero on any mismatch.
+in <dir>/manifest.json. `closure` does the same for every repo file the named
+modules import, plus the extra files, so a helper cannot change unnoticed. `verify` recomputes them and exits non-zero on any mismatch.
 A scoring script calls `verify_manifest` before it opens a held-out day.
 """
 
@@ -52,9 +54,36 @@ def verify_manifest(directory: Path) -> dict:
     return manifest
 
 
+def repo_files_for(modules: list[str]) -> list[str]:
+    """Repo-relative paths of every repo file that importing ``modules`` loads (their full import closure)."""
+    import importlib
+    import sys
+
+    if str(ROOT) not in sys.path:
+        sys.path.insert(0, str(ROOT))
+    for name in modules:
+        importlib.import_module(name)
+    found = set()
+    for module in list(sys.modules.values()):
+        path = getattr(module, "__file__", None)
+        if not path:
+            continue
+        resolved = Path(path).resolve()
+        if ROOT in resolved.parents and ".venv" not in resolved.parts:
+            found.add(str(resolved.relative_to(ROOT)))
+    return sorted(found)
+
+
 def main(argv: list[str]) -> int:
     if len(argv) >= 2 and argv[0] == "write":
         manifest = write_manifest(ROOT / argv[1], argv[2:])
+        print(json.dumps(manifest, indent=2))
+        return 0
+    if len(argv) >= 3 and argv[0] == "closure":
+        # freeze.py closure <dir> <module> [<module> ...] [-- extra files]
+        split = argv.index("--") if "--" in argv else len(argv)
+        files = sorted(set(repo_files_for(argv[2:split])) | set(argv[split + 1 :]))
+        manifest = write_manifest(ROOT / argv[1], files)
         print(json.dumps(manifest, indent=2))
         return 0
     if len(argv) == 2 and argv[0] == "verify":

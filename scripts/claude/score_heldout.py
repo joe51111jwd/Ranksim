@@ -190,6 +190,50 @@ def _t2_block(part: pd.DataFrame) -> dict:
     return block
 
 
+def _changed_placement(material_rows: pd.DataFrame, cons: pd.DataFrame) -> dict:
+    """Target 1's "content changed" rows: pages that ranked yesterday and changed materially.
+
+    The prediction is yesterday's position (persistence). It is compared with the brief's
+    three baselines. This table is descriptive and never enters a pass decision.
+    """
+    days = rs.query_days(cons)
+    by_query_day = {key: group for key, group in cons.groupby(["query", "day"])}
+    records = []
+    for row in material_rows.drop_duplicates(["query", "key", "serp_day_b"]).itertuples(index=False):
+        prev = rs.previous_day(days.get(row.query, []), row.serp_day_b)
+        if prev is None:
+            continue
+        before = by_query_day[(row.query, prev)]
+        before = before[before["cons"] <= 10]
+        prev_pos = dict(zip(before["key"], before["cons"], strict=True))
+        if row.key not in prev_pos:
+            continue
+        today = by_query_day.get((row.query, row.serp_day_b))
+        truth = rs.ABSENT
+        if today is not None:
+            found = today[(today["key"] == row.key) & (today["cons"] <= 10)]
+            if len(found):
+                truth = int(found["cons"].iloc[0])
+        same_site = before[before["site"] == row.site]
+        preds = {"persistence": int(prev_pos[row.key]), "domain_prior": int(same_site["cons"].min()), "const7": 7, "const11": 11}
+        record = {"query": row.query, "key": row.key, "day": row.serp_day_b, "truth": truth}
+        for name, value in preds.items():
+            record[f"band3_{name}"] = int(m.band3_hit(value, truth))
+            record[f"err3_{name}"] = int(m.err3_hit(value, truth))
+        records.append(record)
+    frame = pd.DataFrame.from_records(records)
+    out: dict = {"n": int(len(frame))}
+    if frame.empty:
+        return out
+    for metric in ("band3", "err3"):
+        block = {name: m.bootstrap_rate(frame, f"{metric}_{name}") for name in ("persistence", "domain_prior", "const7", "const11")}
+        best = max(("domain_prior", "const7", "const11"), key=lambda name: (block[name]["rate"], name))
+        block["best_brief_baseline"] = best
+        block["persistence_minus_best_brief_baseline"] = m.bootstrap_difference(frame, f"{metric}_persistence", f"{metric}_{best}")
+        out[metric] = block
+    return out
+
+
 def score_t2(max_date: str) -> dict:
     """Edit direction on change rows whose outcome day is held out. One run covers every pair through max_date."""
     if max_date < FIRST_HELDOUT_DAY:
@@ -206,7 +250,6 @@ def score_t2(max_date: str) -> dict:
     OUT.mkdir(parents=True, exist_ok=True)
     keep = [name for name in rows.columns if not name.startswith("headings_")]
     rows[keep].to_csv(OUT / f"t2-{max_date}-rows.csv", index=False)
-    design_queries = set(rs.load_rows(rs.DESIGN_MAX_DATE)["query"])
     report = {
         "label": "PREDICTED",
         "target": "t2",
@@ -232,6 +275,8 @@ def score_t2(max_date: str) -> dict:
             "control_moved_top10_at_a": _t2_block(control[control["in_top10_a"].astype(bool)]),
         },
     }
+    held_cons = rs.consensus_table(rs.load_rows(max_date))
+    report["t1_changed_rows_placement"] = _changed_placement(usable[usable["material"].astype(bool)], held_cons)
     main_block = report["slices"]["material_moved"]
     enough = main_block["n"] >= T2_MIN_ROWS
     if main_block["n"]:
@@ -259,6 +304,13 @@ def score_t2(max_date: str) -> dict:
         for method in T2_METHODS:
             print(f"    {method}: {m.fmt_rate(block[method])}")
         print(f"    both minus position-only {m.fmt_diff(block['both_minus_position'])}; both minus majority {m.fmt_diff(block['both_minus_majority'])}")
+    changed = report["t1_changed_rows_placement"]
+    print(f"  Target 1 changed rows (ranked yesterday, changed materially): n={changed['n']}")
+    for metric in ("band3", "err3"):
+        if metric in changed:
+            block = changed[metric]
+            parts = ", ".join(f"{name} {m.fmt_rate(block[name])}" for name in ("persistence", "domain_prior", "const7", "const11"))
+            print(f"    {metric}: {parts}; persistence minus {block['best_brief_baseline']} {m.fmt_diff(block['persistence_minus_best_brief_baseline'])}")
     print(f"  decision: {json.dumps(report['decision'])}")
     (OUT / f"t2-{max_date}.json").write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
     return report

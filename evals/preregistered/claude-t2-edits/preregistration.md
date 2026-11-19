@@ -14,6 +14,7 @@ The sha256 of every file below is in `manifest.json` in this folder. `scripts/cl
 - `scripts/claude/t2_common.py`, `scripts/claude/t2_dataset.py` (fetch pairing, alignment to pull days, row building)
 - `scripts/claude/t2_direction.py` and `evals/claude/t2-edits/params.json` (the direction rule)
 - `scripts/claude/rsdata.py`, `scripts/claude/metrics.py`, `scripts/claude/score_heldout.py`
+- every other repo file those modules import, including the page text extractor `src/aeo/crawl/extract.py`. The manifest lists them all, with the Python, numpy and pandas versions.
 
 Nothing is refit on a held-out day.
 
@@ -22,7 +23,7 @@ Nothing is refit on a held-out day.
 One row per (search, URL, fetch pair A to B). A and B are consecutive days on which the URL has a usable plain fetch by the same method. The position at A is the search's consensus on the latest pulled day in [A minus 1, A]. The position at B is the consensus on the earliest pulled day in [B, B plus 1]. Out of the top 10 counts as 11. A row "moved" when the two positions differ.
 
 - **Material change.** Both versions extract at least 50 words of main text, and one of: the title changed; the H1 changed; at least 250 edited tokens that are also at least 2% of the two versions' tokens; or the word count changed by at least 25% and at least 150 words. Digits are masked. Headings, dates, schema and link counts never make a change material on their own. On design data this flagged 0 of 54 same-day re-fetches.
-- **Held-out rows.** Rows whose position at B comes from 2026-11-18 or later. The "after" pages come from the free re-fetch pass of 2026-11-19 03:28 to 04:00 ET and any later pass. Each pass fetches a URL list fixed before that day's pulls: every URL seen in a top-10 pull in the previous five days. That removes the selection problem in the design data, where a page was only re-fetched when it was still ranking.
+- **Held-out rows.** Rows on the 100 SmartCrew searches (the original 30 and the 70 added on 2026-11-16) whose position at B comes from 2026-11-18 or later. The "after" pages come from the free re-fetch pass of 2026-11-19 03:28 to 04:00 ET and any later pass. Each pass fetches a URL list fixed before that day's pulls: every URL seen in a top-10 pull in the previous five days. That removes the selection problem in the design data, where a page was only re-fetched when it was still ranking.
 - **Test rows.** Held-out rows with a material change and a move. **Control rows**: held-out rows with a move and no material change.
 
 ## The direction rule (PREDICTED), from `params.json`

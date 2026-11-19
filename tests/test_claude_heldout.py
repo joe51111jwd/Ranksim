@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import json
 
-import pandas as pd
 import pytest
+
+pd = pytest.importorskip("pandas")
 
 from scripts.claude import freeze
 from scripts.claude import heldout as ho
@@ -88,3 +89,70 @@ def test_manifest_detects_a_changed_file(tmp_path, monkeypatch):
     target.write_text(json.dumps({"weight": 2}), encoding="utf-8")
     with pytest.raises(SystemExit):
         freeze.verify_manifest(tmp_path / "prereg")
+
+
+def test_scorer_b_calls_a_flip_only_when_a_pull_showed_the_reverse_order():
+    from scripts.claude import t3_contested
+
+    day = "2026-11-16"
+    records = (
+        [("q", day, f"{day}T08:00:00.000Z", 1, "https://b.com/", "m"), ("q", day, f"{day}T08:00:00.000Z", 2, "https://a.com/", "m")]
+        + [("q", day, f"{day}T21:00:00.000Z", 1, "https://a.com/", "e"), ("q", day, f"{day}T21:00:00.000Z", 2, "https://b.com/", "e"),
+           ("q", day, f"{day}T21:00:00.000Z", 3, "https://c.com/", "e")]
+    )
+    rows = _rows(records)
+    a, b, c, gone = "https://a.com/", "https://b.com/", "https://c.com/", "https://never.com/"
+    calls = t3_contested.call_flips(rows, "q", [(a, b), (a, c), (b, c), (c, gone), (gone, a)], "2026-11-17")
+    # the morning pull (another session) showed b above a; c was absent there (11) and a present, so a stays above c
+    # b above c in both pulls; c present vs never-seen url: no pull shows the reverse; never-seen vs a: a is above it in every pull
+    assert calls == [True, False, False, False, True]
+    with pytest.raises(AssertionError):
+        t3_contested.call_flips(rows, "q", [(a, b)], day)
+
+
+def test_query_bootstrap_matches_a_brute_force_reference():
+    import numpy as np
+
+    frame = pd.DataFrame({"query": list("aaabbcdddd"), "h": [1, 0, 1, 1, 1, 0, 0, 1, 0, 0], "b": [0, 0, 1, 1, 0, 0, 1, 0, 0, 0]})
+    got = m.bootstrap_rate(frame, "h", draws=500, seed=7)
+    diff = m.bootstrap_difference(frame, "h", "b", draws=500, seed=7)
+    groups = [part for _, part in frame.groupby("query", sort=True)]
+    rng = np.random.default_rng(7)
+    index = rng.integers(0, len(groups), size=(500, len(groups)))
+    rates, diffs = [], []
+    for draw in index:
+        picked = pd.concat([groups[i] for i in draw])
+        rates.append(picked["h"].mean())
+        diffs.append(picked["h"].mean() - picked["b"].mean())
+    assert got["rate"] == pytest.approx(0.5) and got["n"] == 10 and got["queries"] == 4
+    assert got["lo"] == pytest.approx(np.percentile(rates, 2.5)) and got["hi"] == pytest.approx(np.percentile(rates, 97.5))
+    assert diff["diff"] == pytest.approx(0.2)
+    assert diff["lo"] == pytest.approx(np.percentile(diffs, 2.5)) and diff["hi"] == pytest.approx(np.percentile(diffs, 97.5))
+    assert m.bootstrap_rate(frame.iloc[0:0], "h")["n"] == 0
+    assert m.bootstrap_difference(frame.iloc[0:0], "h", "b")["diff"] is None
+
+
+def test_pooled_keeps_the_decision_searches_and_consecutive_days(tmp_path, monkeypatch):
+    from scripts.claude import score_heldout as sh
+
+    monkeypatch.setattr(sh, "OUT", tmp_path)
+
+    def pairs(day_a, day_b, group, query, flipped, calls):
+        return pd.DataFrame(
+            {
+                "query": query, "day_a": day_a, "day_b": day_b, "key_x": [f"x{i}" for i in range(len(flipped))],
+                "key_y": [f"y{i}" for i in range(len(flipped))], "flipped": flipped, "calls_flip": calls,
+                "correct": [int(f == c) for f, c in zip(flipped, calls, strict=True)],
+                "persist_correct": [int(not f) for f in flipped], "grp": group, "scorer": "B",
+            }
+        )
+
+    pairs("2026-11-18", "2026-11-19", "o30", "q1", [True, False, False], [True, False, True]).to_csv(tmp_path / "t3B-2026-11-18_2026-11-19-pairs.csv", index=False)
+    pairs("2026-11-18", "2026-11-19", "rev", "r1", [True, True], [False, False]).to_csv(tmp_path / "t3B-2026-11-18_2026-11-19b-pairs.csv", index=False)
+    pairs("2026-11-16", "2026-11-19", "a70", "q2", [True, True], [True, True]).to_csv(tmp_path / "t3B-2026-11-16_2026-11-19-pairs.csv", index=False)
+    report = sh.pooled()
+    consecutive = report["t3B"]["slices"]["consecutive_days"]
+    assert consecutive["pairs"] == 3 and consecutive["flips"] == 1 and consecutive["flip_accuracy"]["hits"] == 1
+    assert report["t3B"]["slices"]["all_transitions"]["pairs"] == 5
+    assert report["t3B"]["decision"]["c1_brief_wording"] is False
+    assert report["t3_decision"] == {"scorers_tested": 1, "target3_pass": False}

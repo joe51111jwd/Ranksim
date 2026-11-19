@@ -11,7 +11,8 @@ Label: PREDICTED. Written 2026-11-19 before any day after 2026-11-17 was read. N
 The sha256 of every file below is in `manifest.json` in this folder. `scripts/claude/score_heldout.py` refuses to score when a hash differs, when the freeze is not committed, or when it is not pushed.
 
 - `scripts/claude/t1_placement.py` and `evals/claude/t1-placement/params.json` (the predictor)
-- `scripts/claude/rsdata.py`, `scripts/claude/metrics.py`, `scripts/claude/heldout.py`, `scripts/claude/score_heldout.py`
+- `scripts/claude/rsdata.py`, `scripts/claude/metrics.py`, `scripts/claude/heldout.py`, `scripts/claude/score_heldout.py`, `scripts/claude/predict_ahead.py`
+- every other repo file those modules import, including `src/aeo/ranksim/consensus.py`, `src/aeo/ranksim/site_history.py` and `src/aeo/crawl/urls.py`, which define the consensus median and which URLs count as the same URL. The manifest lists them all, with the Python, numpy and pandas versions.
 
 The predictor is not refit on a held-out day.
 
@@ -46,9 +47,13 @@ Baselines, fixed by the brief: the domain prior (the best consensus position of 
 
 Intervals: 95% query bootstrap, 2000 draws, seed 20261119, paired difference on the same rows.
 
-## Held-out days
+## Searches and held-out days
 
-2026-11-18 (pulled by the earlier team before this run, never read during design, original 30 searches) and every later day pulled in this run with a pull session for the 100 searches (2026-11-19, 2026-11-20, and 2026-11-21 if pulled). Every pulled day is scored and reported. None is dropped.
+The pass decision uses the 100 SmartCrew searches only: the original 30 and the 70 added on 2026-11-16. They are also the only searches with a deep list, so they are the only ones that can have strict-new rows. Other searches in the raw store are printed on their own line and never enter the decision.
+
+Held-out days: 2026-11-18 (pulled by the earlier team before this run, two or three pulls per search, never read during design, original 30 searches) and every later day pulled in this run for the 100 searches with three pulls per search (2026-11-19, 2026-11-20, and 2026-11-21 if pulled). Every pulled day is scored and reported. None is dropped. The scorer refuses to score a day of this run until all three pulls are in, and it does not overwrite a scored file.
+
+Before each day of this run is pulled, the predictor's answers for that day are written to `evals/claude/ahead/`, hashed, and pushed: for every search, the position a new URL from each known site would get, the position for a new URL from any other site, and the position for every URL that could re-enter. The scorer checks its predictions against that file.
 
 ## Pass rule
 

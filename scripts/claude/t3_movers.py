@@ -23,6 +23,23 @@ cannot leak day_b information into a score.
 
 Fitted parameters live in evals/claude/t3-movers/params.json and are loaded
 from there by default so the file can be frozen by sha256.
+
+THE FROZEN PATH (params target = "kemeny") does not use the formula above.
+It takes the query's day_a consensus top 10 and returns each URL's rank in the
+Kemeny order of weighted pairwise pull shares: every top-10 pull of day_a
+counts fully, pulls of earlier days count with a small decaying weight, and a
+1e-3 per-pair tie-break favours day_a's consensus order (alphabetical by key
+when consensus positions tie). A key outside day_a's top 10 gets cons_a + 0.5,
+and a key never seen gets 12. With more than 14 URLs in day_a's top 10 the
+exact search is skipped and the consensus order is returned unchanged.
+
+What the earlier-day weight can and cannot do. Pair by pair, the earlier days
+never change which side of one half a day_a share falls on (prev_cap keeps
+their total under one pull). But the Kemeny order is chosen over the whole
+list, so when day_a's pairwise majorities form a cycle one of them has to
+lose, and the earlier-day margins summed over several pairs can decide which.
+So "a strict day_a majority always wins" is NOT guaranteed, and the scorer can
+in rare cases reverse a pair that every day_a pull agreed on.
 """
 
 from __future__ import annotations
@@ -333,7 +350,8 @@ def _kemeny_order(items: list[str], pref: np.ndarray) -> list[str]:
     """Order maximizing sum of pref[i, j] over i placed above j. Exact DP over subsets (n <= 14)."""
     n = len(items)
     if n > 14:
-        raise ValueError("kemeny DP limited to 14 items")
+        # The exact search is 2^n. Past 14 items keep the input (consensus) order: no flip is called.
+        return list(items)
     full = (1 << n) - 1
     best = np.full(1 << n, -np.inf)
     choice = np.full(1 << n, -1, dtype=int)

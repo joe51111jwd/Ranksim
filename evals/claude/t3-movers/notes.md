@@ -202,6 +202,8 @@ Design numbers through the public `score_urls` API (one call per query and day_b
 It is the most accurate scorer I found on all pairs, and its precision stays above 0.5. It will
 almost surely fail the flip-accuracy half of the rule.
 
+Correction from the independent review (2026-11-19, before the freeze): the sentence "a strict day_a majority always wins" above holds pair by pair only. The Kemeny order is chosen over the whole list. When day_a's pairwise majorities form a cycle, one of them has to lose, and earlier-day margins summed over several pairs can decide which one. In rare cases the scorer reverses a pair that every day_a pull agreed on. The code was not changed for this. The description in `params.json`, the module docstring and the preregistration now say so. One code change was made: with more than 14 URLs in day_a's top 10 the exact search is skipped and the consensus order is kept, instead of raising an error. The design maximum is 11 URLs, so no design number changes.
+
 ## Held-out expectation
 
 - 17->18: day_a (Nov 17) has 3 pulls in one 75-minute session and no morning pull. 2-2 splits

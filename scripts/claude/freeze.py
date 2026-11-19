@@ -74,6 +74,19 @@ def repo_files_for(modules: list[str]) -> list[str]:
     return sorted(found)
 
 
+def library_versions() -> dict:
+    """Versions behind the bootstrap intervals and the consensus tables."""
+    import platform
+
+    found = {"python": platform.python_version()}
+    for name in ("numpy", "pandas"):
+        try:
+            found[name] = __import__(name).__version__
+        except ImportError:
+            found[name] = None
+    return found
+
+
 def main(argv: list[str]) -> int:
     if len(argv) >= 2 and argv[0] == "write":
         manifest = write_manifest(ROOT / argv[1], argv[2:])
@@ -83,7 +96,7 @@ def main(argv: list[str]) -> int:
         # freeze.py closure <dir> <module> [<module> ...] [-- extra files]
         split = argv.index("--") if "--" in argv else len(argv)
         files = sorted(set(repo_files_for(argv[2:split])) | set(argv[split + 1 :]))
-        manifest = write_manifest(ROOT / argv[1], files)
+        manifest = write_manifest(ROOT / argv[1], files, extra={"modules": argv[2:split], "versions": library_versions()})
         print(json.dumps(manifest, indent=2))
         return 0
     if len(argv) == 2 and argv[0] == "verify":

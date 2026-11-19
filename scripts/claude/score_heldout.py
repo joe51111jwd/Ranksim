@@ -36,6 +36,35 @@ PREREG = {
     "t3": ROOT / "evals/preregistered/claude-t3-movers",
 }
 FIRST_HELDOUT_DAY = "2026-11-18"
+# The pass decisions use the 100 SmartCrew searches only: the original 30 and the 70 added on Nov 16.
+# Other searches in the raw store (Revorion, ClockShark, the PR 41 baseline list) are reported apart.
+DECISION_GROUPS = ("o30", "a70")
+# Days pulled in this run have three pulls per search. Nov 18 was pulled earlier with two or three.
+FIRST_LEAD_PULLED_DAY = "2026-11-19"
+LEAD_PULLS_PER_DAY = 3
+
+
+def pull_counts(cons: pd.DataFrame, groups: dict[str, str], day: str) -> dict:
+    """How many pulls voted per decision-group search on a day."""
+    part = cons[(cons["day"] == day) & cons["query"].map(groups).isin(DECISION_GROUPS)]
+    per_query = part.groupby("query")["n_pulls"].max()
+    return {
+        "day": day,
+        "searches": int(len(per_query)),
+        "min_pulls": int(per_query.min()) if len(per_query) else 0,
+        "max_pulls": int(per_query.max()) if len(per_query) else 0,
+        "by_count": {str(int(key)): int(value) for key, value in per_query.value_counts().sort_index().items()},
+    }
+
+
+def require_complete(counts: dict, allow_incomplete: bool) -> None:
+    if counts["day"] >= FIRST_LEAD_PULLED_DAY and counts["min_pulls"] < LEAD_PULLS_PER_DAY and not allow_incomplete:
+        raise SystemExit(f"{counts['day']} has a search with fewer than {LEAD_PULLS_PER_DAY} pulls: {counts['by_count']}. Finish the pulls first.")
+
+
+def refuse_overwrite(path: Path, force: bool) -> None:
+    if path.exists() and not force:
+        raise SystemExit(f"{path.name} already exists. A held-out day is scored once. Use --force only to redo an identical run.")
 
 
 def require_frozen(target: str) -> dict:
@@ -118,11 +147,15 @@ def _load(day: str) -> tuple[pd.DataFrame, pd.DataFrame, dict[str, str]]:
 
 
 def _t1_slices(frame: pd.DataFrame) -> dict[str, pd.DataFrame]:
+    main = frame[frame["grp"].isin(DECISION_GROUPS)]
     return {
-        "strict_new": frame[frame["strict_new"]],
-        "new_no_deep_history": frame[(frame["klass"] == "new") & ~frame["strict_new"]],
-        "reentrant": frame[frame["klass"] == "reentrant"],
-        "all_non_survivors": frame,
+        "strict_new": main[main["strict_new"]],
+        "strict_new_original_30": main[main["strict_new"] & (main["grp"] == "o30")],
+        "strict_new_added_70": main[main["strict_new"] & (main["grp"] == "a70")],
+        "new_no_deep_history": main[(main["klass"] == "new") & ~main["strict_new"]],
+        "reentrant": main[main["klass"] == "reentrant"],
+        "all_non_survivors": main,
+        "other_search_groups_all_non_survivors": frame[~frame["grp"].isin(DECISION_GROUPS)],
     }
 
 
@@ -139,13 +172,16 @@ def _print_t1(name: str, summary: dict) -> None:
             print(f"    {metric}: reference {name} {m.fmt_rate(block[name])}, model minus {name} {m.fmt_diff(block[f'diff_vs_{name}'])}")
 
 
-def score_t1(day: str) -> dict:
+def score_t1(day: str, force: bool = False, allow_incomplete: bool = False) -> dict:
     if day < FIRST_HELDOUT_DAY:
         raise SystemExit("Not a held-out day.")
     manifest = require_frozen("t1")
+    refuse_overwrite(OUT / f"t1-{day}.json", force)
     from scripts.claude import t1_placement
 
     rows, cons, groups = _load(day)
+    counts = pull_counts(cons, groups, day)
+    require_complete(counts, allow_incomplete)
     deep = ho.deep_queries(rows, day)
     frame = ho.t1_frame(rows, cons, day, t1_placement.predict_rows, deep)
     if frame.empty:
@@ -153,9 +189,10 @@ def score_t1(day: str) -> dict:
     frame["grp"] = frame["query"].map(groups)
     OUT.mkdir(parents=True, exist_ok=True)
     frame.to_csv(OUT / f"t1-{day}-rows.csv", index=False)
-    report = {"label": "PREDICTED", "target": "t1", "day": day, "manifest_frozen_at": manifest.get("frozen_at_utc"), "slices": {}}
+    report = {"label": "PREDICTED", "target": "t1", "day": day, "manifest_frozen_at": manifest.get("frozen_at_utc"), "pulls": counts, "slices": {}}
     report["ahead_check"] = check_ahead_t1(frame, day)
     print(f"T1 held-out day {day} (PREDICTED)")
+    print(f"  pulls: {json.dumps(counts)}")
     print(f"  written-before-the-pull check: {json.dumps(report['ahead_check'])}")
     for name, part in _t1_slices(frame).items():
         report["slices"][name] = ho.t1_summary(part)
@@ -189,12 +226,23 @@ def _t3_frame(scorer: str, rows: pd.DataFrame, cons: pd.DataFrame, day_a: str, d
     return ho.t3_frame_pairs(rows, cons, day_a, day_b, t3_contested.call_flips)
 
 
-def score_t3(day_a: str, day_b: str) -> dict:
+def score_t3(day_a: str, day_b: str, force: bool = False, allow_incomplete: bool = False) -> dict:
     """Score both frozen scorers: A (pull-majority order) and B (a contested pair flips)."""
     if day_b < FIRST_HELDOUT_DAY:
         raise SystemExit("Not a held-out day.")
+    if rs.calendar_gap(day_a, day_b) < 1:
+        raise SystemExit("day_a must be before day_b.")
     manifest = require_frozen("t3")
+    refuse_overwrite(OUT / f"t3-{day_a}_{day_b}.json", force)
     rows, cons, groups = _load(day_b)
+    counts_a = pull_counts(cons, groups, day_a)
+    counts_b = pull_counts(cons, groups, day_b)
+    require_complete(counts_a, allow_incomplete)
+    require_complete(counts_b, allow_incomplete)
+    # Both scorers read "yesterday" as the search's last pulled day before day_b. Keep only
+    # searches for which that day is day_a, so the pair definition and the scorers agree.
+    days = rs.query_days(cons)
+    aligned = {query for query, listed in days.items() if rs.previous_day(listed, day_b) == day_a}
     OUT.mkdir(parents=True, exist_ok=True)
     report = {
         "label": "PREDICTED",
@@ -203,21 +251,29 @@ def score_t3(day_a: str, day_b: str) -> dict:
         "day_b": day_b,
         "gap_days": rs.calendar_gap(day_a, day_b),
         "manifest_frozen_at": manifest.get("frozen_at_utc"),
+        "pulls_day_a": counts_a,
+        "pulls_day_b": counts_b,
         "scorers": {},
     }
     print(f"T3 held-out transition {day_a} -> {day_b} (PREDICTED)")
+    print(f"  pulls day_a: {json.dumps(counts_a)}")
+    print(f"  pulls day_b: {json.dumps(counts_b)}")
     for scorer in T3_SCORERS:
         frame = _t3_frame(scorer, rows, cons, day_a, day_b)
         if frame.empty:
             raise SystemExit(f"No pairs to score on {day_a} -> {day_b}.")
+        dropped = int((~frame["query"].isin(aligned)).sum())
+        frame = frame[frame["query"].isin(aligned)].reset_index(drop=True)
         frame["grp"] = frame["query"].map(groups)
         frame["scorer"] = scorer
         frame.to_csv(OUT / f"t3{scorer}-{day_a}_{day_b}-pairs.csv", index=False)
-        slices = {"all": ho.t3_summary(frame)}
+        main = frame[frame["grp"].isin(DECISION_GROUPS)]
+        slices = {"smartcrew_100": ho.t3_summary(main)}
+        slices["pairs_dropped_other_previous_day"] = dropped
         slices["ahead_check"] = check_ahead_t3(frame, scorer, day_b)
         print(f" scorer {scorer}")
         print(f"  written-before-the-pull check: {json.dumps(slices['ahead_check'])}")
-        _print_t3("all", slices["all"])
+        _print_t3("smartcrew_100 (decision population)", slices["smartcrew_100"])
         for group, part in frame.groupby("grp"):
             slices[group] = ho.t3_summary(part)
             _print_t3(group, slices[group])
@@ -294,15 +350,17 @@ def _changed_placement(material_rows: pd.DataFrame, cons: pd.DataFrame) -> dict:
     return out
 
 
-def score_t2(max_date: str) -> dict:
+def score_t2(max_date: str, force: bool = False) -> dict:
     """Edit direction on change rows whose outcome day is held out. One run covers every pair through max_date."""
     if max_date < FIRST_HELDOUT_DAY:
         raise SystemExit("Not a held-out day.")
     manifest = require_frozen("t2")
+    refuse_overwrite(OUT / f"t2-{max_date}.json", force)
     from scripts.claude import t2_dataset
 
     rows = t2_dataset.build_rows(max_date=max_date)
-    rows = rows[rows["serp_day_b"] >= FIRST_HELDOUT_DAY]
+    groups = rs.query_groups(rs.load_rows(max_date))
+    rows = rows[(rows["serp_day_b"] >= FIRST_HELDOUT_DAY) & rows["query"].map(groups).isin(DECISION_GROUPS)]
     usable = rows[rows["usable"].astype(bool)]
     moved = usable[usable["move"] != "none"]
     material = moved[moved["material"].astype(bool)]
@@ -381,7 +439,7 @@ T1_POOLED_MIN_ROWS = 40
 
 def t1_decision(frame: pd.DataFrame) -> dict:
     """The preregistered Target 1 pass rule on strict-new rows, band3."""
-    strict = frame[frame["strict_new"]]
+    strict = frame[frame["strict_new"] & frame["grp"].isin(DECISION_GROUPS)]
     per_day = {}
     for day, part in strict.groupby("day"):
         summary = ho.t1_summary(part)
@@ -422,6 +480,7 @@ def pooled() -> dict:
         if not t3_files:
             continue
         frame = pd.concat([pd.read_csv(path) for path in t3_files], ignore_index=True)
+        frame = frame[frame["grp"].isin(DECISION_GROUPS)]
         consecutive = frame[(pd.to_datetime(frame["day_b"]) - pd.to_datetime(frame["day_a"])).dt.days == 1]
         block = {"transitions": sorted({f"{a}->{b}" for a, b in zip(frame["day_a"], frame["day_b"], strict=True)}), "slices": {}}
         print(f"T3 scorer {scorer} pooled over {block['transitions']} (PREDICTED)")
@@ -438,6 +497,10 @@ def pooled() -> dict:
             }
             print(f"  decision: {json.dumps(block['decision'])}")
         report[f"t3{scorer}"] = block
+    decided = [report[f"t3{scorer}"]["decision"]["target3_pass"] for scorer in T3_SCORERS if "decision" in report.get(f"t3{scorer}", {})]
+    if decided:
+        report["t3_decision"] = {"scorers_tested": len(decided), "target3_pass": bool(any(decided))}
+        print(f"T3 decision over both scorers: {json.dumps(report['t3_decision'])}")
     (OUT / "pooled.json").write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
     return report
 
@@ -452,14 +515,18 @@ def main(argv: list[str] | None = None) -> int:
     t3.add_argument("--day-b", required=True)
     t2 = sub.add_parser("t2")
     t2.add_argument("--max-date", required=True)
+    for each in (t1, t2, t3):
+        each.add_argument("--force", action="store_true", help="Overwrite an existing scored file (identical rerun only).")
+    for each in (t1, t3):
+        each.add_argument("--allow-incomplete", action="store_true", help="Score a lead-pulled day with fewer than three pulls. Not for the record.")
     sub.add_parser("pooled")
     args = parser.parse_args(argv)
     if args.command == "t1":
-        score_t1(args.day)
+        score_t1(args.day, force=args.force, allow_incomplete=args.allow_incomplete)
     elif args.command == "t2":
-        score_t2(args.max_date)
+        score_t2(args.max_date, force=args.force)
     elif args.command == "t3":
-        score_t3(args.day_a, args.day_b)
+        score_t3(args.day_a, args.day_b, force=args.force, allow_incomplete=args.allow_incomplete)
     else:
         pooled()
     return 0

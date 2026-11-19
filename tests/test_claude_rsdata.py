@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import sqlite3
 
-import pandas as pd
 import pytest
+
+pd = pytest.importorskip("pandas")
 
 from scripts.claude import rsdata as rs
 

@@ -13,6 +13,10 @@ from scripts.claude import metrics as m
 from scripts.claude import rsdata as rs
 
 T1_BASELINES = ("domain_prior", "const7", "const11")
+# Extra reference, not one of the brief's baselines: the best single position for
+# newcomers on design days. If the model does not beat it, the model's edge over the
+# brief's baselines is only "newcomers land low on page one".
+T1_REFERENCES = ("const9",)
 # A slice smaller than this cannot pass: a query bootstrap on a handful of rows has no meaning.
 T1_MIN_ROWS = 20
 T1_MIN_QUERIES = 10
@@ -47,8 +51,9 @@ def t1_frame(rows: pd.DataFrame, cons: pd.DataFrame, day: str, predict_rows, dee
     targets["pred"] = [min(max(int(value), 1), rs.ABSENT) for value in preds]
     targets["const7"] = 7
     targets["const11"] = 11
+    targets["const9"] = 9
     targets["strict_new"] = (targets["klass"] == "new") & targets["query"].isin(deep_queries)
-    for name in ("pred",) + T1_BASELINES:
+    for name in ("pred",) + T1_BASELINES + T1_REFERENCES:
         targets[f"band3_{name}"] = [int(m.band3_hit(p, t)) for p, t in zip(targets[name], targets["truth"], strict=True)]
         targets[f"err3_{name}"] = [int(m.err3_hit(p, t)) for p, t in zip(targets[name], targets["truth"], strict=True)]
     return targets
@@ -61,8 +66,10 @@ def t1_summary(frame: pd.DataFrame) -> dict:
     out["big_enough"] = bool(big_enough)
     for metric in ("band3", "err3"):
         block: dict = {}
-        for name in ("pred",) + T1_BASELINES:
+        for name in ("pred",) + T1_BASELINES + T1_REFERENCES:
             block[name] = m.bootstrap_rate(frame, f"{metric}_{name}")
+        for name in T1_REFERENCES:
+            block[f"diff_vs_{name}"] = m.bootstrap_difference(frame, f"{metric}_pred", f"{metric}_{name}")
         if len(frame):
             best = max(T1_BASELINES, key=lambda name: (block[name]["rate"], name))
             block["best_baseline"] = best

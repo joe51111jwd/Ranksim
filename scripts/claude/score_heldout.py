@@ -74,6 +74,8 @@ def _print_t1(name: str, summary: dict) -> None:
         parts = ", ".join(f"{key} {m.fmt_rate(block[key])}" for key in ("pred",) + ho.T1_BASELINES)
         print(f"    {metric}: {parts}")
         print(f"    {metric}: model minus best baseline ({block['best_baseline']}) {m.fmt_diff(block['diff_vs_best'])} pass={block['pass']}")
+        for name in ho.T1_REFERENCES:
+            print(f"    {metric}: reference {name} {m.fmt_rate(block[name])}, model minus {name} {m.fmt_diff(block[f'diff_vs_{name}'])}")
 
 
 def score_t1(day: str) -> dict:

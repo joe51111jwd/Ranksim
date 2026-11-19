@@ -1,0 +1,426 @@
+# Round 2, Target 3 noise study (design days only). Measurement, not a predictor.
+Latest day loaded: 2026-11-17 (asserted == 2026-11-17). Searches with Nov 16 and Nov 17 pulls: 30.
+Pair table equals rsdata.flip_pairs: 767 pairs, 44 flips, 29 searches with pairs. Flip rate 44/767 (0.057) [0.030, 0.097] (same as metrics.bootstrap_rate).
+
+## Q1. Noise share of flips: permutation of the six voting pulls
+Observed: 44 flips / 767 pairs = 0.0574
+Exchangeable (all 20 splits of each search's six pulls, exact per search): expected flips 45.00, expected pairs 811.9, pooled rate 0.0554
+Null spread over random splits (100000 Monte Carlo draws of one split per search): flips [30.0, 61.0], rate [0.0373, 0.0755]; P(null flips >= 44) = 0.5636; P(null rate >= observed) = 0.4150
+Query bootstrap: null rate 0.0554 [0.0346, 0.0785]; observed rate 0.0574 [0.0302, 0.0946]; noise share of the flip count 1.023 [0.784, 1.465]; of the flip rate 0.966 [0.729, 1.400]; excess flips -1.00 [-13.20, 13.00]; excess rate 0.0019 [-0.0145, 0.0222]
+Pull level (URL pairs present in both pulls): within-day disagreement 0.0701 [0.0498, 0.0928], cross-day 0.0798 [0.0556, 0.1065], cross minus within 0.0097 [0.0002, 0.0201]; null 95% range [-0.0113, 0.0121], P(null >= observed) = 0.0566. Counts {'wd': 315, 'wc': 4496, 'cd': 496, 'cc': 6219}
+
+### Q1b. Nov 16 alone: morning pull versus the evening session
+Morning pull vs evening consensus: 56 flips / 841 pairs = 0.0666 [0.0377, 0.1054]
+Each evening pull vs the consensus of the other three (mean): 33.67 / 785.0 = 0.0429 [0.0249, 0.0643]
+Any of the four held out (exchangeable null): rate 0.0491; P(null flips >= observed) = 0.0202; P(null rate >= observed) = 0.0572
+Morning minus evening flip rate 0.0237 [0.0002, 0.0547]; evening-held-out rate as a share of the morning rate 0.644 [0.399, 0.995]
+Pull level: morning vs evening pulls 0.0760 [0.0489, 0.1105], evening vs evening 0.0594 [0.0353, 0.0892], difference 0.0166 [-0.0101, 0.0486]
+
+### Q1c. Are the pulls exchangeable? Pull-by-pull disagreement on Nov 16 and Nov 17
+Pooled share of URL pairs ordered differently (in brackets: searches out of 30 whose two top-10 lists are identical in order):
+| pull | 16m | 16e1 | 16e2 | 16e3 | 17a | 17b | 17c |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 16m | - | 0.067 (6) | 0.094 (4) | 0.069 (6) | 0.086 (1) | 0.117 (1) | 0.102 (1) |
+| 16e1 | 0.067 (6) | - | 0.038 (5) | 0.059 (4) | 0.074 (1) | 0.085 (1) | 0.079 (0) |
+| 16e2 | 0.094 (4) | 0.038 (5) | - | 0.085 (5) | 0.068 (0) | 0.090 (2) | 0.102 (1) |
+| 16e3 | 0.069 (6) | 0.059 (4) | 0.085 (5) | - | 0.061 (1) | 0.095 (1) | 0.070 (2) |
+| 17a | 0.086 (1) | 0.074 (1) | 0.068 (0) | 0.061 (1) | - | 0.087 (5) | 0.078 (2) |
+| 17b | 0.117 (1) | 0.085 (1) | 0.090 (2) | 0.095 (1) | 0.087 (5) | - | 0.073 (5) |
+| 17c | 0.102 (1) | 0.079 (0) | 0.102 (1) | 0.070 (2) | 0.078 (2) | 0.073 (5) | - |
+Disagreement of each Nov 16 pull with the three Nov 17 pulls: 16m 0.1010 [0.0673, 0.1407]; 16e1 0.0794 [0.0537, 0.1115]; 16e2 0.0856 [0.0555, 0.1229]; 16e3 0.0750 [0.0483, 0.1071]. Evening 3 minus evening 2: -0.0106 [-0.0406, 0.0172]
+Identical top-10 lists: same-session pull pairs 26/180; Nov 16 evening vs Nov 17 pull pairs 9/270
+Identical-list rate, same session minus cross day: 0.111 [0.052, 0.189]
+
+## Noise model fits (canonical orientation, 3 voting pulls on Nov 16 and 3 pulls on Nov 17 per scored pair)
+| model (G family, change kind) | log-lik | fitted change parameter | single-pull disagreement under G | model flip rate at 3 pulls | G mass with pull-level q in [0.35, 0.65] |
+| --- | --- | --- | --- | --- | --- |
+| npmle_stationary | -1319.81 | pi 0.0000 | 0.1200 | 0.0517 | 0.000 |
+| npmle_fresh | -1319.81 | pi 0.0000 | 0.1200 | 0.0517 | 0.000 |
+| npmle_swap | -1319.81 | pi 0.0000 | 0.1200 | 0.0517 | 0.000 |
+| beta_stationary | -1319.96 | pi 0.0000 | 0.1200 | 0.0521 | 0.017 |
+| beta_fresh | -1319.96 | pi 0.0000 | 0.1200 | 0.0521 | 0.017 |
+| lnorm_stationary | -1320.09 | pi 0.0000 | 0.1200 | 0.0525 | 0.026 |
+| lnorm_fresh | -1320.09 | pi 0.0000 | 0.1200 | 0.0525 | 0.026 |
+| beta_drift | -1319.96 | tau 0.0110 | 0.1200 | 0.0521 | 0.017 |
+Parametric G: beta-mirror theta [-0.7071472186700831, 1.943569083068094], logit-normal-mirror theta [-3.149514413605336, 0.28827848943669976] (stationary fits).
+
+Profile log-likelihood of pi, shown as 2*(max - LL). One-sided 95% upper bound where it crosses 2.706. Pairs are treated as independent here, so these bounds are too narrow if pairs in one search move together.
+| model | 0.0 | 0.0025 | 0.005 | 0.01 | 0.015 | 0.02 | 0.03 | 0.04 | 0.05 | 0.075 | 0.1 | 0.15 | 0.2 | 0.3 | 95% upper bound on pi |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| npmle_fresh | 0.00 | 0.41 | 1.02 | 2.59 | 4.44 | 6.47 | 10.88 | 15.62 | 20.58 | 33.72 | 47.66 | 77.38 | 109.14 | 177.96 | 0.0103 |
+| npmle_swap | 0.00 | 1.05 | 2.67 | 6.65 | 11.14 | 15.94 | 26.11 | 36.82 | 47.95 | 77.23 | 108.30 | 175.28 | 248.46 | 414.21 | 0.0050 |
+| beta_fresh | 0.00 | 0.45 | 1.07 | 2.64 | 4.47 | 6.48 | 10.85 | 15.54 | 20.47 | 33.55 | 47.45 | 77.12 | 108.86 | 177.69 | 0.0102 |
+| lnorm_fresh | 0.00 | 0.46 | 1.09 | 2.66 | 4.49 | 6.49 | 10.84 | 15.52 | 20.43 | 33.47 | 47.34 | 76.98 | 108.70 | 177.53 | 0.0101 |
+Profile of the drift model's tau (logit units per day), 2*(max - LL):
+| model | 0.0 | 0.1 | 0.2 | 0.3 | 0.4 | 0.5 | 0.75 | 1.0 | 1.5 | 2.0 | 3.0 | 95% upper bound on tau |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| beta_drift | 0.00 | 0.16 | 0.75 | 1.93 | 3.89 | 6.93 | 20.49 | 43.79 | 150.51 | 327.22 | 655.86 | 0.3396 |
+
+How many of the 44 flips are real order changes (the pull-majority order differs between the days)?
+| model | change parameter | MLE | real flips among 44 at MLE | 95% upper bound | true order changes per scored pair at the bound | real flips among 44 at the bound (share) | real changes the consensus missed at the bound |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| npmle_fresh | pi | 0.0000 | 0.00 | 0.0103 | 0.0052 | 1.9 (0.04) | 0.3 |
+| npmle_swap | pi | 0.0000 | 0.00 | 0.0050 | 0.0050 | 1.8 (0.04) | 0.3 |
+| beta_fresh | pi | 0.0000 | 0.00 | 0.0102 | 0.0051 | 1.9 (0.04) | 0.3 |
+| lnorm_fresh | pi | 0.0000 | 0.00 | 0.0101 | 0.0051 | 1.9 (0.04) | 0.3 |
+| beta_drift | tau | 0.0110 | 0.00 | 0.3396 | 0.0031 | 1.1 (0.02) | 1.3 |
+
+Query bootstrap of the beta-mirror fresh-change model (2000 draws, refit per draw):
+pi 0.0000 [8.315280276641321e-07, 0.007316002898903329] (share of draws with pi < 0.001: 0.770); real share of flips [1.5842005184835643e-06, 0.057866037101589086]; true order changes per scored pair [4.157640138320659e-07, 0.0036580014494516644]; real changes missed by consensus [1.4782856522703254e-05, 0.2507790227061616]
+
+Model check on the 611 pairs with 3 informative votes on both days (folded: (r1, r2) is pooled with (3-r1, 3-r2); r = votes for the alphabetically later URL):
+| cells (r1, r2) | observed | NPMLE stationary | beta stationary | logit-normal stationary | beta fresh at pi = 0.010 |
+| --- | --- | --- | --- | --- | --- |
+| [(0, 0), (3, 3)] | 422 | 429.7 | 429.3 | 429.2 | 427.9 |
+| [(0, 1), (3, 2)] | 50 | 60.5 | 61.3 | 61.5 | 61.4 |
+| [(0, 2), (3, 1)] | 8 | 9.6 | 9.1 | 8.9 | 9.3 |
+| [(0, 3), (3, 0)] | 1 | 1.3 | 1.4 | 1.4 | 3.4 |
+| [(1, 0), (2, 3)] | 73 | 60.5 | 61.3 | 61.5 | 61.4 |
+| [(1, 1), (2, 2)] | 33 | 28.7 | 27.2 | 26.7 | 26.5 |
+| [(1, 2), (2, 1)] | 13 | 11.3 | 12.4 | 12.8 | 11.9 |
+| [(1, 3), (2, 0)] | 11 | 9.6 | 9.1 | 8.9 | 9.3 |
+Day asymmetry: one dissenting vote on Nov 16 and none on Nov 17: 73; the reverse: 50. Two-sided binomial p = 0.0469. Every model here is symmetric in the two days, so none can fit this.
+Same-session single-pull disagreement: Nov 16 evening 0.0594 [0.0353, 0.0892], Nov 17 0.0794 [0.0522, 0.1108], difference -0.0200 [-0.0594, 0.0172]
+
+## Q2. Structure of flips (observed Nov 16 to Nov 17), with the exchangeable-null expectation per category
+
+### Rank distance on day one
+| category | flips | non-flips | flip rate [95% CI] | exchangeable null: flips / pairs | observed minus null flips |
+| --- | --- | --- | --- | --- | --- |
+| 1 | 23 | 132 | 23/155 (0.148) [0.097, 0.208] | 21.5 / 160.7 | +1.5 |
+| 2 | 6 | 131 | 6/137 (0.044) [0.014, 0.080] | 10.7 / 148.1 | -4.7 |
+| 3+ | 15 | 460 | 15/475 (0.032) [0.004, 0.072] | 12.9 / 503.1 | +2.1 |
+
+### Position band on day one
+| category | flips | non-flips | flip rate [95% CI] | exchangeable null: flips / pairs | observed minus null flips |
+| --- | --- | --- | --- | --- | --- |
+| both in top 3 | 6 | 58 | 6/64 (0.094) [0.019, 0.177] | 3.6 / 65.8 | +2.4 |
+| both in 4-10 | 30 | 294 | 30/324 (0.093) [0.046, 0.156] | 29.5 / 343.4 | +0.5 |
+| mixed | 8 | 371 | 8/379 (0.021) [0.000, 0.057] | 11.9 / 402.7 | -3.9 |
+
+### Same site
+| category | flips | non-flips | flip rate [95% CI] | exchangeable null: flips / pairs | observed minus null flips |
+| --- | --- | --- | --- | --- | --- |
+| same site | 1 | 20 | 1/21 (0.048) [0.000, 0.100] | 0.6 / 22.2 | +0.4 |
+| different sites | 43 | 703 | 43/746 (0.058) [0.029, 0.099] | 44.4 / 789.7 | -1.4 |
+
+### Voting pulls of day one that show the reverse order
+| category | flips | non-flips | flip rate [95% CI] | exchangeable null: flips / pairs | observed minus null flips |
+| --- | --- | --- | --- | --- | --- |
+| 0 of 3 | 13 | 616 | 13/629 (0.021) [0.007, 0.039] | 16.6 / 662.0 | -3.6 |
+| 1 of 3 | 28 | 107 | 28/135 (0.207) [0.103, 0.331] | 25.2 / 144.6 | +2.8 |
+| 2+ of 3 (pull majority reverses the median) | 3 | 0 | 3/3 (1.000) [1.000, 1.000] | 3.2 / 5.2 | -0.2 |
+
+### Order in the four earlier single pulls (Nov 6, 9, 11, 13)
+| category | flips | non-flips | flip rate [95% CI] | exchangeable null: flips / pairs | observed minus null flips |
+| --- | --- | --- | --- | --- | --- |
+| earlier days mostly agree with day one | 14 | 565 | 14/579 (0.024) [0.008, 0.044] | 17.8 / 609.7 | -3.8 |
+| earlier days mostly reversed | 19 | 103 | 19/122 (0.156) [0.082, 0.248] | 17.8 / 129.8 | +1.2 |
+| earlier days tied or silent | 11 | 55 | 11/66 (0.167) [0.036, 0.317] | 9.5 / 72.3 | +1.5 |
+
+### Newcomer status (top 10 of the Nov 11 and Nov 13 pulls)
+| category | flips | non-flips | flip rate [95% CI] | exchangeable null: flips / pairs | observed minus null flips |
+| --- | --- | --- | --- | --- | --- |
+| either URL new on day one | 15 | 174 | 15/189 (0.079) [0.023, 0.179] | 12.8 / 229.5 | +2.2 |
+| either URL new on Nov 13 (none on day one) | 14 | 175 | 14/189 (0.074) [0.028, 0.141] | 11.6 / 206.9 | +2.4 |
+| both in the Nov 11 and Nov 13 top 10 | 15 | 374 | 15/389 (0.039) [0.015, 0.072] | 20.6 / 375.5 | -5.6 |
+
+The 44 flips by direction relative to the earlier days:
+| flip type | flips |
+| --- | --- |
+| reversion (day two returns to the earlier order) | 19 |
+| departure (day two leaves the earlier order) | 14 |
+| no earlier majority | 11 |
+
+Day-two strength of the 44 flips (Nov 17 pulls showing the new order):
+| Nov 17 pulls showing the new order | flips |
+| --- | --- |
+| 3 | 18 |
+| 2 | 23 |
+| 1 | 3 |
+
+Day-one votes over all four Nov 16 pulls (morning + 3 evening) showing the reverse order:
+| reverse votes on Nov 16 | flips | pairs | flip rate |
+| --- | --- | --- | --- |
+| 0 of 4 | 9 | 577 | 0.016 |
+| 1 of 4 | 21 | 154 | 0.136 |
+| 2 of 4 | 14 | 36 | 0.389 |
+
+Movers: adjacent swaps (distance 1 on both days) 14 of 44; flips where both URLs moved equally 9; distinct URLs that did most of the moving 18; flips per driver (top 5) [6, 4, 4, 3, 2]; flips by the driver's move size {1: 8, 2: 12, 3: 6, 5: 5, 7: 9, 9: 4}
+URL moves Nov 16 to Nov 17 for the 223 URLs in both top 10s: {'0': 140, '1': 59, '2': 14, '3': 4, '4+': 6}
+Pull positions of the URLs that drove the flips (11 = absent; URL names left out), largest consensus move first:
+| flips driven | consensus move | Nov 16 evening pulls | Nov 16 morning | Nov 17 pulls | Nov 6, 9, 11, 13 pulls |
+| --- | --- | --- | --- | --- | --- |
+| 4 | 9 | (11, 10, 1) | 11 | (1, 1, 1) | (11, 11, 4, 11) |
+| 6 | 7 | (1, 1, 7) | 1 | (5, 8, 8) | (5, 4, 6, 7) |
+| 3 | 7 | (10, 11, 4) | 11 | (3, 3, 4) | (1, 11, 10, 3) |
+| 4 | 5 | (8, 11, 9) | 6 | (10, 4, 4) | (11, 11, 11, 6) |
+| 1 | 5 | (5, 11, 10) | 11 | (11, 5, 5) | (3, 3, 3, 4) |
+| 2 | 3 | (3, 6, 6) | 6 | (11, 3, 3) | (11, 11, 11, 5) |
+| 2 | 3 | (7, 5, 11) | 8 | (10, 11, 10) | (4, 1, 5, 8) |
+| 1 | 3 | (6, 11, 7) | 11 | (10, 10, 7) | (11, 11, 11, 7) |
+| 1 | 3 | (6, 9, 6) | 9 | (6, 9, 9) | (8, 8, 10, 7) |
+| 2 | 2 | (8, 11, 9) | 11 | (7, 7, 9) | (9, 6, 3, 7) |
+| 2 | 2 | (8, 6, 11) | 11 | (4, 6, 11) | (11, 11, 4, 11) |
+| 1 | 2 | (6, 7, 5) | 11 | (8, 8, 8) | (9, 7, 9, 11) |
+| 1 | 2 | (9, 9, 8) | 8 | (7, 7, 8) | (4, 5, 6, 6) |
+| 1 | 2 | (5, 11, 3) | 3 | (3, 5, 3) | (11, 11, 11, 6) |
+| 1 | 2 | (1, 1, 2) | 1 | (2, 3, 11) | (1, 1, 2, 1) |
+| 1 | 2 | (3, 3, 3) | 3 | (4, 5, 5) | (11, 3, 4, 3) |
+| 1 | 2 | (10, 8, 11) | 6 | (8, 8, 11) | (6, 11, 5, 8) |
+| 1 | 2 | (8, 8, 8) | 8 | (8, 10, 11) | (9, 9, 10, 11) |
+Drivers that moved 3+ places: 9; of them, already spread over 4+ places across one day's pulls: 8
+Concentration: 18 of 30 searches have a flip; the top 5 searches hold 28 of 44 ([8, 8, 6, 3, 3]). Spearman of per-search flips with the per-search null expectation: 0.758 (p 0.0000); per-search flip rate vs the Nov 13 to 16 flip rate: 0.058 (p 0.7690)
+
+## Q3. Ceiling: the precision-budget oracle (call in order of P(flip | state, q) while expected precision >= 0.5)
+
+(a) Distribution of q (P that a 3-pull consensus shows the pair's majority order) under each stationary G. 'pairs' = share of scored pairs; 'flips' = share of expected flips (weight 2q(1-q)).
+| G | 0.5-0.6 | 0.6-0.7 | 0.7-0.8 | 0.8-0.9 | 0.9-0.95 | 0.95-0.99 | 0.99-1 | flip-weighted mean q | flip-weighted mean of 1/(2q) |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| npmle_stationary, pairs | 0.000 | 0.000 | 0.001 | 0.072 | 0.167 | 0.166 | 0.593 | 0.913 | 0.549 |
+| npmle_stationary, flips | 0.000 | 0.000 | 0.010 | 0.316 | 0.455 | 0.193 | 0.026 |  |  |
+| beta_stationary, pairs | 0.006 | 0.009 | 0.019 | 0.055 | 0.077 | 0.226 | 0.607 | 0.854 | 0.599 |
+| beta_stationary, flips | 0.052 | 0.081 | 0.134 | 0.261 | 0.205 | 0.218 | 0.049 |  |  |
+| lnorm_stationary, pairs | 0.010 | 0.013 | 0.020 | 0.047 | 0.064 | 0.218 | 0.627 | 0.830 | 0.623 |
+| lnorm_stationary, flips | 0.098 | 0.112 | 0.138 | 0.223 | 0.169 | 0.203 | 0.057 |  |  |
+Per-pair posterior mean of q from all six votes, counts of pairs (the six votes include the outcome day, so this is descriptive only):
+| prior and pairs | 0.5-0.6 | 0.6-0.7 | 0.7-0.8 | 0.8-0.9 | 0.9-0.95 | 0.95-0.99 | 0.99-1 |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| npmle_stationary: 44 flips | 0 | 0 | 0 | 0 | 44 | 0 | 0 |
+| npmle_stationary: 723 non-flips | 0 | 0 | 0 | 0 | 177 | 546 | 0 |
+| beta_stationary: 44 flips | 0 | 0 | 0 | 34 | 10 | 0 | 0 |
+| beta_stationary: 723 non-flips | 0 | 0 | 0 | 37 | 140 | 546 | 0 |
+
+Model bound: oracle that knows each pair's true q (and pi), 3-pull consensus on both days. Recall at expected precision >= 0.5:
+| G family | stationary world: recall | precision | flip rate | upper-bound pi | recall with change at that pi | flip rate |
+| --- | --- | --- | --- | --- | --- | --- |
+| npmle | 0.596 | 0.500 | 0.0517 | 0.0103 | 0.536 | 0.0550 |
+| beta | 0.691 | 0.500 | 0.0521 | 0.0102 | 0.629 | 0.0554 |
+| lnorm | 0.721 | 0.500 | 0.0525 | 0.0101 | 0.658 | 0.0557 |
+| npmle, swap change | - | - | - | 0.0050 | 0.533 | 0.0547 |
+| beta, drift change | - | - | - | tau 0.340 | 0.640 | 0.0540 |
+
+(b) and (c) Empirical precision-budget oracles on the 767 real pairs. P(flip) = posterior mean of B3(p_y) given the votes; whole tie groups are called while the mean P stays >= 0.5; then scored on the real flips.
+| votes the oracle sees | prior | calls | right | realized recall [CI] | realized precision [CI] | oracle's own expected recall | post-hoc best realized recall at precision >= 0.5 (right/calls) |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| cheat: Nov 16 voting + Nov 17 (6 votes) | NPMLE G (6 votes) | 37 | 34 | 34/44 (0.773) [0.571, 0.921] | 34/37 (0.919) [0.833, 1.000] | 0.553 | 0.977 (43/82) |
+| cheat: Nov 16 voting + Nov 17 (6 votes) | beta G (6 votes) | 37 | 34 | 34/44 (0.773) [0.571, 0.921] | 34/37 (0.919) [0.833, 1.000] | 0.539 | 0.977 (43/82) |
+| cheat: Nov 16 voting + Nov 17 (6 votes) | Jeffreys | 37 | 34 | 34/44 (0.773) [0.571, 0.921] | 34/37 (0.919) [0.833, 1.000] | 0.286 | 0.977 (43/82) |
+| cheat: Nov 16 voting + Nov 17 (6 votes) | uniform | 37 | 34 | 34/44 (0.773) [0.571, 0.921] | 34/37 (0.919) [0.833, 1.000] | 0.217 | 0.977 (43/82) |
+| cheat: all Nov 16 + Nov 17 (7 votes) | NPMLE G (6 votes) | 46 | 38 | 38/44 (0.864) [0.750, 0.958] | 38/46 (0.826) [0.650, 0.971] | 0.580 | 0.864 (38/46) |
+| cheat: all Nov 16 + Nov 17 (7 votes) | beta G (6 votes) | 46 | 38 | 38/44 (0.864) [0.750, 0.958] | 38/46 (0.826) [0.650, 0.971] | 0.579 | 0.864 (38/46) |
+| cheat: all Nov 16 + Nov 17 (7 votes) | Jeffreys | 46 | 38 | 38/44 (0.864) [0.750, 0.958] | 38/46 (0.826) [0.650, 0.971] | 0.337 | 0.864 (38/46) |
+| cheat: all 11 pulls Nov 6 to Nov 17 | NPMLE G (6 votes) | 71 | 32 | 32/44 (0.727) [0.549, 0.921] | 32/71 (0.451) [0.281, 0.632] | 0.599 | 0.727 (32/61) |
+| cheat: all 11 pulls Nov 6 to Nov 17 | beta G (6 votes) | 77 | 32 | 32/44 (0.727) [0.549, 0.921] | 32/77 (0.416) [0.254, 0.594] | 0.598 | 0.727 (32/61) |
+| cheat: all 11 pulls Nov 6 to Nov 17 | Jeffreys | 77 | 32 | 32/44 (0.727) [0.549, 0.921] | 32/77 (0.416) [0.254, 0.594] | 0.431 | 0.727 (32/61) |
+| honest: Nov 16 voting pulls (3 votes) | NPMLE G fit on these votes | 8 | 7 | 7/44 (0.159) [0.000, 0.351] | 7/8 (0.875) [0.000, 1.000] | 0.112 | 0.159 (7/8) |
+| honest: Nov 16 voting pulls (3 votes) | beta G (prior reads day two) | 8 | 7 | 7/44 (0.159) [0.000, 0.351] | 7/8 (0.875) [0.000, 1.000] | 0.110 | 0.159 (7/8) |
+| honest: Nov 16 voting pulls (3 votes) | Jeffreys | 8 | 7 | 7/44 (0.159) [0.000, 0.351] | 7/8 (0.875) [0.000, 1.000] | 0.041 | 0.159 (7/8) |
+| honest: all Nov 16 pulls (4 votes) | NPMLE G fit on these votes | 38 | 16 | 16/44 (0.364) [0.200, 0.545] | 16/38 (0.421) [0.222, 0.621] | 0.426 | 0.068 (3/3) |
+| honest: all Nov 16 pulls (4 votes) | beta G (prior reads day two) | 38 | 16 | 16/44 (0.364) [0.200, 0.545] | 16/38 (0.421) [0.222, 0.621] | 0.432 | 0.068 (3/3) |
+| honest: all Nov 16 pulls (4 votes) | Jeffreys | 38 | 16 | 16/44 (0.364) [0.200, 0.545] | 16/38 (0.421) [0.222, 0.621] | 0.199 | 0.068 (3/3) |
+| honest: all Nov 16 pulls (4 votes) | beta G, pi at upper bound (reads day two) | 38 | 16 | 16/44 (0.364) [0.200, 0.545] | 16/38 (0.421) [0.222, 0.621] | 0.408 | 0.068 (3/3) |
+| honest: all 8 pulls up to day one | NPMLE G fit on these votes | 102 | 24 | 24/44 (0.545) [0.328, 0.794] | 24/102 (0.235) [0.120, 0.367] | 0.480 | 0.114 (5/6) |
+| honest: all 8 pulls up to day one | beta G (prior reads day two) | 102 | 24 | 24/44 (0.545) [0.328, 0.794] | 24/102 (0.235) [0.120, 0.367] | 0.680 | 0.114 (5/6) |
+| honest: all 8 pulls up to day one | Jeffreys | 102 | 24 | 24/44 (0.545) [0.328, 0.794] | 24/102 (0.235) [0.120, 0.367] | 0.479 | 0.114 (5/6) |
+| honest: all 8 pulls up to day one | beta G, pi at upper bound (reads day two) | 102 | 24 | 24/44 (0.545) [0.328, 0.794] | 24/102 (0.235) [0.120, 0.367] | 0.661 | 0.114 (5/6) |
+
+Plain strict-majority rule (call when more of the listed votes show y above x than x above y):
+| votes | calls | recall | precision | exact ties (flips among them) |
+| --- | --- | --- | --- | --- |
+| cheat 6 | 20 | 20/44 (0.455) [0.227, 0.667] | 20/20 (1.000) [1.000, 1.000] | 14 (13 flips) |
+| cheat 7 | 26 | 25/44 (0.568) [0.346, 0.787] | 25/26 (0.962) [0.920, 1.000] | 3 (2 flips) |
+| cheat 11 | 29 | 25/44 (0.568) [0.333, 0.795] | 25/29 (0.862) [0.586, 1.000] | 6 (2 flips) |
+| honest 3 | 3 | 3/44 (0.068) [0.000, 0.184] | 3/3 (1.000) [1.000, 1.000] | 5 (4 flips) |
+| honest 4 | 3 | 3/44 (0.068) [0.000, 0.151] | 3/3 (1.000) [1.000, 1.000] | 35 (13 flips) |
+| honest 8 | 40 | 15/44 (0.341) [0.206, 0.500] | 15/40 (0.375) [0.200, 0.586] | 40 (7 flips) |
+
+(d) Model: Bayes precision-budget oracle that knows G (and pi) and sees k extra stationary pulls before day one plus day one's 3 pulls. Exact sums over vote outcomes. Change world = pi at the profile upper bound with G refit at that pi.
+| G family | extra pulls before day one | total pulls seen | stationary world: recall | precision | share of pairs called | change world (upper bound): recall | precision |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| npmle | 0 | 3 | 0.000 | n/a | 0.0000 | 0.000 | n/a |
+| npmle | 1 | 4 | 0.421 | 0.500 | 0.0435 | 0.387 | 0.500 |
+| npmle | 3 | 6 | 0.500 | 0.500 | 0.0517 | 0.458 | 0.500 |
+| npmle | 5 | 8 | 0.542 | 0.500 | 0.0561 | 0.493 | 0.500 |
+| npmle | 6 | 9 | 0.546 | 0.500 | 0.0565 | 0.497 | 0.500 |
+| npmle | 9 | 12 | 0.556 | 0.500 | 0.0575 | 0.504 | 0.500 |
+| npmle | 12 | 15 | 0.559 | 0.500 | 0.0578 | 0.506 | 0.500 |
+| npmle | 15 | 18 | 0.560 | 0.500 | 0.0580 | 0.507 | 0.500 |
+| npmle | 18 | 21 | 0.562 | 0.500 | 0.0581 | 0.508 | 0.500 |
+| npmle | inf | inf | 0.596 | 0.500 | 0.0616 | 0.536 | 0.500 |
+| beta | 0 | 3 | 0.000 | n/a | 0.0000 | 0.000 | n/a |
+| beta | 1 | 4 | 0.414 | 0.500 | 0.0431 | 0.380 | 0.500 |
+| beta | 3 | 6 | 0.500 | 0.500 | 0.0521 | 0.459 | 0.500 |
+| beta | 5 | 8 | 0.573 | 0.500 | 0.0597 | 0.524 | 0.500 |
+| beta | 6 | 9 | 0.579 | 0.500 | 0.0603 | 0.529 | 0.500 |
+| beta | 9 | 12 | 0.610 | 0.500 | 0.0636 | 0.557 | 0.500 |
+| beta | 12 | 15 | 0.625 | 0.500 | 0.0651 | 0.569 | 0.500 |
+| beta | 15 | 18 | 0.632 | 0.500 | 0.0659 | 0.576 | 0.500 |
+| beta | 18 | 21 | 0.639 | 0.500 | 0.0666 | 0.582 | 0.500 |
+| beta | inf | inf | 0.691 | 0.500 | 0.0721 | 0.629 | 0.500 |
+| lnorm | 0 | 3 | 0.000 | n/a | 0.0000 | 0.000 | n/a |
+| lnorm | 1 | 4 | 0.411 | 0.500 | 0.0431 | 0.378 | 0.500 |
+| lnorm | 3 | 6 | 0.500 | 0.500 | 0.0525 | 0.459 | 0.500 |
+| lnorm | 5 | 8 | 0.585 | 0.500 | 0.0613 | 0.536 | 0.500 |
+| lnorm | 6 | 9 | 0.591 | 0.500 | 0.0620 | 0.541 | 0.500 |
+| lnorm | 9 | 12 | 0.631 | 0.500 | 0.0662 | 0.577 | 0.500 |
+| lnorm | 12 | 15 | 0.649 | 0.500 | 0.0681 | 0.593 | 0.500 |
+| lnorm | 15 | 18 | 0.659 | 0.500 | 0.0691 | 0.601 | 0.500 |
+| lnorm | 18 | 21 | 0.667 | 0.500 | 0.0700 | 0.609 | 0.500 |
+| lnorm | inf | inf | 0.721 | 0.500 | 0.0756 | 0.658 | 0.500 |
+| beta, drift change | 0 | 3 | 0.000 | n/a | 0.0000 | 0.000 | n/a |
+| beta, drift change | 1 | 4 | 0.414 | 0.500 | 0.0431 | 0.379 | 0.500 |
+| beta, drift change | 3 | 6 | 0.500 | 0.500 | 0.0521 | 0.458 | 0.500 |
+| beta, drift change | 5 | 8 | 0.573 | 0.500 | 0.0597 | 0.525 | 0.500 |
+| beta, drift change | 6 | 9 | 0.579 | 0.500 | 0.0603 | 0.531 | 0.500 |
+| beta, drift change | 9 | 12 | 0.610 | 0.500 | 0.0636 | 0.561 | 0.500 |
+| beta, drift change | 12 | 15 | 0.625 | 0.500 | 0.0651 | 0.574 | 0.500 |
+| beta, drift change | 15 | 18 | 0.632 | 0.500 | 0.0659 | 0.581 | 0.500 |
+| beta, drift change | 18 | 21 | 0.639 | 0.500 | 0.0666 | 0.588 | 0.500 |
+| beta, drift change | inf | inf | 0.691 | 0.500 | 0.0721 | 0.640 | 0.500 |
+Monte Carlo cross-check (beta G at upper pi, k=6, 400000 simulated pairs, whole-pair cut): recall 0.524, precision 0.501; exact: recall 0.529, precision 0.500
+Gap decomposition, recall at precision >= 0.5 (k = extra stationary pulls before day one):
+| G family | true_q_stationary | k0_stationary | k1_stationary | k5_stationary | k0_change | k5_change | true_q_change |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| npmle | 0.596 | 0.000 | 0.421 | 0.542 | 0.000 | 0.493 | 0.536 |
+| beta | 0.691 | 0.000 | 0.414 | 0.573 | 0.000 | 0.524 | 0.629 |
+| lnorm | 0.721 | 0.000 | 0.411 | 0.585 | 0.000 | 0.536 | 0.658 |
+| beta, drift change | 0.691 | 0.000 | 0.414 | 0.573 | 0.000 | 0.525 | 0.640 |
+Recall when the oracle keeps a stricter expected precision (beta G, stationary world), by extra pulls before day one:
+| precision floor | k=1 | k=6 | k=12 | k=18 | true q |
+| --- | --- | --- | --- | --- | --- |
+| 0.5 | 0.414 | 0.579 | 0.625 | 0.639 | 0.691 |
+| 0.55 | 0.000 | 0.554 | 0.599 | 0.616 | 0.662 |
+| 0.6 | 0.000 | 0.536 | 0.576 | 0.592 | 0.634 |
+| 0.7 | 0.000 | 0.472 | 0.531 | 0.548 | 0.582 |
+
+## Q4. More pulls or a longer horizon
+| model | pulls per day | flip rate per scored pair | real flips | noise flips | noise share of flips | true changes seen as flips |
+| --- | --- | --- | --- | --- | --- | --- |
+| npmle_stationary | 1 | 0.1200 | 0.0000 | 0.1200 | 1.000 | n/a |
+| npmle_stationary | 3 | 0.0517 | 0.0000 | 0.0517 | 1.000 | n/a |
+| npmle_stationary | 5 | 0.0268 | 0.0000 | 0.0268 | 1.000 | n/a |
+| npmle_stationary | 7 | 0.0150 | 0.0000 | 0.0150 | 1.000 | n/a |
+| npmle_stationary | 9 | 0.0088 | 0.0000 | 0.0088 | 1.000 | n/a |
+| npmle_stationary | 15 | 0.0022 | 0.0000 | 0.0022 | 1.000 | n/a |
+| npmle_stationary | 25 | 0.0004 | 0.0000 | 0.0004 | 1.000 | n/a |
+| npmle_stationary | 51 | 0.0000 | 0.0000 | 0.0000 | 1.000 | n/a |
+| npmle_stationary | inf | 0.0000 | 0.0000 | 0.0000 | n/a | n/a |
+| beta_stationary | 1 | 0.1200 | 0.0000 | 0.1200 | 1.000 | n/a |
+| beta_stationary | 3 | 0.0521 | 0.0000 | 0.0521 | 1.000 | n/a |
+| beta_stationary | 5 | 0.0313 | 0.0000 | 0.0313 | 1.000 | n/a |
+| beta_stationary | 7 | 0.0220 | 0.0000 | 0.0220 | 1.000 | n/a |
+| beta_stationary | 9 | 0.0169 | 0.0000 | 0.0169 | 1.000 | n/a |
+| beta_stationary | 15 | 0.0101 | 0.0000 | 0.0101 | 1.000 | n/a |
+| beta_stationary | 25 | 0.0063 | 0.0000 | 0.0063 | 1.000 | n/a |
+| beta_stationary | 51 | 0.0036 | 0.0000 | 0.0036 | 1.000 | n/a |
+| beta_stationary | inf | 0.0000 | 0.0000 | 0.0000 | n/a | n/a |
+| lnorm_stationary | 1 | 0.1200 | 0.0000 | 0.1200 | 1.000 | n/a |
+| lnorm_stationary | 3 | 0.0525 | 0.0000 | 0.0525 | 1.000 | n/a |
+| lnorm_stationary | 5 | 0.0331 | 0.0000 | 0.0331 | 1.000 | n/a |
+| lnorm_stationary | 7 | 0.0246 | 0.0000 | 0.0246 | 1.000 | n/a |
+| lnorm_stationary | 9 | 0.0200 | 0.0000 | 0.0200 | 1.000 | n/a |
+| lnorm_stationary | 15 | 0.0135 | 0.0000 | 0.0135 | 1.000 | n/a |
+| lnorm_stationary | 25 | 0.0095 | 0.0000 | 0.0095 | 1.000 | n/a |
+| lnorm_stationary | 51 | 0.0062 | 0.0000 | 0.0062 | 1.000 | n/a |
+| lnorm_stationary | inf | 0.0000 | 0.0000 | 0.0000 | n/a | n/a |
+| beta_fresh at upper pi 0.0102 | 1 | 0.1229 | 0.0044 | 0.1185 | 0.964 | 0.867 |
+| beta_fresh at upper pi 0.0102 | 3 | 0.0554 | 0.0048 | 0.0506 | 0.913 | 0.941 |
+| beta_fresh at upper pi 0.0102 | 5 | 0.0348 | 0.0049 | 0.0299 | 0.859 | 0.965 |
+| beta_fresh at upper pi 0.0102 | 7 | 0.0257 | 0.0050 | 0.0207 | 0.807 | 0.975 |
+| beta_fresh at upper pi 0.0102 | 9 | 0.0207 | 0.0050 | 0.0157 | 0.759 | 0.981 |
+| beta_fresh at upper pi 0.0102 | 15 | 0.0142 | 0.0050 | 0.0092 | 0.646 | 0.988 |
+| beta_fresh at upper pi 0.0102 | 25 | 0.0107 | 0.0051 | 0.0056 | 0.527 | 0.993 |
+| beta_fresh at upper pi 0.0102 | 51 | 0.0082 | 0.0051 | 0.0031 | 0.383 | 0.996 |
+| beta_fresh at upper pi 0.0102 | inf | 0.0051 | 0.0051 | 0.0000 | 0.000 | 1.000 |
+| npmle_swap at upper pi 0.0050 | 1 | 0.1230 | 0.0044 | 0.1185 | 0.964 | 0.881 |
+| npmle_swap at upper pi 0.0050 | 3 | 0.0547 | 0.0048 | 0.0499 | 0.912 | 0.950 |
+| npmle_swap at upper pi 0.0050 | 5 | 0.0297 | 0.0049 | 0.0247 | 0.834 | 0.975 |
+| npmle_swap at upper pi 0.0050 | 7 | 0.0181 | 0.0050 | 0.0131 | 0.725 | 0.987 |
+| npmle_swap at upper pi 0.0050 | 9 | 0.0123 | 0.0050 | 0.0073 | 0.593 | 0.993 |
+| npmle_swap at upper pi 0.0050 | 15 | 0.0066 | 0.0050 | 0.0015 | 0.233 | 0.998 |
+| npmle_swap at upper pi 0.0050 | 25 | 0.0052 | 0.0050 | 0.0002 | 0.034 | 1.000 |
+| npmle_swap at upper pi 0.0050 | 51 | 0.0051 | 0.0050 | 0.0000 | 0.001 | 1.000 |
+| npmle_swap at upper pi 0.0050 | inf | 0.0050 | 0.0050 | 0.0000 | 0.000 | 1.000 |
+| beta_drift at upper tau 0.340 | 1 | 0.1204 | 0.0016 | 0.1188 | 0.987 | 0.506 |
+| beta_drift at upper tau 0.340 | 3 | 0.0540 | 0.0016 | 0.0524 | 0.970 | 0.512 |
+| beta_drift at upper tau 0.340 | 5 | 0.0335 | 0.0016 | 0.0319 | 0.952 | 0.519 |
+| beta_drift at upper tau 0.340 | 7 | 0.0242 | 0.0016 | 0.0226 | 0.933 | 0.525 |
+| beta_drift at upper tau 0.340 | 9 | 0.0191 | 0.0017 | 0.0174 | 0.914 | 0.531 |
+| beta_drift at upper tau 0.340 | 15 | 0.0122 | 0.0017 | 0.0105 | 0.860 | 0.547 |
+| beta_drift at upper tau 0.340 | 25 | 0.0083 | 0.0018 | 0.0066 | 0.787 | 0.571 |
+| beta_drift at upper tau 0.340 | 51 | 0.0056 | 0.0019 | 0.0037 | 0.658 | 0.615 |
+| beta_drift at upper tau 0.340 | inf | 0.0031 | 0.0031 | 0.0000 | 0.000 | 1.000 |
+Query-bootstrap 95% intervals, beta fresh-change model refit per draw:
+| pulls per day | flip rate | noise flip rate | real flip rate | noise share |
+| --- | --- | --- | --- | --- |
+| 3 | [0.0306, 0.0797] | [0.0304, 0.0782] | [0.0000, 0.0034] | [0.9373, 1.0000] |
+| 5 | [0.0140, 0.0559] | [0.0138, 0.0551] | [0.0000, 0.0035] | [0.8947, 1.0000] |
+| 7 | [0.0072, 0.0443] | [0.0069, 0.0439] | [0.0000, 0.0035] | [0.8471, 1.0000] |
+| 9 | [0.0041, 0.0377] | [0.0040, 0.0373] | [0.0000, 0.0036] | [0.7906, 1.0000] |
+| inf | [0.0000, 0.0037] | [0.0000, 0.0000] | [0.0000, 0.0037] | [0.0000, 0.0000] |
+
+Single-pull pair disagreement by time gap (URL pairs present in both pulls; floor = same-session pulls on Nov 16 evening and Nov 17):
+| gap | pull pairs | mean gap h | URL pairs compared | disagreement [CI] | minus same-session floor | real-change share of disagreement | implied pi (fresh model) |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| <2 h (same session) | 180 | 0.8 | 4496 | 0.0701 [0.0498, 0.0928] | 0.0000 [0.0000, 0.0000] | 0.000 [0.000, 0.000] | 0.000 [0.000, 0.000] |
+| 2-12 h (Nov 16 morning vs evening) | 90 | 8.3 | 2264 | 0.0760 [0.0489, 0.1105] | 0.0059 [-0.0231, 0.0388] | 0.078 [-0.425, 0.390] | 0.014 [-0.055, 0.089] |
+| 12-21 h (Nov 16 evening vs Nov 17) | 270 | 17.2 | 6219 | 0.0798 [0.0556, 0.1065] | 0.0097 [0.0002, 0.0201] | 0.122 [0.004, 0.227] | 0.023 [0.001, 0.048] |
+| 21-30 h (Nov 16 morning vs Nov 17) | 90 | 25.5 | 2059 | 0.1010 [0.0673, 0.1407] | 0.0310 [0.0038, 0.0626] | 0.306 [0.047, 0.488] | 0.072 [0.009, 0.146] |
+| 30-60 h (about 2 days) | 90 | 53.8 | 1996 | 0.1298 [0.0990, 0.1644] | 0.0597 [0.0291, 0.0950] | 0.460 [0.259, 0.615] | 0.139 [0.069, 0.218] |
+| 60-84 h (about 3 days) | 120 | 71.1 | 2650 | 0.1317 [0.1002, 0.1665] | 0.0616 [0.0312, 0.0948] | 0.468 [0.283, 0.609] | 0.143 [0.074, 0.218] |
+| 84-132 h (4-5 days) | 270 | 109.1 | 5157 | 0.1540 [0.1289, 0.1816] | 0.0839 [0.0600, 0.1078] | 0.545 [0.421, 0.659] | 0.195 [0.141, 0.250] |
+| 132-180 h (6-7 days) | 240 | 161.2 | 3908 | 0.1804 [0.1452, 0.2221] | 0.1103 [0.0772, 0.1439] | 0.612 [0.488, 0.707] | 0.257 [0.182, 0.336] |
+| 180-228 h (8-9 days) | 120 | 201.3 | 1880 | 0.1915 [0.1454, 0.2474] | 0.1214 [0.0789, 0.1699] | 0.634 [0.500, 0.732] | 0.282 [0.184, 0.397] |
+| 228-300 h (10-11 days) | 180 | 243.3 | 2748 | 0.2034 [0.1599, 0.2491] | 0.1334 [0.0913, 0.1773] | 0.656 [0.524, 0.754] | 0.310 [0.213, 0.413] |
+
+Consecutive single-pull days (one pull each; Nov 16 uses the morning pull):
+| transition | gap h | URL pairs | disagreement | real-change share | implied pi |
+| --- | --- | --- | --- | --- | --- |
+| 11-06 to 11-09 | 59.0 | 667 | 0.1094 [0.0730, 0.1522] | 0.360 [-0.007, 0.594] | 0.092 [-0.001, 0.197] |
+| 11-09 to 11-11 | 48.4 | 724 | 0.1367 [0.0860, 0.1944] | 0.488 [0.214, 0.649] | 0.155 [0.047, 0.279] |
+| 11-11 to 11-13 | 54.2 | 605 | 0.1438 [0.1050, 0.1884] | 0.513 [0.283, 0.674] | 0.172 [0.074, 0.275] |
+| 11-13 to 11-16m | 64.9 | 684 | 0.1301 [0.0857, 0.1818] | 0.462 [0.192, 0.626] | 0.140 [0.042, 0.255] |
+
+Projected consensus flip rate / noise share of flips by gap (beta G, pi = the variogram's implied pi for that gap; rough, the variogram's pair population differs from scored pairs):
+| gap | pi | 1 pull | 3 pulls | 5 pulls | 9 pulls | infinite pulls (all real) |
+| --- | --- | --- | --- | --- | --- | --- |
+| 2-12 h (Nov 16 morning vs evening) | 0.014 | 0.125 / 0.95 | 0.058 / 0.89 | 0.038 / 0.82 | 0.024 / 0.71 | 0.007 |
+| 12-21 h (Nov 16 evening vs Nov 17) | 0.023 | 0.129 / 0.92 | 0.062 / 0.83 | 0.042 / 0.74 | 0.028 / 0.60 | 0.011 |
+| 21-30 h (Nov 16 morning vs Nov 17) | 0.072 | 0.147 / 0.79 | 0.084 / 0.60 | 0.065 / 0.47 | 0.052 / 0.32 | 0.036 |
+| 30-60 h (about 2 days) | 0.139 | 0.173 / 0.65 | 0.114 / 0.43 | 0.096 / 0.31 | 0.084 / 0.19 | 0.069 |
+| 60-84 h (about 3 days) | 0.143 | 0.174 / 0.64 | 0.116 / 0.42 | 0.099 / 0.30 | 0.086 / 0.19 | 0.072 |
+| 84-132 h (4-5 days) | 0.195 | 0.194 / 0.56 | 0.140 / 0.34 | 0.123 / 0.23 | 0.111 / 0.14 | 0.098 |
+| 132-180 h (6-7 days) | 0.257 | 0.217 / 0.49 | 0.167 / 0.28 | 0.152 / 0.19 | 0.141 / 0.11 | 0.128 |
+| 180-228 h (8-9 days) | 0.282 | 0.227 / 0.46 | 0.179 / 0.26 | 0.164 / 0.17 | 0.153 / 0.10 | 0.141 |
+| 228-300 h (10-11 days) | 0.310 | 0.238 / 0.44 | 0.191 / 0.24 | 0.177 / 0.15 | 0.167 / 0.09 | 0.155 |
+
+Observed consensus flip rates (rsdata rule; Nov 6 to 13 are single pulls, Nov 16 and 17 are 3-pull sessions):
+| transition | flips/pairs (rate) [CI] |
+| --- | --- |
+| 11-06 to 11-09 | 73/667 (0.1094) [0.0730, 0.1523] |
+| 11-09 to 11-11 | 99/724 (0.1367) [0.0854, 0.1946] |
+| 11-11 to 11-13 | 87/605 (0.1438) [0.1033, 0.1915] |
+| 11-13 to 11-16 | 90/721 (0.1248) [0.0904, 0.1652] |
+| 11-16 to 11-17 | 44/767 (0.0574) [0.0295, 0.0965] |
+
+## Q5. Pre-specified leads (no thresholds tuned). Lift = flip rate when flagged / flip rate when not flagged.
+| lead | flagged pairs | flagged flips | precision (flip rate if flagged) | flip rate if not flagged | lift | recall |
+| --- | --- | --- | --- | --- | --- | --- |
+| (a) higher URL entered the top 10 on day one | 98 | 8 | 8/98 (0.082) [0.012, 0.225] | 36/669 (0.054) [0.027, 0.091] | 1.52 [0.23, 4.63] | 8/44 (0.182) [0.024, 0.356] |
+| (a') lower URL entered the top 10 on day one (contrast) | 145 | 12 | 12/145 (0.083) [0.027, 0.183] | 32/622 (0.051) [0.024, 0.089] | 1.61 [0.53, 3.84] | 12/44 (0.273) [0.091, 0.485] |
+| (b) lower URL's site rose on other searches, Nov 13 to Nov 16 | 272 | 12 | 12/272 (0.044) [0.011, 0.095] | 32/495 (0.065) [0.033, 0.108] | 0.68 [0.21, 1.43] | 12/44 (0.273) [0.095, 0.440] |
+| (b') higher URL's site fell on other searches, Nov 13 to Nov 16 | 406 | 20 | 20/406 (0.049) [0.025, 0.085] | 24/361 (0.066) [0.026, 0.123] | 0.74 [0.40, 1.62] | 20/44 (0.455) [0.312, 0.634] |
+| (b'') diagnostic, reads day two: lower URL's site rose on other searches, Nov 16 to Nov 17 | 425 | 27 | 27/425 (0.064) [0.031, 0.110] | 17/342 (0.050) [0.015, 0.105] | 1.28 [0.46, 3.92] | 27/44 (0.614) [0.339, 0.841] |
+| (b''') diagnostic, reads day two: higher URL's site fell on other searches, Nov 16 to Nov 17 | 123 | 9 | 9/123 (0.073) [0.008, 0.170] | 35/644 (0.054) [0.028, 0.091] | 1.35 [0.15, 3.51] | 9/44 (0.205) [0.025, 0.438] |
+| (c) only the last day-one pull shows the reverse order | 48 | 13 | 13/48 (0.271) [0.068, 0.577] | 31/719 (0.043) [0.024, 0.069] | 6.28 [1.84, 14.86] | 13/44 (0.295) [0.088, 0.448] |
+| (c') only the morning pull shows the reverse order | 52 | 4 | 4/52 (0.077) [0.000, 0.242] | 40/715 (0.056) [0.028, 0.096] | 1.38 [0.00, 5.20] | 4/44 (0.091) [0.000, 0.214] |
+| (c'') only evening pull 1 shows the reverse order | 8 | 3 | 3/8 (0.375) [0.000, 1.000] | 41/759 (0.054) [0.027, 0.092] | 6.94 [0.00, 25.03] | 3/44 (0.068) [0.000, 0.158] |
+| (c''') only evening pull 2 shows the reverse order | 46 | 1 | 1/46 (0.022) [0.000, 0.100] | 43/721 (0.060) [0.030, 0.101] | 0.36 [0.00, 1.85] | 1/44 (0.023) [0.000, 0.081] |
+| (d) habitual: reverse order seen in 2+ of the 8 pulls up to day one | 222 | 38 | 38/222 (0.171) [0.090, 0.269] | 6/545 (0.011) [0.002, 0.021] | 15.55 [8.01, 51.85] | 38/44 (0.864) [0.750, 0.960] |
+| (d') once: reverse order seen in exactly 1 of 8 | 149 | 2 | 2/149 (0.013) [0.000, 0.035] | 42/618 (0.068) [0.035, 0.114] | 0.20 [0.00, 0.50] | 2/44 (0.045) [0.000, 0.103] |
+| (d'') novel: reverse order never seen in the 8 pulls up to day one | 396 | 4 | 4/396 (0.010) [0.000, 0.022] | 40/371 (0.108) [0.056, 0.176] | 0.09 [0.00, 0.23] | 4/44 (0.091) [0.000, 0.212] |
+Pairs with exactly one reversed day-one pull: homogeneity across the four pulls chi2 p = 0.0005; across the three evening pulls only p = 0.0014 (pairs treated as independent). Flip rate when only evening 3 dissents minus when only evening 2 dissents: 0.249 [0.030, 0.562] (query bootstrap). Evening 2 sits between evening 1 and evening 3 in time, so recency does not explain the gap.
+Pairs whose lower URL's site appears on no other search (lead b undefined, counted as not flagged): 57
+
+Wrote /workspace/ranksim-claude/evals/claude/r2/t3-noise/results.json in 65 s

@@ -122,3 +122,74 @@ Inside (`evals/claude/r2/t2-signal/notes.md`, `evals/claude/r2/samesite/notes.md
 - On held-out rows, changed pages move clearly more than matched unchanged pages (difference above +0.20 with the interval above zero). Then edits matter more in short windows than the theory says, and a content rule deserves a new attempt.
 - The frozen content-aware rule beats the position-only rule on held-out rows.
 - The position rule falls to coin level on changed rows while staying near 0.70 on unchanged ones. That would mean edits scramble direction, which is also an edit effect.
+
+## 3. Target 3: which pairs swap order overnight
+
+### Mechanism
+
+Over a day or two, each pair of URLs on a results page has a stable chance of appearing in one order rather than the other. A single pull is one noisy draw from it. A three-pull consensus is a less noisy draw, but still a draw. When two consecutive days show a pair in opposite orders, the usual cause is two draws landing on different sides, not a change at Google.
+
+### What the design data says
+
+From `evals/claude/r2/t3-noise/` (the one consecutive-day consensus transition in design data, Nov 16 to Nov 17, the original 30 searches, 767 pairs, 44 flips):
+
+- **The flips are what pull noise alone produces.** Shuffle each search's six voting pulls between the two days and count flips the same way: 45.0 expected on 811.9 pairs. Observed: 44 on 767. Noise share of the flip count 1.02 [0.78, 1.47].
+- **Real order changes are too few to see.** In a model that lets a pair's order chance be redrawn between the days, the best estimate of the redraw rate is zero and its upper bound puts about 2 of the 44 flips down to real change. That bound treats pairs as independent, so it is too tight, but the permutation count says the same thing.
+- **Flips come from pairs that already alternate.** 38 of the 44 flips are in the 222 pairs whose reverse order had shown in at least 2 of the 8 pulls up to day one (17% of those flip). Pairs whose reverse order had never shown: 4 flips in 396 (1%).
+- **Real change needs days, not hours.** Two single pulls disagree on 7.0% of pairs inside one session, 8.0% at 17 hours, 10.1% at 25 hours, 13.0% at 2 days, 15.4% at 4 to 5 days and 20.3% at 10 to 11 days.
+- Outside evidence agrees: two identical searches at the same moment give the same URLs in a noisy order (Kendall tau 0.88).
+
+### What follows for any predictor
+
+Take one pair whose consensus shows its usual order with probability q. On a day it shows the unusual order it flips back tomorrow with probability q. On a day it shows the usual order it flips with probability 1 minus q. Two consequences:
+
+1. Calling a flip on every pair that is in its unusual order today catches exactly half of all flips, and more than half of those calls are right. That is the same as saying "tomorrow will show the long-run pull-majority order". It beats yesterday's consensus on all pairs. So a denoised order is a better forecast than persistence. This is the useful product fact.
+2. To catch more than half, a predictor must also call flips on pairs that sit in their usual order, and those calls are right less than half the time. With precision held at one half, the best reachable flip recall for one pair is 1/(2q).
+
+Numbers, with the distribution of q fitted on the design transition (three model families):
+
+| What the predictor knows | Flip recall with half of its calls right |
+| --- | --- |
+| Every pair's true q, nothing changes between days | 0.60 to 0.72 |
+| Same, with real change at its upper bound | 0.54 to 0.66 |
+| Day one's 3 pulls plus 12 more recent pulls | 0.56 to 0.65 |
+| Day one's 3 pulls plus 6 more | 0.55 to 0.59 |
+| Day one's 3 pulls plus 3 more | 0.50 |
+| Day one's 3 pulls plus 1 more | 0.41 |
+| Day one's 3 pulls only | 0.00 |
+
+On the real design pairs, a predictor of this kind that sees the four Nov 16 pulls calls 38 pairs and is right on 16: recall 0.36, precision 0.42. Adding the four older single pulls (Nov 6 to 13) makes it worse (24 of 102 right), because over a week or more the order chances themselves have moved. Only the last day or two of pulls count.
+
+### Back-of-envelope: is the number reachable?
+
+- **The brief's wording alone** (more than half of the flipped pairs called, lower bound above 0.5): yes, and it means nothing. "A pair that any of yesterday's pulls showed reversed" holds 35 of 44 flips. Reversing every pair holds 44 of 44.
+- **With the guard that the predictor is no worse than persistence on all pairs** (which is the same as "at least half of its flip calls are right"): the ceiling is 0.60 to 0.72 with perfect knowledge and about 0.50 with the pulls we have. A lower bound above 0.5 needs a true recall near 0.58 and about 300 flipped pairs, or 0.55 and about 700 (the design interval on 44 flips is plus or minus 0.2). That takes 12 or more recent pulls per search, so at least 6 pulls a day, on 100 searches for several days: about 600 credits a day. The balance is 891.
+- PREDICTED for the held-out days in hand (Nov 17 to 18 with about 4 extra recent pulls, Nov 18 to 19 with about 7 that are up to two days old, about 90 flips in all): flip recall 0.35 to 0.55 with precision 0.40 to 0.55. The lower bound stays under 0.5. **Target 3 with the guard fails, and it fails because the thing to be predicted is measurement noise.**
+
+### What would make it reachable, and what is worth predicting instead
+
+- More pulls per day would lift the ceiling toward 0.6, at a price, to predict noise. Not worth buying.
+- Over three days or more, most consensus flips are real: the projected noise share at three pulls is about 0.42 at 2 to 3 days, 0.34 at 4 to 5 and 0.28 at 6 to 7. That is the horizon at which "which of two pages will be ahead" is a question about Google and not about the measurement. It needs multi-pull days on both ends, which exist from Nov 16 on. This is the natural loop 2.
+
+### What gets built in loop 1
+
+- **The latent-order scorer** (`scripts/claude/r2_t3_latent.py`). For each pair it pools the pull-by-pull order votes of recent days, weighted by age with a two-day half-life, turns them into a probability that tomorrow's three-pull consensus shows the reverse order, and calls flips two ways: every pair above one half, and the largest set whose expected share of right calls is at least one half. No weight is fitted.
+- **The noise check** (`scripts/claude/r2_t3_noise_check.py`). The permutation count above, frozen, run on every held-out consecutive transition. PREDICTED: the noise share of the flip count is between 0.75 and 1.3 on each.
+
+### What would prove this wrong
+
+- On held-out transitions the observed flips clearly exceed the shuffled-pull expectation (noise share under 0.7). Then real overnight change is common and a different predictor is worth building.
+- The latent-order scorer's calls are right far less than 40% of the time. Then order chances are not stable even for a day.
+- Any frozen scorer reaches a flip-recall lower bound above 0.5 while at least half of its calls are right.
+
+## 4. Summary of predictions made before scoring (all PREDICTED)
+
+| Target | Reading | Prediction | Why |
+| --- | --- | --- | --- |
+| 1 | 3-wide band, pooled held-out days | Pass, probability about 0.8 | Two doors: the site's slot, else the bottom of the page |
+| 1 | 3-wide band, two separate days | Not reachable this week | Only Nov 19 has 20 or more strict-new rows |
+| 1 | absolute error of 3 or less | Fail | Position 7 covers positions 4 to 10 |
+| 2 | brief's wording (L) | About even, once there are 40 rows; about 35 rows expected through Nov 19 | Position state decides direction about 70% of the time |
+| 2 | content beats position (H) | Fail on any number of rows this month | An edit explains a few percent of a short-window move |
+| 3 | brief's wording alone | Pass for the contested-pair rule, and it means nothing | Reversing everything also passes |
+| 3 | with the persistence guard | Fail | One-day flips are pull noise. Ceiling 0.60 to 0.72, reachable about 0.50 |

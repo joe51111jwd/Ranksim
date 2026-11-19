@@ -1,0 +1,1 @@
+{"command": "run", "finished_utc": "2026-11-19T20:17:00.676Z", "gap": 1.5, "refused_attempts": 6, "requests": 6, "started_utc": "2026-11-19T20:09:26.048Z", "status_hist": {"error:ConnectError": 6}, "stopped": "service_refused: 6 refusals in a row (last error:ConnectError)", "urls": 764}

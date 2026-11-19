@@ -1,0 +1,1819 @@
+{
+  "label": "Positions REAL (Serper consensus). Scorer outputs PREDICTED. Diagnostic only: not proof that an edit moves rank.",
+  "mode": "design",
+  "prereg": null,
+  "manifest_frozen_at": null,
+  "max_serp_day_loaded": "2026-11-17",
+  "max_page_fetch_day_loaded": "2026-11-17",
+  "pulls": {
+    "2026-11-16": {
+      "day": "2026-11-16",
+      "searches": 100,
+      "min_pulls": 1,
+      "max_pulls": 3,
+      "by_count": {
+        "1": 70,
+        "3": 30
+      }
+    },
+    "2026-11-17": {
+      "day": "2026-11-17",
+      "searches": 30,
+      "min_pulls": 3,
+      "max_pulls": 3,
+      "by_count": {
+        "3": 30
+      }
+    }
+  },
+  "scorer_definitions": {
+    "bm25f": {
+      "fields": {
+        "title": {
+          "weight": 3.0,
+          "b": 0.5
+        },
+        "h1": {
+          "weight": 3.0,
+          "b": 0.5
+        },
+        "head": {
+          "weight": 2.0,
+          "b": 0.5
+        },
+        "body": {
+          "weight": 1.0,
+          "b": 0.75
+        }
+      },
+      "k1": 1.2,
+      "source": "scripts.claude.r2_samesite_pairs.Corpus.bm25f",
+      "direction": "higher first"
+    },
+    "text_vote": {
+      "features": {
+        "title_cov": "larger first",
+        "h1_cov": "larger first",
+        "slug_cov": "larger first",
+        "title_phrase": "larger first",
+        "bm25_body": "larger first",
+        "bm25f": "larger first",
+        "first100_cov": "larger first"
+      },
+      "source": "scripts.claude.r2_samesite_pairs.sign_vote",
+      "tie": "vote sum 0 counts half"
+    },
+    "excluded_from_both": [
+      "serp_title_all",
+      "inlinks",
+      "url_depth",
+      "is_home",
+      "log_words",
+      "recency",
+      "url_len",
+      "age_published",
+      "canonical_elsewhere"
+    ],
+    "corpus_rule": "one page per URL in any pair of this run (same-site or cross-site), the usable fetch nearest the last listed day",
+    "page_rule": "usable fetch (>= 50 main-text words) nearest the pair's day, not after the last listed day; pair's day is the day (per-day) or the latest listed day the pair was strictly ordered (pooled)"
+  },
+  "days": [
+    "2026-11-16",
+    "2026-11-17"
+  ],
+  "search_groups": [
+    "o30",
+    "a70"
+  ],
+  "seen_cutoff": "2026-11-15",
+  "pairs": {
+    "per_day": {
+      "2026-11-16": {
+        "pair_day_instances": 4174,
+        "tied_instances": 12,
+        "split_pairs_dropped": 0
+      },
+      "2026-11-17": {
+        "pair_day_instances": 1109,
+        "tied_instances": 14,
+        "split_pairs_dropped": 0
+      }
+    },
+    "pooled": {
+      "pair_day_instances": 5283,
+      "tied_instances": 26,
+      "split_pairs_dropped": 44
+    },
+    "searches_with_lists": {
+      "2026-11-16": 100,
+      "2026-11-17": 30
+    }
+  },
+  "pages": {
+    "urls_in_pairs": 535,
+    "urls_with_any_fetch": 407,
+    "urls_with_usable_page": 365,
+    "page_versions_used": 720,
+    "max_fetch_day_used": "2026-11-17",
+    "fetch_day_of_corpus_pages": {
+      "2026-11-09": 1,
+      "2026-11-11": 1,
+      "2026-11-13": 1,
+      "2026-11-16": 359,
+      "2026-11-17": 3
+    },
+    "method_of_corpus_pages": {
+      "http": 289,
+      "browser": 43,
+      "browser:date-only": 31,
+      "http:date-only": 2
+    }
+  },
+  "corpus": {
+    "documents": 365,
+    "avg_field_tokens": {
+      "title": 7.425,
+      "h1": 6.093,
+      "head": 130.008,
+      "body": 1826.356
+    }
+  },
+  "pooled": {
+    "counts": {
+      "pairs_total": 4472,
+      "same_site_pairs": 137,
+      "cross_site_pairs": 4335,
+      "same_site_without_usable_html": 65,
+      "cross_site_without_usable_html": 2118,
+      "same_site_duplicate_content_dropped": 4,
+      "cross_site_duplicate_content_dropped": 0,
+      "same_site_usable_pairs": 68,
+      "same_site_searches": 31,
+      "same_site_sites": 9,
+      "same_site_top5_sites": [
+        [
+          "hcss.com",
+          44
+        ],
+        [
+          "smartcrewhq.com",
+          8
+        ],
+        [
+          "trimble.com",
+          8
+        ],
+        [
+          "youtube.com",
+          3
+        ],
+        [
+          "contractortalk.com",
+          1
+        ]
+      ],
+      "same_site_top5_share": 0.9411764705882353,
+      "same_site_distinct_url_pairs": 57,
+      "cross_site_usable_pairs": 2217,
+      "cross_site_searches": 100,
+      "same_site_multi_day": 4
+    },
+    "scorers": {
+      "bm25f": {
+        "same_site": {
+          "hits": 34.0,
+          "n": 68,
+          "rate": 0.5,
+          "lo": 0.375,
+          "hi": 0.6842348927875243,
+          "queries": 31
+        },
+        "cross_site": {
+          "hits": 1157.0,
+          "n": 2217,
+          "rate": 0.5218764095624718,
+          "lo": 0.4911938526228513,
+          "hi": 0.5521584402581028,
+          "queries": 100
+        },
+        "same_minus_cross": {
+          "diff": -0.021876409562471832,
+          "lo": -0.15638657436150954,
+          "hi": 0.17436804131974284
+        },
+        "same_site_ties": 0,
+        "same_site_decided": {
+          "hits": 34.0,
+          "n": 68,
+          "rate": 0.5,
+          "lo": 0.375,
+          "hi": 0.6842348927875243,
+          "queries": 31
+        },
+        "same_site_without_top5_sites": {
+          "hits": 3.0,
+          "n": 4,
+          "rate": 0.75,
+          "lo": 0.25,
+          "hi": 1.0,
+          "queries": 4
+        }
+      },
+      "text_vote": {
+        "same_site": {
+          "hits": 38.0,
+          "n": 68,
+          "rate": 0.5588235294117647,
+          "lo": 0.47530092592592593,
+          "hi": 0.6734931181775033,
+          "queries": 31
+        },
+        "cross_site": {
+          "hits": 1158.0,
+          "n": 2217,
+          "rate": 0.5223274695534507,
+          "lo": 0.4945773177346282,
+          "hi": 0.5495199978129359,
+          "queries": 100
+        },
+        "same_minus_cross": {
+          "diff": 0.036496059858314056,
+          "lo": -0.049137977093399926,
+          "hi": 0.1510351992031031
+        },
+        "same_site_ties": 8,
+        "same_site_decided": {
+          "hits": 34.0,
+          "n": 60,
+          "rate": 0.5666666666666667,
+          "lo": 0.4666666666666667,
+          "hi": 0.6842348927875243,
+          "queries": 29
+        },
+        "same_site_without_top5_sites": {
+          "hits": 3.0,
+          "n": 4,
+          "rate": 0.75,
+          "lo": 0.25,
+          "hi": 1.0,
+          "queries": 4
+        }
+      },
+      "text_vote_8_with_serp_title": {
+        "same_site": {
+          "hits": 38.0,
+          "n": 68,
+          "rate": 0.5588235294117647,
+          "lo": 0.47530092592592593,
+          "hi": 0.6734931181775033,
+          "queries": 31
+        },
+        "cross_site": {
+          "hits": 1166.5,
+          "n": 2217,
+          "rate": 0.5261614794767704,
+          "lo": 0.49809877180331347,
+          "hi": 0.5531977957419233,
+          "queries": 100
+        },
+        "same_minus_cross": {
+          "diff": 0.03266204993499433,
+          "lo": -0.05167047767547161,
+          "hi": 0.14519053351209613
+        },
+        "same_site_ties": 8,
+        "same_site_decided": {
+          "hits": 34.0,
+          "n": 60,
+          "rate": 0.5666666666666667,
+          "lo": 0.4666666666666667,
+          "hi": 0.6842348927875243,
+          "queries": 29
+        },
+        "same_site_without_top5_sites": {
+          "hits": 3.0,
+          "n": 4,
+          "rate": 0.75,
+          "lo": 0.25,
+          "hi": 1.0,
+          "queries": 4
+        }
+      }
+    },
+    "by_history": {
+      "new_pair_this_search": {
+        "same_site_pairs": 62,
+        "same_site_searches": 28,
+        "same_site_sites": 9,
+        "cross_site_pairs": 1617,
+        "cross_site_searches": 96,
+        "bm25f": {
+          "same_site": {
+            "hits": 30.0,
+            "n": 62,
+            "rate": 0.4838709677419355,
+            "lo": 0.3610949612403101,
+            "hi": 0.68295892169448,
+            "queries": 28
+          },
+          "cross_site": {
+            "hits": 856.0,
+            "n": 1617,
+            "rate": 0.5293753865182437,
+            "lo": 0.4949324187870811,
+            "hi": 0.5631494498258517,
+            "queries": 96
+          },
+          "same_minus_cross": {
+            "diff": -0.045504418776308175,
+            "lo": -0.16812379390781138,
+            "hi": 0.16108714835097931
+          },
+          "same_site_ties": 0,
+          "same_site_decided": {
+            "hits": 30.0,
+            "n": 62,
+            "rate": 0.4838709677419355,
+            "lo": 0.3610949612403101,
+            "hi": 0.68295892169448,
+            "queries": 28
+          }
+        },
+        "text_vote": {
+          "same_site": {
+            "hits": 34.0,
+            "n": 62,
+            "rate": 0.5483870967741935,
+            "lo": 0.4622605774728416,
+            "hi": 0.6625072674418604,
+            "queries": 28
+          },
+          "cross_site": {
+            "hits": 846.5,
+            "n": 1617,
+            "rate": 0.5235003092145949,
+            "lo": 0.4883951162776096,
+            "hi": 0.55654356541952,
+            "queries": 96
+          },
+          "same_minus_cross": {
+            "diff": 0.02488678755959861,
+            "lo": -0.06030468572427628,
+            "hi": 0.14426480961616542
+          },
+          "same_site_ties": 8,
+          "same_site_decided": {
+            "hits": 30.0,
+            "n": 54,
+            "rate": 0.5555555555555556,
+            "lo": 0.4594594594594595,
+            "hi": 0.6829268292682927,
+            "queries": 26
+          }
+        },
+        "text_vote_8_with_serp_title": {
+          "same_site": {
+            "hits": 34.0,
+            "n": 62,
+            "rate": 0.5483870967741935,
+            "lo": 0.4622605774728416,
+            "hi": 0.6625072674418604,
+            "queries": 28
+          },
+          "cross_site": {
+            "hits": 853.0,
+            "n": 1617,
+            "rate": 0.5275200989486704,
+            "lo": 0.49260418425941566,
+            "hi": 0.5608797320278786,
+            "queries": 96
+          },
+          "same_minus_cross": {
+            "diff": 0.020866997825523148,
+            "lo": -0.06393217794531507,
+            "hi": 0.1398988272709202
+          },
+          "same_site_ties": 8,
+          "same_site_decided": {
+            "hits": 30.0,
+            "n": 54,
+            "rate": 0.5555555555555556,
+            "lo": 0.4594594594594595,
+            "hi": 0.6829268292682927,
+            "queries": 26
+          }
+        }
+      },
+      "seen_pair_this_search": {
+        "same_site_pairs": 6,
+        "same_site_searches": 4,
+        "same_site_sites": 2,
+        "cross_site_pairs": 600,
+        "cross_site_searches": 29,
+        "bm25f": {
+          "same_site": {
+            "hits": 4.0,
+            "n": 6,
+            "rate": 0.6666666666666666,
+            "lo": 0.0,
+            "hi": 1.0,
+            "queries": 4
+          },
+          "cross_site": {
+            "hits": 301.0,
+            "n": 600,
+            "rate": 0.5016666666666667,
+            "lo": 0.43870450232879077,
+            "hi": 0.5687031331012518,
+            "queries": 29
+          },
+          "same_minus_cross": {
+            "diff": 0.16499999999999992,
+            "lo": -0.5187037535421977,
+            "hi": 0.5424567952243229
+          },
+          "same_site_ties": 0,
+          "same_site_decided": {
+            "hits": 4.0,
+            "n": 6,
+            "rate": 0.6666666666666666,
+            "lo": 0.0,
+            "hi": 1.0,
+            "queries": 4
+          }
+        },
+        "text_vote": {
+          "same_site": {
+            "hits": 4.0,
+            "n": 6,
+            "rate": 0.6666666666666666,
+            "lo": 0.0,
+            "hi": 1.0,
+            "queries": 4
+          },
+          "cross_site": {
+            "hits": 311.5,
+            "n": 600,
+            "rate": 0.5191666666666667,
+            "lo": 0.46999471299093654,
+            "hi": 0.5738434163701067,
+            "queries": 29
+          },
+          "same_minus_cross": {
+            "diff": 0.14749999999999996,
+            "lo": -0.5328014883251612,
+            "hi": 0.5153888582460011
+          },
+          "same_site_ties": 0,
+          "same_site_decided": {
+            "hits": 4.0,
+            "n": 6,
+            "rate": 0.6666666666666666,
+            "lo": 0.0,
+            "hi": 1.0,
+            "queries": 4
+          }
+        },
+        "text_vote_8_with_serp_title": {
+          "same_site": {
+            "hits": 4.0,
+            "n": 6,
+            "rate": 0.6666666666666666,
+            "lo": 0.0,
+            "hi": 1.0,
+            "queries": 4
+          },
+          "cross_site": {
+            "hits": 313.5,
+            "n": 600,
+            "rate": 0.5225,
+            "lo": 0.47348106060606066,
+            "hi": 0.5767826092505208,
+            "queries": 29
+          },
+          "same_minus_cross": {
+            "diff": 0.14416666666666667,
+            "lo": -0.5373550606938524,
+            "hi": 0.5121028509282995
+          },
+          "same_site_ties": 0,
+          "same_site_decided": {
+            "hits": 4.0,
+            "n": 6,
+            "rate": 0.6666666666666666,
+            "lo": 0.0,
+            "hi": 1.0,
+            "queries": 4
+          }
+        }
+      },
+      "new_pair_every_search": {
+        "same_site_pairs": 58,
+        "same_site_searches": 25,
+        "same_site_sites": 9,
+        "cross_site_pairs": 1248,
+        "cross_site_searches": 91,
+        "bm25f": {
+          "same_site": {
+            "hits": 27.0,
+            "n": 58,
+            "rate": 0.46551724137931033,
+            "lo": 0.34523809523809523,
+            "hi": 0.6512102515424772,
+            "queries": 25
+          },
+          "cross_site": {
+            "hits": 661.0,
+            "n": 1248,
+            "rate": 0.5296474358974359,
+            "lo": 0.49000721461346697,
+            "hi": 0.5706473178877196,
+            "queries": 91
+          },
+          "same_minus_cross": {
+            "diff": -0.06413019451812557,
+            "lo": -0.19045448679012067,
+            "hi": 0.13196275112567205
+          },
+          "same_site_ties": 0,
+          "same_site_decided": {
+            "hits": 27.0,
+            "n": 58,
+            "rate": 0.46551724137931033,
+            "lo": 0.34523809523809523,
+            "hi": 0.6512102515424772,
+            "queries": 25
+          }
+        },
+        "text_vote": {
+          "same_site": {
+            "hits": 31.0,
+            "n": 58,
+            "rate": 0.5344827586206896,
+            "lo": 0.44116400797607175,
+            "hi": 0.6486486486486487,
+            "queries": 25
+          },
+          "cross_site": {
+            "hits": 638.5,
+            "n": 1248,
+            "rate": 0.5116185897435898,
+            "lo": 0.47142472428827903,
+            "hi": 0.5535499718564244,
+            "queries": 91
+          },
+          "same_minus_cross": {
+            "diff": 0.022864168877099855,
+            "lo": -0.07575083391664361,
+            "hi": 0.14030230900120408
+          },
+          "same_site_ties": 6,
+          "same_site_decided": {
+            "hits": 28.0,
+            "n": 52,
+            "rate": 0.5384615384615384,
+            "lo": 0.44154889228418637,
+            "hi": 0.6585365853658537,
+            "queries": 24
+          }
+        },
+        "text_vote_8_with_serp_title": {
+          "same_site": {
+            "hits": 31.0,
+            "n": 58,
+            "rate": 0.5344827586206896,
+            "lo": 0.44116400797607175,
+            "hi": 0.6486486486486487,
+            "queries": 25
+          },
+          "cross_site": {
+            "hits": 644.0,
+            "n": 1248,
+            "rate": 0.5160256410256411,
+            "lo": 0.475361831829842,
+            "hi": 0.5566732673267326,
+            "queries": 91
+          },
+          "same_minus_cross": {
+            "diff": 0.018457117595048533,
+            "lo": -0.0803795624814497,
+            "hi": 0.13572831058113916
+          },
+          "same_site_ties": 6,
+          "same_site_decided": {
+            "hits": 28.0,
+            "n": 52,
+            "rate": 0.5384615384615384,
+            "lo": 0.44154889228418637,
+            "hi": 0.6585365853658537,
+            "queries": 24
+          }
+        }
+      }
+    }
+  },
+  "per_day": {
+    "2026-11-16": {
+      "counts": {
+        "pairs_total": 4174,
+        "same_site_pairs": 128,
+        "cross_site_pairs": 4046,
+        "same_site_without_usable_html": 62,
+        "cross_site_without_usable_html": 2016,
+        "same_site_duplicate_content_dropped": 2,
+        "cross_site_duplicate_content_dropped": 0,
+        "same_site_usable_pairs": 64,
+        "same_site_searches": 30,
+        "same_site_sites": 9,
+        "same_site_top5_sites": [
+          [
+            "hcss.com",
+            45
+          ],
+          [
+            "smartcrewhq.com",
+            6
+          ],
+          [
+            "trimble.com",
+            6
+          ],
+          [
+            "youtube.com",
+            2
+          ],
+          [
+            "contractortalk.com",
+            1
+          ]
+        ],
+        "same_site_top5_share": 0.9375,
+        "same_site_distinct_url_pairs": 52,
+        "cross_site_usable_pairs": 2030,
+        "cross_site_searches": 100
+      },
+      "scorers": {
+        "bm25f": {
+          "same_site": {
+            "hits": 31.0,
+            "n": 64,
+            "rate": 0.484375,
+            "lo": 0.358974358974359,
+            "hi": 0.6800212765957446,
+            "queries": 30
+          },
+          "cross_site": {
+            "hits": 1060.0,
+            "n": 2030,
+            "rate": 0.5221674876847291,
+            "lo": 0.4898464208018233,
+            "hi": 0.5521001240474925,
+            "queries": 100
+          },
+          "same_minus_cross": {
+            "diff": -0.03779248768472909,
+            "lo": -0.1668188802887079,
+            "hi": 0.16372165064142885
+          },
+          "same_site_ties": 0,
+          "same_site_decided": {
+            "hits": 31.0,
+            "n": 64,
+            "rate": 0.484375,
+            "lo": 0.358974358974359,
+            "hi": 0.6800212765957446,
+            "queries": 30
+          },
+          "same_site_without_top5_sites": {
+            "hits": 3.0,
+            "n": 4,
+            "rate": 0.75,
+            "lo": 0.25,
+            "hi": 1.0,
+            "queries": 4
+          }
+        },
+        "text_vote": {
+          "same_site": {
+            "hits": 33.5,
+            "n": 64,
+            "rate": 0.5234375,
+            "lo": 0.4375,
+            "hi": 0.6286180124223599,
+            "queries": 30
+          },
+          "cross_site": {
+            "hits": 1049.5,
+            "n": 2030,
+            "rate": 0.5169950738916256,
+            "lo": 0.4888706271488469,
+            "hi": 0.544372214541898,
+            "queries": 100
+          },
+          "same_minus_cross": {
+            "diff": 0.006442426108374422,
+            "lo": -0.08079844824711317,
+            "hi": 0.1118259040086725
+          },
+          "same_site_ties": 7,
+          "same_site_decided": {
+            "hits": 30.0,
+            "n": 57,
+            "rate": 0.5263157894736842,
+            "lo": 0.42252738654147104,
+            "hi": 0.6388888888888888,
+            "queries": 29
+          },
+          "same_site_without_top5_sites": {
+            "hits": 3.0,
+            "n": 4,
+            "rate": 0.75,
+            "lo": 0.25,
+            "hi": 1.0,
+            "queries": 4
+          }
+        },
+        "text_vote_8_with_serp_title": {
+          "same_site": {
+            "hits": 33.5,
+            "n": 64,
+            "rate": 0.5234375,
+            "lo": 0.4375,
+            "hi": 0.6286180124223599,
+            "queries": 30
+          },
+          "cross_site": {
+            "hits": 1057.5,
+            "n": 2030,
+            "rate": 0.520935960591133,
+            "lo": 0.4920738214792324,
+            "hi": 0.548901223040159,
+            "queries": 100
+          },
+          "same_minus_cross": {
+            "diff": 0.002501539408866993,
+            "lo": -0.0833577668793615,
+            "hi": 0.10680440127247881
+          },
+          "same_site_ties": 7,
+          "same_site_decided": {
+            "hits": 30.0,
+            "n": 57,
+            "rate": 0.5263157894736842,
+            "lo": 0.42252738654147104,
+            "hi": 0.6388888888888888,
+            "queries": 29
+          },
+          "same_site_without_top5_sites": {
+            "hits": 3.0,
+            "n": 4,
+            "rate": 0.75,
+            "lo": 0.25,
+            "hi": 1.0,
+            "queries": 4
+          }
+        }
+      },
+      "by_history": {
+        "new_pair_this_search": {
+          "same_site_pairs": 59,
+          "same_site_searches": 25,
+          "same_site_sites": 9,
+          "cross_site_pairs": 1517,
+          "cross_site_searches": 90,
+          "bm25f": {
+            "same_site": {
+              "hits": 28.0,
+              "n": 59,
+              "rate": 0.4745762711864407,
+              "lo": 0.34882414423830677,
+              "hi": 0.6666666666666666,
+              "queries": 25
+            },
+            "cross_site": {
+              "hits": 810.0,
+              "n": 1517,
+              "rate": 0.5339485827290705,
+              "lo": 0.4971185230450406,
+              "hi": 0.5688520276002587,
+              "queries": 90
+            },
+            "same_minus_cross": {
+              "diff": -0.05937231154262984,
+              "lo": -0.18518026020388845,
+              "hi": 0.14135179209901527
+            },
+            "same_site_ties": 0,
+            "same_site_decided": {
+              "hits": 28.0,
+              "n": 59,
+              "rate": 0.4745762711864407,
+              "lo": 0.34882414423830677,
+              "hi": 0.6666666666666666,
+              "queries": 25
+            }
+          },
+          "text_vote": {
+            "same_site": {
+              "hits": 31.5,
+              "n": 59,
+              "rate": 0.5338983050847458,
+              "lo": 0.4473449248120301,
+              "hi": 0.6477377946127946,
+              "queries": 25
+            },
+            "cross_site": {
+              "hits": 795.0,
+              "n": 1517,
+              "rate": 0.5240606460118655,
+              "lo": 0.4888176336183544,
+              "hi": 0.5583694194117593,
+              "queries": 90
+            },
+            "same_minus_cross": {
+              "diff": 0.009837659072880256,
+              "lo": -0.0855000389554301,
+              "hi": 0.11818027041800248
+            },
+            "same_site_ties": 7,
+            "same_site_decided": {
+              "hits": 28.0,
+              "n": 52,
+              "rate": 0.5384615384615384,
+              "lo": 0.4426229508196721,
+              "hi": 0.6666666666666666,
+              "queries": 24
+            }
+          },
+          "text_vote_8_with_serp_title": {
+            "same_site": {
+              "hits": 31.5,
+              "n": 59,
+              "rate": 0.5338983050847458,
+              "lo": 0.4473449248120301,
+              "hi": 0.6477377946127946,
+              "queries": 25
+            },
+            "cross_site": {
+              "hits": 801.5,
+              "n": 1517,
+              "rate": 0.528345418589321,
+              "lo": 0.49209635259947515,
+              "hi": 0.5631799645066793,
+              "queries": 90
+            },
+            "same_minus_cross": {
+              "diff": 0.005552886495424736,
+              "lo": -0.09003487878059492,
+              "hi": 0.11308828277973047
+            },
+            "same_site_ties": 7,
+            "same_site_decided": {
+              "hits": 28.0,
+              "n": 52,
+              "rate": 0.5384615384615384,
+              "lo": 0.4426229508196721,
+              "hi": 0.6666666666666666,
+              "queries": 24
+            }
+          }
+        },
+        "seen_pair_this_search": {
+          "same_site_pairs": 5,
+          "same_site_searches": 5,
+          "same_site_sites": 2,
+          "cross_site_pairs": 513,
+          "cross_site_searches": 29,
+          "bm25f": {
+            "same_site": {
+              "hits": 3.0,
+              "n": 5,
+              "rate": 0.6,
+              "lo": 0.2,
+              "hi": 1.0,
+              "queries": 5
+            },
+            "cross_site": {
+              "hits": 250.0,
+              "n": 513,
+              "rate": 0.4873294346978557,
+              "lo": 0.42134542865938124,
+              "hi": 0.5539633353558117,
+              "queries": 29
+            },
+            "same_minus_cross": {
+              "diff": 0.11267056530214425,
+              "lo": -0.45932241061789547,
+              "hi": 0.560241054613936
+            },
+            "same_site_ties": 0,
+            "same_site_decided": {
+              "hits": 3.0,
+              "n": 5,
+              "rate": 0.6,
+              "lo": 0.2,
+              "hi": 1.0,
+              "queries": 5
+            }
+          },
+          "text_vote": {
+            "same_site": {
+              "hits": 2.0,
+              "n": 5,
+              "rate": 0.4,
+              "lo": 0.0,
+              "hi": 0.8,
+              "queries": 5
+            },
+            "cross_site": {
+              "hits": 254.5,
+              "n": 513,
+              "rate": 0.49610136452241715,
+              "lo": 0.44684881257312714,
+              "hi": 0.5508903869686275,
+              "queries": 29
+            },
+            "same_minus_cross": {
+              "diff": -0.09610136452241713,
+              "lo": -0.5093902886247879,
+              "hi": 0.512662814162539
+            },
+            "same_site_ties": 0,
+            "same_site_decided": {
+              "hits": 2.0,
+              "n": 5,
+              "rate": 0.4,
+              "lo": 0.0,
+              "hi": 0.8,
+              "queries": 5
+            }
+          },
+          "text_vote_8_with_serp_title": {
+            "same_site": {
+              "hits": 2.0,
+              "n": 5,
+              "rate": 0.4,
+              "lo": 0.0,
+              "hi": 0.8,
+              "queries": 5
+            },
+            "cross_site": {
+              "hits": 256.0,
+              "n": 513,
+              "rate": 0.49902534113060426,
+              "lo": 0.4491865222487714,
+              "hi": 0.5537569853636467,
+              "queries": 29
+            },
+            "same_minus_cross": {
+              "diff": -0.09902534113060424,
+              "lo": -0.5121027124084343,
+              "hi": 0.5099115390254632
+            },
+            "same_site_ties": 0,
+            "same_site_decided": {
+              "hits": 2.0,
+              "n": 5,
+              "rate": 0.4,
+              "lo": 0.0,
+              "hi": 0.8,
+              "queries": 5
+            }
+          }
+        },
+        "new_pair_every_search": {
+          "same_site_pairs": 55,
+          "same_site_searches": 22,
+          "same_site_sites": 9,
+          "cross_site_pairs": 1194,
+          "cross_site_searches": 86,
+          "bm25f": {
+            "same_site": {
+              "hits": 25.0,
+              "n": 55,
+              "rate": 0.45454545454545453,
+              "lo": 0.32967032967032966,
+              "hi": 0.6578947368421053,
+              "queries": 22
+            },
+            "cross_site": {
+              "hits": 631.0,
+              "n": 1194,
+              "rate": 0.5284757118927973,
+              "lo": 0.48386768948334646,
+              "hi": 0.5703513519471788,
+              "queries": 86
+            },
+            "same_minus_cross": {
+              "diff": -0.07393025734734276,
+              "lo": -0.19369581481216486,
+              "hi": 0.12431863079081866
+            },
+            "same_site_ties": 0,
+            "same_site_decided": {
+              "hits": 25.0,
+              "n": 55,
+              "rate": 0.45454545454545453,
+              "lo": 0.32967032967032966,
+              "hi": 0.6578947368421053,
+              "queries": 22
+            }
+          },
+          "text_vote": {
+            "same_site": {
+              "hits": 28.5,
+              "n": 55,
+              "rate": 0.5181818181818182,
+              "lo": 0.42857142857142855,
+              "hi": 0.6285714285714286,
+              "queries": 22
+            },
+            "cross_site": {
+              "hits": 608.0,
+              "n": 1194,
+              "rate": 0.509212730318258,
+              "lo": 0.46524203146563986,
+              "hi": 0.5522091243262524,
+              "queries": 86
+            },
+            "same_minus_cross": {
+              "diff": 0.00896908786356021,
+              "lo": -0.09441044542991218,
+              "hi": 0.12546695092574917
+            },
+            "same_site_ties": 5,
+            "same_site_decided": {
+              "hits": 26.0,
+              "n": 50,
+              "rate": 0.52,
+              "lo": 0.42105263157894735,
+              "hi": 0.6363636363636364,
+              "queries": 22
+            }
+          },
+          "text_vote_8_with_serp_title": {
+            "same_site": {
+              "hits": 28.5,
+              "n": 55,
+              "rate": 0.5181818181818182,
+              "lo": 0.42857142857142855,
+              "hi": 0.6285714285714286,
+              "queries": 22
+            },
+            "cross_site": {
+              "hits": 613.5,
+              "n": 1194,
+              "rate": 0.5138190954773869,
+              "lo": 0.46923130533499924,
+              "hi": 0.5575652147923038,
+              "queries": 86
+            },
+            "same_minus_cross": {
+              "diff": 0.004362722704431277,
+              "lo": -0.09979673987454069,
+              "hi": 0.11882601129148075
+            },
+            "same_site_ties": 5,
+            "same_site_decided": {
+              "hits": 26.0,
+              "n": 50,
+              "rate": 0.52,
+              "lo": 0.42105263157894735,
+              "hi": 0.6363636363636364,
+              "queries": 22
+            }
+          }
+        }
+      }
+    },
+    "2026-11-17": {
+      "counts": {
+        "pairs_total": 1109,
+        "same_site_pairs": 31,
+        "cross_site_pairs": 1078,
+        "same_site_without_usable_html": 17,
+        "cross_site_without_usable_html": 427,
+        "same_site_duplicate_content_dropped": 4,
+        "cross_site_duplicate_content_dropped": 0,
+        "same_site_usable_pairs": 10,
+        "same_site_searches": 7,
+        "same_site_sites": 4,
+        "same_site_top5_sites": [
+          [
+            "hcss.com",
+            4
+          ],
+          [
+            "trimble.com",
+            3
+          ],
+          [
+            "smartcrewhq.com",
+            2
+          ],
+          [
+            "youtube.com",
+            1
+          ]
+        ],
+        "same_site_top5_share": 1.0,
+        "same_site_distinct_url_pairs": 10,
+        "cross_site_usable_pairs": 651,
+        "cross_site_searches": 29
+      },
+      "scorers": {
+        "bm25f": {
+          "same_site": {
+            "hits": 6.0,
+            "n": 10,
+            "rate": 0.6,
+            "lo": 0.2222222222222222,
+            "hi": 0.8888888888888888,
+            "queries": 7
+          },
+          "cross_site": {
+            "hits": 312.0,
+            "n": 651,
+            "rate": 0.4792626728110599,
+            "lo": 0.42072896291565204,
+            "hi": 0.5420113616997102,
+            "queries": 29
+          },
+          "same_minus_cross": {
+            "diff": 0.12073732718894009,
+            "lo": -0.3198651550900463,
+            "hi": 0.42419505224913695
+          },
+          "same_site_ties": 0,
+          "same_site_decided": {
+            "hits": 6.0,
+            "n": 10,
+            "rate": 0.6,
+            "lo": 0.2222222222222222,
+            "hi": 0.8888888888888888,
+            "queries": 7
+          },
+          "same_site_without_top5_sites": {
+            "hits": 0,
+            "n": 0,
+            "rate": null,
+            "lo": null,
+            "hi": null,
+            "queries": 0
+          }
+        },
+        "text_vote": {
+          "same_site": {
+            "hits": 7.5,
+            "n": 10,
+            "rate": 0.75,
+            "lo": 0.4375,
+            "hi": 0.9545454545454546,
+            "queries": 7
+          },
+          "cross_site": {
+            "hits": 335.0,
+            "n": 651,
+            "rate": 0.5145929339477726,
+            "lo": 0.4675094018855288,
+            "hi": 0.5666693163751987,
+            "queries": 29
+          },
+          "same_minus_cross": {
+            "diff": 0.2354070660522274,
+            "lo": -0.088383974988674,
+            "hi": 0.4884006634618087
+          },
+          "same_site_ties": 1,
+          "same_site_decided": {
+            "hits": 7.0,
+            "n": 9,
+            "rate": 0.7777777777777778,
+            "lo": 0.5,
+            "hi": 1.0,
+            "queries": 6
+          },
+          "same_site_without_top5_sites": {
+            "hits": 0,
+            "n": 0,
+            "rate": null,
+            "lo": null,
+            "hi": null,
+            "queries": 0
+          }
+        },
+        "text_vote_8_with_serp_title": {
+          "same_site": {
+            "hits": 7.5,
+            "n": 10,
+            "rate": 0.75,
+            "lo": 0.4375,
+            "hi": 0.9545454545454546,
+            "queries": 7
+          },
+          "cross_site": {
+            "hits": 337.0,
+            "n": 651,
+            "rate": 0.5176651305683564,
+            "lo": 0.47134176926584587,
+            "hi": 0.5684742824290642,
+            "queries": 29
+          },
+          "same_minus_cross": {
+            "diff": 0.2323348694316436,
+            "lo": -0.09111072984089821,
+            "hi": 0.48661888727096225
+          },
+          "same_site_ties": 1,
+          "same_site_decided": {
+            "hits": 7.0,
+            "n": 9,
+            "rate": 0.7777777777777778,
+            "lo": 0.5,
+            "hi": 1.0,
+            "queries": 6
+          },
+          "same_site_without_top5_sites": {
+            "hits": 0,
+            "n": 0,
+            "rate": null,
+            "lo": null,
+            "hi": null,
+            "queries": 0
+          }
+        }
+      },
+      "by_history": {
+        "new_pair_this_search": {
+          "same_site_pairs": 3,
+          "same_site_searches": 3,
+          "same_site_sites": 2,
+          "cross_site_pairs": 146,
+          "cross_site_searches": 21,
+          "bm25f": {
+            "same_site": {
+              "hits": 2.0,
+              "n": 3,
+              "rate": 0.6666666666666666,
+              "lo": 0.0,
+              "hi": 1.0,
+              "queries": 3
+            },
+            "cross_site": {
+              "hits": 66.0,
+              "n": 146,
+              "rate": 0.4520547945205479,
+              "lo": 0.36413038411336934,
+              "hi": 0.5423794507949021,
+              "queries": 21
+            },
+            "same_minus_cross": {
+              "diff": 0.2146118721461187,
+              "lo": -0.4697781125873168,
+              "hi": 0.6193852167732765
+            },
+            "same_site_ties": 0,
+            "same_site_decided": {
+              "hits": 2.0,
+              "n": 3,
+              "rate": 0.6666666666666666,
+              "lo": 0.0,
+              "hi": 1.0,
+              "queries": 3
+            }
+          },
+          "text_vote": {
+            "same_site": {
+              "hits": 2.5,
+              "n": 3,
+              "rate": 0.8333333333333334,
+              "lo": 0.5,
+              "hi": 1.0,
+              "queries": 3
+            },
+            "cross_site": {
+              "hits": 75.5,
+              "n": 146,
+              "rate": 0.5171232876712328,
+              "lo": 0.42068196793323087,
+              "hi": 0.625920812645658,
+              "queries": 21
+            },
+            "same_minus_cross": {
+              "diff": 0.31621004566210054,
+              "lo": -0.03491767473118276,
+              "hi": 0.5597239692522712
+            },
+            "same_site_ties": 1,
+            "same_site_decided": {
+              "hits": 2.0,
+              "n": 2,
+              "rate": 1.0,
+              "lo": 1.0,
+              "hi": 1.0,
+              "queries": 2
+            }
+          },
+          "text_vote_8_with_serp_title": {
+            "same_site": {
+              "hits": 2.5,
+              "n": 3,
+              "rate": 0.8333333333333334,
+              "lo": 0.5,
+              "hi": 1.0,
+              "queries": 3
+            },
+            "cross_site": {
+              "hits": 75.5,
+              "n": 146,
+              "rate": 0.5171232876712328,
+              "lo": 0.42068196793323087,
+              "hi": 0.625920812645658,
+              "queries": 21
+            },
+            "same_minus_cross": {
+              "diff": 0.31621004566210054,
+              "lo": -0.03491767473118276,
+              "hi": 0.5597239692522712
+            },
+            "same_site_ties": 1,
+            "same_site_decided": {
+              "hits": 2.0,
+              "n": 2,
+              "rate": 1.0,
+              "lo": 1.0,
+              "hi": 1.0,
+              "queries": 2
+            }
+          }
+        },
+        "seen_pair_this_search": {
+          "same_site_pairs": 7,
+          "same_site_searches": 5,
+          "same_site_sites": 2,
+          "cross_site_pairs": 505,
+          "cross_site_searches": 29,
+          "bm25f": {
+            "same_site": {
+              "hits": 4.0,
+              "n": 7,
+              "rate": 0.5714285714285714,
+              "lo": 0.0,
+              "hi": 0.9090909090909091,
+              "queries": 5
+            },
+            "cross_site": {
+              "hits": 246.0,
+              "n": 505,
+              "rate": 0.4871287128712871,
+              "lo": 0.4221739400024802,
+              "hi": 0.5571183781069545,
+              "queries": 29
+            },
+            "same_minus_cross": {
+              "diff": 0.08429985855728428,
+              "lo": -0.5061126166817224,
+              "hi": 0.5271177446102822
+            },
+            "same_site_ties": 0,
+            "same_site_decided": {
+              "hits": 4.0,
+              "n": 7,
+              "rate": 0.5714285714285714,
+              "lo": 0.0,
+              "hi": 0.9090909090909091,
+              "queries": 5
+            }
+          },
+          "text_vote": {
+            "same_site": {
+              "hits": 5.0,
+              "n": 7,
+              "rate": 0.7142857142857143,
+              "lo": 0.2,
+              "hi": 1.0,
+              "queries": 5
+            },
+            "cross_site": {
+              "hits": 259.5,
+              "n": 505,
+              "rate": 0.5138613861386139,
+              "lo": 0.4626630915524105,
+              "hi": 0.569384090888946,
+              "queries": 29
+            },
+            "same_minus_cross": {
+              "diff": 0.20042432814710043,
+              "lo": -0.49167992776931324,
+              "hi": 0.5242664870881152
+            },
+            "same_site_ties": 0,
+            "same_site_decided": {
+              "hits": 5.0,
+              "n": 7,
+              "rate": 0.7142857142857143,
+              "lo": 0.2,
+              "hi": 1.0,
+              "queries": 5
+            }
+          },
+          "text_vote_8_with_serp_title": {
+            "same_site": {
+              "hits": 5.0,
+              "n": 7,
+              "rate": 0.7142857142857143,
+              "lo": 0.2,
+              "hi": 1.0,
+              "queries": 5
+            },
+            "cross_site": {
+              "hits": 261.5,
+              "n": 505,
+              "rate": 0.5178217821782178,
+              "lo": 0.4672596500721501,
+              "hi": 0.5731019059270879,
+              "queries": 29
+            },
+            "same_minus_cross": {
+              "diff": 0.19646393210749646,
+              "lo": -0.49679369711117594,
+              "hi": 0.5200425035990952
+            },
+            "same_site_ties": 0,
+            "same_site_decided": {
+              "hits": 5.0,
+              "n": 7,
+              "rate": 0.7142857142857143,
+              "lo": 0.2,
+              "hi": 1.0,
+              "queries": 5
+            }
+          }
+        },
+        "new_pair_every_search": {
+          "same_site_pairs": 3,
+          "same_site_searches": 3,
+          "same_site_sites": 2,
+          "cross_site_pairs": 81,
+          "cross_site_searches": 18,
+          "bm25f": {
+            "same_site": {
+              "hits": 2.0,
+              "n": 3,
+              "rate": 0.6666666666666666,
+              "lo": 0.0,
+              "hi": 1.0,
+              "queries": 3
+            },
+            "cross_site": {
+              "hits": 42.0,
+              "n": 81,
+              "rate": 0.5185185185185185,
+              "lo": 0.39505360623781677,
+              "hi": 0.6363636363636364,
+              "queries": 18
+            },
+            "same_minus_cross": {
+              "diff": 0.14814814814814814,
+              "lo": -0.555731364275668,
+              "hi": 0.5882352941176471
+            },
+            "same_site_ties": 0,
+            "same_site_decided": {
+              "hits": 2.0,
+              "n": 3,
+              "rate": 0.6666666666666666,
+              "lo": 0.0,
+              "hi": 1.0,
+              "queries": 3
+            }
+          },
+          "text_vote": {
+            "same_site": {
+              "hits": 2.5,
+              "n": 3,
+              "rate": 0.8333333333333334,
+              "lo": 0.5,
+              "hi": 1.0,
+              "queries": 3
+            },
+            "cross_site": {
+              "hits": 43.0,
+              "n": 81,
+              "rate": 0.5308641975308642,
+              "lo": 0.4107142857142857,
+              "hi": 0.6447368421052632,
+              "queries": 18
+            },
+            "same_minus_cross": {
+              "diff": 0.30246913580246915,
+              "lo": -0.050561797752809,
+              "hi": 0.5633802816901409
+            },
+            "same_site_ties": 1,
+            "same_site_decided": {
+              "hits": 2.0,
+              "n": 2,
+              "rate": 1.0,
+              "lo": 1.0,
+              "hi": 1.0,
+              "queries": 2
+            }
+          },
+          "text_vote_8_with_serp_title": {
+            "same_site": {
+              "hits": 2.5,
+              "n": 3,
+              "rate": 0.8333333333333334,
+              "lo": 0.5,
+              "hi": 1.0,
+              "queries": 3
+            },
+            "cross_site": {
+              "hits": 43.0,
+              "n": 81,
+              "rate": 0.5308641975308642,
+              "lo": 0.4107142857142857,
+              "hi": 0.6447368421052632,
+              "queries": 18
+            },
+            "same_minus_cross": {
+              "diff": 0.30246913580246915,
+              "lo": -0.050561797752809,
+              "hi": 0.5633802816901409
+            },
+            "same_site_ties": 1,
+            "same_site_decided": {
+              "hits": 2.0,
+              "n": 2,
+              "rate": 1.0,
+              "lo": 1.0,
+              "hi": 1.0,
+              "queries": 2
+            }
+          }
+        }
+      }
+    }
+  },
+  "prediction_check": {
+    "prediction": "BM25F and the text vote each order held-out same-site top-10 pairs between 0.55 and 0.65 and above their cross-site rate",
+    "label": "PREDICTED before the held-out days were opened. Observed values are scorer outputs (PREDICTED) on REAL orders.",
+    "mode": "design dry run, not a test",
+    "population": "pooled records (one per search and URL pair across the listed days), searches o30 and a70, consensus top 10, pairs with usable HTML for both pages, duplicate content dropped",
+    "rule": "Point estimates, ties count half. 'between' means 0.55 <= same-site rate <= 0.65. 'above' means same-site rate > cross-site rate of the same scorer on the same lists. difference_interval_above_zero is reported and is not part of the prediction.",
+    "parts": {
+      "bm25f_between_0.55_and_0.65": {
+        "observed_same_site": 0.5,
+        "same_site": {
+          "hits": 34.0,
+          "n": 68,
+          "rate": 0.5,
+          "lo": 0.375,
+          "hi": 0.6842348927875243,
+          "queries": 31
+        },
+        "held": false
+      },
+      "bm25f_above_cross_site": {
+        "observed_same_site": 0.5,
+        "observed_cross_site": 0.5218764095624718,
+        "same_minus_cross": {
+          "diff": -0.021876409562471832,
+          "lo": -0.15638657436150954,
+          "hi": 0.17436804131974284
+        },
+        "held": false,
+        "difference_interval_above_zero": false
+      },
+      "text_vote_between_0.55_and_0.65": {
+        "observed_same_site": 0.5588235294117647,
+        "same_site": {
+          "hits": 38.0,
+          "n": 68,
+          "rate": 0.5588235294117647,
+          "lo": 0.47530092592592593,
+          "hi": 0.6734931181775033,
+          "queries": 31
+        },
+        "held": true
+      },
+      "text_vote_above_cross_site": {
+        "observed_same_site": 0.5588235294117647,
+        "observed_cross_site": 0.5223274695534507,
+        "same_minus_cross": {
+          "diff": 0.036496059858314056,
+          "lo": -0.049137977093399926,
+          "hi": 0.1510351992031031
+        },
+        "held": true,
+        "difference_interval_above_zero": false
+      }
+    },
+    "held": false
+  },
+  "design_comparison": {
+    "note": "Design mode only. The design study's U2 used every consensus day through 2026-11-17 and every search group, pages nearest 2026-11-16, a corpus over its U1 deep-list and U2 pages, and an eight-feature vote that includes serp_title_all. The second universe below reruns this script's pair, page and corpus rules on all design consensus days and all groups, so the two rows separate the pair definition from the rest.",
+    "design_study_u2": {
+      "same_site_pairs": 159,
+      "same_site_searches": 54,
+      "text_vote_8_with_serp_title": {
+        "hits": 96.5,
+        "n": 159,
+        "rate": 0.6069
+      },
+      "bm25f": {
+        "hits": 96.0,
+        "n": 159,
+        "rate": 0.6038
+      },
+      "bm25f_cross_site": {
+        "hits": 1926.0,
+        "n": 3741,
+        "rate": 0.5148
+      }
+    },
+    "design_universe": {
+      "days": [
+        "2026-11-06",
+        "2026-11-09",
+        "2026-11-11",
+        "2026-11-13",
+        "2026-11-16",
+        "2026-11-17"
+      ],
+      "pooled": {
+        "counts": {
+          "pairs_total": 8726,
+          "same_site_pairs": 282,
+          "cross_site_pairs": 8444,
+          "same_site_without_usable_html": 116,
+          "cross_site_without_usable_html": 4703,
+          "same_site_duplicate_content_dropped": 8,
+          "cross_site_duplicate_content_dropped": 0,
+          "same_site_usable_pairs": 158,
+          "same_site_searches": 53,
+          "same_site_sites": 14,
+          "same_site_top5_sites": [
+            [
+              "hcss.com",
+              72
+            ],
+            [
+              "trimble.com",
+              23
+            ],
+            [
+              "smartcrewhq.com",
+              11
+            ],
+            [
+              "assignar.com",
+              11
+            ],
+            [
+              "busybusy.com",
+              11
+            ]
+          ],
+          "same_site_top5_share": 0.810126582278481,
+          "same_site_distinct_url_pairs": 139,
+          "cross_site_usable_pairs": 3741,
+          "cross_site_searches": 139,
+          "same_site_multi_day": 8
+        },
+        "scorers": {
+          "bm25f": {
+            "same_site": {
+              "hits": 96.0,
+              "n": 158,
+              "rate": 0.6075949367088608,
+              "lo": 0.5153282392270674,
+              "hi": 0.703125,
+              "queries": 53
+            },
+            "cross_site": {
+              "hits": 1924.0,
+              "n": 3741,
+              "rate": 0.5143009890403636,
+              "lo": 0.49013885076808134,
+              "hi": 0.5385163420671102,
+              "queries": 139
+            },
+            "same_minus_cross": {
+              "diff": 0.09329394766849719,
+              "lo": -0.0022212310616246647,
+              "hi": 0.19372877206773373
+            },
+            "same_site_ties": 0,
+            "same_site_decided": {
+              "hits": 96.0,
+              "n": 158,
+              "rate": 0.6075949367088608,
+              "lo": 0.5153282392270674,
+              "hi": 0.703125,
+              "queries": 53
+            },
+            "same_site_without_top5_sites": {
+              "hits": 24.0,
+              "n": 30,
+              "rate": 0.8,
+              "lo": 0.6248922413793103,
+              "hi": 0.9444819819819817,
+              "queries": 17
+            }
+          },
+          "text_vote": {
+            "same_site": {
+              "hits": 95.5,
+              "n": 158,
+              "rate": 0.6044303797468354,
+              "lo": 0.5346120689655173,
+              "hi": 0.6788140996957222,
+              "queries": 53
+            },
+            "cross_site": {
+              "hits": 1930.0,
+              "n": 3741,
+              "rate": 0.5159048382785352,
+              "lo": 0.4923888295656094,
+              "hi": 0.539292767264381,
+              "queries": 139
+            },
+            "same_minus_cross": {
+              "diff": 0.08852554146830027,
+              "lo": 0.008651025582942801,
+              "hi": 0.17126670129779406
+            },
+            "same_site_ties": 19,
+            "same_site_decided": {
+              "hits": 86.0,
+              "n": 139,
+              "rate": 0.6187050359712231,
+              "lo": 0.5407114308553157,
+              "hi": 0.7007313638714869,
+              "queries": 51
+            },
+            "same_site_without_top5_sites": {
+              "hits": 22.5,
+              "n": 30,
+              "rate": 0.75,
+              "lo": 0.5415509259259259,
+              "hi": 0.9074494949494948,
+              "queries": 17
+            }
+          },
+          "text_vote_8_with_serp_title": {
+            "same_site": {
+              "hits": 96.5,
+              "n": 158,
+              "rate": 0.6107594936708861,
+              "lo": 0.5398592837608102,
+              "hi": 0.6844050684374576,
+              "queries": 53
+            },
+            "cross_site": {
+              "hits": 1940.0,
+              "n": 3741,
+              "rate": 0.5185779203421546,
+              "lo": 0.4944455731504677,
+              "hi": 0.5422776920320508,
+              "queries": 139
+            },
+            "same_minus_cross": {
+              "diff": 0.09218157332873156,
+              "lo": 0.011360407012362952,
+              "hi": 0.17492950337635632
+            },
+            "same_site_ties": 15,
+            "same_site_decided": {
+              "hits": 89.0,
+              "n": 143,
+              "rate": 0.6223776223776224,
+              "lo": 0.5441111971104231,
+              "hi": 0.7029042119565218,
+              "queries": 51
+            },
+            "same_site_without_top5_sites": {
+              "hits": 23.0,
+              "n": 30,
+              "rate": 0.7666666666666667,
+              "lo": 0.5475649350649351,
+              "hi": 0.9264705882352942,
+              "queries": 17
+            }
+          }
+        }
+      },
+      "corpus": {
+        "documents": 550,
+        "avg_field_tokens": {
+          "title": 7.411,
+          "h1": 6.015,
+          "head": 127.518,
+          "body": 1898.536
+        }
+      }
+    }
+  }
+}

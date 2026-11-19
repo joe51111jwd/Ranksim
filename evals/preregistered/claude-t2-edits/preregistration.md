@@ -53,3 +53,10 @@ Frozen rule minus position-only on the 17 rows: -0.059 [-0.222, +0.143].
 ## What we expect (PREDICTED, stated before scoring)
 
 The held-out window (Nov 16 to Nov 19 and Nov 20) will probably give fewer than 40 changed-and-moved rows, in which case the test cannot be run and the report says so with the count. If n does reach 40, L may hold and H will not. Either way Target 2 is expected not to pass. The collection pipeline (`scripts/claude/refetch_html.py`, `scripts/claude/collect_day.sh`) and the counterfactual diagnostic (`scripts/claude/t2_counterfactual.py`) are the deliverables the brief asks for in that case.
+
+## Addendum before the freeze (2026-11-19, 14:45 ET)
+
+Written before the manifest and before any day after 2026-11-17 was read. The frozen files are byte-identical to commit `e91637d`, pushed at 08:27 ET on Nov 19.
+
+- The earlier team's daily collector pulled the original 30 searches on 2026-11-19 between 09:38 and 10:51 ET, with a partial third pull. That day is used as it was pulled. This run pulls the 70 added searches three times on the afternoon of Nov 19.
+- Round 2 of the brief (GOAL.md, Nov 19) asks for new theory-driven predictors. Those get their own folders under `evals/preregistered/claude-r2-*`. This file and its rule are not changed by round 2.

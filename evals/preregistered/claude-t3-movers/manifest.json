@@ -1,0 +1,38 @@
+{
+  "label": "PREDICTED",
+  "frozen_at_utc": "2026-11-19T19:37:20Z",
+  "sha256": {
+    "evals/claude/t3-movers/params.json": "226a4f391a285554d4554760cc1874f9d7c6533c2c68e19ba78faf16e08ccd8c",
+    "evals/preregistered/claude-t3-movers/preregistration.md": "f0f2728f2cfec292ec83aa68372c7a1b18097a5f54743a753bbfa7a3b097c714",
+    "scripts/claude/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "scripts/claude/freeze.py": "7800190726721cf6dce44322c0638efa1c8365cf83ea11d8e919fcee8f6ce5b1",
+    "scripts/claude/heldout.py": "99305313b704d1f436a7ffe1aa722812f82abc78c46779cac72e0517ae05f9e5",
+    "scripts/claude/metrics.py": "81673f3e4d0f026a7d064cd401276a8b5843dabe142911a1db3df692cf44380d",
+    "scripts/claude/predict_ahead.py": "5cc5f8d04a31e7e4a43351ed6da3d5a6df976141d54ac9f28433664462ef3ba9",
+    "scripts/claude/rsdata.py": "b5852b6b23f6e9aa2aaa51bf77068b09a75d638712aeab4880919a0e3851a958",
+    "scripts/claude/score_heldout.py": "5e2730b291ac98ab8500400cace058391917c23144555779468c904335689525",
+    "scripts/claude/t3_contested.py": "f04dae5ca358eb210a07e2f83ed6dfff7c3369ca2eda999f517fda16d8a96b0d",
+    "scripts/claude/t3_movers.py": "bdc8379fd90b2d329d0102a98cdf2f9280700d2364d46ae4e53113751bfb67e5",
+    "src/aeo/__init__.py": "77eed6fe4a3041e3d33b4716c5a93242a313ed1de3c9dfe18f2343bc52634ba5",
+    "src/aeo/crawl/__init__.py": "f4710241737af8291224ac6cc98173b1aac674bbdb93112580eda3885cd5170e",
+    "src/aeo/crawl/urls.py": "0d715e4b2b88bf82f4518e296265b51bfb7478c2ce16c9beb37b999615bf42d0",
+    "src/aeo/errors.py": "7f78a78e1118f8889fefd7fcbc980da990907dbae11284fa263bdbfc7ba2d14f",
+    "src/aeo/ranksim/__init__.py": "f7dccd6ac816f7e4ee7fe0da68a8f8f009b9ebf4a1b54df17323e27e3d5407c0",
+    "src/aeo/ranksim/consensus.py": "4d241399b9a14cc15e79f374caa1338a13bd6e3c8b55d49724421dfd18f0ef59",
+    "src/aeo/ranksim/site_history.py": "9b0d36ceff1042e57203671b589137f25f0ce8015ad22bfbefb978b0826d14df"
+  },
+  "modules": [
+    "scripts.claude.t3_movers",
+    "scripts.claude.t3_contested",
+    "scripts.claude.rsdata",
+    "scripts.claude.metrics",
+    "scripts.claude.heldout",
+    "scripts.claude.score_heldout",
+    "scripts.claude.predict_ahead"
+  ],
+  "versions": {
+    "python": "3.13.5",
+    "numpy": "2.5.5",
+    "pandas": "3.1.1"
+  }
+}

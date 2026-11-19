@@ -86,3 +86,11 @@ Strict-new rows are rare. Design data has 5 real ones (Nov 17) and 19 emulated o
 - So a per-day pass on two days is unlikely for lack of rows, and a pooled pass is possible.
 - Most of any gain over the brief's baselines will come from predicting 9 instead of 7 or 11. The gain over position 9 is expected to be small.
 - The err3 reading is expected to fail.
+
+## Addendum before the freeze (2026-11-19, 14:45 ET)
+
+Written before the manifest and before any day after 2026-11-17 was read. The predictor files are byte-identical to commit `e91637d`, pushed at 08:27 ET on Nov 19.
+
+- The earlier team's daily collector pulled the original 30 searches on 2026-11-19 between 09:38 and 10:51 ET (source `daily:2026-11-19`), after `e91637d` was pushed and without this run asking for it. Its third pull stopped early, so some searches have two pulls. Like Nov 18, that day is scored as it was pulled, with `--allow-incomplete` for the original 30. No "written before the pull" file can exist for those 30 searches on Nov 19. The proof that the predictor came first is commit `e91637d`.
+- This run pulls the 70 added searches three times on the afternoon of Nov 19, after the answers for them are written to `evals/claude/ahead/` and pushed.
+- Round 2 of the brief (GOAL.md, Nov 19) asks for new theory-driven predictors. Those get their own folders under `evals/preregistered/claude-r2-*`. This file and its predictor are not changed by round 2.

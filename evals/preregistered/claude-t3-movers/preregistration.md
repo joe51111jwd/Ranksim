@@ -59,3 +59,11 @@ About 50 other scorers (smoothed means, mean reversion, trend, deep-list rank, s
 ## What we expect (PREDICTED, stated before scoring)
 
 Scorer A will fail C1 and hold C2. Scorer B will fail C2. Whether B meets C1 is open: held-out days have three pulls, and on the three-pull design row B caught 31 of 44 flips with a lower bound of 0.455, below 0.5. With several times more flipped pairs the bound may clear 0.5. Either way Target 3 is expected to fail under this rule. The reason is in the notes: with a three-pull consensus on both days, a pair flips with probability above one half only when the ranking really changed overnight, and nothing in the history we have predicts those changes.
+
+## Addendum before the freeze (2026-11-19, 14:45 ET)
+
+Written before the manifest and before any day after 2026-11-17 was read. The predictor files are byte-identical to commit `e91637d`, pushed at 08:27 ET on Nov 19.
+
+- The earlier team's daily collector pulled the original 30 searches on 2026-11-19 between 09:38 and 10:51 ET (source `daily:2026-11-19`), after `e91637d` was pushed and without this run asking for it. Its third pull stopped early, so some searches have two pulls. Like Nov 18, that day is scored as it was pulled, with `--allow-incomplete` for the original 30. No "written before the pull" file can exist for those 30 searches on Nov 19. The proof that the predictor came first is commit `e91637d`.
+- This run pulls the 70 added searches three times on the afternoon of Nov 19, after the answers for them are written to `evals/claude/ahead/` and pushed.
+- Round 2 of the brief (GOAL.md, Nov 19) asks for new theory-driven predictors. Those get their own folders under `evals/preregistered/claude-r2-*`. This file and its predictor are not changed by round 2.

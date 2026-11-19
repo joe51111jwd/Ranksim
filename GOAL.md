@@ -31,3 +31,12 @@ You are the lead (Fable 5.2, ultracode). Split work across subagents (they run o
 
 ## Done when
 All of targets 1, 2 and 3 pass on held-out data and a reviewer subagent has signed off that there is no leakage, OR you have exhausted the reasonable approaches and RESULTS-claude.md contains an honest final report: what passes, what fails with numbers, why, and the concrete next data needed. Finish with a short plain-English summary (no em or en dashes) at the end of RESULTS-claude.md and as your final message.
+
+## Round 2 (James, Nov 19 2026): find a way to hit the numbers
+Round 1 stopped before freezing and scoring. Read RESULTS-claude.md first; do not redo finished work. The Targets above are still the numbers to hit. Round 1 showed the current approach cannot hit them: the ranker is 94% history and 3% content, so it cannot tell which version of a page is better, and changed-page data is thin. Do not respond by building more variants and hoping one crosses the line. Work like a researcher:
+1. Research first. Study how real ranking works (Google leak attributes, published learning-to-rank and click model work, content quality and relevance signals, how other rank simulators and SEO tools model edits) and what the data says about why pages move.
+2. Write a theory before building. In `evals/claude/theory.md`, for each target write the mechanism you believe would hit the number, why it should work, which data it needs, and a back-of-envelope estimate (from real counts) showing the target is reachable if the theory holds. Have a reviewer subagent attack the theory before you build.
+3. Build only what the theory says, then test it honestly on held-out data under the freeze rules above.
+4. If it fails, write down why, go back to step 1 with what you learned, and form a new theory. Repeat. Each loop must change the theory, not just tune knobs.
+5. If the bottleneck is data, get it: you may build and run free data collection (daily HTML re-fetch of all tracked URLs, more SERP pulls within the credit rules, controlled edits on test pages you own are NOT allowed without James). Never touch client sites.
+Freeze the round 1 preregistrations that are ready and score them on held-out days as they arrive; those results go in the report whatever they show. Keep going until the Done-when condition is met. Do not stop just because subagents returned; stopping without the final report is a failure.

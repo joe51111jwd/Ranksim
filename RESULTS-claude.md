@@ -128,3 +128,28 @@ Round 2 brief: `GOAL.md`, section "Round 2". The order of work is research, then
 - Tests at the start of round 2: 485 passed, 6 failed. The 6 are the same DNS failures in `tests/test_layered_fetch.py` as before.
 - Held-out days are still unread. Nothing dated Nov 18 or later is scored until the round 2 loop 1 predictors are frozen too, so both rounds are scored on days neither has seen.
 
+### 4.1 Loop 1, step 1: research (Nov 19, 14:45 to 16:15 ET). Done except the flip-noise study.
+
+Seven workers ran in parallel. Two read public sources. Five measured design days only (through Nov 17). Nothing here is a predictor.
+
+Outside evidence (`evals/claude/research/ranking-mechanics.md`, `evals/claude/research/edit-effects.md`, every claim graded and linked):
+
+- A Google core update started on Nov 10 and was not marked complete on Nov 19. Every pull from Nov 11 on is inside it.
+- Two identical searches at the same moment return the same URLs in a noisy order (peer-reviewed: Jaccard 0.998, Kendall tau 0.88). Noise grows down the page.
+- A new URL has no click history and borrows its site's standing. No source documents a boost for new pages.
+- In published split tests about 75% of on-page edits had no detectable effect. A detected effect is at most 0.1 to 0.6 positions. Ordinary daily movement at positions 4 to 10 is 1.0 position. The sign of title edits flips from site to site.
+- Google says reprocessing an edit takes a few days to a few weeks. Tests run 2 to 6 weeks.
+- No content tool or rank simulator has published a check of predicted edit effects against real rank changes.
+
+Design-day measurements:
+
+| Study | Script and notes | Main result (REAL counts, days through Nov 17) |
+| --- | --- | --- |
+| Where new URLs land | `scripts/claude/r2_t1_mechanisms.py`, `evals/claude/r2/t1-mechanisms/notes.md` | Slots open at the bottom: 23 of 163 URLs at position 1 left, 82 of 142 at position 10. Of 101 new rows whose site was already on page one, 84 were a same-site swap. The swapped slot is in band for 40 of 84 against 24 for a flat 9. Moving a URL's position over from a sibling search does not help (44 of 96 against 46 for a flat 9). |
+| Do edits move rank | `scripts/claude/r2_t2_signal.py`, `evals/claude/r2/t2-signal/notes.md` | Changed pages moved 0.640 of the time against 0.557 for matched unchanged pages: +0.083 [-0.082, +0.267]. They did not move further. At most 0.335 of moves on changed pages can be due to the edit. A perfect content reader could add at most 0.10 to 0.17 accuracy over a position-only rule. A fair test needs 170 to 2,735 changed-and-moved rows. Google showed the new title for 2 of 11 title changes. |
+| Content with the site held fixed | `scripts/claude/r2_samesite_pairs.py`, `evals/claude/r2/samesite/notes.md` | 465 same-site pairs with HTML for both pages. BM25F puts the higher page first in 277 of 464 (0.597 [0.548, 0.647]) against 0.522 across sites. A fitted 12-feature model fails on held-out searches (0.486). Applied to the 17 real edits, the sign of the score change matched the move 9 times. |
+| Flip noise | `scripts/claude/r2_t3_noise.py` | Still running when this was written. |
+| Earlier page versions from the Wayback Machine | `scripts/claude/r2_wayback.py` | Still running when this was written. |
+
+Today's three pulls of the 70 added searches finished at 14:40, 15:14 and 15:56 ET. Serper balance after: 891.
+

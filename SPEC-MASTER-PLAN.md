@@ -2,9 +2,12 @@
 
 > REVIEW IN PROGRESS (Nov 20, 15:50 ET). Sections 3 to 8 carry the review fixes. Sections 0, 1, 2.8, 2.9, 9 and the appendices are still the pre-review text and are being rewritten. Do not act on this file until this note is gone.
 
-Written 2026-11-20 by the lead (Claude goal run), branch `claude/goal-ranksim-works`. This is a plan and a theory. No production code was written and no Serper credit was spent to make it. Every model number in it is labeled PREDICTED, SIMULATED or DERIVED. Every REAL number names its source. James reviews this file before any coding agent runs a stage.
+Written 2026-11-20 by the lead (Claude goal run), branch `claude/goal-ranksim-works`. Revised the same day after an adversarial review (Appendix D) and after James's two directions of 2:52 and 2:53 PM ET. This is a plan and a theory. No production code was written and no Serper credit was spent to make it. Every model number in it is labeled PREDICTED, SIMULATED or DERIVED. Every REAL number names its source. James reviews this file before any coding agent runs a stage.
 
-Product goal (James): "make a meaningful change to a page, run the predictor, and get an approximate predicted Google rank position. Don't worry about tiny day-to-day edits or knowing exactly what to fix yet."
+Product goals (James):
+- Nov 20, the headline product: "If I made a website for a client and I can run it and know where I rank for hundreds of key searches. That's what matters."
+- Nov 20, on what counts: "No one would pay for 71%." Pair accuracy is not the product metric.
+- Nov 19, now the secondary product: "make a meaningful change to a page, run the predictor, and get an approximate predicted Google rank position. Don't worry about tiny day-to-day edits or knowing exactly what to fix yet."
 
 Research behind this plan (seven memos, each claim graded and linked, all in `evals/claude/research/`):
 
@@ -22,37 +25,97 @@ Research behind this plan (seven memos, each claim graded and linked, all in `ev
 
 ## 0. Summary for James
 
-### 0.1 The five conclusions that shape the plan
+### 0.1 What you asked for, and the short honest answer
 
-1. **The cross-site gap is mostly solved by anchoring, not by modelling.** A page that already ranks carries its site's strength, links and clicks inside its current position. For that page the simulator only has to predict the change from the edit. That needs the content scorer and one scale number. It does not need a site-strength model at all. Site strength is only needed for a page with no current rank.
-2. **Site strength decides who reaches page one. Content decides little inside page one.** REAL, design day Nov 16, 100 searches: a free link count (Majestic referring subnets) orders 0.633 [0.607, 0.659] of pairs with one page in the top 10 and the other at 11 to 30, but only 0.517 of pairs inside the top 10 (`r4-free-label-sources.md` section 6). Published work agrees: Moz Domain Authority correlates 0.26 with position over a top 50 and 0.071 inside a top 10.
-3. **The earlier "global authority points the wrong way" result was a counting artifact.** The 0.377 to 0.420 figures counted score ties and missing values as wrong (`src/aeo/ranksim/snapshot_protocol.py`, `pair_counts`). A recount on decided pairs gives 0.528 to 0.548 (`r4-statistical-design.md` section 0). So global authority is weakly right, not harmful. The plan treats it as a weak gate signal.
-4. **The realistic ceiling is far below 90% pair accuracy.** Two pulls of the same search agree on 0.87 to 0.93 of pairs. The best transparent published cross-site result is 62.5% to 67.5% (Bifet 2005), and 65% to 66% with domains held out (Critchlow 2017). SIMULATED from our own measured numbers: inside a top 10, content plus a good site estimate reaches 0.58 to 0.60, and even a perfect site value plus our content scorer reaches 0.66 to 0.71. Section 2.8 has the full table.
-5. **So the honest product is a band, a tier and a direction, not an exact position.** For a page that ranks: the chance the edit beats leaving the page alone, the expected change, and an 80% band. For a new page: tier probabilities (top 3, 4 to 10, 11 to 30, beyond 30). An explicit "cannot tell" state is part of the product.
+You gave two directions on Nov 20. First: "No one would pay for 71%." Second: "If I made a website for a client and I can run it and know where I rank for hundreds of key searches. That's what matters."
 
-### 0.2 The stages at a glance
+So the plan now has one headline product and one secondary product, and each has a product gate measured on real sites or real edits against real Google. Pair accuracy stays only as a check on parts. It is not a product gate anywhere.
 
-| Stage | What it does | Credits | Gate to advance (short form, exact form in the stage) | PREDICTED chance of passing |
+| | Product 1 (headline): rank bands for a new site | Product 2 (secondary): effect of an edit |
+| --- | --- | --- |
+| Input | A client site with no rank history, and its list of key searches | A page that already ranks, and an edited version |
+| Output | One band per search: top 3, 4 to 10, page 2, not ranking, or "cannot tell". Also the expected number of searches in each band | Up, down or stay, a predicted new position, or "cannot tell" |
+| Product gate | Checkpoint P, on real sites the model never saw (0.2) | Gate E, on real edits (0.3) |
+| Can free data reach a sellable number? | Probably not. PREDICTED chance about 0.1 to 0.15 (lead's estimate). A lower "worth continuing" bar: about 0.5 | Probably not. Direction is capped near 0.67 by what we measured (DERIVED) |
+| When will we know? | About two weeks of work, 0 credits | Not before Dec 17, and it needs more real edits than exist today |
+
+The short honest answer: free data will most likely give a triage tool ("these are the searches where this site has a real chance of page one"), not "know where I rank". Sections 0.2 and 0.3 give the number that would change that, and the point at which to stop.
+
+### 0.2 Product 1: where a new site will rank across its key searches
+
+**How a site with no history is scored from free signals.** Four inputs:
+1. Its pages. For each search the content scorer rates the site's best page against the pages that rank now.
+2. Free site signals: referring domains from the Common Crawl link graph (from all sites, and from sites of the niche), listing in the Majestic, Tranco and Chrome top lists, brand demand, domain age, site type, and how focused the site is on the topic.
+3. The competition on each search, read from its current result list: how strong the sites on pages 1 and 2 are, and how many small sites hold a slot there.
+4. What happened to similar sites: the model is fitted on real sites of the niche, each treated as if it were new.
+
+A weak site is placed on page one only where weak sites already hold page-one slots and its page fits the search well. A brand-new domain has almost no links, so most of its searches will come out "not ranking". That is probably right for its first months. The tool predicts the settled rank. It cannot say how long a new site takes to get there, and no stored data covers brand-new domains.
+
+**The product test (Checkpoint P, stage 3).** Take a real site of the niche. Hide every trace of its rankings. Score it as new across the stored searches. Compare with where Google really has it. Two readings, both at 0 credits:
+- Every eligible site in turn: about 400 sites, 100 searches with a top-20 list and 40 more with page one only. The model's form is chosen on this data, so the reading is PROVISIONAL.
+- The 145 sites that no fit of this project has ever used, scored once. This one is small. REAL counts: they hold 67 page-one placements on 35 sites and 84 page-two placements.
+
+All bars are measured on the searches a site targets (a rule frozen without looking at ranks, section 7), so easy "this site has nothing on that topic" cases cannot inflate them.
+
+| Measure | Sellable bar (lead's proposal, D8) | Continue bar. Below it: stop | PREDICTED from free data (lead's estimate) |
+| --- | --- | --- | --- |
+| P1, page one or not. Of the tool's "page 1" calls, the share that are right, and the share of real page-one rankings it finds | 0.70 right while finding 0.40 | 0.35 right while finding 0.30, and better than a guess from the search's difficulty alone, with the interval above zero | 0.25 to 0.50 right while finding 0.30 |
+| P2, right band. On searches where the site really is in the top 20, the share placed in the right band | 0.60 | 0.25 | 0.15 to 0.35 |
+| P3, spread. Per site, the predicted number of page-one searches against the real number | within 25% or 2 searches for 7 sites in 10 | rank correlation across sites at least 0.4 | correlation 0.4 to 0.7 |
+| Coverage. Share of targeted searches with a confident call, the rest "cannot tell" | at least 0.80 | reported | 0.85 or more, mostly confident "not ranking" |
+
+The plain share of searches placed in the correct band is always shown too, next to the same number for a tool that answers "not ranking" every time. That empty tool will already score about 0.70 to 0.90, which is why no bar is written on it.
+
+**What someone would pay for.** Agencies pay today for keyword difficulty scores that publish no accuracy at all. A tool that is right on 7 of 10 page-one calls for a site it has never seen would stand out. That needs the model to separate rankers from non-rankers far better than any published free-data method has (the best published cross-site results order 62% to 67% of pairs). So the sellable bar is a long shot on free data, and the plan says so before any work starts.
+
+**Kill or pivot.** If P1 or P2 is under the continue bar on the first reading, the no-history product stops on free data. No further tuning. The pivots, in order of cost:
+1. Search Console (D2). For a site that is live, Google already reports its real position on every search with impressions, for free. Then the product is real tracking plus the edit effect, and the forecast is needed only before launch.
+2. Sell the triage list (searches ranked by chance of page one) and not the bands.
+3. Paid link data, which is your call. Site strength is about 75% of the score among candidate pages (DERIVED at R = 3) and free signals see it only weakly.
+
+If the continue bars hold but the sellable bars do not, the tool is a triage tool and is described as that. If the sellable bars hold on both readings, the claim still needs unseen result lists before anyone hears it: 200 credits (section 0.5).
+
+**What a client run costs.** The tool needs the current result list of every search: 2 credits per search for pages 1 and 2. A run of 300 searches is 600 credits. The free balance cannot pay for one run. Until credits exist the product can only be shown on the 140 stored searches.
+
+### 0.3 Product 2: what an edit does to a page that already ranks (secondary)
+
+**Gate E, on real edits.** For each edited page and search: (a) direction, called as up, down or stay, where up or down means a move of 2 or more places beyond what unedited control pages did; (b) whether the predicted new position is within 2 places of the real one; (c) coverage, the share of edits that get a confident call and not "cannot tell".
+
+| Measure | Sellable bar (lead's proposal, D8) | What we can honestly expect |
+| --- | --- | --- |
+| Direction right, on confident calls | 0.70, with confident calls on at least half of the edits | PREDICTED 0.55 to 0.65. REAL: over days, changed pages moved no more than unchanged pages (+0.036 [-0.065, +0.140]). At most a third of moves carry any edit signal, which caps direction near 0.67 (DERIVED) |
+| Within 2 places, on confident calls | 0.70, and at least 10 points above "predict no change" on the same edits | Mostly rank stability, not model skill. REAL: an unedited page at 4 to 10 stays within 2 places 0.82 of the time over one day and 0.50 over ten days across the core update |
+
+**Can it even be measured?** It needs about 40 to 70 independent real edits. PR 45 gives about 10 and reads at 18 credits a date. PR 41 gives more but costs 222 credits a date, which is not funded. Search Console (D2) would give those reads for free.
+
+**Kill or pivot.** After 40 independent scored edits: if direction on confident calls is under 0.60, or "within 2" is not above "predict no change", stop selling position changes. Keep only the comparison of two versions ("this version fits the search better"), with no rank claim. Until that count exists, every edit prediction is labeled "unconfirmed against Google".
+
+### 0.4 The stages at a glance
+
+| Stage | What it does | Credits | Gate | PREDICTED chance (lead's estimate) |
 | --- | --- | ---: | --- | --- |
-| 0 | Pre-flight: push, freeze the gate file, credit guard | 0 | Branch pushed, gates frozen, balance at least 468 | near 1 if D1 is settled |
-| 1 | Freeze and score the same-site content scorer on unseen sites (Checkpoint 1) | 208 | Goal target: two-way lower bound above 0.65. Advance rule: point at least 0.65, lower bound at least 0.60, beats BM25F | goal 0.45, advance 0.85 |
-| 2 | Site strength from free signals, tested on stored lists (Checkpoint 2) | 0 | Site-only model on page-one boundary pairs: lower bound above 0.60 and at least 0.02 above the best single free signal | 0.6 |
-| 3 | Content plus site strength, pairs to positions, sealed test on fresh searches (Checkpoints 3a and 3b) | 90 to 180 | Placement error beats the middle guess and the domain prior with intervals above zero, bands calibrated, boundary pairs lower bound above 0.58 | 0.35 for all gates |
-| 4 | The edit simulator: anchored prediction, sanity suite, band backtest, live ledgers (Checkpoints 4 and 5) | 0 | Sanity suite, band coverage and virtual-edit gates. Live ledgers never block | 0.7 |
+| 0 | Pre-flight: push, freeze the gate file, credit check | 0 | G0 | near 1 |
+| 1 | A part, not a product: the content scorer on unseen sites (same-site pairs). The freeze and the PR 45 ledger run in any case. The test itself runs only if D1 says so | 208 | G1-GOAL: lower bound above 0.65. Advance rule: point at least 0.65 | goal 0.45, advance 0.85 |
+| 2 | Site strength from free signals. Label-blind crawl of the niche sites | 0 | G2, a cross-validation on design data, PROVISIONAL | 0.4 |
+| 3 | The band model and **Checkpoint P, the Product 1 test**. Also part checks 3a and 3c | 0. Unseen confirmation: 200 | P continue bars, P sellable bars, G3 for the parts | continue 0.5, sellable 0.1 to 0.15, G3 0.15 |
+| 4 | The edit simulator (Product 2): sanity suite, honest bands, then Gate E on real edits | 36 for two PR 45 reads | G4 now. Gate E not before Dec 17 | G4 core gates 0.6, Gate E sellable: unlikely |
 
-Stage 4's anchored modes do not depend on stage 3 passing. If stage 3 fails, the simulator ships for pages that already rank and says "cannot tell" for pages with no anchor.
+### 0.5 Credits, and the decisions needed from James
 
-### 0.3 Decisions needed from James
+REAL, read 2026-11-20 15:45 ET: the shared free Serper balance is 513. This plan's own pulls stop at 260, so it can spend 253. Two other users draw on the same key every morning between about 09:10 and 11:00 ET: the other team's collector (about 90) and a 15-credit tracker for another client. Together about 105 a day. The collector's own floor is 200, not 250, and the tracker has none.
 
 | # | Decision | Why it matters | Default if no answer |
 | --- | --- | --- | --- |
-| D1 | Cap or pause the other team's daily collector (about 90 credits a day) until the stage 1 and stage 3 pulls are done, and set `RANKSIM_CREDIT_RESERVE=250` in its caller | Balance is 617 (read 2026-11-20 09:04 ET). 367 can be spent. Stage 1 needs 208. After two more collector days stage 1 no longer fits. The collector's own default floor is 200, not 250 (`/workspace/ranksim-data/collect_daily.sh` line 13) | Run stage 1 at once. Stage 3 falls back to stored data only (Checkpoint 3a, provisional) |
-| D2 | Connect Google Search Console for the client's site (free, read only) | The only free source of the client's positions past page one and of before and after views for PR 41 and PR 45. Exports through mid November are already on disk | Use the exports on disk only |
-| D3 | Allow one free signup for extra Google lists (for example the DataForSEO $1 trial) | Only needed if a larger stage 3 test is wanted than the credits allow | No signup |
-| D4 | Allow the client's domain to be sent to free public lookups (Google autocomplete, Wikidata, RDAP) | Brand-demand and age signals for the client's site | Client domain is never sent. Its values come from local data only |
-| D5 | Swap one of the collector's three daily page-one pulls for a page-two pull (same 90 credits) | Free daily labels for positions 11 to 20, which is where site strength shows | No swap |
+| **D1, today** | What to do with the last free credits. **(C, recommended) Pause both other users of the key today.** Then nothing is urgent and the 253 credits go to whichever test Checkpoint P shows is worth it. If they cannot be paused, the credits are gone by about Nov 23 and only one of these fits, tonight, before 09:00 ET Nov 21: **(A)** the stage 1 test, 208 credits, a part and not a product. **(B)** fresh result lists for Product 1: 100 new searches, pages 1 and 2, 200 credits, sealed until the model is frozen. This is the only unseen data for the product you named, and it needs a small pull script first. Lead's pick if no pause: B | After tomorrow morning's runs the balance is about 408 and neither A nor B ever fits again without new credits. With no pause, the other users also take the balance under your 250 floor by Nov 21 to 23, whatever this plan does | No stage runs on its own. If an agent is started without an answer, it spends nothing and runs the 0-credit stages |
+| D2 | Connect Google Search Console for the client's site (free, read only) | Real positions for hundreds of the client's searches at no cost. It is pivot 1 for Product 1, and the only free way to read the PR 41 and PR 45 edits for Gate E | Use the exports on disk only (through mid November) |
+| D3 | More credits: one free signup for extra Google lists, or lifting the no-money rule for Serper credits | Without them there is no unseen test of Product 1 beyond D1 (B), no PR 41 read, and no client run of 300 searches | None |
+| D4 | Allow the client's domain to be sent to free public lookups (Google autocomplete, Wikidata, RDAP) | Brand-demand and age signals for the client's site | Never sent. Its values come from local data only |
 | D6 | Commit `scripts/claude/t1b_postmortem.py` (untracked, but its outputs were committed in `f0da90c`) | The repo rule says every number comes from a committed script | Left untracked and flagged |
-| D7 | Allow paid LLM calls for an LLM-judge content scorer | Only a fallback if stage 1 fails. Costs real money | Not used |
+| D7 | Allow paid LLM calls for an LLM-judge content scorer | Only a fallback if the content scorer fails. Costs real money | Not used |
+| D8 | Confirm or change the sellable bars and continue bars of 0.2 and 0.3 | They decide when to stop. They are the lead's proposal, not a measured market fact | Used as written |
+| D9 | Confirm the target map: GOAL Target 1 is scored as Checkpoint 3c, Target 2 becomes Gate E, Target 3 (one-day movers) is retired under your Nov 19 note | GOAL.md still names all three | Used as written |
+
+The adversarial review is logged in Appendix D: five Opus reviewers and seven skeptic passes, 71 objections, 61 accepted. The largest changes: the credit numbers were stale and the fresh test was no longer affordable, several gates could be passed by an empty or a silent tool, the content score was being tested on sites it was trained on, one gate could not be passed even by a perfect tool, and no gate compared anything with a real product outcome. The last point is what your Nov 20 directions fix.
 
 ---
 
@@ -77,10 +140,16 @@ Stage 4's anchored modes do not depend on stage 3 passing. If stage 3 fails, the
 | One-day movement of an unedited page | within 1 place: 0.72 at positions 4 to 10, 0.86 at 1 to 3. Within 2 places: 0.82 at 4 to 10 | `r4-edit-simulator-design.md` |
 | Ten-day movement inside the core update (Nov 6 to 16) | 50% of pages at 4 to 10 within 2 places. Half left the top 10 | same |
 | Stored ordinary lists | 100 construction searches (c100), plus 35, 4 and 15 other searches. 428 domains in c100 top 10s. 256 of them on one search only, 31 on more than ten | `r4-data-inventory.md` 2 |
-| Deep lists | One day only: Nov 16, 100 searches, positions 1 to 30 (70 reach 30). 16,264 cross-site pairs with both pages readable | `r4-data-inventory.md` 3 |
+| Deep lists | One day only: Nov 16, 100 searches. All reach about position 20, 70 have a third page and 66 reach position 30. 16,264 cross-site pairs with both pages readable | `r4-data-inventory.md` 3, recount in this review |
 | Platforms in c100 top-10 rows | 22.3% user-content platforms, 10.0% review aggregators. Readable 22.7% and 44.4%, against 88.9% for ordinary sites | `r4-data-inventory.md` 2 |
 | Global lists and the client | Majestic Million and Tranco each cover about 243 of 428 c100 domains. The client's domain is in neither | `r4-data-inventory.md` 7 |
-| Serper balance | 617. Floor 250. Stage 1 needs 208 | read 2026-11-20 09:04 ET |
+| Serper balance | 513. Floor 250. This plan's pulls stop at 260 | read 2026-11-20 15:45 ET (617 at 09:04, 538 at 10:40) |
+| Other users of the same key | A collector of the other team: three pulls of the original 30 searches each morning, 84 to 90 credits, own floor 200. A tracker for another client: 15 a day, no floor. About 6 more a day charged with no stored response. Runs between about 09:10 and 11:00 ET | `serp_raw` Nov 17 to 20, `/workspace/ranksim-data/collect_daily.sh` |
+| Sites never used by any fit (test2, 145 sites) in the Nov 16 deep lists | 67 page-one placements on 35 sites, 84 page-two placements, 79 sites with at least one top-20 placement, 13 sites with three or more | counts only, this review |
+| All universe sites in the Nov 16 deep lists | page one: 571 placements. Top 20: 1,135 placements on 328 sites | counts only, this review |
+| Client's Search Console export | 429 searches. 343 average beyond position 10, 231 beyond 30. 401 of them have no stored result list | `/workspace/seo-tracker/smartcrew/gsc-export/`, review |
+| Same-site pairs of non-platform sites in the deep lists | hcss.com holds about 60%. About five other sites have five or more pairs | review, counts only |
+| Content scorer on its own training lists | 0.771 in sample, against 0.704 with site and search group held out. 85 of the 100 deep-list searches are in its training groups | `evals/claude/r3/model/page-blend/fit_info.json`, review |
 | A Google core update | Started Nov 10. Not marked complete on Nov 20 | `r4-edit-simulator-design.md` 5 |
 | PR 45 ledger | Not written. Blocked on the stage 1 freeze. 6 of 9 target searches have a before rank | `r4-data-inventory.md` 9 |
 | PR 41 ledger | 147 rows, 143 frozen, no outcome yet. Score dates Dec 2 (plus 14) and Dec 16 (plus 28) | `r4-data-inventory.md` 9 |
@@ -199,37 +268,71 @@ Error of the prediction: `Var = Var(anchor) + (transfer and kappa_A uncertainty)
 
 ### 2.8 Realistic accuracy ceilings
 
+Every SIMULATED row is against the true order. Against a single pull, subtract 0.01 to 0.03.
+
 | Quantity | Value | Kind |
 | --- | --- | --- |
-| Pair agreement of two pulls (the label ceiling) | 0.87 to 0.93 | REAL |
+| Two pulls of one search agree on a pair | 0.870 to 0.877 of all pairs (0.932 for pairs five or more places apart) | REAL |
+| One pull against the settled order (the label ceiling) | 0.91 to 0.94 | DERIVED |
 | Best transparent published cross-site pair accuracy | 0.625 to 0.675 over top 100 with Google's own link data. 0.65 to 0.66 on top-10 pairs with domains held out | published |
 | Same-site content scorer against Google's settled order | 0.72 to 0.74 | DERIVED from REAL |
 | Cross-site, inside a top 10, content alone | 0.53 to 0.54 | SIMULATED, R = 3 |
-| Cross-site, inside a top 10, content plus a site estimate correlated 0.7 with the truth | 0.58 to 0.60 | SIMULATED |
-| Cross-site, inside a top 10, content plus a perfect site value | 0.66 to 0.71 | SIMULATED |
-| Any model, inside a top 10, if hidden click signals hold 20% of the score | at most about 0.69 | SIMULATED |
+| Cross-site, inside a top 10, content plus a site estimate correlated 0.7 with the truth | 0.58 to 0.60 | SIMULATED, R = 1 to 10 |
+| Cross-site, inside a top 10, content plus a perfect site value | 0.62 to 0.78 depending on R and pool size (0.66 to 0.71 at R = 3) | SIMULATED |
+| Any model, inside a top 10, if hidden click signals hold 20% of the score | at most about 0.67 to 0.75, depending on the candidate pool (0.69 at 300 candidates) | SIMULATED |
 | Cross-site, all pairs of a top 30, combined model | 0.58 to 0.64 | PREDICTED |
-| Cross-site, page-one boundary pairs, combined model | 0.64 to 0.70 | PREDICTED |
-| New page with no anchor, placed inside a top 30 | mean error about 6.3 to 6.8 places against 7.5 for the middle guess | SIMULATED at a = 0.60 to 0.65 |
+| Cross-site, page-one boundary pairs, combined model | 0.62 to 0.68 | PREDICTED |
+| A signal that holds half the score, over the whole candidate pool and not only the top 10 | orders 0.72 of pairs, against 0.58 inside the top 10 | SIMULATED |
+| New page on a known site, placed inside a top 30 | mean error about 6.3 to 6.8 places against 7.5 for the middle guess | SIMULATED at a = 0.60 to 0.65 |
+| New site with no history, page one or not, on the searches it targets | 0.25 to 0.50 of "page 1" calls right while finding 0.30 of the real ones | PREDICTED, lead's estimate (see 2.9) |
 | Page that ranks, no edit, next day | within 1 place 0.72, within 2 places 0.82 (positions 4 to 10) | REAL |
-| Page that ranks, large content change (one standard deviation), before the transfer discount | about 2 to 3 places from position 5, 4 to 6 from position 9, 6 to 10 from position 15 | SIMULATED upper figure |
+| Page that ranks, title and H1 retargeted (about one standard deviation), before the transfer discount | about 2 to 3 places from position 5, 4 to 6 from position 9, 6 to 10 from position 15 | SIMULATED upper figure, R = 1 to 10 |
+| Page that ranks, body-only rewrite with the title and H1 kept (about 0.1 to 0.3 standard deviations) | about 0.2 to 2 places from position 14 and under 1 place from position 5, at the middle of the transfer prior. Usually inside the one-day noise of about 1 place, so reported as "cannot tell" | SIMULATED from the DERIVED edit size |
 
-The 90% pairwise target in `docs/MISSION.md` cannot be met by any history-free method on unseen results. It is above the label ceiling of most pairs and far above every published result.
+The 90% pairwise target in `docs/MISSION.md` sits only 0.01 to 0.04 under the single-pull ceiling. Reaching it would need near-perfect knowledge of Google's settled order, which no history-free method has shown, and it is far above every published result.
 
-### 2.9 What the product can honestly claim
+### 2.9 The new-site model, and why reach is easier than order
 
-- **Page that ranks (anchored).** "This edit has a 64% chance to beat leaving the page as it is. Expected change: about 1 place better. 80% band at 28 days: positions 4 to 13." The paired effect is the claim. The absolute band is mostly normal movement.
+Product 1 asks a different question from the one sections 2.3 to 2.6 answer. It does not ask "which of two pages that both made page one is higher". It asks "does this site make page one, page two, or neither, on this search".
+
+- **Less range restriction.** Inside a top 10 every signal is squeezed (section 2.3). Between pages that rank and candidates that do not, the gaps are wide. SIMULATED: a signal that holds half the score orders 0.72 of pairs over the whole candidate pool and 0.58 inside the top 10. A page-one boundary already shows it in our data: one free link count orders 0.633 of pairs that straddle position 10 and 0.517 of pairs inside the top 10 (REAL, design day).
+- **Topical fit does real work.** Which of a site's searches it ranks for at all depends first on whether it has a page about the search. That is what the content scorer measures, and across sites and searches it is not range restricted.
+- **The site part still dominates who gets in.** At R = 3 it holds about 75% of the score among candidates (DERIVED). For a site with no history the model sees that part only through free outside signals. That is the weak point of Product 1, and no theory removes it.
+
+**The band model.** For site s and search q, with the site treated as new:
+
+    P(band of s on q) = OrderedLogit( a * m_best(q, s)          best content score among the site's pages
+                                    + c' cold(s)                site strength from outside signals only
+                                    + d' comp(q)                strength of the sites now on pages 1 and 2
+                                    + e * E[rank among the listed rivals]   from the pairwise model of 2.4
+                                    + g' flags(q, s) )          brand in the search, site type, page count
+
+It is fitted on (site, search) cells of real sites, including the many cells where the site does not rank. Those cells are what a pairwise model fitted inside result lists never sees, and they are why the pairwise coefficients cannot be reused as they are (the scale of a coefficient changes 3.6 times between designs, section 2.4).
+
+**Where the PREDICTED numbers of section 0.2 come from.** They are the lead's arithmetic, not a measurement. Assume the model separates page-one cells from the rest on targeted searches with an area under the curve of 0.70 to 0.82 (the published cross-site results and our boundary number suggest that range), and that about 1 targeted cell in 9 is a page-one cell. For two normal score distributions that gives 0.26 to 0.50 of "page 1" calls right when 0.30 of the real ones are found. The sellable bar (0.70 right while finding 0.40) needs an area of about 0.90. Nothing published on free data comes close to that.
+
+### 2.10 What each product can honestly claim
+
+**Product 1, a site with no history.**
+- Per search: a band (top 3, 4 to 10, page 2, not ranking) or "cannot tell", and per site the expected number of searches in each band.
+- It is a forecast of the settled rank of a site like this one. It says nothing about how many months that takes.
+- If Checkpoint P only reaches the continue bars, the output is a triage list ("searches ranked by chance of page one") and is named that. Bands are shown only if the sellable bars hold.
+- A site that is live and has Search Console connected does not need the forecast for searches where Google already shows it: there the tool reports the real position.
+
+**Product 2, a page that ranks (anchored).**
+- Illustrative only, nothing was run: "This edit is likely (70%) to beat leaving the page as it is. Expected change: 0 to 2 places better. Normal movement at this position: within 2 places on 8 days in 10."
+- Most body-only rewrites will get "cannot tell" (section 2.7).
+- Today a full anchor exists only for pages in the top 10 of the 100 stored construction searches. At 11 to 30 the anchor is one pull and the band is untested. 401 of the client's 429 Search Console searches have no stored list at all.
 - **New page on a site that already ranks for the search (sibling anchor).** Placed against the site's own ranking page, with a wider band.
-- **New page with no anchor.** Tier probabilities and a "low confidence" label.
-- **Cannot tell.** Shown when the paired effect is inside the noise, the edit is not material, a sanity guard fires, or the page cannot be read.
+- **Cannot tell.** Shown when the chance that the edit helps is between 0.34 and 0.66, the edit is not material, a sanity guard fires, the page cannot be read, or the search has no stored list.
 
-The simulator will not say: an exact position, a guarantee, or that an edit "will" move rank. No edit has been scored yet.
+Neither product will say: an exact position, a guarantee, or that an edit "will" move rank. No edit has been scored against Google yet, and no gate of this plan can do that before Dec 17.
 
 ---
 
 ## 3. Rules for every stage
 
-1. **Freeze before scoring.** Each test's split, metric, threshold, code and model go into `evals/preregistered/claude-<name>/` with a sha256 manifest (`scripts/claude/freeze.py`), committed and pushed before any held-out data is pulled or read. A test is scored once. A result file is never overwritten. **Gates on design data are frozen too** (G2, G4.1 to G4.4). Before the first gate run of stage 2, freeze `evals/preregistered/claude-r4-site/`. Before the first gate run of stage 4, freeze `evals/preregistered/claude-r4-editsim/`. Each folder holds the code and every choice a gate depends on, written as a number or a rule: the pair set, missing-value encoding, signal directions, ridge values, cells, horizons, the case generator and its seed, and which estimate the product uses. A gate detail that is in neither `gates.json` nor the stage's frozen folder makes that gate's result VOID.
+1. **Freeze before scoring.** Each test's split, metric, threshold, code and model go into `evals/preregistered/claude-<name>/` with a sha256 manifest (`scripts/claude/freeze.py`), committed and pushed before any held-out data is pulled or read. A test is scored once. A result file is never overwritten. One exception to the order is written down in group 3D: fresh lists pulled before the models exist stay sealed until the models are frozen. **Gates on design data are frozen too** (G2, G4.1 to G4.4). Before the first gate run of stage 2, freeze `evals/preregistered/claude-r4-site/`. Before the first gate run of stage 4, freeze `evals/preregistered/claude-r4-editsim/`. Each folder holds the code and every choice a gate depends on, written as a number or a rule: the pair set, missing-value encoding, signal directions, ridge values, cells, horizons, the case generator and its seed, and which estimate the product uses. A gate detail that is in neither `gates.json` nor the stage's frozen folder makes that gate's result VOID.
 2. **Design seal and PR 45 seal.** Stages 2 to 4 fit and design only on data dated 2026-11-19 or earlier. Every reader of list rows, page fetches or Search Console data dated after that goes through one sealed loader, `scripts/claude/r4_sealed.py` (a new wrapper around `rsdata`; see rule 16). Until `evals/claude/r4/ledgers/pr45-v2/manifest.json` exists and verifies, the loader drops every row on the client's domain, every row of a PR 45 target search, every row of a search whose folded tokens (`r2_samesite_pairs._fold_tokens`) contain a PR 45 brand token (raken, busybusy, clockshark, b2w) or equal or contain the folded tokens of a PR 45 target, and every fetch of a client URL. For the client's domain and the PR 45 searches the seal is a time, not a date: `fetched_at_utc` before 2026-11-20T01:00:00Z (the merge). Site-restricted lists of other sites are not sealed.
 3. **Splits.** Time first, then search group, then domain. Near-duplicate wordings stay in one search group. The 71 groups in `evals/claude/r3/plans/universe.json` are fixed and never recomputed (`r3_dataset.search_groups` only looks them up, so it cannot screen a new search; group 3D has the screen for new searches). The round 3 site folds stay: test1 is the stage 1 test, test2 sites contribute no training pairs and no domain effects in stages 2 and 3.
 4. **Leave-group-out features.** Any feature built from result lists (footprint, niche link counts) for a pair or a page in search group g uses only lists of other groups, dated on or before the label day. **URL-new rule:** gated placement rows and gated site-strength pairs use only URLs that appear in no stored list of another search group dated on or before the label day, and the footprint of their domains is computed without those URLs' rows. This is what a new page looks like. Rows with URLs seen elsewhere are a secondary reading.
@@ -245,6 +348,8 @@ The simulator will not say: an exact position, a guarantee, or that an edit "wil
 14. **Log.** After every checkpoint, an entry goes into `RESULTS-claude.md`, and the theory with its predictions made before scoring goes into `evals/claude/theory.md` (new part "Round 4"). Every entry opens with a table of every `gates.json` id at that checkpoint: value, interval, bar, and PASS, FAIL, NOT RUN or VOID. Stage 1 opens with G1-GOAL. A fallback is written "FAIL, fallback F taken", never "passed" or "advanced". No point estimate appears without its interval. Every number from stored lists that earlier work read carries PROVISIONAL in the same sentence. The entry links its audit file (rule 15).
 15. **Independent audit.** No PASS is logged until a reviewer subagent that wrote none of the stage's code reruns `r4_gate.py` on a fresh clone of the pushed commit, checks rules 2 to 4 for leakage, and commits `evals/claude/r4/audits/<checkpoint>.md` with the rerun output. Until then the checkpoint reads "PASS pending audit". GOAL.md requires this.
 16. **Frozen files are wrapped, never edited.** Until `evals/claude/r3/heldout/claude-r3-samesite/results.json` is committed, no commit may change any file listed in `evals/preregistered/claude-r3-samesite/manifest.json` (about 47 files, among them `rsdata.py`, `r3_model.py`, `r3_dataset.py`, `r3_features.py`, `r3_semantic.py`, `metrics.py`, `t2_changes.py`). Stages 2 to 4 add new modules that import them.
+17. **New-site rule (Product 1).** When a site is scored as new, nothing derived from its own rankings may reach the model: no footprint (S1), no domain effect, no row of the site in any list on any day. Its rows are removed from every list before the rivals' order and the competition features are formed, so no gap marks where it was. Its pages come only from the label-blind crawl of task 2A.6, never from the list of pages that ranked. Rivals keep their own histories: at prediction time they are known sites. The sites of the round 3 test2 fold are scored as new exactly once, in Checkpoint P, and contribute nothing to any fit before that.
+18. **Product gates outrank part gates.** Checkpoint P (section 7) and Gate E (section 8) are the only gates that say whether something can be sold. G1 to G4 check parts. A report never presents a pass of a part gate as a product result.
 
 **Known exposures of the stored cross-site data (it is not pristine):**
 
@@ -262,6 +367,7 @@ The simulator will not say: an exact position, a guarantee, or that an edit "wil
 | Nov 18 and Nov 19 scored once for placement and movers | rounds 1 and 2, `evals/claude/heldout/REPORT.md` |
 | Common Crawl capture counts against the Nov 16 lists (138 domains) | `r4-free-label-sources.md` 6 |
 | Counts only on Nov 20 collector rows (rows, client rows, URLs new to a top 10). No position was scored | this review, Appendix D |
+| Counts only of the test2 sites' placements by band in the Nov 16 deep lists (67 on page one, 84 on page two). No model or signal was scored on them | this review, section 1 |
 
 No model with the stage 2 site features has been fitted on any of it. History-based cross-site models and footprint-type transfers have been read. Because of these reads, every test on stored lists dated Nov 19 or earlier (Checkpoints 2, 3a and 4) is PROVISIONAL. Only data dated Nov 20 or later counts as unseen: the fresh pull (Checkpoint 3b, not affordable today, see section 9) and the collector days of Checkpoint 3c.
 
@@ -293,7 +399,9 @@ No model with the stage 2 site features has been fitted on any of it. History-ba
 
 ## 5. Stage 1: freeze and verify the same-site content scorer on unseen sites (Checkpoint 1)
 
-**Purpose.** James's first priority. The scorer is fitted but not frozen and not scored. Everything is designed and reviewed (`evals/preregistered/claude-r3-samesite/preregistration.md`). This stage only executes it. The preregistration is not changed.
+**Purpose.** A check of one part, not a product gate. It was James's first priority on Nov 19. On Nov 20 he said that pair accuracy is not what anyone pays for, so D1 now decides whether this test gets the last free credits. The scorer is fitted but not frozen and not scored. Everything is designed and reviewed (`evals/preregistered/claude-r3-samesite/preregistration.md`). This stage only executes it. The preregistration is not changed.
+
+**What runs in any case, at 0 credits:** group 1A (the freeze) and group 1B (the PR 45 ledger). **What needs D1:** groups 1C to 1E (the pulls and the scoring). If they do not run, G1 is reported as NOT RUN, the frozen scorer is used as it is with the label "not scored on unseen sites", and stages 2 to 4 proceed. Checkpoint P then tests the scorer end to end on sites it never saw.
 
 **Inputs:** the three fitted scorers in `evals/claude/r3/model/`, the plan `evals/claude/r3/plans/heldout1.jsonl` (104 lists, 93 test1 sites, 46 searches, 35 search groups), `test.json`, the pinned text models, 208 credits.
 
@@ -348,7 +456,7 @@ In every case the held-out lists become design data after scoring.
 
 ## 6. Stage 2: site strength from free signals (Checkpoint 2)
 
-**Purpose.** Estimate, for every domain in the niche, a site-strength value with an honest uncertainty, from free data, and prove on stored lists that it carries real information where site strength matters: at the page-one boundary, and for small sites that no global list covers. Zero credits. No waiting on Google.
+**Purpose.** Estimate, for every domain in the niche, a site-strength value with an honest uncertainty, from free data, and prove on stored lists that it carries real information where site strength matters: at the page-one boundary, and for small sites that no global list covers. For Product 1 it must also give a value for a site with no rank history at all: the **cold estimate**, built from outside signals only. Zero credits. No waiting on Google.
 
 **Inputs:**
 - Stored ordinary lists through 2026-11-19 for the 140 construction searches (c100, the 35 PR 41 baseline searches, the 4 ClockShark searches), via `scripts/claude/rsdata.py` with `max_date="2026-11-19"`. The 15 revenue searches are a different niche: never used for fitting, reported as a separate slice.
@@ -360,6 +468,7 @@ In every case the held-out lists become design data after scoring.
 **Outputs:**
 - `evals/claude/r4/plans/xs_split.json` (frozen split) and `evals/claude/r4/site/site_types.tsv` (frozen site types).
 - `evals/claude/r4/site/signals.parquet` or `.csv.gz`: one row per (domain, left-out search group) with every signal, its source and its as-of date.
+- `evals/claude/r4/site/site_strength_cold.csv.gz`: per domain, the cold estimate and its standard deviation, each from a fit that never saw that domain (rule 17).
 - `evals/claude/r4/site/site_strength.csv.gz`: per (domain, left-out group): estimate, standard deviation, and how much came from the domain's own results against its features.
 - `evals/claude/r4/site/content_oof.csv.gz`: out-of-fold content scores for stored rows (task 2A.4).
 - `evals/claude/r4/site/signal_spec.json`: every signal's formula, direction and missing-value encoding, committed before group 2C runs.
@@ -398,6 +507,7 @@ Not used, with reasons (`r4-site-strength-signals.md`): Open PageRank (needs a s
 3. `scripts/claude/r4_xsdata.py`: tables of rows and pairs through `r4_sealed.py`. One list per search for fitting: the Nov 16 deep list where it exists (used to its own depth: 66 lists reach position 30, 30 stop near 20), else the search's single stored pull. Pair types: inside top 10, boundary (one page in the top 10, the other at 11 to 30), inside 11 to 30. Pair weights make each list's total weight equal to its number of scorable pages. Page text for a row is the stored fetch closest to the label day within 14 days, else the row is unreadable. Each row also gets a `text_mismatch` flag when no 8-word run of Google's stored snippet appears in the stored main text. The share of flagged rows is reported by day and site type, and every stage 2 and 3 table has a line with flagged rows dropped.
 4. `scripts/claude/r4_content_scores.py`: the frozen scorer applied to ordinary-list pages. **List invariance is required:** the same page with the same text for the same search must get the same score whatever other pages are in the list. The frozen `page-blend` standardises inside a list, so this script replaces in-list standardisation with frozen pooled scales computed from the training lists (no weight is refitted). **Out-of-fold scores are required on stored rows.** The frozen scorer was fitted once on all training lists, and 85 of the 100 deep-list searches are in its training groups. So the script also writes `content_oof.csv.gz`: for every ordinary-list (search, page) whose site is a round 3 train site or whose search is in a round 3 train group, a score from `r3_model.fit_predict`, refitted with the frozen spec, seed and site folds (`r3_model.site_folds`) on the training table minus that site's fold and minus that search group, with the pooled scales recomputed the same way. The frozen weights used to score new pages do not change. Every fit and every gate that uses a content score on stored rows uses `content_oof` there: `zbar` (S3c), `kappa` both ways (3A), `kappa_A` (4C), the bands of 3B, G3.5, G4.3 and G4.4. Each is also reported on sites and groups the scorer never trained on. Check (G2.0): on the training lists, with site-held-out fits on both sides, the list-invariant score must agree with the in-list score (pair accuracy within 0.005, within-list rank correlation at least 0.98). If the check fails, use the logistic part alone (`text-logit` style), which was preregistered as a secondary scorer.
 5. Free text fill: one plain-HTTP pass over Nov 19 URLs without text, and Common Crawl captures through `data.commoncrawl.org` (`cluster.idx` plus range reads; `index.commoncrawl.org` does not answer from this box). Record source and capture date.
+6. `scripts/claude/r4_site_crawl.py`: the **label-blind site crawl**. Product 1 scores a site from its own pages, and the local index holds mostly pages that were collected because they ranked, which would leak the answer. So every non-platform site of the niche is crawled the way a client site would be: the home page, the sitemap (all URLs if there are at most 300, else a seeded sample of 300 plus, for each stored search, up to 3 URLs whose path shares the most folded tokens with the search), and the pages the home page links to. Plain HTTP, one request a second per site, no page of the client's site (rule 2), results stored append only under `/workspace/ranksim-data/external/site_crawl/` with a sha256 list in git. The URL list of each site is fixed by this rule alone. No ranked URL is added to it. Free, no credits.
 
 **Group 2B. Signals.** One script per family, each with a loader that keeps missing as missing:
 `r4_signals_local.py` (S1, S3d, S7, S8), `r4_signals_cc.py` (S2, with resumable downloads, `curl -C -`), `r4_signals_focus.py` (S3a to S3c), `r4_signals_lists.py` (S5, reusing `src/aeo/ranksim/offpage.py`), `r4_signals_brand.py` (S4, S6, polite rate, results cached, the client's domain filtered out unless a D4 flag file exists).
@@ -405,6 +515,8 @@ Not used, with reasons (`r4-site-strength-signals.md`): Open PageRank (needs a s
 **Group 2C. Single-signal table (design, XS-design only).** Commit `signal_spec.json` first, so no direction or encoding is chosen after seeing this table. Then `scripts/claude/r4_stage2_eval.py signals`: each signal alone on the fixed pair sets of rule 7 (1, 0 or one half), with correct, wrong, ties and missing shown, by pair type, with and without platforms, on small-site pairs, and on URL-new pairs (rule 4). A signal with a "not listed" flag appears twice: missing as missing, and unlisted ranked last. This is the baseline table for the gate, and the best single signal is the best row of it on the gate's pair set. It also reruns the recount of section 1 so the old 0.38 to 0.42 figures are settled in a committed script.
 
 **Group 2D. The site-strength model.** `scripts/claude/r4_site_model.py`: the step 2 model of section 2.4 without the page-level content term (the site-only model: S1 to S8, `zbar`, domain effects). Fixed choices: logistic link, all signals enter (no selection), each signal standardised on XS-design, ridge on domain effects with `tau^2` chosen by nested leave-group-out log-likelihood over a grid written in the freeze, one ridge value on the other weights written in the freeze. Statistics helpers in `scripts/claude/r4_stats.py` (dyadic variance, two-way bootstrap, coverage simulation, power), ported from the appendix of `r4-statistical-design.md`.
+
+**Group 2D-cold. The cold estimate.** The same script fits a second model for sites scored as new: signals S2 to S8 only, no footprint (S1), no domain effect for the target. It is fitted by leave-site-out folds over the design sites (round 3 train and test1 sites), so each site's cold estimate comes from a fit that never saw it. The test2 sites get theirs from the fit on all design sites, and no test2 label is read. A brand-new domain has near-zero link counts and no listing, and the estimate must say so with a wide standard deviation.
 
 **Group 2E. Checkpoint 2.** Before the first gate run, freeze `evals/preregistered/claude-r4-site/`: `r4_site_model.py`, `r4_stage2_eval.py`, `r4_stats.py`, `xs_split.json`, `site_types.tsv`, `signal_spec.json`, the signals file, and a config that fixes every open choice (the gate's pair set, ridge value, tau grid, pair weights, missing handling, list choice). Commit and push. Then `r4_stage2_eval.py gate`, once: nested leave-group-out cross-validation over XS-design. Every prediction for group g comes from a model that never saw g, with features that leave g out. The gate refuses to run if the manifest fails or `stage2/results.json` exists, locally or on the pushed branch. Then `r4_gate.py c2`. XS-test-stored is not opened in stage 2. Checkpoint 2 is a design cross-validation on lists that earlier work has read. It is reported as PROVISIONAL and never as accuracy on unseen data.
 
@@ -415,6 +527,7 @@ Not used, with reasons (`r4-site-strength-signals.md`): Open PageRank (needs a s
 - `tests/test_claude_r4_sealed.py`: a planted client row and a planted PR 45 row, both fetched after 2026-11-20T01:00Z, are dropped by every loader that stages 2 to 4 use. A row of a search that only contains a PR 45 brand token is dropped too. The drop ends only when the ledger manifest verifies.
 - `tests/test_claude_r4_signals.py`: planted-leak test (a synthetic domain that ranks only in group g has footprint 0 for g). As-of date test. URL-new rule: a URL listed in another group is not a gated row, and its rows do not count in its domain's footprint. A domain missing from a global list stays missing and gets its flag. The outbound request list never contains the client's domain without the D4 flag.
 - `tests/test_claude_r4_content_scores.py`: list invariance (score unchanged when other pages are added or removed), the agreement check of task 2A.4 on a fixture, and an out-of-fold check: no row in `content_oof` was scored by a fit that saw its site or its search group.
+- `tests/test_claude_r4_newsite.py`: the new-site rule. For a site scored as new, the feature row is identical whether or not the site's rows are in the lists. Removing the site leaves the rivals' ranks consecutive. The crawl list of a site is the same with the stored lists deleted. No test2 site appears in any training table.
 - `tests/test_claude_r4_site_model.py`: on the synthetic design of `r4-statistical-design.md` simulation 3, the two-step fit keeps content weights with cosine at least 0.95 and beats content only. A domain with only wins or only losses gets a finite effect. The shrinkage formula matches the closed form. Dyadic interval coverage is 0.93 to 0.97 on a synthetic layout.
 - All tests run with no network and with keys unset.
 
@@ -431,7 +544,7 @@ Not used, with reasons (`r4-site-strength-signals.md`): Open PageRank (needs a s
 
 Why G2.2 changed: one free signal already clears 0.60 on the full Nov 16 data (Majestic 0.633 [0.607, 0.659], unlisted counted as zero). So the absolute bar proves little, and the gate now rests on a paired difference with an interval. G2.1 used to ask for an estimate for 95% of domains, which the prior gives to every domain by construction.
 
-Reported next to the gate, not gated: the same model on all boundary pairs (URLs seen elsewhere included), inside the top 10 (PREDICTED 0.53 to 0.58, an honesty check on section 2.3), inside 11 to 30, with and without platforms, by search type, and on the revenue niche.
+Reported next to the gate, not gated: the cold estimate on the same boundary pairs with every design site scored as new (PREDICTED 0.55 to 0.62, lead's estimate: this is the number that matters for Product 1, and Checkpoint P gates it); the same model on all boundary pairs (URLs seen elsewhere included), inside the top 10 (PREDICTED 0.53 to 0.58, an honesty check on section 2.3), inside 11 to 30, with and without platforms, by search type, and on the revenue niche.
 
 **PREDICTED (lead's estimates, not computed):** G2.2 point 0.62 to 0.68 on URL-new pairs. The best single signal is expected at 0.62 to 0.66 and is likely the footprint itself. G2.3 point 0.56 to 0.64. Chance that all of G2 pass: about 0.4. The main risk is that the model adds nothing measurable over the best single signal.
 
@@ -446,23 +559,25 @@ Reported next to the gate, not gated: the same model on all boundary pairs (URLs
 
 ---
 
-## 7. Stage 3: content plus site strength, full-SERP pairs, and positions (Checkpoints 3a and 3b)
+## 7. Stage 3: the band model for a new site, and the cross-site parts behind it (Checkpoints P, 3a, 3c, 3b)
 
-**Purpose.** Combine the frozen content score with the stage 2 site strength into one model that orders pages of different sites, turn the pairwise wins into a position with an honest band, and test it on search groups the model never saw. The sites in those searches are mostly known from other searches. Sites with no stored history are a separate slice (G3.6), and rows of test2 sites and of cold domains are always reported apart.
+**Purpose.** This stage holds the test of Product 1. It combines the frozen content score with the stage 2 site strength, turns them into a rank band for a site with no history on each of its searches, and measures that on real sites the model never saw (Checkpoint P). It also checks the parts: pairwise order across sites and the placement of one page among known rivals (Checkpoints 3a, 3c and 3b).
 
-**Three tests, in order of how much they prove:**
+**The tests, most important first:**
 
-| Checkpoint | Data | Credits | Status of the result |
-| --- | --- | ---: | --- |
-| 3a, stored test | XS-test-stored, the Nov 16 deep lists of search groups never used in fitting | 0 | PROVISIONAL: earlier work has read these lists |
-| 3c, forward test | collector days dated Nov 20 or later that are already in the store, pages new to a top 10 | 0 | unseen in time, same searches. This is GOAL Target 1 |
-| 3b, fresh test | new searches from new search groups, pages 1 to 3 | 90 to 180 | unseen. **Not affordable from today's balance** (section 9). Runs only if credits appear (D3) |
+| Checkpoint | What it tests | Data | Credits | Status of the result |
+| --- | --- | --- | ---: | --- |
+| **P, the Product 1 test** | Bands for a whole site scored as new, across all stored searches | P-cv: every design site in turn. P-sealed: the 145 test2 sites, once | 0 | P-cv is a design cross-validation, PROVISIONAL. P-sealed uses sites no fit has seen, on lists earlier work has read |
+| P-fresh and 3b | The same on unseen result lists | 100 new searches, pages 1 and 2 | 200 | unseen. Runs only under D1 option B, or with new credits (D3) |
+| 3a, stored part check | One page placed among known rivals, on search groups never used in fitting | XS-test-stored, Nov 16 deep lists | 0 | PROVISIONAL |
+| 3c, forward part check | Pages new to a top 10 on later days. This is GOAL Target 1 | collector days dated Nov 20 or later that are already in the store | 0 | unseen in time, same searches |
 
 **Inputs:** stage 2 outputs, XS-design lists, the frozen content score with `content_oof` on stored rows, the multi-pull days (for the noise model).
 
 **Outputs:**
 - `evals/claude/r4/model/rank-v1/` (the frozen combined model: kappa, weights, domain effects, tau, the reach model, the position curve, the band quantiles, with a save and load API like `r3_model.FrozenScorer`).
-- `evals/preregistered/claude-r4-xs/` (preregistration, `test.json`, manifest).
+- `evals/preregistered/claude-r4-xs/` (preregistration, `test.json`, manifest) for the part checks, and `evals/preregistered/claude-r4-newsite/` for Checkpoint P.
+- `evals/claude/r4/stage3/newsite/{cv, sealed, fresh}/{results.json, cells.csv, report.md}`: one row per (site, search) cell with the true band, the four band probabilities, the targeted flag and the fold.
 - `evals/claude/r4/plans/xs_fresh.jsonl` (the fresh-search plan) and its meta file, only if 3b runs.
 - `evals/claude/r4/stage3/{stored, forward, fresh}/{results.json, rows.csv, pairs.csv, report.md}`.
 
@@ -476,7 +591,20 @@ Tiers are the same everywhere in this plan: 1 to 3, 4 to 10, 11 to 20, 21 to 30,
 
 ### Task groups
 
-**Group 3A. The combined model.** `scripts/claude/r4_rank_model.py`: the full step 2 model of section 2.4, fitted once on XS-design (one list per search), with `content_oof` scores on stored rows. Fixed choices as in 2D. Report `kappa` with a search-group bootstrap interval. Also fit `kappa` a second way, from same-site pairs of ordinary lists only (a conditional logit on the content score), and report both. If they differ by more than a factor of 2, say so: content and site are then not on one scale. The same script fits the **reach model** for T-B, because the pairwise model has no page that failed to rank and so cannot learn reach: a logistic classifier on XS-design (domain, search) rows. Positives are domains in the top 10 (and, in a second fit, the top 30) of the Nov 16 deep list. Negatives are niche domains with a readable indexed page that are absent from that list. Features: the combined model's score for the candidate page, the stage 2 site strength, and the log page count, all leave-group-out. It is frozen with `rank-v1`.
+**Group 3P. The band model and Checkpoint P (the Product 1 test).** `scripts/claude/r4_newsite.py`.
+1. **Cells.** A cell is one (site, search): a non-platform site of the niche that has a crawl (task 2A.6), and a stored construction search. The truth is the site's best position in the stored list of that search, as a band: top 3, 4 to 10, page 2 (11 to 20), not ranking (not in the top 20). The 100 searches with a deep list give all four bands (label day Nov 16). The 40 searches with page one only give "page one or not" and enter P1 only. The client's site and the PR 45 searches follow rule 2.
+2. **New-site rule.** In every cell the target site is scored as new (rule 17): its rows are removed from the list, it has no footprint and no domain effect, and its pages are the crawled ones.
+3. **Features.** (a) The best list-invariant content score among the site's crawled pages for the search, and the number of its pages above a frozen score level. Sites the scorer trained on get out-of-fold scores (task 2A.4). (b) The cold site strength and its standard deviation (group 2D-cold). (c) The competition on the search, from the list without the target: the median and the lowest site strength on page 1 and on page 2 (rivals are known sites, so their full stage 2 estimates are used), and the share of small sites and of platforms on page 1. (d) The target's expected rank among the 20 listed rivals from the pairwise model of group 3A, using the cold strength. (e) Flags: the search names the site's brand, site type, log page count.
+4. **Model.** One ordered logit over the four bands, with a page-one-or-not term for the searches that have page one only. One ridge value, written in the freeze. One temperature fitted on left-out predictions. Fitted on the design sites (round 3 train and test1 sites) and the XS-design searches.
+5. **Targeted cells.** A cell is targeted when the best content score is at or above a frozen level. The level is set on design sites so that targeted cells keep 90% of their real top-20 cells. In the cross-validation it is set inside each training fold. Every bar is on targeted cells. The same numbers on all cells are reported next to them.
+6. **Calls.** The called band is the most probable one. The call is confident when that probability is at least 0.5, else the output is "cannot tell". Coverage is the share of targeted cells with a confident call.
+7. **Readings.** P-cv: 5 folds by site (seeded), every design site scored by a fit that never saw it, XS-design searches. P-sealed: one fit on all design sites, frozen, then the 145 test2 sites scored once on all 140 searches, reported apart for XS-design searches (unseen sites) and XS-test-stored searches (unseen sites and unseen searches). P-fresh, only if the fresh lists of group 3D exist: every site scored on the fresh searches by a fit that never saw it. Before P-cv runs, freeze `evals/preregistered/claude-r4-newsite/` with the code, the crawl list, the content-score level rule, the ridge value, the fold seed and the call threshold. One gate run each, logged (rule 13).
+8. **Baselines on the same cells.** B0: always "not ranking". B1: difficulty only, the same model with features (c) and site type alone, so every site gets the same answer on a search. B2: B1 plus the cold strength. B3: B1 plus the content score.
+9. **Slices, each with its count.** Small sites (in neither Majestic nor Tranco). Young domains (registered under two years ago, where RDAP gives a date): the closest stored stand-in for a brand-new site. Site type. Search type. A slice with fewer than 20 sites is descriptive only. If the young-domain slice is that small, the report says plainly that brand-new sites are untested.
+
+A known bias, on the safe side: a held-out site's crawl is capped, so it can miss the page that ranks. A client's own site is crawled in full. The test therefore finds fewer real rankings than the product would.
+
+**Group 3A. The combined model.** `scripts/claude/r4_rank_model.py`: the full step 2 model of section 2.4, fitted once on XS-design (one list per search), with `content_oof` scores on stored rows. Fixed choices as in 2D. Report `kappa` with a search-group bootstrap interval. Also fit `kappa` a second way, from same-site pairs of ordinary lists only (a conditional logit on the content score), and report both. If they differ by more than a factor of 2, say so: content and site are then not on one scale. The same script fits the **reach model** for T-B, because the pairwise model has no page that failed to rank and so cannot learn reach: a logistic classifier on XS-design (domain, search) rows. Positives are domains in the top 10 (and, in a second fit, the top 30) of the Nov 16 deep list. Negatives are niche domains with a readable indexed page that are absent from that list. Features: the combined model's score for the candidate page, the stage 2 site strength, and the log page count, all leave-group-out. It is frozen with `rank-v1`. This reach model is the known-site reading of the cells of group 3P: the same cells and code with the site's footprint switched on. Sites of the test2 fold are never targets in group 3A, 3C or 3E, so Checkpoint P-sealed stays unread.
 
 **Group 3B. Positions.** `scripts/claude/r4_position.py`:
 1. Position curve and pull noise: fit the jump-mixture noise model (a page lands at a random place with probability q, otherwise gets Gaussian jitter) to pair agreement by position gap, from the multi-pull days of XS-design searches. This gives the latent spacing of positions 1 to 10. Positions 11 to 30 are extrapolated on the log-rank form of section 2.7 and flagged as extrapolated until repeat deep pulls exist.
@@ -486,10 +614,11 @@ Tiers are the same everywhere in this plan: 1 to 3, 4 to 10, 11 to 20, 21 to 30,
 
 **Group 3C. Checkpoint 3a, stored test (0 credits, PROVISIONAL).** Freeze the model and the preregistration `evals/preregistered/claude-r4-xs/`. Before the freeze, compute the power of each gate at the PREDICTED effect for the real size of XS-test-stored, by simulation from the XS-design errors. If power is under 0.8, the gate stays as written and the report says a fail is uninformative. Then score XS-test-stored once with `scripts/claude/r4_stage3_score.py --cell stored`. T-A and T-C use the deep-list searches only. The top-10-only searches of the fold (PR 41 baseline and ClockShark searches) are a separate reported slice. If the model is refitted afterwards, the stored cell is design data from then on. With today's balance this is the main test of the cross-site model.
 
-**Group 3D. Checkpoint 3b, fresh test. Not affordable today.** By the size rule below, the balance after stage 1 gives N = 13, under the minimum of 30 (section 9). The group stays in the plan so that it can run unchanged if credits appear.
+**Group 3D. Fresh lists, for P-fresh and Checkpoint 3b.** These are the only unseen result lists this plan can get. They fit the free balance only in place of the stage 1 test (D1 option B), or with new credits (D3). After a stage 1 run the size rule below gives a negative N and the group does not run.
 1. `scripts/claude/r4_stage3_plan.py`: candidate searches are the related searches and "people also ask" strings in stored raw responses dated on or before Nov 19 (1,028 and 542 distinct strings). Eligibility is computed for each candidate against the stored searches only, never through other candidates. With t = `r2_samesite_pairs._fold_tokens`, a candidate c is excluded if, for any of the 155 stored searches s, the token sets of t(c) and t(s) are equal, they share a token trigram, or one token set contains the other (any size, including one-token stored searches). It is also excluded if it contains a brand token from a frozen list (every brand named in a stored search, the client's brand, and every PR 45 brand token) or a navigational word from a frozen list (login, sign in, app, download, careers, glassdoor, support, reddit, complaints). It must contain a niche term from a frozen list. All three lists are written to the plan's meta file before sampling. Fresh groups come from `assign_folds` over the eligible candidates alone. The 71 universe groups are never recomputed. Draw by seeded hash, at most 2 searches per new group. The eligible list and its count are written before the draw.
-2. Size, fixed by the balance on the day of the freeze: `N = min(60, floor((balance - 250 - 15) / 3))`. If N is under 30, Checkpoint 3b is not run, and that is reported as "not tested on unseen searches".
-3. Freeze and push. Then pull pages 1, 2 and 3 of each search once, all three within minutes (a small `r4_stage3_pull.py`; chunked, each chunk committed and pushed). 3 credits per search.
+2. Size, fixed by the balance B on the day of the pull: `N = min(100, floor((B - 260 - 46) / 2))`. The 46 keeps 36 credits for the two PR 45 reads and 10 for charges with no stored response. If N is under 30, the group is not run, and that is reported as "not tested on unseen lists".
+3. Freeze the query list and the pull script and push. Then pull pages 1 and 2 of each search once, both within minutes (a small `r4_stage3_pull.py`; chunked, each chunk committed and pushed, the balance read before every chunk). 2 credits per search. Page 3 is not pulled: the bands of Product 1 end at position 20.
+3b. **Pulling before the models exist.** Under D1 option B the pull happens tonight, before stages 2 and 3 are built, because the credits will not be there later. That breaks the usual order of rule 1, so the lists are sealed instead: the pull script stores raw responses only and prints counts, and `r4_sealed.py` refuses every read of them until the manifests of `claude-r4-xs` and `claude-r4-newsite` verify. The audit of rule 15 checks that no script read them earlier.
 4. One plain-HTTP fetch pass, then the Common Crawl fill. No browser pass, no second pass, no scrape. Client URLs are not fetched.
 5. Score once: `r4_stage3_score.py --cell fresh`, reading through `r4_sealed.py`. The client's domain is never a T-A target, a T-B domain or a T-C pair member in this cell, and its rows are removed before the rivals' order is formed. Guards as in round 3: full manifest, the freeze commit is an ancestor of every chunk commit, one pull, one fetch pass.
 6. Every fresh result is also reported on the fresh searches whose top 10 shares fewer than 3 URLs with any stored top 10.
@@ -507,9 +636,32 @@ Tiers are the same everywhere in this plan: 1 to 3, 4 to 10, 11 to 20, 21 to 30,
 - `tests/test_claude_r4_score_guards.py`: scoring refuses without a manifest, with an unpushed freeze, with a second pull, with a second fetch pass, or when a result file exists locally or on the pushed branch. A forward-cell run refuses a day that the preregistration does not name.
 - `tests/test_claude_r4_plan.py`: `raken alternative free`, `raken pricing per month`, `raken time tracking` and `busybusy login` are not eligible. `universe.json` is unchanged. The draw is deterministic. N follows the formula.
 
-### Gate G3 (applied to Checkpoint 3a as PROVISIONAL, and to 3b if it ever runs)
+### Gate P (Checkpoint P, the Product 1 gate)
 
-Rows: the gated T-A rows defined above (readable, no platform, no same-site page in the list, URL new under rule 4). Validity for 3a: at least 30 searches with a deep list and at least 200 gated T-A rows. Validity for 3b: at least 30 searches and 300 gated rows. A test under its validity bar is reported as "not tested: too few rows", with descriptive numbers only, and is never scored against the bars. G3 passes only if G3.1 to G3.7 all pass, where G3.5a may instead be "not testable".
+All numbers are on targeted cells, with a bootstrap over sites for every interval.
+
+| Id | Measure, exactly | Continue bar | Sellable bar |
+| --- | --- | --- | --- |
+| P1 | Page one or not. Rank the cells by the predicted chance of page one and take cells from the top until the stated share of the real page-one cells is found. The measure is the share of taken cells that really are on page one | at least 0.35 when 0.30 are found, and log loss of the page-one chance below baseline B1 with a 95% lower bound of the difference above 0 | at least 0.70 when 0.40 are found |
+| P2 | Right band. Over cells whose true band is top 3, 4 to 10 or page 2: the share whose called band is the true band. "Cannot tell" and "not ranking" count as wrong | at least 0.25 | at least 0.60 |
+| P3 | Spread. Over sites with at least 5 targeted cells: the predicted number of page-one cells (the sum of the chances) against the real number | rank correlation across sites at least 0.4 | within 25% or 2 searches of the real number for at least 0.70 of sites |
+| P4 | Coverage: share of targeted cells with a confident call | reported | at least 0.80 |
+| P5 | Guard tests: the new-site tests of stage 2, and a shuffle of site labels inside each search, which must bring P1 down to the base rate | all pass | all pass |
+
+Always reported next to the gate: the plain share of cells placed in the correct band, with the same number for B0, B1, B2 and B3; the area under the curve for page one; the all-cells versions; the slices of task 9; the count of cells and sites behind every number.
+
+**Decision rule, fixed now.**
+- **Kill.** P1 or P2 misses its continue bar on P-cv. Product 1 stops on free data. No second model is tried on the same data beyond the one loop of rule 13. The pivots are in section 0.2.
+- **Continue as a triage tool.** The continue bars hold on P-cv, and P-sealed agrees (its point estimates clear the continue bars, or the bars lie inside its 95% intervals). The output is a list of searches ranked by chance of page one. No bands are shown.
+- **Sellable, pending unseen lists.** The sellable bars hold on P-cv and at the point estimate on P-sealed. Then the fresh lists are requested (200 credits). Bands are shown, and the numbers are quoted to anyone outside, only after P-fresh meets the sellable bars at the point estimate with its lower bounds above the continue bars.
+
+P-sealed is small: 67 page-one placements on 35 sites and 84 page-two placements (REAL). It can contradict P-cv. It cannot carry a sellable claim alone.
+
+**PREDICTED (lead's estimates from the arithmetic of section 2.9, not computed):** P1 0.25 to 0.50 at the continue point. P2 0.15 to 0.35. P3 correlation 0.4 to 0.7. Chance that the continue bars hold: about 0.5. Chance that the sellable bars hold: about 0.1 to 0.15.
+
+### Gate G3 (the part checks: applied to Checkpoint 3a as PROVISIONAL, and to 3b if it ever runs)
+
+Rows: the gated T-A rows defined above (readable, no platform, no same-site page in the list, URL new under rule 4). Validity for 3a: at least 30 searches with a deep list and at least 200 gated T-A rows. Validity for 3b: at least 30 searches and 200 gated rows (its lists end at position 20). A test under its validity bar is reported as "not tested: too few rows", with descriptive numbers only, and is never scored against the bars. G3 passes only if G3.1 to G3.7 all pass, where G3.5a may instead be "not testable".
 
 | Id | Metric | Bar |
 | --- | --- | --- |
@@ -528,7 +680,9 @@ Always reported next to the gate: correct, wrong, ties and missing; pair accurac
 
 **PREDICTED (lead's estimates, not computed):** T-C all pairs 0.58 to 0.64, boundary pairs 0.62 to 0.68. T-A error about 7% to 14% below the middle guess (from T-C 0.58 to 0.64 through simulation 4, a point or two less against one pull), so the 8% bar of G3.1 is near the low end of that range. Chance that G3 passes on the stored test: about 0.15 (0.10 to 0.20). The most likely failures are the 8% bar of G3.1 and a lower bound in G3.3 just under its bar.
 
-### What each outcome means, and the fallbacks
+### What each outcome of the part checks means, and the fallbacks
+
+This table is about G3 and about the no-anchor mode for a new page on a site that is already known. Product 1 is decided by Gate P alone.
 
 | Outcome | Meaning | Next step |
 | --- | --- | --- |
@@ -543,11 +697,11 @@ Always reported next to the gate: correct, wrong, ties and missing; pair accurac
 
 ---
 
-## 8. Stage 4: the edit simulator and live confirmation (Checkpoints 4 and 5)
+## 8. Stage 4: the edit simulator, Product 2 (Checkpoints 4 and 5, Gate E)
 
-**Purpose.** The end product: give it a search, a page and a changed version, get an approximate rank with honest uncertainty. Validate it with tests that do not wait on Google. Confirm it later on real edits without ever blocking on them.
+**Purpose.** The secondary product: give it a search, a page that already ranks and a changed version, get the direction and an approximate new position with honest uncertainty. Validate its parts with tests that do not wait on Google (G4). Measure it on real edits when they exist (Gate E), without ever blocking on them.
 
-**Inputs:** the frozen content scorer (stage 1 must have advanced by G1-ADV or a fallback; under F1-C stage 4 does not start), the list-invariant score and `content_oof` (stage 2, group 2A), the position curve and noise model (stage 3, group 3B), the rank model for pages with no anchor (stage 3, if it passed), stored lists, the PR 41 and PR 45 material, the Search Console exports on disk.
+**Inputs:** the frozen content scorer (stage 1 advanced by G1-ADV or a fallback, or was NOT RUN under D1 and the scorer carries the label "not scored on unseen sites"; under F1-C stage 4 does not start), the list-invariant score and `content_oof` (stage 2, group 2A), the position curve and noise model (stage 3, group 3B), the rank model for pages with no anchor (stage 3, if it passed), stored lists, the PR 41 and PR 45 material, the Search Console exports on disk.
 
 ### The three modes
 
@@ -664,7 +818,7 @@ Not gated, always reported: rung 4 (after-minus-before agreement, controls, the 
 | G4.3 position backtest fails | Same as a G4.4 fail. The paired effect is shown as a direction with its probability |
 | Rung 4 shows no agreement gain for after versions | Lambda's prior moves toward 0, bands widen, and the report says the edit effect is unconfirmed. This does not block release of the band and tier outputs |
 
-### Checkpoint 5 (live reads, on the calendar, never a gate)
+### Checkpoint 5 (live reads, on the calendar, never a release gate)
 
 | Date (not before 7 days after the core update completes) | Read | Credits | Funded today |
 | --- | --- | ---: | --- |
@@ -673,33 +827,80 @@ Not gated, always reported: rung 4 (after-minus-before agreement, controls, the 
 | Dec 16 and Jan 13 | PR 41 plus 28 and plus 56, 74 searches, 3 pulls | 222 each | no. Needs new credits (D3) |
 | Each later client edit | A new ledger frozen before the edit goes live, read at plus 28 and plus 56 | 3 per search per read | no |
 
+### Gate E (the Product 2 gate, on real edits)
+
+G4 says the simulator is sane. Only Gate E says whether its answers match what Google did. It cannot block the release on this branch, because it waits on Google. Until it is measured, every edit prediction carries the label "unconfirmed against Google".
+
+- **Rows.** Every edited (page, search) row of a ledger frozen before the edit went live, with a before anchor from pulls fetched before the edit, and with Google's reprocessing marker set by the score date. Rows of one search are not independent: the count of independent rows is the row count divided by 1 + (m - 1) x 0.3, with m the mean rows per search (the 0.3 is assumed, not measured).
+- **Truth.** The change in consensus position (at least 3 pulls) from the before anchor to the score date, minus the median change of the matched controls. Up: a net gain of 2 places or more. Down: a net loss of 2 places or more. Stay: anything else.
+- **Calls.** Up or down: the chance that the edit helps is at least 0.66 or at most 0.34, and the lower figure of the expected change is at least 2 places. Stay: the upper figure of the expected change is under 2 places. Otherwise "cannot tell".
+
+| Id | Measure | Sellable bar | Kill bar, read after 40 independent rows |
+| --- | --- | --- | --- |
+| E1 | Direction: share of confident calls (up, down, stay) that match the truth | at least 0.70, and above "always stay" on the same rows | under 0.60 |
+| E2 | Within 2: share of confident calls whose predicted position is within 2 places of the real consensus position | at least 0.70, and at least 10 points above "predict no change" on the same rows | not above "predict no change" |
+| E3 | Coverage: share of rows with a confident call | at least 0.50 | reported |
+
+Also reported: accuracy on the up and down calls alone, because a tool that always says "stay" would look good on E1 and E2 without knowing anything. That is why both bars are tied to the empty baselines.
+
+The rule, the baselines and the row filter are frozen in `evals/preregistered/claude-r4-gate-e/` before the first ledger read. If the kill bar is hit, the product stops quoting position changes and keeps only the comparison of two versions. Rows come from PR 45 (about 10 independent rows, 18 credits a read), PR 41 (222 credits a read, not funded) and later client edits. With Search Console connected (D2), the same rows can be read for free from Google's own average positions, reported as a second truth source and labeled as that.
+
+**PREDICTED (lead's estimate):** E1 0.55 to 0.65 on up and down calls. E2 close to the "no change" baseline. The 40 independent rows will not exist before February unless D2 or D3 is approved.
+
 ---
 
 ## 9. Credits and order of work
 
-| Step | Credits | Balance above the 250 floor after it (if the collector is paused, D1) |
-| --- | ---: | ---: |
-| Now | | 367 |
-| Stage 1, two pulls of 104 lists | 208 | 159 |
-| Stage 2 | 0 | 159 |
-| Stage 3b, fresh test, N = 48 by the formula (3 credits a search) | 144 | 15 |
-| Stage 4 | 0 | 15 |
+**The balance (REAL, read 2026-11-20 15:45 ET): 513.** James's floor is 250. This plan's pull scripts stop at 260, so the plan can spend 253.
 
-- With the collector running at about 90 a day: stage 1 must be pulled before the collector's second run from now, or it no longer fits. After stage 1, one more collector run leaves 69 above the floor, which is under the 90 needed for the smallest fresh test (N = 30). So without D1, Checkpoint 3b cannot happen and stage 3 ends at the PROVISIONAL stored test.
-- The collector's default floor is 200. Unless its caller sets 250, it can take the shared balance below James's floor on its own.
-- Not affordable now and left out: a repeat pull of pages 2 and 3 to measure noise at positions 11 to 30 (30 to 60 credits). D5 would give that data for free.
+**Who else spends it.** Two other users draw on the same free key every morning: the other team's collector (three pulls of the original 30 searches, 84 to 90 credits, between about 09:30 and 11:00 ET) and a tracker for another client (15 credits at about 09:10 ET). About 6 more a day are charged with no stored response. Together about 105 to 111 a day. The collector stops itself at 200, not 250. The tracker never stops.
 
-**Order.** Stage 0 and stage 1 at once (one day). Stage 2 next (about four working days, no credits). Stage 3 (about three days plus the pull). Stage 4 (about one to two weeks to the release gate). Ledger reads on the calendar. Stage 2 groups A to C may start while stage 1's second pull waits out its gap, because they do not use the held-out result.
+| If nothing changes | Balance after that morning (DERIVED) |
+| --- | ---: |
+| Nov 21 | about 408 |
+| Nov 22 | about 303 |
+| Nov 23 | about 200, under the 250 floor. The tracker then keeps taking 15 a day |
+
+**What each use costs, and what fits.**
+
+| Use | Credits | Fits today (253 to spend) | Fits after the Nov 21 morning runs (about 148 to spend) |
+| --- | ---: | --- | --- |
+| A. Stage 1 test: 104 site-restricted lists, two pulls | 208 | yes, alone | no |
+| B. Fresh lists for Product 1 and Checkpoint 3b: 100 new searches, pages 1 and 2 | 200 | yes, alone | no (N = 51 at most) |
+| A and B together | 408 | no | no |
+| Two PR 45 reads (Dec 17, Jan 14): 6 searches, 3 pulls | 36 | yes, next to A or next to B | yes |
+| One PR 41 read: 74 searches, 3 pulls | 222 | only in place of A and B | no |
+| One client run of Product 1 on 300 searches, pages 1 and 2 | 600 | no | no |
+| Stages 0, 2, 3 (Checkpoint P, 3a, 3c) and 4 up to G4 | 0 | yes | yes |
+
+So the free balance pays for exactly one of A or B, plus the two PR 45 reads, and only if it is spent before about 09:00 ET on Nov 21 or the other two users are paused today (D1). Everything that decides whether Product 1 is worth continuing costs nothing.
+
+**Rules for any pull (they restate task 0.4).** Read the balance just before the pull. A pull of A needs at least 478 (260 + 208 + 10). A pull of B needs at least 260 + 2N + 46. Both pulls of A, or the whole of B, must fall in a window with no run of the other users inside it: start after their last run of the day, end before 09:00 ET the next morning. Never pass `--reserve`.
+
+**The collector is not a data source after Nov 21 to 23.** It runs out of credits by then, or sooner if it is paused under D1. No gate, fallback or ledger read in this plan depends on a collector day that does not already exist. The days that exist (through Nov 20, and Nov 21 if it runs) are used by Checkpoint 3c and by the band backtest.
+
+**Not affordable and left out:** a repeat pull of pages 2 and 3 to measure noise at positions 11 to 30, any PR 41 read, any client run of Product 1, a fresh anchor for an edit prediction (3 credits per search per day).
+
+**Order.**
+1. Today: D1. Stage 0. Stage 1 groups 1A and 1B (freeze and PR 45 ledger, 0 credits). Then A or B tonight if D1 says so.
+2. Stage 2 (about five working days, 0 credits): data layer, the label-blind crawl, signals, the site model and the cold estimate.
+3. Stage 3 (about four working days, 0 credits): the band model and **Checkpoint P first**, then the part checks 3a and 3c. The kill, continue or sellable decision for Product 1 falls here, about two weeks from the start.
+4. Stage 4 (about one to two weeks to G4, 0 credits): the edit simulator. Gate E waits for real edits: first read Dec 17.
+
+If Checkpoint P hits its kill rule, stage 4 still runs (Product 2 does not depend on it), and the pivots of section 0.2 go to James.
 
 ---
 
 ## 10. What this plan does not do
 
-- It does not wait on Google for any gate.
+- It does not make any gate wait on Google, except Gate E, which is the only honest measure of the edit product and never blocks other work.
 - It does not spend money, and it does not sign up for anything unless James approves D3.
-- It does not claim an exact position, or that an edit will move rank.
+- It does not claim an exact position, or that an edit will move rank, or how fast a new site reaches its settled rank.
+- It does not treat pair accuracy as a product result. The Round 3 target (G1-GOAL) is still scored as frozen if the credits go to it, and it is reported as a part.
 - It does not change the round 3 preregistration, the PR 41 ledger, the product ranker, main, or production.
-- It does not use rank history as a model feature of the content scorer. The anchored mode uses the page's current position as a starting point, which is known at prediction time, and every test anchors only on data from before the prediction date.
+- It does not use rank history as a feature of the content scorer. Product 1 uses no history of the scored site at all (rule 17). Product 2 uses the page's current position as a starting point, which is known at prediction time, and every test anchors only on data from before the prediction time.
+
+**GOAL.md targets.** Target 1 (place new or changed URLs, at least two held-out days) is scored as Checkpoint 3c with the GOAL metric. Target 2 (edit direction) is Gate E. Target 3 (one-day movers) is retired: it measured pull noise (RESULTS-claude.md 4.3), and James's Nov 19 note sets day-to-day movement aside. The Round 3 target (same-site pairs, lower bound above 0.65) is G1-GOAL. D9 asks James to confirm this map.
 
 ---
 

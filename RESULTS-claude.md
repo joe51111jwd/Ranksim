@@ -2,7 +2,7 @@
 
 Branch `claude/goal-ranksim-works`. Brief: `GOAL.md`. Every model number below is PREDICTED and comes from a script in `scripts/claude/`. Real Google positions come from Serper and are labeled REAL or "truth".
 
-Status: IN PROGRESS (round 2 started Nov 19, 14:20 ET). This file is updated after every meaningful experiment. The final report and the plain-English summary go at the bottom when the run ends.
+Status: IN PROGRESS (round 3 started Nov 19, 19:20 ET). This file is updated after every meaningful experiment. The final report and the plain-English summary go at the bottom when the run ends.
 
 ## 0. Ground rules used in this run
 
@@ -148,8 +148,83 @@ Design-day measurements:
 | Where new URLs land | `scripts/claude/r2_t1_mechanisms.py`, `evals/claude/r2/t1-mechanisms/notes.md` | Slots open at the bottom: 23 of 163 URLs at position 1 left, 82 of 142 at position 10. Of 101 new rows whose site was already on page one, 84 were a same-site swap. The swapped slot is in band for 40 of 84 against 24 for a flat 9. Moving a URL's position over from a sibling search does not help (44 of 96 against 46 for a flat 9). |
 | Do edits move rank | `scripts/claude/r2_t2_signal.py`, `evals/claude/r2/t2-signal/notes.md` | Changed pages moved 0.640 of the time against 0.557 for matched unchanged pages: +0.083 [-0.082, +0.267]. They did not move further. At most 0.335 of moves on changed pages can be due to the edit. A perfect content reader could add at most 0.10 to 0.17 accuracy over a position-only rule. A fair test needs 170 to 2,735 changed-and-moved rows. Google showed the new title for 2 of 11 title changes. |
 | Content with the site held fixed | `scripts/claude/r2_samesite_pairs.py`, `evals/claude/r2/samesite/notes.md` | 465 same-site pairs with HTML for both pages. BM25F puts the higher page first in 277 of 464 (0.597 [0.548, 0.647]) against 0.522 across sites. A fitted 12-feature model fails on held-out searches (0.486). Applied to the 17 real edits, the sign of the score change matched the move 9 times. |
-| Flip noise | `scripts/claude/r2_t3_noise.py` | Still running when this was written. |
-| Earlier page versions from the Wayback Machine | `scripts/claude/r2_wayback.py` | Still running when this was written. |
+| Flip noise | `scripts/claude/r2_t3_noise.py`, `evals/claude/r2/t3-noise/notes.md` | The 44 flips of Nov 16 to 17 are what pull noise alone gives: shuffling each search's pulls between the two days gives 45.0 expected flips. Noise share 1.02 [0.78, 1.47]. |
+| Earlier page versions from the Wayback Machine | `scripts/claude/r2_wayback.py`, `evals/claude/r2/wayback/notes.md` | web.archive.org cannot be reached from this box (every connection times out in the egress proxy). 0 captures downloaded. The script is ready to run from another network. |
 
 Today's three pulls of the 70 added searches finished at 14:40, 15:14 and 15:56 ET. Serper balance after: 891.
 
+
+### 4.2 Loop 1, steps 2 and 3: theory, build, freeze (Nov 19, 16:15 to 20:20 ET). Done.
+
+- Theory: `evals/claude/theory.md`, sections 0 to 4, written before anything dated after Nov 17 was read. It predicted: Target 1 passes pooled (probability about 0.8), Target 2 lacks rows and content cannot beat position, Target 3 fails with the persistence guard because one-day flips are pull noise.
+- Built from the theory, design days only: the latent-order scorer and the permutation noise check for Target 3 (`scripts/claude/r2_t3_latent.py`, `r2_t3_noise_check.py`, notes in `evals/claude/r2/t3-latent/`), the same-site content check (`r2_samesite_check.py`), the excess-movement test (`r2_t2_excess.py`) and the 14 to 28 day scorer (`r2_t2_longwindow.py`, cannot run before Dec 3). Nothing new was built for Target 1: the theory said the round 1 rule already was the mechanism.
+- Frozen with sha256 manifests in commit `d854bf0`: `evals/preregistered/claude-r2-t3-latent/`, `claude-r2-samesite/`, `claude-r2-t2-excess/`, `claude-r2-t2-longwindow/`. All seven `claude-*` manifests verified before scoring.
+
+### 4.3 Loop 1, step 4: held-out scores of round 1 and loop 1 (Nov 19, 20:23 to 20:41 ET). Done.
+
+Every frozen predictor and instrument was scored once on the held-out days Nov 18 and Nov 19. Full tables: `evals/claude/heldout/REPORT.md`. Results: `evals/claude/heldout/` (commit `dfb00bd`) and `evals/claude/heldout-r2/` (commit `c4aab8e`). Model outputs PREDICTED, positions REAL.
+
+| Item | Held-out result | Verdict | Prediction made before scoring |
+| --- | --- | --- | --- |
+| Target 1, strict-new rows, 3-wide band, pooled | model 48/135 (0.356), position 7 47/135 (0.348), difference +0.007 [-0.095, +0.125] | FAIL | pass, probability about 0.8. Wrong. |
+| Target 1, absolute error of 3 or less | -0.126 [-0.192, -0.045] against position 7 | FAIL | fail. Held. |
+| Target 2 | 33 changed-and-moved rows. Content-aware rule 27/33, identical to the position-only rule on every row | NOT ENOUGH ROWS (needs 40) | about 35 rows, content cannot beat position. Held. |
+| Target 3, scorer A (pull-majority order) | 7 of 98 flips called (0.071) [0.018, 0.157]. All pairs +0.005 over persistence | FAIL | fails the flip test, holds the guard. Held. |
+| Target 3, scorer B (contested pairs) | 41 of 98 flips (0.418) [0.288, 0.580]. All pairs -0.085 [-0.134, -0.042] under persistence | FAIL | fails the guard. Held. It was also expected to meet the brief's wording alone. It did not. |
+| Latent-order scorer (loop 1 build) | flip recall 0.254 and 0.564, calls right 0.306 and 0.272, under persistence on both transitions | FAIL | recall 0.35 to 0.55 with 0.40 to 0.55 of calls right. Ranges missed. The fail was predicted. |
+| Noise check | noise share of the flip count 1.03 [0.79, 1.37] and 0.99 [0.74, 1.40] | prediction held | 0.75 to 1.3 |
+| Same-site check in ordinary top 10s | BM25F 27/51 (0.529), text vote 0.520, cross-site 0.513 and 0.516 | prediction did not hold | 0.55 to 0.65 |
+| Excess-movement test | changed pages moved 0.517 of the time against 0.481 for matched unchanged pages: +0.036 [-0.065, +0.140] | prediction held | under +0.20, interval includes zero |
+
+Notes a reviewer should know:
+
+- Nov 19 was scored "as pulled" (six of the original 30 searches have two pulls, the rest three), as the dated addenda of the preregistrations say. Nov 18 needed no flag.
+- The round 3 page fetches of the evening of Nov 19 (section 5) are dated Nov 19, so the frozen Target 2 code picked them up: 30 of 752 usable rows on 13 URLs, one of them a changed-and-moved row that both rules called correctly. No decision depends on them. Round 3 search pulls go to `serp_raw` only and never enter a day series (checked in the database: 0 rows in `serp_results`).
+- Nov 18 has no written-before-the-pull file. For Nov 19 the scorer checked 313 of 313 Target 1 rows and 857 of 857 Target 3 pairs against the file pushed before the pull, 0 mismatches.
+
+### 4.4 Loop 1: why each target failed
+
+- **Target 1.** The theory said new URLs come in through the site's own slot or at the bottom of the page. On 135 held-out strict-new rows the rule only tied a flat 7, and a flat 9 was worse than a flat 7 (0.304 against 0.348). So "newcomers land low" did not hold on the 70 added searches, where "new" is measured against one earlier pull and a top-30 list three days before. The theory's own "wrong if" condition fired. A post-mortem and a new theory are in section 6.
+- **Target 2.** 33 rows, and the content step changed no call. Position decided direction 0.818 of the time on changed rows and 0.738 on unchanged ones. Changed pages did not move more than unchanged pages (+0.036). This is the round 2 theory's claim 2, confirmed on four times the design rows: in a window of days an edit explains almost none of a move. Round 3 replaces this test with one that does not wait on Google.
+- **Target 3.** One-day flips are pull noise on both held-out transitions (noise share 1.03 and 0.99), as the theory said. No scorer can call noise. The latent-order scorer did worse than its predicted range, because the order chances were less stable from day to day than the model assumed (calls right about 0.29, not 0.40 to 0.55).
+
+## 5. Round 3 (started Nov 19, 19:20 ET): validate without waiting on Google
+
+Round 3 brief: `GOAL.md`, section "Round 3". Theory: `evals/claude/theory.md`, part "Round 3 theory". Outside evidence: `evals/claude/research/r3-matched-pairs.md`.
+
+### 5.0 Setup
+
+- Serper balance at the start of round 3: 891. Reserve 250 (scripts refuse under 260).
+- New label source: site-restricted searches (`site:<site> <search>`, one credit for up to 10 pages of one site in Google's order). Pull script `scripts/claude/r3_pull.py`: raw responses go to the append-only store (`serp_raw` only) and to `evals/claude/r3/serp/` in git, chunk by chunk.
+- The client's site is in no round 3 pull, so no result for it is read after the PR 45 merge.
+- Split fixed before any model existed (`scripts/claude/r3_plans.py`, `evals/claude/r3/plans/universe.json`): 2,004 (search, site) combinations on 579 sites and 155 searches from design days. Sites: train 0.40, test1 0.35, test2 0.25 by a seeded hash. Search groups: 19 train, 52 test. Training lists are train sites with train groups. Held-out lists are test1 sites with test groups (177 combinations on 93 sites).
+
+### 5.1 Study 1: is the order of a site-restricted search a usable label? (Nov 19, 19:27 to 20:10 ET). Done.
+
+Script `scripts/claude/r3_validity.py`, output `evals/claude/r3/validity/tables.md`. REAL positions only. 70 credits for the lists, 24 for the repeat.
+
+| Check | Result |
+| --- | --- |
+| The site's best page in the ordinary Nov 16 top 30 is first in the site-restricted list | 42 of 53 (top two: 49) |
+| Pairs in both lists keep the same order (lists three days apart) | 62/74 (0.838) [0.738, 0.906 by site] |
+| Yardstick: two ordinary pulls 2 to 3 days apart, same-site pairs | 44/50 (0.880). All pairs 2332/2680 (0.870) |
+| The same site-restricted list pulled twice, 40 minutes apart | 486/554 pairs keep their order (0.877) [0.799, 0.944]. Adjacent pairs 0.839, five or more places apart 0.932 |
+
+The site-restricted order agrees with the ordinary order about as well as two ordinary pulls agree with each other. The label ceiling against a single pull is about 0.93.
+
+### 5.2 Study 2: what orders the pages of one site? Design, training lists only (Nov 19, 19:35 to 21:10 ET). Done.
+
+Script `scripts/claude/r3_design.py`, output `evals/claude/r3/design/tables.md`. 180 more credits. 212 training lists, 182 with a scorable pair, 5,623 pairs, 87 sites, 80 searches. Site-held-out cross-validation. PREDICTED. Not a test.
+
+| Scorer | Pair accuracy [95% by site] | Minus BM25F |
+| --- | --- | --- |
+| BM25F alone | 0.614 [0.588, 0.640] | |
+| Cross-encoder on the title text, nothing fitted | 0.694 [0.673, 0.716] | +0.080 [+0.051, +0.109] |
+| Blend, text plus URL plus page shape | 0.709 [0.689, 0.729] | +0.095 [+0.066, +0.122] |
+| Same plus site position | 0.714 [0.695, 0.734] | +0.100 [+0.071, +0.128] |
+| Current ranker with no history (first 44 lists only) | 0.565 [0.513, 0.623] | |
+
+- The content signal has a plateau near 0.70. Seventeen other ways to read topic match landed between 0.636 and 0.695.
+- Holding out the search group as well costs about one point (0.704 to 0.696 on the smaller groups).
+- On 18 training lists pulled twice the blend is right on 0.682 of pairs both pulls agree on and 0.545 of pairs the second pull reversed.
+- Swap pairs (286 rows, 37 sites, two pages of one site in opposite orders under two searches): BM25F 0.563, unfitted vote 0.645, blend 0.612. A search-blind scorer gets 0.500.

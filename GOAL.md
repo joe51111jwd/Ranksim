@@ -54,3 +54,9 @@ Build an edit simulator from this: a content model trained only on held-out-safe
 
 ### Round 3 note: SmartCrew PR 45 (merges to production about 8:00 PM ET Nov 19)
 Real pre-registered edit, useful as a later confirmation (not the main plan). No new pages, no title or redirect changes: competitor price cells rewritten, a Free plan column, and a "Is There a Free Alternative to Raken?" FAQ on 15 pages (/compare/raken-, b2w-, busybusy-, clockshark-, jobtread-, contractor-foreman-alternative/, six /blog/ posts, /earthwork-software/, /all-in-one-dirt-work-software/, /features/construction-time-tracking/, /features/crew-scheduling-software/). Target searches: raken alternative(s), free alternative to raken, raken pricing, busybusy alternative, clockshark alternative, b2w alternative, earthwork software, construction software per user pricing. Before-HTML for all 15 pages was saved at 6:58 PM ET Nov 19 in /workspace/ranksim-data/snapshots/2026-11-19-pr45-before-html/ (manifest + SHA256SUMS). Freeze your model's PREDICTED direction per (search, page) from before vs after HTML before any after-merge SERP is read, in a separate ledger; never touch the PR41 ledger or the client site.
+
+### Round 3 priority from James (Nov 19, 11:22 PM ET)
+
+1. The content pairwise scorer (predicting which page Google ranks higher from content) is the top priority. Finish freezing and scoring it on unseen sites first.
+2. Do not spend time chasing tiny day-to-day edits or small-change diagnostics. The product goal is simple: make a meaningful page change, run the predictor, and get an approximate predicted rank.
+3. Next step after proving same-site content ordering: combine the content scorer with a site-strength / domain-standing signal so we can run pairwise comparisons across all pages in a SERP and sort them into an approximate rank position.

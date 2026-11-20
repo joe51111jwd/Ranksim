@@ -28,7 +28,7 @@ if str(REPO) not in sys.path:
     sys.path.insert(0, str(REPO))
 
 from scripts.claude import r3_data, r3_features as F, r3_pages  # noqa: E402
-from scripts.claude.r2_samesite_pairs import Corpus, ident, page_fields, query_terms  # noqa: E402
+from scripts.claude.r2_samesite_pairs import Corpus, coverage, ident, page_fields, query_terms, toks  # noqa: E402
 
 
 class FrozenCorpus(Corpus):
@@ -134,6 +134,14 @@ def build_table(labels: list[str], df_table: dict | None = None, with_semantic: 
         home = next((pages[key] for key in homes[site] if key in pages), None)
         home_links = {ident(link) for link, _text in (home.get("links") or [])} if home else None
         outgoing = {key: {ident(link) for link, _text in (listed_pages[key].get("links") or [])} for key in group["key"] if key in listed_pages}
+        # Anchor text of same-site links that point at each URL, from the stored home page and the other listed pages.
+        anchors: dict[str, list[str]] = {}
+        sources = [(None, home)] if home else []
+        sources += [(key, listed_pages[key]) for key in group["key"] if key in listed_pages]
+        for source_key, source_page in sources:
+            for link, text in source_page.get("links") or []:
+                if text:
+                    anchors.setdefault(ident(link), []).append((source_key, text))
         terms = query_terms(query)
         idf_sum = sum(corpus.idf(term) for term in terms) or 1.0
         flags = F.query_flags(query)
@@ -164,6 +172,9 @@ def build_table(labels: list[str], df_table: dict | None = None, with_semantic: 
                 row["in_list_links"] = float(sum(1 for other, links in outgoing.items() if other != record.key and own in links))
                 row["in_list_link_share"] = row["in_list_links"] / max(1, len(outgoing) - 1)
                 row["home_linked"] = float(own in home_links) if home_links is not None else float("nan")
+                anchor_tokens = [token for source_key, text in anchors.get(own, []) if source_key != record.key for token in toks(text)]
+                row["anchor_cov"] = coverage(anchor_tokens, terms)
+                row["has_anchor"] = float(bool(anchor_tokens))
                 row.update(flags)
             records.append(row)
     table = pd.DataFrame.from_records(records)

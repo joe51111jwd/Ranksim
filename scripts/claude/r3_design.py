@@ -11,7 +11,7 @@ fold's search groups from the training side.
 This is design, not a test. The held-out test lists (plan test1) are pulled only
 after the chosen scorer is frozen.
 
-Output: evals/claude/r3/design/results.json, tables.md, table.parquet (features, no HTML).
+Output: evals/claude/r3/design/results.json, tables.md, table.csv.gz (features, no HTML).
 """
 
 from __future__ import annotations
@@ -173,7 +173,7 @@ def main(argv: list[str] | None = None) -> int:
     OUT.mkdir(parents=True, exist_ok=True)
     (OUT / "results.json").write_text(json.dumps(res, indent=2, sort_keys=True, default=float) + "\n", encoding="utf-8")
     keep_cols = [c for c in table.columns if c not in ("url",)]
-    table[keep_cols].to_parquet(OUT / "table.parquet", index=False)
+    table[keep_cols].to_csv(OUT / "table.csv.gz", index=False)
     (OUT / "df_table.json").write_text(json.dumps(df_table) + "\n", encoding="utf-8")
 
     lines = [

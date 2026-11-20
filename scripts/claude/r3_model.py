@@ -53,7 +53,7 @@ TIERS = {
     "semantic": F.TEXT_SEMANTIC,
     "url": F.URL_FEATURES,
     "shape": F.SHAPE_FEATURES,
-    "site": ["in_list_link_share", "home_linked"],
+    "site": ["in_list_link_share", "home_linked", "anchor_cov", "has_anchor"],
     "query": F.QUERY_FEATURES,
 }
 # Fixed directions for the unfitted vote (+1 larger is better, -1 smaller is better). Text and URL match only.
@@ -278,3 +278,79 @@ def cross_validate(table: pd.DataFrame, kind: str, features: list[str], n_splits
         scores = fit_predict(kind, features, train, test)
         out.loc[scores.index] = scores
     return out
+
+
+# ---------------------------------------------------------------------------------------------
+# Frozen scorer: fit once on the training lists, saved as plain files, loaded for every later use.
+
+
+class FrozenScorer:
+    """A fitted scorer of kind logit, gbm or blend, saved as JSON plus a LightGBM text model.
+
+    ``score(table)`` returns one number per usable row. For the blend the two parts
+    are z-scored inside each list before they are averaged, so a blend score only
+    compares pages of the same list. ``score_parts`` gives the raw parts, which are
+    comparable across lists (used for before-and-after scoring of one page).
+    """
+
+    def __init__(self, spec: dict, logit: LogitModel | None, gbm: GbmModel | None):
+        self.spec = spec
+        self.logit = logit
+        self.gbm = gbm
+
+    @classmethod
+    def fit(cls, table: pd.DataFrame, kind: str, features: list[str]) -> "FrozenScorer":
+        linear = [name for name in features if name not in TIERS["query"]]
+        logit = LogitModel(linear).fit(table) if kind in ("logit", "blend") else None
+        gbm = GbmModel(features).fit(table) if kind in ("gbm", "blend") else None
+        return cls({"kind": kind, "features": list(features), "linear_features": linear, "gbm_params": GBM_PARAMS, "logit_c": LOGIT_C}, logit, gbm)
+
+    def score_parts(self, table: pd.DataFrame) -> dict[str, pd.Series]:
+        parts = {}
+        if self.logit is not None:
+            parts["logit"] = self.logit.score(table)
+        if self.gbm is not None:
+            parts["gbm"] = self.gbm.score(table)
+        return parts
+
+    def score(self, table: pd.DataFrame) -> pd.Series:
+        parts = self.score_parts(table)
+        if self.spec["kind"] == "blend":
+            return (zscore_in_list(table, parts["logit"]) + zscore_in_list(table, parts["gbm"])) / 2.0
+        return parts[self.spec["kind"]]
+
+    def save(self, directory: Path) -> None:
+        import json
+
+        directory = Path(directory)
+        directory.mkdir(parents=True, exist_ok=True)
+        (directory / "spec.json").write_text(json.dumps(self.spec, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        if self.logit is not None:
+            (directory / "logit.json").write_text(json.dumps(self.logit.to_dict(), indent=2) + "\n", encoding="utf-8")
+        if self.gbm is not None:
+            (directory / "gbm.txt").write_text(self.gbm.model.booster_.model_to_string(), encoding="utf-8")
+
+    @classmethod
+    def load(cls, directory: Path) -> "FrozenScorer":
+        import json
+
+        import lightgbm as lgb
+
+        directory = Path(directory)
+        spec = json.loads((directory / "spec.json").read_text(encoding="utf-8"))
+        logit = LogitModel.from_dict(json.loads((directory / "logit.json").read_text(encoding="utf-8"))) if (directory / "logit.json").exists() else None
+        gbm = None
+        if (directory / "gbm.txt").exists():
+            gbm = GbmModel(spec["features"], spec["gbm_params"])
+            gbm.model = _BoosterWrap(lgb.Booster(model_str=(directory / "gbm.txt").read_text(encoding="utf-8")))
+        return cls(spec, logit, gbm)
+
+
+class _BoosterWrap:
+    """Gives a loaded LightGBM booster the predict() call GbmModel.score uses."""
+
+    def __init__(self, booster):
+        self.booster_ = booster
+
+    def predict(self, frame):
+        return self.booster_.predict(np.asarray(frame, dtype=float))

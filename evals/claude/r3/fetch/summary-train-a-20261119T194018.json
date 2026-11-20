@@ -1,0 +1,37 @@
+{
+  "body_bytes_ok": 234327685,
+  "failed": 71,
+  "failure_reasons": {
+    "challenge_page": 3,
+    "error:ConnectError": 9,
+    "error:ReadTimeout": 5,
+    "error:RemoteProtocolError": 1,
+    "http_202": 4,
+    "http_403": 18,
+    "http_404": 4,
+    "http_409": 16,
+    "http_429": 1,
+    "http_500": 1,
+    "non_html": 5,
+    "robots_disallow": 4
+  },
+  "fetched_ok": 877,
+  "hosts": 112,
+  "html_chars_stored": 234191496,
+  "http_status_hist": {
+    "200": 885,
+    "202": 4,
+    "403": 18,
+    "404": 4,
+    "409": 16,
+    "429": 1,
+    "500": 1,
+    "None": 19
+  },
+  "ok_bytes_changed_vs_prior": 8,
+  "ok_bytes_unchanged_vs_prior": 2,
+  "ok_no_prior_http_fetch": 867,
+  "rows_inserted": 948,
+  "rows_skipped_duplicate": 0,
+  "urls_selected": 948
+}

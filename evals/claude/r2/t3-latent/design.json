@@ -1,0 +1,200 @@
+{
+  "label": "DESIGN, PREDICTED, not a test",
+  "day_a": "2026-11-16",
+  "day_b": "2026-11-17",
+  "max_date": "2026-11-17",
+  "max_day_loaded": "2026-11-17",
+  "groups": [
+    "o30"
+  ],
+  "searches": 30,
+  "fixed_by_theory": {
+    "half_life_days": 2.0,
+    "prior_each_side": 0.5,
+    "consensus_pulls": 3,
+    "r1_threshold": 0.5,
+    "r2_floor": 0.5
+  },
+  "vote_weights": [
+    {
+      "day": "2026-11-06",
+      "age_days": 10,
+      "weight": 0.03125,
+      "pulls": 30
+    },
+    {
+      "day": "2026-11-09",
+      "age_days": 7,
+      "weight": 0.08838834764831845,
+      "pulls": 30
+    },
+    {
+      "day": "2026-11-11",
+      "age_days": 5,
+      "weight": 0.1767766952966369,
+      "pulls": 30
+    },
+    {
+      "day": "2026-11-13",
+      "age_days": 3,
+      "weight": 0.3535533905932738,
+      "pulls": 30
+    },
+    {
+      "day": "2026-11-16",
+      "age_days": 0,
+      "weight": 1.0,
+      "pulls": 120
+    }
+  ],
+  "universe": {
+    "pairs": 1120,
+    "queries": 30,
+    "calls_r1": 37,
+    "calls_r2": 80,
+    "r2_lowest_p_flip_called": 0.3324302088193079,
+    "r2_mean_p_flip_called": 0.5070378490337977,
+    "pulls_per_search": {
+      "8": 30
+    }
+  },
+  "summary": {
+    "pairs": 767,
+    "flips": 44,
+    "queries": 29,
+    "flip_queries": 18,
+    "expected_flips_model": 74.34185216077907,
+    "persistence": {
+      "hits": 723,
+      "n": 767,
+      "rate": 0.9426336375488917,
+      "lo": 0.9034604567404969,
+      "hi": 0.9704509149605246,
+      "queries": 29
+    },
+    "calibration": [
+      {
+        "p_flip_band": "[0, 0.05]",
+        "pairs": 472,
+        "expected_flips": 12.290097883307073,
+        "observed_flips": 5
+      },
+      {
+        "p_flip_band": "(0.05, 0.2]",
+        "pairs": 186,
+        "expected_flips": 23.22492488650711,
+        "observed_flips": 5
+      },
+      {
+        "p_flip_band": "(0.2, 0.5]",
+        "pairs": 97,
+        "expected_flips": 31.79679877950032,
+        "observed_flips": 24
+      },
+      {
+        "p_flip_band": "(0.5, 1]",
+        "pairs": 12,
+        "expected_flips": 7.030030611464562,
+        "observed_flips": 10
+      }
+    ],
+    "r1": {
+      "calls": 12,
+      "right": 10,
+      "flip_recall": {
+        "hits": 10,
+        "n": 44,
+        "rate": 0.22727272727272727,
+        "lo": 0.07497685185185185,
+        "hi": 0.39285714285714285,
+        "queries": 18
+      },
+      "precision": {
+        "hits": 10,
+        "n": 12,
+        "rate": 0.8333333333333334,
+        "lo": 0.6,
+        "hi": 1.0,
+        "queries": 6
+      },
+      "all_pairs_rule": {
+        "hits": 731,
+        "n": 767,
+        "rate": 0.9530638852672751,
+        "lo": 0.9209261686994983,
+        "hi": 0.976470952242283,
+        "queries": 29
+      },
+      "all_pairs_minus_persistence": {
+        "diff": 0.010430247718383311,
+        "lo": 0.0013422368965579285,
+        "hi": 0.024781912018817222,
+        "n": 767,
+        "queries": 29
+      },
+      "expected_precision_model": 0.5858358842887135,
+      "expected_recall_model": 0.09456356557085395,
+      "recall_lower_bound_above_half": false,
+      "not_below_persistence": true
+    },
+    "r2": {
+      "calls": 41,
+      "right": 17,
+      "flip_recall": {
+        "hits": 17,
+        "n": 44,
+        "rate": 0.38636363636363635,
+        "lo": 0.21212121212121213,
+        "hi": 0.5833726415094338,
+        "queries": 18
+      },
+      "precision": {
+        "hits": 17,
+        "n": 41,
+        "rate": 0.4146341463414634,
+        "lo": 0.22443310657596371,
+        "hi": 0.6,
+        "queries": 12
+      },
+      "all_pairs_rule": {
+        "hits": 716,
+        "n": 767,
+        "rate": 0.9335071707953064,
+        "lo": 0.8935279257380265,
+        "hi": 0.9662361712361712,
+        "queries": 29
+      },
+      "all_pairs_minus_persistence": {
+        "diff": -0.009126466753585397,
+        "lo": -0.03394693077663959,
+        "hi": 0.010699177907255145,
+        "n": 767,
+        "queries": 29
+      },
+      "expected_precision_model": 0.4805058458399539,
+      "expected_recall_model": 0.26500200232880045,
+      "recall_lower_bound_above_half": false,
+      "not_below_persistence": false
+    }
+  },
+  "theory_expectation_four_nov16_pulls": {
+    "calls": 38,
+    "right": 16,
+    "flip_recall": 0.36,
+    "precision": 0.42
+  },
+  "theory_heldout_prediction": {
+    "flip_recall": [
+      0.35,
+      0.55
+    ],
+    "precision": [
+      0.4,
+      0.55
+    ]
+  },
+  "diagnostics": {
+    "R2 with its budget run over the scored pairs instead of day A's universe: calls / right": "30 / 12",
+    "scored pairs with P(flip) exactly 0.5 (weighted tie)": 0
+  }
+}

@@ -1,0 +1,30 @@
+{
+  "body_bytes_ok": 74536415,
+  "failed": 273,
+  "failure_reasons": {
+    "challenge_page": 32,
+    "http_202": 13,
+    "http_403": 129,
+    "http_404": 4,
+    "http_409": 9,
+    "non_html": 1,
+    "robots_disallow": 85
+  },
+  "fetched_ok": 169,
+  "hosts": 56,
+  "html_chars_stored": 74509719,
+  "http_status_hist": {
+    "200": 202,
+    "202": 13,
+    "403": 129,
+    "404": 4,
+    "409": 9,
+    "None": 85
+  },
+  "ok_bytes_changed_vs_prior": 2,
+  "ok_bytes_unchanged_vs_prior": 0,
+  "ok_no_prior_http_fetch": 167,
+  "rows_inserted": 442,
+  "rows_skipped_duplicate": 0,
+  "urls_selected": 442
+}

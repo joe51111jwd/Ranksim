@@ -1,0 +1,13 @@
+{
+  "plan": "train",
+  "cell": "train sites x train search groups",
+  "per_site_cap": 3,
+  "per_query_cap": 8,
+  "validity_lists_count_toward_site_cap": true,
+  "design_max_date": "2026-11-17",
+  "seed": 20261119,
+  "sites_in_plan": 100,
+  "searches_in_plan": 76,
+  "requests": 180,
+  "sha256": "1c132cc69deb8716f0894a2a2bbdf0029abacdbe1c692ecc6cb3e0ed36f735d0"
+}

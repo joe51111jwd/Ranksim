@@ -1,0 +1,10 @@
+{
+  "plan": "noise",
+  "rule": "one validity list per site with a plain-HTTP success share of 0.5 or more, seeded order",
+  "design_max_date": "2026-11-17",
+  "seed": 20261119,
+  "sites_in_plan": 24,
+  "searches_in_plan": 20,
+  "requests": 24,
+  "sha256": "26f5dd99d9ebef20c1d316155b83c8e35bdff772258805428d3779527b130a9a"
+}

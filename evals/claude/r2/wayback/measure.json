@@ -1,0 +1,86 @@
+{
+  "availability_probe": {
+    "capture_nov6_to_nov17_o30": 1,
+    "distinct_in_window_ts": 2,
+    "probe_ts": [
+      "20261117235959",
+      "20261106000000",
+      "20261001000000"
+    ],
+    "probed_o30": 21,
+    "urls_fully_probed": 21,
+    "with_capture_o30": 2
+  },
+  "cdx": {
+    "urls_queried": 0
+  },
+  "cutoff_ts": "20261117235959",
+  "design_max_date": "2026-11-17",
+  "downloads": {},
+  "material_changes": {
+    "brackets": [],
+    "overlapping_round1": 0,
+    "sites": 0,
+    "total": 0,
+    "urls": 0
+  },
+  "material_rule": "usable (both versions extract >= 50 main-text words) AND any of: (a) title token sequence changed; (b) H1 token sequence changed (including gaining or losing an H1); (c) main-text edit >= 250 tokens AND >= 0.02 of the two versions' combined tokens, where an edited token is one not covered by any word 5-gram present in the other version; (d) main-text word count changed by >= 25% AND by >= 150 words. Tokens are lowercase [a-z0-9]+ with every digit run masked to '#'. Headings, meta description, schema types, canonical, dates and link counts are reported but never make a change material on their own.",
+  "own_fetch_coverage": {
+    "a70_own_http_days_0": 149,
+    "a70_own_http_days_1": 236,
+    "o30_own_http_days_0": 160,
+    "o30_own_http_days_1": 106,
+    "o30_own_http_days_2plus": 113
+  },
+  "pairs": {
+    "noise": {
+      "pairs": 0
+    },
+    "wh": {
+      "pairs": 0
+    },
+    "ww": {
+      "pairs": 0
+    }
+  },
+  "rule_version": "t2-material-v1",
+  "url_list": {
+    "by_group": {
+      "a70": 385,
+      "o30": 379
+    },
+    "sites": 299,
+    "urls": 764
+  },
+  "usable_rows": {
+    "loose": {
+      "rows": 0
+    },
+    "pulled_days": {
+      "a70": [
+        "2026-11-16"
+      ],
+      "o30": [
+        "2026-11-06",
+        "2026-11-09",
+        "2026-11-11",
+        "2026-11-13",
+        "2026-11-16",
+        "2026-11-17"
+      ]
+    },
+    "strict": {
+      "rows": 0
+    }
+  },
+  "wayback_rows": {
+    "legacy_rows_in_window": 6,
+    "legacy_urls": 6,
+    "r2_rows_in_window": 0,
+    "r2_urls": 0
+  },
+  "window": [
+    "20261001",
+    "20261117"
+  ]
+}

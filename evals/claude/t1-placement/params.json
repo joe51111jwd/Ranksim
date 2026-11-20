@@ -1,0 +1,62 @@
+{
+  "label": "PREDICTED",
+  "name": "t1-anchor-cascade-v1",
+  "design_max_date": "2026-11-17",
+  "note": "Anchor cascade per class. First anchor whose history feature is <= max gives value + offset; else default; then clip. band3 is the primary metric (lead decision 2026-11-19). See notes.md.",
+  "clip": [
+    2,
+    9
+  ],
+  "new": {
+    "anchors": [
+      {
+        "feature": "dp",
+        "max": 10,
+        "offset": 0
+      },
+      {
+        "feature": "deep_site",
+        "max": 30,
+        "offset": 0
+      }
+    ],
+    "default": 9,
+    "clip": [
+      2,
+      9
+    ]
+  },
+  "reentrant": {
+    "anchors": [
+      {
+        "feature": "deep_key",
+        "max": 30,
+        "offset": 0
+      },
+      {
+        "feature": "last_top_pos",
+        "max": 10,
+        "offset": 0
+      }
+    ],
+    "default": 7,
+    "clip": [
+      2,
+      9
+    ]
+  },
+  "survivor": {
+    "anchors": [
+      {
+        "feature": "last_cons",
+        "max": 10,
+        "offset": 0
+      }
+    ],
+    "default": 7,
+    "clip": [
+      1,
+      10
+    ]
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "plan": "test1",
+  "cell": "test1 sites x test search groups",
+  "per_site_cap": 3,
+  "per_query_cap": 8,
+  "status": "superseded by heldout1 before any pull; never pulled",
+  "design_max_date": "2026-11-17",
+  "seed": 20261119,
+  "sites_in_plan": 93,
+  "searches_in_plan": 45,
+  "requests": 132,
+  "sha256": "aebf616f97d2c5ad4bd9e7b3d39c1174b8470c7ae2df925d9c8a6292ecdc1a3c"
+}

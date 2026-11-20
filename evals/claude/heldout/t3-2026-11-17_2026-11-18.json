@@ -1,0 +1,363 @@
+{
+  "label": "PREDICTED",
+  "target": "t3",
+  "day_a": "2026-11-17",
+  "day_b": "2026-11-18",
+  "gap_days": 1,
+  "manifest_frozen_at": "2026-11-19T19:37:20Z",
+  "pulls_day_a": {
+    "day": "2026-11-17",
+    "searches": 30,
+    "min_pulls": 3,
+    "max_pulls": 3,
+    "by_count": {
+      "3": 30
+    }
+  },
+  "pulls_day_b": {
+    "day": "2026-11-18",
+    "searches": 30,
+    "min_pulls": 2,
+    "max_pulls": 3,
+    "by_count": {
+      "2": 15,
+      "3": 15
+    }
+  },
+  "scorers": {
+    "A": {
+      "smartcrew_100": {
+        "pairs": 673,
+        "flips": 59,
+        "flip_accuracy": {
+          "hits": 2,
+          "n": 59,
+          "rate": 0.03389830508474576,
+          "lo": 0.0,
+          "hi": 0.1,
+          "queries": 23
+        },
+        "nonflip_accuracy": {
+          "hits": 614,
+          "n": 614,
+          "rate": 1.0,
+          "lo": 1.0,
+          "hi": 1.0,
+          "queries": 28
+        },
+        "all_pairs_model": {
+          "hits": 616,
+          "n": 673,
+          "rate": 0.9153046062407132,
+          "lo": 0.8765867916578892,
+          "hi": 0.9486765579894719,
+          "queries": 28
+        },
+        "all_pairs_persistence": {
+          "hits": 614,
+          "n": 673,
+          "rate": 0.912332838038633,
+          "lo": 0.8736239495798319,
+          "hi": 0.9453382860245736,
+          "queries": 28
+        },
+        "all_pairs_diff": {
+          "diff": 0.0029717682020802376,
+          "lo": 0.0,
+          "hi": 0.007453528719946841,
+          "n": 673,
+          "queries": 28
+        },
+        "flip_calls": 2,
+        "flip_call_precision": {
+          "hits": 2,
+          "n": 2,
+          "rate": 1.0,
+          "lo": 1.0,
+          "hi": 1.0,
+          "queries": 2
+        },
+        "flip_queries": 23,
+        "big_enough": false,
+        "goal_criterion_pass": false,
+        "guard_pass": true
+      },
+      "pairs_dropped_other_previous_day": 0,
+      "ahead_check": {
+        "ahead_file": false
+      },
+      "o30": {
+        "pairs": 673,
+        "flips": 59,
+        "flip_accuracy": {
+          "hits": 2,
+          "n": 59,
+          "rate": 0.03389830508474576,
+          "lo": 0.0,
+          "hi": 0.1,
+          "queries": 23
+        },
+        "nonflip_accuracy": {
+          "hits": 614,
+          "n": 614,
+          "rate": 1.0,
+          "lo": 1.0,
+          "hi": 1.0,
+          "queries": 28
+        },
+        "all_pairs_model": {
+          "hits": 616,
+          "n": 673,
+          "rate": 0.9153046062407132,
+          "lo": 0.8765867916578892,
+          "hi": 0.9486765579894719,
+          "queries": 28
+        },
+        "all_pairs_persistence": {
+          "hits": 614,
+          "n": 673,
+          "rate": 0.912332838038633,
+          "lo": 0.8736239495798319,
+          "hi": 0.9453382860245736,
+          "queries": 28
+        },
+        "all_pairs_diff": {
+          "diff": 0.0029717682020802376,
+          "lo": 0.0,
+          "hi": 0.007453528719946841,
+          "n": 673,
+          "queries": 28
+        },
+        "flip_calls": 2,
+        "flip_call_precision": {
+          "hits": 2,
+          "n": 2,
+          "rate": 1.0,
+          "lo": 1.0,
+          "hi": 1.0,
+          "queries": 2
+        },
+        "flip_queries": 23,
+        "big_enough": false,
+        "goal_criterion_pass": false,
+        "guard_pass": true
+      },
+      "rev": {
+        "pairs": 356,
+        "flips": 32,
+        "flip_accuracy": {
+          "hits": 0,
+          "n": 32,
+          "rate": 0.0,
+          "lo": 0.0,
+          "hi": 0.0,
+          "queries": 12
+        },
+        "nonflip_accuracy": {
+          "hits": 324,
+          "n": 324,
+          "rate": 1.0,
+          "lo": 1.0,
+          "hi": 1.0,
+          "queries": 14
+        },
+        "all_pairs_model": {
+          "hits": 324,
+          "n": 356,
+          "rate": 0.9101123595505618,
+          "lo": 0.849117758424839,
+          "hi": 0.9512228081740276,
+          "queries": 15
+        },
+        "all_pairs_persistence": {
+          "hits": 324,
+          "n": 356,
+          "rate": 0.9101123595505618,
+          "lo": 0.849117758424839,
+          "hi": 0.9512228081740276,
+          "queries": 15
+        },
+        "all_pairs_diff": {
+          "diff": 0.0,
+          "lo": 0.0,
+          "hi": 0.0,
+          "n": 356,
+          "queries": 15
+        },
+        "flip_calls": 0,
+        "flip_call_precision": null,
+        "flip_queries": 12,
+        "big_enough": false,
+        "goal_criterion_pass": false,
+        "guard_pass": true
+      }
+    },
+    "B": {
+      "smartcrew_100": {
+        "pairs": 673,
+        "flips": 59,
+        "flip_accuracy": {
+          "hits": 27,
+          "n": 59,
+          "rate": 0.4576271186440678,
+          "lo": 0.2962962962962963,
+          "hi": 0.6363636363636364,
+          "queries": 23
+        },
+        "nonflip_accuracy": {
+          "hits": 531,
+          "n": 614,
+          "rate": 0.8648208469055375,
+          "lo": 0.8024936881751583,
+          "hi": 0.9193043958089565,
+          "queries": 28
+        },
+        "all_pairs_model": {
+          "hits": 558,
+          "n": 673,
+          "rate": 0.8291233283803864,
+          "lo": 0.7706270627062707,
+          "hi": 0.8858001134179092,
+          "queries": 28
+        },
+        "all_pairs_persistence": {
+          "hits": 614,
+          "n": 673,
+          "rate": 0.912332838038633,
+          "lo": 0.8736239495798319,
+          "hi": 0.9453382860245736,
+          "queries": 28
+        },
+        "all_pairs_diff": {
+          "diff": -0.08320950965824665,
+          "lo": -0.14003185483383504,
+          "hi": -0.03153718694484421,
+          "n": 673,
+          "queries": 28
+        },
+        "flip_calls": 110,
+        "flip_call_precision": {
+          "hits": 27,
+          "n": 110,
+          "rate": 0.24545454545454545,
+          "lo": 0.1416544117647059,
+          "hi": 0.37805702043506917,
+          "queries": 21
+        },
+        "flip_queries": 23,
+        "big_enough": false,
+        "goal_criterion_pass": false,
+        "guard_pass": false
+      },
+      "pairs_dropped_other_previous_day": 0,
+      "ahead_check": {
+        "ahead_file": false
+      },
+      "o30": {
+        "pairs": 673,
+        "flips": 59,
+        "flip_accuracy": {
+          "hits": 27,
+          "n": 59,
+          "rate": 0.4576271186440678,
+          "lo": 0.2962962962962963,
+          "hi": 0.6363636363636364,
+          "queries": 23
+        },
+        "nonflip_accuracy": {
+          "hits": 531,
+          "n": 614,
+          "rate": 0.8648208469055375,
+          "lo": 0.8024936881751583,
+          "hi": 0.9193043958089565,
+          "queries": 28
+        },
+        "all_pairs_model": {
+          "hits": 558,
+          "n": 673,
+          "rate": 0.8291233283803864,
+          "lo": 0.7706270627062707,
+          "hi": 0.8858001134179092,
+          "queries": 28
+        },
+        "all_pairs_persistence": {
+          "hits": 614,
+          "n": 673,
+          "rate": 0.912332838038633,
+          "lo": 0.8736239495798319,
+          "hi": 0.9453382860245736,
+          "queries": 28
+        },
+        "all_pairs_diff": {
+          "diff": -0.08320950965824665,
+          "lo": -0.14003185483383504,
+          "hi": -0.03153718694484421,
+          "n": 673,
+          "queries": 28
+        },
+        "flip_calls": 110,
+        "flip_call_precision": {
+          "hits": 27,
+          "n": 110,
+          "rate": 0.24545454545454545,
+          "lo": 0.1416544117647059,
+          "hi": 0.37805702043506917,
+          "queries": 21
+        },
+        "flip_queries": 23,
+        "big_enough": false,
+        "goal_criterion_pass": false,
+        "guard_pass": false
+      },
+      "rev": {
+        "pairs": 356,
+        "flips": 32,
+        "flip_accuracy": {
+          "hits": 0,
+          "n": 32,
+          "rate": 0.0,
+          "lo": 0.0,
+          "hi": 0.0,
+          "queries": 12
+        },
+        "nonflip_accuracy": {
+          "hits": 324,
+          "n": 324,
+          "rate": 1.0,
+          "lo": 1.0,
+          "hi": 1.0,
+          "queries": 14
+        },
+        "all_pairs_model": {
+          "hits": 324,
+          "n": 356,
+          "rate": 0.9101123595505618,
+          "lo": 0.849117758424839,
+          "hi": 0.9512228081740276,
+          "queries": 15
+        },
+        "all_pairs_persistence": {
+          "hits": 324,
+          "n": 356,
+          "rate": 0.9101123595505618,
+          "lo": 0.849117758424839,
+          "hi": 0.9512228081740276,
+          "queries": 15
+        },
+        "all_pairs_diff": {
+          "diff": 0.0,
+          "lo": 0.0,
+          "hi": 0.0,
+          "n": 356,
+          "queries": 15
+        },
+        "flip_calls": 0,
+        "flip_call_precision": null,
+        "flip_queries": 12,
+        "big_enough": false,
+        "goal_criterion_pass": false,
+        "guard_pass": true
+      }
+    }
+  }
+}

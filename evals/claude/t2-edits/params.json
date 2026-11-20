@@ -1,0 +1,12 @@
+{
+  "absent": 11,
+  "content_only_if_material": true,
+  "content_weights": {
+    "q_h1_delta": 1.0,
+    "q_title_delta": 1.0
+  },
+  "default": "down",
+  "label": "PREDICTED",
+  "reversion_eps": 0.5,
+  "version": "t2-direction-v1"
+}

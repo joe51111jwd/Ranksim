@@ -1,0 +1,256 @@
+{
+  "brands_also_in_training": [
+    "b2w",
+    "agtek",
+    "quoteiq",
+    "assignar",
+    "procore",
+    "hcss"
+  ],
+  "counts": {
+    "lists_brand_in_training": 17,
+    "lists_by_topic": {
+      "construction software": 67,
+      "revenue and royalties": 37
+    },
+    "lists_one_word_brand": 13,
+    "search_groups": 35
+  },
+  "plan": "heldout1",
+  "searches": {
+    "AI for revenue recovery": {
+      "bare_brand": false,
+      "brand_in_training": false,
+      "topic": "revenue and royalties"
+    },
+    "AI revenue recovery": {
+      "bare_brand": false,
+      "brand_in_training": false,
+      "topic": "revenue and royalties"
+    },
+    "agtek": {
+      "bare_brand": true,
+      "brand_in_training": true,
+      "topic": "construction software"
+    },
+    "assignar competitors": {
+      "bare_brand": false,
+      "brand_in_training": true,
+      "topic": "construction software"
+    },
+    "b2w": {
+      "bare_brand": true,
+      "brand_in_training": true,
+      "topic": "construction software"
+    },
+    "b2w alternative": {
+      "bare_brand": false,
+      "brand_in_training": true,
+      "topic": "construction software"
+    },
+    "b2w pricing": {
+      "bare_brand": false,
+      "brand_in_training": true,
+      "topic": "construction software"
+    },
+    "best fleet management software": {
+      "bare_brand": false,
+      "brand_in_training": false,
+      "topic": "construction software"
+    },
+    "busybusy alternative": {
+      "bare_brand": false,
+      "brand_in_training": false,
+      "topic": "construction software"
+    },
+    "busybusy competitors": {
+      "bare_brand": false,
+      "brand_in_training": false,
+      "topic": "construction software"
+    },
+    "clockshark alternative": {
+      "bare_brand": false,
+      "brand_in_training": false,
+      "topic": "construction software"
+    },
+    "construction dispatch software": {
+      "bare_brand": false,
+      "brand_in_training": false,
+      "topic": "construction software"
+    },
+    "construction equipment maintenance software": {
+      "bare_brand": false,
+      "brand_in_training": false,
+      "topic": "construction software"
+    },
+    "construction management software": {
+      "bare_brand": false,
+      "brand_in_training": false,
+      "topic": "construction software"
+    },
+    "construction scheduling software": {
+      "bare_brand": false,
+      "brand_in_training": false,
+      "topic": "construction software"
+    },
+    "construction software pricing": {
+      "bare_brand": false,
+      "brand_in_training": false,
+      "topic": "construction software"
+    },
+    "construction takeoff software": {
+      "bare_brand": false,
+      "brand_in_training": false,
+      "topic": "construction software"
+    },
+    "equipment maintenance software": {
+      "bare_brand": false,
+      "brand_in_training": false,
+      "topic": "construction software"
+    },
+    "hcss": {
+      "bare_brand": true,
+      "brand_in_training": true,
+      "topic": "construction software"
+    },
+    "heavy equipment fleet management software": {
+      "bare_brand": false,
+      "brand_in_training": false,
+      "topic": "construction software"
+    },
+    "heavy equipment maintenance software": {
+      "bare_brand": false,
+      "brand_in_training": false,
+      "topic": "construction software"
+    },
+    "music royalty audit": {
+      "bare_brand": false,
+      "brand_in_training": false,
+      "topic": "revenue and royalties"
+    },
+    "music royalty audit services": {
+      "bare_brand": false,
+      "brand_in_training": false,
+      "topic": "revenue and royalties"
+    },
+    "procore reviews": {
+      "bare_brand": false,
+      "brand_in_training": true,
+      "topic": "construction software"
+    },
+    "project management software for construction": {
+      "bare_brand": false,
+      "brand_in_training": false,
+      "topic": "construction software"
+    },
+    "quoteiq": {
+      "bare_brand": true,
+      "brand_in_training": true,
+      "topic": "construction software"
+    },
+    "raken alternative": {
+      "bare_brand": false,
+      "brand_in_training": false,
+      "topic": "construction software"
+    },
+    "raken competitors": {
+      "bare_brand": false,
+      "brand_in_training": false,
+      "topic": "construction software"
+    },
+    "raken pricing": {
+      "bare_brand": false,
+      "brand_in_training": false,
+      "topic": "construction software"
+    },
+    "revenue leakage": {
+      "bare_brand": false,
+      "brand_in_training": false,
+      "topic": "revenue and royalties"
+    },
+    "revenue leakage detection": {
+      "bare_brand": false,
+      "brand_in_training": false,
+      "topic": "revenue and royalties"
+    },
+    "revenue leakage software": {
+      "bare_brand": false,
+      "brand_in_training": false,
+      "topic": "revenue and royalties"
+    },
+    "revenue recovery": {
+      "bare_brand": false,
+      "brand_in_training": false,
+      "topic": "revenue and royalties"
+    },
+    "revenue recovery software": {
+      "bare_brand": false,
+      "brand_in_training": false,
+      "topic": "revenue and royalties"
+    },
+    "revorion": {
+      "bare_brand": true,
+      "brand_in_training": false,
+      "topic": "revenue and royalties"
+    },
+    "royalty audit": {
+      "bare_brand": false,
+      "brand_in_training": false,
+      "topic": "revenue and royalties"
+    },
+    "royalty collection": {
+      "bare_brand": false,
+      "brand_in_training": false,
+      "topic": "revenue and royalties"
+    },
+    "royalty recovery": {
+      "bare_brand": false,
+      "brand_in_training": false,
+      "topic": "revenue and royalties"
+    },
+    "tenna alternative": {
+      "bare_brand": false,
+      "brand_in_training": false,
+      "topic": "construction software"
+    },
+    "unbilled revenue": {
+      "bare_brand": false,
+      "brand_in_training": false,
+      "topic": "revenue and royalties"
+    },
+    "unclaimed music royalties": {
+      "bare_brand": false,
+      "brand_in_training": false,
+      "topic": "revenue and royalties"
+    },
+    "workyard": {
+      "bare_brand": true,
+      "brand_in_training": false,
+      "topic": "construction software"
+    },
+    "workyard alternative": {
+      "bare_brand": false,
+      "brand_in_training": false,
+      "topic": "construction software"
+    },
+    "workyard competitors": {
+      "bare_brand": false,
+      "brand_in_training": false,
+      "topic": "construction software"
+    },
+    "workyard pricing": {
+      "bare_brand": false,
+      "brand_in_training": false,
+      "topic": "construction software"
+    },
+    "workyard reviews": {
+      "bare_brand": false,
+      "brand_in_training": false,
+      "topic": "construction software"
+    }
+  },
+  "sister_sites_of_training_sites": [
+    "hcssapps.com",
+    "revorion.ai"
+  ]
+}

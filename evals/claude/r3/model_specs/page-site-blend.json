@@ -1,0 +1,17 @@
+{
+  "kind": "blend",
+  "name": "page-site-blend",
+  "role": "secondary: primary plus site position",
+  "tiers": [
+    "lexical",
+    "semantic",
+    "url",
+    "shape",
+    "site",
+    "query"
+  ],
+  "train_labels": [
+    "validity-a",
+    "train-a"
+  ]
+}

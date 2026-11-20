@@ -1,0 +1,106 @@
+{
+  "about": "Pinned free pretrained models for scripts/claude/r3_semantic.py. Files are stored outside git under /workspace/ranksim-data/models/<name>/. ensure_models() refetches exactly these revisions and checks every sha256.",
+  "models": {
+    "bge-small": {
+      "files": [
+        {
+          "name": "onnx/model.onnx",
+          "sha256": "828e1496d7fabb79cfa4dcd84fa38625c0d3d21da474a00f08db0f559940cf35",
+          "size": 133093490
+        },
+        {
+          "name": "tokenizer.json",
+          "sha256": "d241a60d5e8f04cc1b2b3e9ef7a4921b27bf526d9f6050ab90f9267a1f9e5c66",
+          "size": 711396
+        },
+        {
+          "name": "config.json",
+          "sha256": "094f8e891b932f2000c92cfc663bac4c62069f5d8af5b5278c4306aef3084750",
+          "size": 743
+        },
+        {
+          "name": "tokenizer_config.json",
+          "sha256": "9261e7d79b44c8195c1cada2b453e55b00aeb81e907a6664974b4d7776172ab3",
+          "size": 366
+        },
+        {
+          "name": "1_Pooling/config.json",
+          "sha256": "d1caf60c96f5fba2157c0c26b76d80818fad6cf0b8eb5e73ec372ff9818eba5c",
+          "size": 190
+        }
+      ],
+      "kind": "embed",
+      "max_length": 512,
+      "name": "bge-small",
+      "onnx_file": "onnx/model.onnx",
+      "pooling": "cls",
+      "query_prefix": "Represent this sentence for searching relevant passages: ",
+      "repo_id": "BAAI/bge-small-en-v1.5",
+      "revision": "5c38ec7c405ec4b44b94cc5a9bb96e735b38267a"
+    },
+    "minilm-l12": {
+      "files": [
+        {
+          "name": "onnx/model.onnx",
+          "sha256": "2ac389ab6abe08dcbddf2c41a69b6a18853e0dca440adbc2abc1adfcee46483f",
+          "size": 133743863
+        },
+        {
+          "name": "tokenizer.json",
+          "sha256": "d241a60d5e8f04cc1b2b3e9ef7a4921b27bf526d9f6050ab90f9267a1f9e5c66",
+          "size": 711396
+        },
+        {
+          "name": "config.json",
+          "sha256": "69a745055b0307584d2903ea5cf4e1899254e511834f358be80d049918b144d8",
+          "size": 791
+        },
+        {
+          "name": "tokenizer_config.json",
+          "sha256": "a5c2e5a7b1a29a0702cd28c08a399b5ecc110c263009d17f7e3b415f25905fd8",
+          "size": 1330
+        }
+      ],
+      "kind": "cross",
+      "max_length": 512,
+      "name": "minilm-l12",
+      "onnx_file": "onnx/model.onnx",
+      "pooling": null,
+      "query_prefix": "",
+      "repo_id": "cross-encoder/ms-marco-MiniLM-L-12-v2",
+      "revision": "7b0235231ca2674cb8ca8f022859a6eba2b1c968"
+    },
+    "minilm-l6": {
+      "files": [
+        {
+          "name": "onnx/model.onnx",
+          "sha256": "5d3e70fd0c9ff14b9b5169a51e957b7a9c74897afd0a35ce4bd318150c1d4d4a",
+          "size": 91011230
+        },
+        {
+          "name": "tokenizer.json",
+          "sha256": "d241a60d5e8f04cc1b2b3e9ef7a4921b27bf526d9f6050ab90f9267a1f9e5c66",
+          "size": 711396
+        },
+        {
+          "name": "config.json",
+          "sha256": "380e02c93f431831be65d99a4e7e5f67c133985bf2e77d9d4eba46847190bacc",
+          "size": 794
+        },
+        {
+          "name": "tokenizer_config.json",
+          "sha256": "a5c2e5a7b1a29a0702cd28c08a399b5ecc110c263009d17f7e3b415f25905fd8",
+          "size": 1330
+        }
+      ],
+      "kind": "cross",
+      "max_length": 512,
+      "name": "minilm-l6",
+      "onnx_file": "onnx/model.onnx",
+      "pooling": null,
+      "query_prefix": "",
+      "repo_id": "cross-encoder/ms-marco-MiniLM-L-6-v2",
+      "revision": "233902d25c440f23af6f7d6e94d2946bac0bee0a"
+    }
+  }
+}

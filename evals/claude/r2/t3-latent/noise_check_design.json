@@ -1,0 +1,83 @@
+{
+  "label": "DESIGN, not a test",
+  "day_a": "2026-11-16",
+  "day_b": "2026-11-17",
+  "max_date": "2026-11-17",
+  "max_day_loaded": "2026-11-17",
+  "groups": [
+    "o30"
+  ],
+  "summary": {
+    "searches": 30,
+    "searches_with_pairs": 29,
+    "observed": {
+      "flips": 44,
+      "pairs": 767,
+      "rate": 0.05736636245110821
+    },
+    "shuffled": {
+      "permutations": 2000,
+      "seed": 20261119,
+      "expected_flips": 45.111000000000004,
+      "expected_pairs": 812.1885,
+      "rate": 0.05554252491878425,
+      "total_flips_2.5_97.5": [
+        31.0,
+        61.0
+      ],
+      "p_shuffled_flips_ge_observed": 0.57
+    },
+    "noise_share_of_flip_count": {
+      "value": 1.02525,
+      "lo": 0.783216796875,
+      "hi": 1.4769592391304351,
+      "undefined_draws": 0,
+      "queries": 30
+    },
+    "theory_band": [
+      0.75,
+      1.3
+    ],
+    "point_in_theory_band": true,
+    "point_below_falsifier_0.7": false,
+    "exact_check": {
+      "expected_flips": 45.0,
+      "expected_pairs": 811.9,
+      "noise_share_of_flip_count": {
+        "value": 1.0227272727272727,
+        "lo": 0.784,
+        "hi": 1.465253623188406,
+        "undefined_draws": 0,
+        "queries": 30
+      }
+    }
+  },
+  "theory_design": {
+    "expected_flips": 45.0,
+    "expected_pairs": 811.9,
+    "observed_flips": 44,
+    "observed_pairs": 767,
+    "noise_share": 1.02,
+    "lo": 0.78,
+    "hi": 1.47
+  },
+  "reproduction": {
+    "observed_matches": true,
+    "exact_enumeration_rounded": {
+      "expected_flips": 45.0,
+      "expected_pairs": 811.9,
+      "noise_share": 1.02,
+      "lo": 0.78,
+      "hi": 1.47
+    },
+    "exact_enumeration_matches_to_stated_digits": true,
+    "shuffled_2000_rounded": {
+      "expected_flips": 45.1,
+      "expected_pairs": 812.2,
+      "noise_share": 1.03,
+      "lo": 0.78,
+      "hi": 1.48
+    },
+    "shuffled_2000_matches_to_stated_digits": false
+  }
+}

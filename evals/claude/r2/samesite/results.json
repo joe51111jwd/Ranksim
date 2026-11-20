@@ -1,0 +1,3471 @@
+{
+  "design_cutoff": "2026-11-17",
+  "fold_pairs": {
+    "u1_same_site": {
+      "A": 330,
+      "B": 135
+    },
+    "u1_same_site_searches": {
+      "A": 59,
+      "B": 29
+    },
+    "u2_same_site": {
+      "A": 119,
+      "B": 40
+    }
+  },
+  "folds": {
+    "components": 71,
+    "largest_components": [
+      [
+        35,
+        "all in 1 dirt work software"
+      ],
+      [
+        16,
+        "hcss alternative"
+      ],
+      [
+        9,
+        "construction time tracking"
+      ],
+      [
+        8,
+        "all in one heavy civil software"
+      ],
+      [
+        5,
+        "best job costing software"
+      ],
+      [
+        4,
+        "AI for revenue recovery"
+      ]
+    ],
+    "searches": {
+      "A": 94,
+      "B": 61
+    }
+  },
+  "label": "OBSERVED positions (REAL, Serper); model scores PREDICTED",
+  "label_day_u1": "2026-11-16",
+  "max_page_fetch_day_loaded": "2026-11-17",
+  "max_serp_day_loaded": "2026-11-17",
+  "pages": {
+    "fetch_day": {
+      "2026-11-06": 12,
+      "2026-11-09": 15,
+      "2026-11-11": 20,
+      "2026-11-13": 13,
+      "2026-11-16": 1012,
+      "2026-11-17": 12
+    },
+    "method": {
+      "browser": 51,
+      "browser:date-only": 87,
+      "http": 448,
+      "http:date-only": 498
+    },
+    "urls_in_pairs": 1819,
+    "urls_with_any_fetch": 1276,
+    "urls_with_usable_page": 1084
+  },
+  "q1_u1": {
+    "by_source": {
+      "deep": {
+        "cross_site": 30459,
+        "same_site": 834,
+        "searches": 100
+      },
+      "top10": {
+        "cross_site": 1878,
+        "same_site": 110,
+        "searches": 50
+      }
+    },
+    "cross_site_duplicate_content_dropped": 0,
+    "cross_site_pairs": 32337,
+    "cross_site_usable_pairs": 16580,
+    "cross_site_usable_searches": 134,
+    "cross_site_usable_sites": 441,
+    "deep_list_repeated_url_rows": 162,
+    "deep_list_rows": 2678,
+    "pairs_total": 33281,
+    "same_site_by_zone": {
+      "both 11-30": 222,
+      "both top10": 241,
+      "one top10": 481
+    },
+    "same_site_duplicate_content_dropped": 5,
+    "same_site_pairs": 944,
+    "same_site_per_search_max": 82,
+    "same_site_per_search_mean": 6.293333333333333,
+    "same_site_per_search_median": 3.0,
+    "same_site_sites": 56,
+    "same_site_top5": [
+      [
+        "hcss.com",
+        368
+      ],
+      [
+        "youtube.com",
+        178
+      ],
+      [
+        "trimble.com",
+        89
+      ],
+      [
+        "reddit.com",
+        73
+      ],
+      [
+        "smartcrewhq.com",
+        57
+      ]
+    ],
+    "same_site_top5_share": 0.8103813559322034,
+    "same_site_usable_pairs": 465,
+    "same_site_usable_searches": 88,
+    "same_site_usable_sites": 40,
+    "same_site_usable_top5": [
+      [
+        "hcss.com",
+        200
+      ],
+      [
+        "smartcrewhq.com",
+        52
+      ],
+      [
+        "trimble.com",
+        52
+      ],
+      [
+        "youtube.com",
+        38
+      ],
+      [
+        "agtek.com",
+        26
+      ]
+    ],
+    "same_site_usable_top5_share": 0.7913978494623656,
+    "searches_with_lists": 150,
+    "searches_with_same_site_pair": 109,
+    "tied_positions_dropped": 0
+  },
+  "q1_u2": {
+    "cross_site_duplicate_content_dropped": 0,
+    "cross_site_pairs": 8444,
+    "cross_site_usable_pairs": 3741,
+    "cross_site_usable_searches": 139,
+    "cross_site_usable_sites": 242,
+    "pair_day_instances": 13380,
+    "pairs_total": 8726,
+    "same_site_duplicate_content_dropped": 7,
+    "same_site_multi_day": 28,
+    "same_site_pairs": 282,
+    "same_site_per_search_max": 21,
+    "same_site_per_search_mean": 1.8193548387096774,
+    "same_site_per_search_median": 1.0,
+    "same_site_sites": 21,
+    "same_site_top5": [
+      [
+        "hcss.com",
+        107
+      ],
+      [
+        "reddit.com",
+        39
+      ],
+      [
+        "trimble.com",
+        30
+      ],
+      [
+        "smartcrewhq.com",
+        19
+      ],
+      [
+        "youtube.com",
+        19
+      ]
+    ],
+    "same_site_top5_share": 0.7588652482269503,
+    "same_site_unanimous": 279,
+    "same_site_usable_pairs": 159,
+    "same_site_usable_searches": 54,
+    "same_site_usable_sites": 14,
+    "same_site_usable_top5": [
+      [
+        "hcss.com",
+        72
+      ],
+      [
+        "trimble.com",
+        23
+      ],
+      [
+        "smartcrewhq.com",
+        12
+      ],
+      [
+        "assignar.com",
+        11
+      ],
+      [
+        "busybusy.com",
+        11
+      ]
+    ],
+    "same_site_usable_top5_share": 0.8113207547169812,
+    "searches_by_group": {
+      "a70": 70,
+      "o30": 31,
+      "other": 4,
+      "p35": 35,
+      "rev": 15
+    },
+    "searches_with_lists": 155,
+    "searches_with_same_site_pair": 83,
+    "split_pairs_dropped": 151,
+    "tied_instances": 26
+  },
+  "q2_single_features": {
+    "age_published": {
+      "direction": "larger first",
+      "u1": {
+        "cross_site": {
+          "all_pairs_ties_half": {
+            "hi": 0.5229845120109892,
+            "hits": 8523.0,
+            "lo": 0.5048385146284806,
+            "n": 16580,
+            "queries": 134,
+            "rate": 0.5140530759951749
+          },
+          "decided": 5838,
+          "decided_rate": {
+            "hi": 0.5642402593744615,
+            "hits": 3152.0,
+            "lo": 0.5139755095838995,
+            "n": 5838,
+            "queries": 124,
+            "rate": 0.539910928400137
+          },
+          "missing": 10736,
+          "pairs": 16580,
+          "ties": 6
+        },
+        "same_minus_cross_decided": {
+          "diff": -0.06491092840013701,
+          "hi": -0.019766825674875997,
+          "lo": -0.11059317564726372
+        },
+        "same_site": {
+          "all_pairs_ties_half": {
+            "hi": 0.510990834386852,
+            "hits": 225.5,
+            "lo": 0.46065223383836323,
+            "n": 465,
+            "queries": 88,
+            "rate": 0.48494623655913977
+          },
+          "decided": 280,
+          "decided_rate": {
+            "hi": 0.5186610098045338,
+            "hits": 133.0,
+            "lo": 0.4317127813650353,
+            "n": 280,
+            "queries": 63,
+            "rate": 0.475
+          },
+          "missing": 156,
+          "pairs": 465,
+          "ties": 29
+        }
+      },
+      "u2": {
+        "cross_site": {
+          "all_pairs_ties_half": {
+            "hi": 0.52114838166617,
+            "hits": 1895.0,
+            "lo": 0.4917582391855812,
+            "n": 3741,
+            "queries": 139,
+            "rate": 0.5065490510558674
+          },
+          "decided": 1561,
+          "decided_rate": {
+            "hi": 0.5488451456946891,
+            "hits": 805.0,
+            "lo": 0.48079406520631685,
+            "n": 1561,
+            "queries": 126,
+            "rate": 0.515695067264574
+          },
+          "missing": 2180,
+          "pairs": 3741,
+          "ties": 0
+        },
+        "same_minus_cross_decided": {
+          "diff": -0.02064556231407899,
+          "hi": 0.07195636000472866,
+          "lo": -0.12046665740395457
+        },
+        "same_site": {
+          "all_pairs_ties_half": {
+            "hi": 0.5462479073881045,
+            "hits": 79.0,
+            "lo": 0.43703703703703706,
+            "n": 159,
+            "queries": 54,
+            "rate": 0.4968553459119497
+          },
+          "decided": 101,
+          "decided_rate": {
+            "hi": 0.5774839513270096,
+            "hits": 50.0,
+            "lo": 0.40625,
+            "n": 101,
+            "queries": 39,
+            "rate": 0.49504950495049505
+          },
+          "missing": 52,
+          "pairs": 159,
+          "ties": 6
+        }
+      }
+    },
+    "bm25_body": {
+      "direction": "larger first",
+      "u1": {
+        "cross_site": {
+          "all_pairs_ties_half": {
+            "hi": 0.5373809267390521,
+            "hits": 8570.5,
+            "lo": 0.497500926502631,
+            "n": 16580,
+            "queries": 134,
+            "rate": 0.5169179734620024
+          },
+          "decided": 16575,
+          "decided_rate": {
+            "hi": 0.5374032048619501,
+            "hits": 8568.0,
+            "lo": 0.49750031120671395,
+            "n": 16575,
+            "queries": 134,
+            "rate": 0.5169230769230769
+          },
+          "missing": 0,
+          "pairs": 16580,
+          "ties": 5
+        },
+        "same_minus_cross_decided": {
+          "diff": 0.04773209549071622,
+          "hi": 0.09707489529756265,
+          "lo": 0.0009514430396199149
+        },
+        "same_site": {
+          "all_pairs_ties_half": {
+            "hi": 0.615735629376323,
+            "hits": 262.5,
+            "lo": 0.5156809648424168,
+            "n": 465,
+            "queries": 88,
+            "rate": 0.5645161290322581
+          },
+          "decided": 464,
+          "decided_rate": {
+            "hi": 0.615736081145451,
+            "hits": 262.0,
+            "lo": 0.5157419276078862,
+            "n": 464,
+            "queries": 88,
+            "rate": 0.5646551724137931
+          },
+          "missing": 0,
+          "pairs": 465,
+          "ties": 1
+        }
+      },
+      "u2": {
+        "cross_site": {
+          "all_pairs_ties_half": {
+            "hi": 0.5259643213314967,
+            "hits": 1876.5,
+            "lo": 0.4770873823769735,
+            "n": 3741,
+            "queries": 139,
+            "rate": 0.5016038492381716
+          },
+          "decided": 3740,
+          "decided_rate": {
+            "hi": 0.5259719961393294,
+            "hits": 1876.0,
+            "lo": 0.4770873823769735,
+            "n": 3740,
+            "queries": 139,
+            "rate": 0.5016042780748663
+          },
+          "missing": 0,
+          "pairs": 3741,
+          "ties": 1
+        },
+        "same_minus_cross_decided": {
+          "diff": 0.07701207412639155,
+          "hi": 0.18197799934136333,
+          "lo": -0.02635069511490367
+        },
+        "same_site": {
+          "all_pairs_ties_half": {
+            "hi": 0.6748466257668712,
+            "hits": 92.0,
+            "lo": 0.4805162974280621,
+            "n": 159,
+            "queries": 54,
+            "rate": 0.5786163522012578
+          },
+          "decided": 159,
+          "decided_rate": {
+            "hi": 0.6748466257668712,
+            "hits": 92.0,
+            "lo": 0.4805162974280621,
+            "n": 159,
+            "queries": 54,
+            "rate": 0.5786163522012578
+          },
+          "missing": 0,
+          "pairs": 159,
+          "ties": 0
+        }
+      }
+    },
+    "bm25f": {
+      "direction": "larger first",
+      "u1": {
+        "cross_site": {
+          "all_pairs_ties_half": {
+            "hi": 0.5418696428669755,
+            "hits": 8658.5,
+            "lo": 0.503722420617804,
+            "n": 16580,
+            "queries": 134,
+            "rate": 0.5222255729794933
+          },
+          "decided": 16577,
+          "decided_rate": {
+            "hi": 0.541893903067608,
+            "hits": 8657.0,
+            "lo": 0.5037231325181345,
+            "n": 16577,
+            "queries": 134,
+            "rate": 0.522229595222296
+          },
+          "missing": 0,
+          "pairs": 16580,
+          "ties": 3
+        },
+        "same_minus_cross_decided": {
+          "diff": 0.07475316339839366,
+          "hi": 0.12212193104554678,
+          "lo": 0.02839673305095291
+        },
+        "same_site": {
+          "all_pairs_ties_half": {
+            "hi": 0.6471167357850361,
+            "hits": 277.5,
+            "lo": 0.547438269352406,
+            "n": 465,
+            "queries": 88,
+            "rate": 0.5967741935483871
+          },
+          "decided": 464,
+          "decided_rate": {
+            "hi": 0.6473889252192645,
+            "hits": 277.0,
+            "lo": 0.5475571075292991,
+            "n": 464,
+            "queries": 88,
+            "rate": 0.5969827586206896
+          },
+          "missing": 0,
+          "pairs": 465,
+          "ties": 1
+        }
+      },
+      "u2": {
+        "cross_site": {
+          "all_pairs_ties_half": {
+            "hi": 0.538245396921293,
+            "hits": 1926.0,
+            "lo": 0.4911487730957138,
+            "n": 3741,
+            "queries": 139,
+            "rate": 0.5148356054530874
+          },
+          "decided": 3741,
+          "decided_rate": {
+            "hi": 0.538245396921293,
+            "hits": 1926.0,
+            "lo": 0.4911487730957138,
+            "n": 3741,
+            "queries": 139,
+            "rate": 0.5148356054530874
+          },
+          "missing": 0,
+          "pairs": 3741,
+          "ties": 0
+        },
+        "same_minus_cross_decided": {
+          "diff": 0.08893797945257298,
+          "hi": 0.18889545261472465,
+          "lo": -0.006485837170151164
+        },
+        "same_site": {
+          "all_pairs_ties_half": {
+            "hi": 0.6956682769726247,
+            "hits": 96.0,
+            "lo": 0.5114931560937088,
+            "n": 159,
+            "queries": 54,
+            "rate": 0.6037735849056604
+          },
+          "decided": 159,
+          "decided_rate": {
+            "hi": 0.6956682769726247,
+            "hits": 96.0,
+            "lo": 0.5114931560937088,
+            "n": 159,
+            "queries": 54,
+            "rate": 0.6037735849056604
+          },
+          "missing": 0,
+          "pairs": 159,
+          "ties": 0
+        }
+      }
+    },
+    "canonical_elsewhere": {
+      "direction": "smaller first",
+      "u1": {
+        "cross_site": {
+          "all_pairs_ties_half": {
+            "hi": 0.5014334043943828,
+            "hits": 8247.5,
+            "lo": 0.49305025510446204,
+            "n": 16580,
+            "queries": 134,
+            "rate": 0.4974366706875754
+          },
+          "decided": 707,
+          "decided_rate": {
+            "hi": 0.5376008249733581,
+            "hits": 311.0,
+            "lo": 0.3479097826248018,
+            "n": 707,
+            "queries": 32,
+            "rate": 0.43988684582743987
+          },
+          "missing": 0,
+          "pairs": 16580,
+          "ties": 15873
+        },
+        "same_minus_cross_decided": {
+          "diff": -0.011315417256011318,
+          "hi": 0.2295053964676446,
+          "lo": -0.18051302917031817
+        },
+        "same_site": {
+          "all_pairs_ties_half": {
+            "hi": 0.5072679715573938,
+            "hits": 231.0,
+            "lo": 0.48592973384640054,
+            "n": 465,
+            "queries": 88,
+            "rate": 0.4967741935483871
+          },
+          "decided": 21,
+          "decided_rate": {
+            "hi": 0.6842105263157895,
+            "hits": 9.0,
+            "lo": 0.22727272727272727,
+            "n": 21,
+            "queries": 14,
+            "rate": 0.42857142857142855
+          },
+          "missing": 0,
+          "pairs": 465,
+          "ties": 444
+        }
+      },
+      "u2": {
+        "cross_site": {
+          "all_pairs_ties_half": {
+            "hi": 0.5044491278747422,
+            "hits": 1853.0,
+            "lo": 0.48508270451645424,
+            "n": 3741,
+            "queries": 139,
+            "rate": 0.49532210638866614
+          },
+          "decided": 231,
+          "decided_rate": {
+            "hi": 0.5798127552116912,
+            "hits": 98.0,
+            "lo": 0.29783293932230104,
+            "n": 231,
+            "queries": 27,
+            "rate": 0.42424242424242425
+          },
+          "missing": 0,
+          "pairs": 3741,
+          "ties": 3510
+        },
+        "same_minus_cross_decided": {
+          "diff": 0.17575757575757572,
+          "hi": 0.5642249175444196,
+          "lo": -0.48845993008942545
+        },
+        "same_site": {
+          "all_pairs_ties_half": {
+            "hi": 0.5214296669588081,
+            "hits": 80.0,
+            "lo": 0.48683992680376437,
+            "n": 159,
+            "queries": 54,
+            "rate": 0.5031446540880503
+          },
+          "decided": 5,
+          "decided_rate": {
+            "hi": 1.0,
+            "hits": 3.0,
+            "lo": 0.0,
+            "n": 5,
+            "queries": 4,
+            "rate": 0.6
+          },
+          "missing": 0,
+          "pairs": 159,
+          "ties": 154
+        }
+      }
+    },
+    "first100_cov": {
+      "direction": "larger first",
+      "u1": {
+        "cross_site": {
+          "all_pairs_ties_half": {
+            "hi": 0.5222236201464752,
+            "hits": 8431.5,
+            "lo": 0.4949984752708747,
+            "n": 16580,
+            "queries": 134,
+            "rate": 0.508534378769602
+          },
+          "decided": 9933,
+          "decided_rate": {
+            "hi": 0.5376249097970172,
+            "hits": 5108.0,
+            "lo": 0.4913657065422275,
+            "n": 9933,
+            "queries": 122,
+            "rate": 0.5142454444780026
+          },
+          "missing": 0,
+          "pairs": 16580,
+          "ties": 6647
+        },
+        "same_minus_cross_decided": {
+          "diff": 0.0473983911384358,
+          "hi": 0.11904935683306926,
+          "lo": -0.019276746433497024
+        },
+        "same_site": {
+          "all_pairs_ties_half": {
+            "hi": 0.5609202537557407,
+            "hits": 246.0,
+            "lo": 0.4968684759916493,
+            "n": 465,
+            "queries": 88,
+            "rate": 0.5290322580645161
+          },
+          "decided": 219,
+          "decided_rate": {
+            "hi": 0.6350917486936444,
+            "hits": 123.0,
+            "lo": 0.4922916666666667,
+            "n": 219,
+            "queries": 63,
+            "rate": 0.5616438356164384
+          },
+          "missing": 0,
+          "pairs": 465,
+          "ties": 246
+        }
+      },
+      "u2": {
+        "cross_site": {
+          "all_pairs_ties_half": {
+            "hi": 0.523288140178474,
+            "hits": 1878.5,
+            "lo": 0.48013223064127897,
+            "n": 3741,
+            "queries": 139,
+            "rate": 0.5021384656508955
+          },
+          "decided": 2410,
+          "decided_rate": {
+            "hi": 0.5358432641599891,
+            "hits": 1213.0,
+            "lo": 0.47095977852430343,
+            "n": 2410,
+            "queries": 123,
+            "rate": 0.5033195020746888
+          },
+          "missing": 0,
+          "pairs": 3741,
+          "ties": 1331
+        },
+        "same_minus_cross_decided": {
+          "diff": 0.05364252324176688,
+          "hi": 0.17618211651870846,
+          "lo": -0.0759776831992746
+        },
+        "same_site": {
+          "all_pairs_ties_half": {
+            "hi": 0.5872560541861256,
+            "hits": 84.0,
+            "lo": 0.46550721732157174,
+            "n": 159,
+            "queries": 54,
+            "rate": 0.5283018867924528
+          },
+          "decided": 79,
+          "decided_rate": {
+            "hi": 0.6795,
+            "hits": 44.0,
+            "lo": 0.42857142857142855,
+            "n": 79,
+            "queries": 36,
+            "rate": 0.5569620253164557
+          },
+          "missing": 0,
+          "pairs": 159,
+          "ties": 80
+        }
+      }
+    },
+    "h1_cov": {
+      "direction": "larger first",
+      "u1": {
+        "cross_site": {
+          "all_pairs_ties_half": {
+            "hi": 0.5299203596146994,
+            "hits": 8514.0,
+            "lo": 0.49704078348720276,
+            "n": 16580,
+            "queries": 134,
+            "rate": 0.5135102533172496
+          },
+          "decided": 10480,
+          "decided_rate": {
+            "hi": 0.545756361629534,
+            "hits": 5464.0,
+            "lo": 0.49500465156845075,
+            "n": 10480,
+            "queries": 131,
+            "rate": 0.5213740458015267
+          },
+          "missing": 0,
+          "pairs": 16580,
+          "ties": 6100
+        },
+        "same_minus_cross_decided": {
+          "diff": 0.10779262086513997,
+          "hi": 0.1789545077877147,
+          "lo": 0.02751229619641888
+        },
+        "same_site": {
+          "all_pairs_ties_half": {
+            "hi": 0.6022291921664626,
+            "hits": 263.5,
+            "lo": 0.5247983237213002,
+            "n": 465,
+            "queries": 88,
+            "rate": 0.5666666666666667
+          },
+          "decided": 240,
+          "decided_rate": {
+            "hi": 0.6969757334299167,
+            "hits": 151.0,
+            "lo": 0.5442260678061986,
+            "n": 240,
+            "queries": 75,
+            "rate": 0.6291666666666667
+          },
+          "missing": 0,
+          "pairs": 465,
+          "ties": 225
+        }
+      },
+      "u2": {
+        "cross_site": {
+          "all_pairs_ties_half": {
+            "hi": 0.5433413742789124,
+            "hits": 1949.0,
+            "lo": 0.49812446000843746,
+            "n": 3741,
+            "queries": 139,
+            "rate": 0.5209836941994119
+          },
+          "decided": 2361,
+          "decided_rate": {
+            "hi": 0.56855054485748,
+            "hits": 1259.0,
+            "lo": 0.49740792145565127,
+            "n": 2361,
+            "queries": 133,
+            "rate": 0.5332486234646336
+          },
+          "missing": 0,
+          "pairs": 3741,
+          "ties": 1380
+        },
+        "same_minus_cross_decided": {
+          "diff": 0.06249605738643016,
+          "hi": 0.17623730367471696,
+          "lo": -0.06253067307863779
+        },
+        "same_site": {
+          "all_pairs_ties_half": {
+            "hi": 0.6242237261146495,
+            "hits": 88.5,
+            "lo": 0.4915681906237892,
+            "n": 159,
+            "queries": 54,
+            "rate": 0.5566037735849056
+          },
+          "decided": 94,
+          "decided_rate": {
+            "hi": 0.7073424796747966,
+            "hits": 56.0,
+            "lo": 0.4788732394366197,
+            "n": 94,
+            "queries": 45,
+            "rate": 0.5957446808510638
+          },
+          "missing": 0,
+          "pairs": 159,
+          "ties": 65
+        }
+      }
+    },
+    "inlinks": {
+      "direction": "larger first",
+      "u1": {
+        "cross_site": {
+          "all_pairs_ties_half": {
+            "hi": 0.5502803533818321,
+            "hits": 8876.5,
+            "lo": 0.5211508271264438,
+            "n": 16580,
+            "queries": 134,
+            "rate": 0.5353739445114596
+          },
+          "decided": 10091,
+          "decided_rate": {
+            "hi": 0.5803042576032097,
+            "hits": 5632.0,
+            "lo": 0.5349593245619437,
+            "n": 10091,
+            "queries": 132,
+            "rate": 0.558121098008126
+          },
+          "missing": 0,
+          "pairs": 16580,
+          "ties": 6489
+        },
+        "same_minus_cross_decided": {
+          "diff": 0.07003774675721697,
+          "hi": 0.13556987786009167,
+          "lo": 0.004243068011625554
+        },
+        "same_site": {
+          "all_pairs_ties_half": {
+            "hi": 0.6195919129663352,
+            "hits": 268.0,
+            "lo": 0.5357963019578842,
+            "n": 465,
+            "queries": 88,
+            "rate": 0.5763440860215053
+          },
+          "decided": 277,
+          "decided_rate": {
+            "hi": 0.6962484973262771,
+            "hits": 174.0,
+            "lo": 0.5563085823691001,
+            "n": 277,
+            "queries": 73,
+            "rate": 0.628158844765343
+          },
+          "missing": 0,
+          "pairs": 465,
+          "ties": 188
+        }
+      },
+      "u2": {
+        "cross_site": {
+          "all_pairs_ties_half": {
+            "hi": 0.5748685721350647,
+            "hits": 2071.5,
+            "lo": 0.5336408562424554,
+            "n": 3741,
+            "queries": 139,
+            "rate": 0.553728949478749
+          },
+          "decided": 2432,
+          "decided_rate": {
+            "hi": 0.6153223327228223,
+            "hits": 1417.0,
+            "lo": 0.5496632759854555,
+            "n": 2432,
+            "queries": 135,
+            "rate": 0.5826480263157895
+          },
+          "missing": 0,
+          "pairs": 3741,
+          "ties": 1309
+        },
+        "same_minus_cross_decided": {
+          "diff": 0.20735197368421054,
+          "hi": 0.28256592190793306,
+          "lo": 0.1057026888677417
+        },
+        "same_site": {
+          "all_pairs_ties_half": {
+            "hi": 0.7349003396134876,
+            "hits": 108.5,
+            "lo": 0.6137816091954023,
+            "n": 159,
+            "queries": 54,
+            "rate": 0.6823899371069182
+          },
+          "decided": 100,
+          "decided_rate": {
+            "hi": 0.868421052631579,
+            "hits": 79.0,
+            "lo": 0.6962025316455697,
+            "n": 100,
+            "queries": 39,
+            "rate": 0.79
+          },
+          "missing": 0,
+          "pairs": 159,
+          "ties": 59
+        }
+      }
+    },
+    "is_home": {
+      "direction": "larger first",
+      "u1": {
+        "cross_site": {
+          "all_pairs_ties_half": {
+            "hi": 0.5138508688038268,
+            "hits": 8413.0,
+            "lo": 0.5007316035720398,
+            "n": 16580,
+            "queries": 134,
+            "rate": 0.5074185765983112
+          },
+          "decided": 2308,
+          "decided_rate": {
+            "hi": 0.6063391548790334,
+            "hits": 1277.0,
+            "lo": 0.5070847142190376,
+            "n": 2308,
+            "queries": 86,
+            "rate": 0.5532928942807626
+          },
+          "missing": 0,
+          "pairs": 16580,
+          "ties": 14272
+        },
+        "same_minus_cross_decided": {
+          "diff": 0.08162774063987233,
+          "hi": 0.21870162419986963,
+          "lo": -0.07551613912115834
+        },
+        "same_site": {
+          "all_pairs_ties_half": {
+            "hi": 0.5394991453437545,
+            "hits": 241.0,
+            "lo": 0.49699165893771013,
+            "n": 465,
+            "queries": 88,
+            "rate": 0.5182795698924731
+          },
+          "decided": 63,
+          "decided_rate": {
+            "hi": 0.7800121951219512,
+            "hits": 40.0,
+            "lo": 0.47169137466307276,
+            "n": 63,
+            "queries": 26,
+            "rate": 0.6349206349206349
+          },
+          "missing": 0,
+          "pairs": 465,
+          "ties": 402
+        }
+      },
+      "u2": {
+        "cross_site": {
+          "all_pairs_ties_half": {
+            "hi": 0.5285114029958167,
+            "hits": 1926.5,
+            "lo": 0.5003729810580002,
+            "n": 3741,
+            "queries": 139,
+            "rate": 0.5149692595562684
+          },
+          "decided": 644,
+          "decided_rate": {
+            "hi": 0.6666666666666666,
+            "hits": 378.0,
+            "lo": 0.5084463902621024,
+            "n": 644,
+            "queries": 75,
+            "rate": 0.5869565217391305
+          },
+          "missing": 0,
+          "pairs": 3741,
+          "ties": 3097
+        },
+        "same_minus_cross_decided": {
+          "diff": -0.0036231884057971175,
+          "hi": 0.1545210127946155,
+          "lo": -0.18206761250289563
+        },
+        "same_site": {
+          "all_pairs_ties_half": {
+            "hi": 0.5559343166383701,
+            "hits": 82.5,
+            "lo": 0.47985892343514586,
+            "n": 159,
+            "queries": 54,
+            "rate": 0.5188679245283019
+          },
+          "decided": 36,
+          "decided_rate": {
+            "hi": 0.741958525345622,
+            "hits": 21.0,
+            "lo": 0.39989583333333334,
+            "n": 36,
+            "queries": 16,
+            "rate": 0.5833333333333334
+          },
+          "missing": 0,
+          "pairs": 159,
+          "ties": 123
+        }
+      }
+    },
+    "log_words": {
+      "direction": "larger first",
+      "u1": {
+        "cross_site": {
+          "all_pairs_ties_half": {
+            "hi": 0.5080777340512561,
+            "hits": 8162.0,
+            "lo": 0.4766628792040003,
+            "n": 16580,
+            "queries": 134,
+            "rate": 0.4922798552472859
+          },
+          "decided": 16578,
+          "decided_rate": {
+            "hi": 0.5080799346805028,
+            "hits": 8161.0,
+            "lo": 0.4766612726268874,
+            "n": 16578,
+            "queries": 134,
+            "rate": 0.4922789238750151
+          },
+          "missing": 0,
+          "pairs": 16580,
+          "ties": 2
+        },
+        "same_minus_cross_decided": {
+          "diff": 0.021699570748640873,
+          "hi": 0.07979088023851685,
+          "lo": -0.02959878887186859
+        },
+        "same_site": {
+          "all_pairs_ties_half": {
+            "hi": 0.5731139145287543,
+            "hits": 239.0,
+            "lo": 0.4644542738324935,
+            "n": 465,
+            "queries": 88,
+            "rate": 0.513978494623656
+          },
+          "decided": 465,
+          "decided_rate": {
+            "hi": 0.5731139145287543,
+            "hits": 239.0,
+            "lo": 0.4644542738324935,
+            "n": 465,
+            "queries": 88,
+            "rate": 0.513978494623656
+          },
+          "missing": 0,
+          "pairs": 465,
+          "ties": 0
+        }
+      },
+      "u2": {
+        "cross_site": {
+          "all_pairs_ties_half": {
+            "hi": 0.5229651929344459,
+            "hits": 1861.0,
+            "lo": 0.4716306936248694,
+            "n": 3741,
+            "queries": 139,
+            "rate": 0.4974605720395616
+          },
+          "decided": 3741,
+          "decided_rate": {
+            "hi": 0.5229651929344459,
+            "hits": 1861.0,
+            "lo": 0.4716306936248694,
+            "n": 3741,
+            "queries": 139,
+            "rate": 0.4974605720395616
+          },
+          "missing": 0,
+          "pairs": 3741,
+          "ties": 0
+        },
+        "same_minus_cross_decided": {
+          "diff": 0.09373439651389748,
+          "hi": 0.1959983083892268,
+          "lo": -0.0006453177591841302
+        },
+        "same_site": {
+          "all_pairs_ties_half": {
+            "hi": 0.6854352977145912,
+            "hits": 94.0,
+            "lo": 0.5,
+            "n": 159,
+            "queries": 54,
+            "rate": 0.5911949685534591
+          },
+          "decided": 159,
+          "decided_rate": {
+            "hi": 0.6854352977145912,
+            "hits": 94.0,
+            "lo": 0.5,
+            "n": 159,
+            "queries": 54,
+            "rate": 0.5911949685534591
+          },
+          "missing": 0,
+          "pairs": 159,
+          "ties": 0
+        }
+      }
+    },
+    "recency": {
+      "direction": "larger first",
+      "u1": {
+        "cross_site": {
+          "all_pairs_ties_half": {
+            "hi": 0.5197694381512323,
+            "hits": 8455.0,
+            "lo": 0.4994736418098415,
+            "n": 16580,
+            "queries": 134,
+            "rate": 0.5099517490952955
+          },
+          "decided": 8582,
+          "decided_rate": {
+            "hi": 0.5394176152724144,
+            "hits": 4456.0,
+            "lo": 0.5002560633648486,
+            "n": 8582,
+            "queries": 128,
+            "rate": 0.519226287578653
+          },
+          "missing": 7938,
+          "pairs": 16580,
+          "ties": 60
+        },
+        "same_minus_cross_decided": {
+          "diff": 0.06169856791267647,
+          "hi": 0.12599437039741834,
+          "lo": 0.007708809082255424
+        },
+        "same_site": {
+          "all_pairs_ties_half": {
+            "hi": 0.6043020194614769,
+            "hits": 260.5,
+            "lo": 0.5223212952096448,
+            "n": 465,
+            "queries": 88,
+            "rate": 0.5602150537634408
+          },
+          "decided": 346,
+          "decided_rate": {
+            "hi": 0.6388952599388379,
+            "hits": 201.0,
+            "lo": 0.5303761354936164,
+            "n": 346,
+            "queries": 75,
+            "rate": 0.5809248554913294
+          },
+          "missing": 86,
+          "pairs": 465,
+          "ties": 33
+        }
+      },
+      "u2": {
+        "cross_site": {
+          "all_pairs_ties_half": {
+            "hi": 0.5452037504559769,
+            "hits": 1981.0,
+            "lo": 0.5131155872048044,
+            "n": 3741,
+            "queries": 139,
+            "rate": 0.5295375568029939
+          },
+          "decided": 2371,
+          "decided_rate": {
+            "hi": 0.5725819396261586,
+            "hits": 1296.0,
+            "lo": 0.5207382774625616,
+            "n": 2371,
+            "queries": 131,
+            "rate": 0.5466048080978491
+          },
+          "missing": 1362,
+          "pairs": 3741,
+          "ties": 8
+        },
+        "same_minus_cross_decided": {
+          "diff": 0.05670097702611787,
+          "hi": 0.14181582284375402,
+          "lo": -0.0305935442512491
+        },
+        "same_site": {
+          "all_pairs_ties_half": {
+            "hi": 0.6442953020134228,
+            "hits": 92.0,
+            "lo": 0.5152415927568367,
+            "n": 159,
+            "queries": 54,
+            "rate": 0.5786163522012578
+          },
+          "decided": 121,
+          "decided_rate": {
+            "hi": 0.683345588235294,
+            "hits": 73.0,
+            "lo": 0.5182230052856783,
+            "n": 121,
+            "queries": 43,
+            "rate": 0.6033057851239669
+          },
+          "missing": 31,
+          "pairs": 159,
+          "ties": 7
+        }
+      }
+    },
+    "serp_title_all": {
+      "direction": "larger first",
+      "u1": {
+        "cross_site": {
+          "all_pairs_ties_half": {
+            "hi": 0.5241035310318272,
+            "hits": 8488.5,
+            "lo": 0.4993533076199099,
+            "n": 16580,
+            "queries": 134,
+            "rate": 0.5119722557297949
+          },
+          "decided": 4657,
+          "decided_rate": {
+            "hi": 0.5883057951606261,
+            "hits": 2527.0,
+            "lo": 0.4992837086112374,
+            "n": 4657,
+            "queries": 97,
+            "rate": 0.5426240068713765
+          },
+          "missing": 0,
+          "pairs": 16580,
+          "ties": 11923
+        },
+        "same_minus_cross_decided": {
+          "diff": 0.3277463634989939,
+          "hi": 0.43275760959917414,
+          "lo": 0.23761790816876074
+        },
+        "same_site": {
+          "all_pairs_ties_half": {
+            "hi": 0.5642476745132071,
+            "hits": 252.5,
+            "lo": 0.5255479797979798,
+            "n": 465,
+            "queries": 88,
+            "rate": 0.543010752688172
+          },
+          "decided": 54,
+          "decided_rate": {
+            "hi": 0.9636363636363636,
+            "hits": 47.0,
+            "lo": 0.7794117647058824,
+            "n": 54,
+            "queries": 26,
+            "rate": 0.8703703703703703
+          },
+          "missing": 0,
+          "pairs": 465,
+          "ties": 411
+        }
+      },
+      "u2": {
+        "cross_site": {
+          "all_pairs_ties_half": {
+            "hi": 0.5270671388630457,
+            "hits": 1923.5,
+            "lo": 0.501338723434798,
+            "n": 3741,
+            "queries": 139,
+            "rate": 0.5141673349371826
+          },
+          "decided": 864,
+          "decided_rate": {
+            "hi": 0.6137742292168086,
+            "hits": 485.0,
+            "lo": 0.5041157311753902,
+            "n": 864,
+            "queries": 91,
+            "rate": 0.5613425925925926
+          },
+          "missing": 0,
+          "pairs": 3741,
+          "ties": 2877
+        },
+        "same_minus_cross_decided": {
+          "diff": 0.24634971509971515,
+          "hi": 0.43553817034918435,
+          "lo": 0.11701988694541819
+        },
+        "same_site": {
+          "all_pairs_ties_half": {
+            "hi": 0.5851110763454318,
+            "hits": 87.5,
+            "lo": 0.5211102874557285,
+            "n": 159,
+            "queries": 54,
+            "rate": 0.550314465408805
+          },
+          "decided": 26,
+          "decided_rate": {
+            "hi": 1.0,
+            "hits": 21.0,
+            "lo": 0.6956219806763285,
+            "n": 26,
+            "queries": 12,
+            "rate": 0.8076923076923077
+          },
+          "missing": 0,
+          "pairs": 159,
+          "ties": 133
+        }
+      }
+    },
+    "slug_cov": {
+      "direction": "larger first",
+      "u1": {
+        "cross_site": {
+          "all_pairs_ties_half": {
+            "hi": 0.5155741070715497,
+            "hits": 8318.0,
+            "lo": 0.48771265652040996,
+            "n": 16580,
+            "queries": 134,
+            "rate": 0.5016887816646562
+          },
+          "decided": 11200,
+          "decided_rate": {
+            "hi": 0.5229961042749627,
+            "hits": 5628.0,
+            "lo": 0.4818685235969634,
+            "n": 11200,
+            "queries": 133,
+            "rate": 0.5025
+          },
+          "missing": 0,
+          "pairs": 16580,
+          "ties": 5380
+        },
+        "same_minus_cross_decided": {
+          "diff": 0.16416666666666668,
+          "hi": 0.23820437758008325,
+          "lo": 0.08047375215464043
+        },
+        "same_site": {
+          "all_pairs_ties_half": {
+            "hi": 0.6056547020883959,
+            "hits": 266.0,
+            "lo": 0.5370348986399796,
+            "n": 465,
+            "queries": 88,
+            "rate": 0.5720430107526882
+          },
+          "decided": 201,
+          "decided_rate": {
+            "hi": 0.7435975609756097,
+            "hits": 134.0,
+            "lo": 0.5838500341076365,
+            "n": 201,
+            "queries": 68,
+            "rate": 0.6666666666666666
+          },
+          "missing": 0,
+          "pairs": 465,
+          "ties": 264
+        }
+      },
+      "u2": {
+        "cross_site": {
+          "all_pairs_ties_half": {
+            "hi": 0.5176242797109479,
+            "hits": 1851.0,
+            "lo": 0.47343026719127423,
+            "n": 3741,
+            "queries": 139,
+            "rate": 0.49478748997594224
+          },
+          "decided": 2585,
+          "decided_rate": {
+            "hi": 0.5264053156088808,
+            "hits": 1273.0,
+            "lo": 0.4603968598555243,
+            "n": 2585,
+            "queries": 138,
+            "rate": 0.49245647969052225
+          },
+          "missing": 0,
+          "pairs": 3741,
+          "ties": 1156
+        },
+        "same_minus_cross_decided": {
+          "diff": 0.08087685364281111,
+          "hi": 0.21054988945971514,
+          "lo": -0.062095056414555046
+        },
+        "same_site": {
+          "all_pairs_ties_half": {
+            "hi": 0.5983651429938973,
+            "hits": 85.0,
+            "lo": 0.46721161900203423,
+            "n": 159,
+            "queries": 54,
+            "rate": 0.5345911949685535
+          },
+          "decided": 75,
+          "decided_rate": {
+            "hi": 0.6988253012048191,
+            "hits": 43.0,
+            "lo": 0.4393847006651885,
+            "n": 75,
+            "queries": 39,
+            "rate": 0.5733333333333334
+          },
+          "missing": 0,
+          "pairs": 159,
+          "ties": 84
+        }
+      }
+    },
+    "title_cov": {
+      "direction": "larger first",
+      "u1": {
+        "cross_site": {
+          "all_pairs_ties_half": {
+            "hi": 0.5253608412436809,
+            "hits": 8454.0,
+            "lo": 0.4944756663346559,
+            "n": 16580,
+            "queries": 134,
+            "rate": 0.509891435464415
+          },
+          "decided": 9408,
+          "decided_rate": {
+            "hi": 0.5461960426946144,
+            "hits": 4868.0,
+            "lo": 0.4899232055216945,
+            "n": 9408,
+            "queries": 125,
+            "rate": 0.5174319727891157
+          },
+          "missing": 0,
+          "pairs": 16580,
+          "ties": 7172
+        },
+        "same_minus_cross_decided": {
+          "diff": 0.08550920368147252,
+          "hi": 0.17138284652202337,
+          "lo": -0.0039017396149068568
+        },
+        "same_site": {
+          "all_pairs_ties_half": {
+            "hi": 0.5848926880265666,
+            "hits": 253.5,
+            "lo": 0.5049017209623575,
+            "n": 465,
+            "queries": 88,
+            "rate": 0.5451612903225806
+          },
+          "decided": 204,
+          "decided_rate": {
+            "hi": 0.6894272376335394,
+            "hits": 123.0,
+            "lo": 0.5074267218126236,
+            "n": 204,
+            "queries": 67,
+            "rate": 0.6029411764705882
+          },
+          "missing": 0,
+          "pairs": 465,
+          "ties": 261
+        }
+      },
+      "u2": {
+        "cross_site": {
+          "all_pairs_ties_half": {
+            "hi": 0.550199417335274,
+            "hits": 1972.5,
+            "lo": 0.5060781478911249,
+            "n": 3741,
+            "queries": 139,
+            "rate": 0.5272654370489174
+          },
+          "decided": 2110,
+          "decided_rate": {
+            "hi": 0.589300675018208,
+            "hits": 1157.0,
+            "lo": 0.5102221095077477,
+            "n": 2110,
+            "queries": 121,
+            "rate": 0.5483412322274882
+          },
+          "missing": 0,
+          "pairs": 3741,
+          "ties": 1631
+        },
+        "same_minus_cross_decided": {
+          "diff": 0.08401170894898236,
+          "hi": 0.20843281997060537,
+          "lo": -0.06942528748608354
+        },
+        "same_site": {
+          "all_pairs_ties_half": {
+            "hi": 0.6114369747899159,
+            "hits": 88.5,
+            "lo": 0.49111679604798875,
+            "n": 159,
+            "queries": 54,
+            "rate": 0.5566037735849056
+          },
+          "decided": 68,
+          "decided_rate": {
+            "hi": 0.75,
+            "hits": 43.0,
+            "lo": 0.47938883034773444,
+            "n": 68,
+            "queries": 32,
+            "rate": 0.6323529411764706
+          },
+          "missing": 0,
+          "pairs": 159,
+          "ties": 91
+        }
+      }
+    },
+    "title_phrase": {
+      "direction": "larger first",
+      "u1": {
+        "cross_site": {
+          "all_pairs_ties_half": {
+            "hi": 0.5204822261730601,
+            "hits": 8453.0,
+            "lo": 0.49909690519605615,
+            "n": 16580,
+            "queries": 134,
+            "rate": 0.5098311218335344
+          },
+          "decided": 3322,
+          "decided_rate": {
+            "hi": 0.6041681910569106,
+            "hits": 1824.0,
+            "lo": 0.4947570581507445,
+            "n": 3322,
+            "queries": 75,
+            "rate": 0.5490668272125225
+          },
+          "missing": 0,
+          "pairs": 16580,
+          "ties": 13258
+        },
+        "same_minus_cross_decided": {
+          "diff": 0.2458049676592723,
+          "hi": 0.40378626002851686,
+          "lo": 0.12070155702434987
+        },
+        "same_site": {
+          "all_pairs_ties_half": {
+            "hi": 0.5414741311216429,
+            "hits": 244.0,
+            "lo": 0.5099980158730159,
+            "n": 465,
+            "queries": 88,
+            "rate": 0.524731182795699
+          },
+          "decided": 39,
+          "decided_rate": {
+            "hi": 0.9411764705882353,
+            "hits": 31.0,
+            "lo": 0.6665322580645161,
+            "n": 39,
+            "queries": 21,
+            "rate": 0.7948717948717948
+          },
+          "missing": 0,
+          "pairs": 465,
+          "ties": 426
+        }
+      },
+      "u2": {
+        "cross_site": {
+          "all_pairs_ties_half": {
+            "hi": 0.5113332371975443,
+            "hits": 1877.5,
+            "lo": 0.4927406060705591,
+            "n": 3741,
+            "queries": 139,
+            "rate": 0.5018711574445336
+          },
+          "decided": 554,
+          "decided_rate": {
+            "hi": 0.5737725792535278,
+            "hits": 284.0,
+            "lo": 0.4497252360914293,
+            "n": 554,
+            "queries": 63,
+            "rate": 0.5126353790613718
+          },
+          "missing": 0,
+          "pairs": 3741,
+          "ties": 3187
+        },
+        "same_minus_cross_decided": {
+          "diff": 0.2600918936659009,
+          "hi": 0.5003621606456742,
+          "lo": 0.10401066619288594
+        },
+        "same_site": {
+          "all_pairs_ties_half": {
+            "hi": 0.5701232884039367,
+            "hits": 85.5,
+            "lo": 0.5087681488203267,
+            "n": 159,
+            "queries": 54,
+            "rate": 0.5377358490566038
+          },
+          "decided": 22,
+          "decided_rate": {
+            "hi": 0.9473684210526315,
+            "hits": 17.0,
+            "lo": 0.625,
+            "n": 22,
+            "queries": 8,
+            "rate": 0.7727272727272727
+          },
+          "missing": 0,
+          "pairs": 159,
+          "ties": 137
+        }
+      }
+    },
+    "url_depth": {
+      "direction": "smaller first",
+      "u1": {
+        "cross_site": {
+          "all_pairs_ties_half": {
+            "hi": 0.5337097975367909,
+            "hits": 8585.0,
+            "lo": 0.5026089862946508,
+            "n": 16580,
+            "queries": 134,
+            "rate": 0.5177925211097708
+          },
+          "decided": 10748,
+          "decided_rate": {
+            "hi": 0.55143349273188,
+            "hits": 5669.0,
+            "lo": 0.5049147625571208,
+            "n": 10748,
+            "queries": 133,
+            "rate": 0.5274469668775587
+          },
+          "missing": 0,
+          "pairs": 16580,
+          "ties": 5832
+        },
+        "same_minus_cross_decided": {
+          "diff": 0.06569028802440213,
+          "hi": 0.13920288473216,
+          "lo": -0.026341902993999414
+        },
+        "same_site": {
+          "all_pairs_ties_half": {
+            "hi": 0.5759634216589861,
+            "hits": 251.5,
+            "lo": 0.5012496141975309,
+            "n": 465,
+            "queries": 88,
+            "rate": 0.5408602150537635
+          },
+          "decided": 204,
+          "decided_rate": {
+            "hi": 0.6666666666666666,
+            "hits": 121.0,
+            "lo": 0.5054809052333805,
+            "n": 204,
+            "queries": 66,
+            "rate": 0.5931372549019608
+          },
+          "missing": 0,
+          "pairs": 465,
+          "ties": 261
+        }
+      },
+      "u2": {
+        "cross_site": {
+          "all_pairs_ties_half": {
+            "hi": 0.5334400346744474,
+            "hits": 1904.0,
+            "lo": 0.4857042016140775,
+            "n": 3741,
+            "queries": 139,
+            "rate": 0.5089548249131248
+          },
+          "decided": 2501,
+          "decided_rate": {
+            "hi": 0.5492315497109778,
+            "hits": 1284.0,
+            "lo": 0.47789804715250306,
+            "n": 2501,
+            "queries": 138,
+            "rate": 0.5133946421431428
+          },
+          "missing": 0,
+          "pairs": 3741,
+          "ties": 1240
+        },
+        "same_minus_cross_decided": {
+          "diff": 0.12614024157778747,
+          "hi": 0.23395358332989494,
+          "lo": -0.01048800285388404
+        },
+        "same_site": {
+          "all_pairs_ties_half": {
+            "hi": 0.6360831415420022,
+            "hits": 91.5,
+            "lo": 0.5,
+            "n": 159,
+            "queries": 54,
+            "rate": 0.5754716981132075
+          },
+          "decided": 86,
+          "decided_rate": {
+            "hi": 0.7464916002036314,
+            "hits": 55.0,
+            "lo": 0.5074626865671642,
+            "n": 86,
+            "queries": 30,
+            "rate": 0.6395348837209303
+          },
+          "missing": 0,
+          "pairs": 159,
+          "ties": 73
+        }
+      }
+    },
+    "url_len": {
+      "direction": "smaller first",
+      "u1": {
+        "cross_site": {
+          "all_pairs_ties_half": {
+            "hi": 0.5200061683520876,
+            "hits": 8361.5,
+            "lo": 0.4881800492949133,
+            "n": 16580,
+            "queries": 134,
+            "rate": 0.5043124246079614
+          },
+          "decided": 16279,
+          "decided_rate": {
+            "hi": 0.5203756885582782,
+            "hits": 8211.0,
+            "lo": 0.48795354161183846,
+            "n": 16279,
+            "queries": 134,
+            "rate": 0.5043921616806929
+          },
+          "missing": 0,
+          "pairs": 16580,
+          "ties": 301
+        },
+        "same_minus_cross_decided": {
+          "diff": 0.056287449969792513,
+          "hi": 0.10949800338739724,
+          "lo": 0.002481004699076756
+        },
+        "same_site": {
+          "all_pairs_ties_half": {
+            "hi": 0.5991288332406655,
+            "hits": 257.5,
+            "lo": 0.5090203249974689,
+            "n": 465,
+            "queries": 88,
+            "rate": 0.553763440860215
+          },
+          "decided": 412,
+          "decided_rate": {
+            "hi": 0.6147308781869688,
+            "hits": 231.0,
+            "lo": 0.5083527247414479,
+            "n": 412,
+            "queries": 80,
+            "rate": 0.5606796116504854
+          },
+          "missing": 0,
+          "pairs": 465,
+          "ties": 53
+        }
+      },
+      "u2": {
+        "cross_site": {
+          "all_pairs_ties_half": {
+            "hi": 0.5475927979977082,
+            "hits": 1944.5,
+            "lo": 0.49365423994349833,
+            "n": 3741,
+            "queries": 139,
+            "rate": 0.5197808072707832
+          },
+          "decided": 3678,
+          "decided_rate": {
+            "hi": 0.5484601964071502,
+            "hits": 1913.0,
+            "lo": 0.4935547563880298,
+            "n": 3678,
+            "queries": 139,
+            "rate": 0.5201196302338227
+          },
+          "missing": 0,
+          "pairs": 3741,
+          "ties": 63
+        },
+        "same_minus_cross_decided": {
+          "diff": 0.10325699314280068,
+          "hi": 0.19483426166670031,
+          "lo": 0.019846828830691964
+        },
+        "same_site": {
+          "all_pairs_ties_half": {
+            "hi": 0.7012214919227114,
+            "hits": 98.5,
+            "lo": 0.5333278145695364,
+            "n": 159,
+            "queries": 54,
+            "rate": 0.6194968553459119
+          },
+          "decided": 154,
+          "decided_rate": {
+            "hi": 0.7122302158273381,
+            "hits": 96.0,
+            "lo": 0.5324675324675324,
+            "n": 154,
+            "queries": 50,
+            "rate": 0.6233766233766234
+          },
+          "missing": 0,
+          "pairs": 159,
+          "ties": 5
+        }
+      }
+    }
+  },
+  "q3_model": {
+    "baseline_more_title_terms_first_u1_cross": {
+      "all_pairs_ties_half": {
+        "hi": 0.5253608412436809,
+        "hits": 8454.0,
+        "lo": 0.4944756663346559,
+        "n": 16580,
+        "queries": 134,
+        "rate": 0.509891435464415
+      },
+      "decided": 9408,
+      "decided_rate": {
+        "hi": 0.5461960426946144,
+        "hits": 4868.0,
+        "lo": 0.4899232055216945,
+        "n": 9408,
+        "queries": 125,
+        "rate": 0.5174319727891157
+      },
+      "missing": 0,
+      "pairs": 16580,
+      "ties": 7172
+    },
+    "baseline_more_title_terms_first_u1_same": {
+      "all_pairs_ties_half": {
+        "hi": 0.5848926880265666,
+        "hits": 253.5,
+        "lo": 0.5049017209623575,
+        "n": 465,
+        "queries": 88,
+        "rate": 0.5451612903225806
+      },
+      "decided": 204,
+      "decided_rate": {
+        "hi": 0.6894272376335394,
+        "hits": 123.0,
+        "lo": 0.5074267218126236,
+        "n": 204,
+        "queries": 67,
+        "rate": 0.6029411764705882
+      },
+      "missing": 0,
+      "pairs": 465,
+      "ties": 261
+    },
+    "baseline_more_title_terms_first_u2_same": {
+      "all_pairs_ties_half": {
+        "hi": 0.6114369747899159,
+        "hits": 88.5,
+        "lo": 0.49111679604798875,
+        "n": 159,
+        "queries": 54,
+        "rate": 0.5566037735849056
+      },
+      "decided": 68,
+      "decided_rate": {
+        "hi": 0.75,
+        "hits": 43.0,
+        "lo": 0.47938883034773444,
+        "n": 68,
+        "queries": 32,
+        "rate": 0.6323529411764706
+      },
+      "missing": 0,
+      "pairs": 159,
+      "ties": 91
+    },
+    "baseline_shorter_url_first_u1_cross": {
+      "all_pairs_ties_half": {
+        "hi": 0.5200061683520876,
+        "hits": 8361.5,
+        "lo": 0.4881800492949133,
+        "n": 16580,
+        "queries": 134,
+        "rate": 0.5043124246079614
+      },
+      "decided": 16279,
+      "decided_rate": {
+        "hi": 0.5203756885582782,
+        "hits": 8211.0,
+        "lo": 0.48795354161183846,
+        "n": 16279,
+        "queries": 134,
+        "rate": 0.5043921616806929
+      },
+      "missing": 0,
+      "pairs": 16580,
+      "ties": 301
+    },
+    "baseline_shorter_url_first_u1_same": {
+      "all_pairs_ties_half": {
+        "hi": 0.5991288332406655,
+        "hits": 257.5,
+        "lo": 0.5090203249974689,
+        "n": 465,
+        "queries": 88,
+        "rate": 0.553763440860215
+      },
+      "decided": 412,
+      "decided_rate": {
+        "hi": 0.6147308781869688,
+        "hits": 231.0,
+        "lo": 0.5083527247414479,
+        "n": 412,
+        "queries": 80,
+        "rate": 0.5606796116504854
+      },
+      "missing": 0,
+      "pairs": 465,
+      "ties": 53
+    },
+    "baseline_shorter_url_first_u2_same": {
+      "all_pairs_ties_half": {
+        "hi": 0.7012214919227114,
+        "hits": 98.5,
+        "lo": 0.5333278145695364,
+        "n": 159,
+        "queries": 54,
+        "rate": 0.6194968553459119
+      },
+      "decided": 154,
+      "decided_rate": {
+        "hi": 0.7122302158273381,
+        "hits": 96.0,
+        "lo": 0.5324675324675324,
+        "n": 154,
+        "queries": 50,
+        "rate": 0.6233766233766234
+      },
+      "missing": 0,
+      "pairs": 159,
+      "ties": 5
+    },
+    "cross_site_model_weights": {
+      "fit_A_score_B": {
+        "bm25_body": -0.9243,
+        "bm25f": 0.9682,
+        "first100_cov": 0.0719,
+        "h1_cov": 0.1552,
+        "is_home": -0.0229,
+        "log_words": -0.021,
+        "recency": 0.0641,
+        "serp_title_all": 0.061,
+        "slug_cov": -0.0774,
+        "title_cov": -0.1213,
+        "title_phrase": 0.0553,
+        "url_depth": -0.1716
+      },
+      "fit_B_score_A": {
+        "bm25_body": 0.7333,
+        "bm25f": -0.2855,
+        "first100_cov": -0.3499,
+        "h1_cov": -0.0104,
+        "is_home": 0.2126,
+        "log_words": -0.1449,
+        "recency": 0.0194,
+        "serp_title_all": -0.0234,
+        "slug_cov": 0.0169,
+        "title_cov": 0.2285,
+        "title_phrase": 0.0202,
+        "url_depth": 0.1124
+      }
+    },
+    "fold_site_pairs": {
+      "A": [
+        [
+          "hcss.com",
+          158
+        ],
+        [
+          "smartcrewhq.com",
+          39
+        ],
+        [
+          "youtube.com",
+          37
+        ],
+        [
+          "trimble.com",
+          26
+        ],
+        [
+          "agtek.com",
+          20
+        ],
+        [
+          "all",
+          330
+        ]
+      ],
+      "B": [
+        [
+          "hcss.com",
+          42
+        ],
+        [
+          "trimble.com",
+          26
+        ],
+        [
+          "assignar.com",
+          16
+        ],
+        [
+          "smartcrewhq.com",
+          13
+        ],
+        [
+          "workyard.com",
+          7
+        ],
+        [
+          "all",
+          135
+        ]
+      ]
+    },
+    "model_minus_title_baseline_u1_same_ties_half": {
+      "diff": -0.05913978494623656,
+      "hi": -0.007587115181176096,
+      "lo": -0.11379331218168157,
+      "n": 465,
+      "queries": 88
+    },
+    "model_minus_url_baseline_u1_same_ties_half": {
+      "diff": -0.06774193548387097,
+      "hi": -0.012393012939682327,
+      "lo": -0.12938166182170543,
+      "n": 465,
+      "queries": 88
+    },
+    "model_ties": 0,
+    "models": {
+      "fit_A_score_B": {
+        "coef": [
+          -0.27982778005740183,
+          0.13539235621437726,
+          0.6078527476534987,
+          -0.17355491179769586,
+          -0.826391010965058,
+          0.17462742973812873,
+          0.46481387258214885,
+          -0.0878135421435548,
+          -0.2743769035500053,
+          0.11416163135045072,
+          0.6842391755928199,
+          0.868690719837415
+        ],
+        "feats": [
+          "title_cov",
+          "h1_cov",
+          "slug_cov",
+          "title_phrase",
+          "bm25_body",
+          "bm25f",
+          "first100_cov",
+          "log_words",
+          "url_depth",
+          "is_home",
+          "serp_title_all",
+          "recency"
+        ],
+        "per_unit": [
+          -0.8102195300378026,
+          0.34007540949948434,
+          1.8732220024865194,
+          -0.5958197068206892,
+          -0.4674316368936604,
+          0.278281065362446,
+          1.240392407060039,
+          -0.0761921043404607,
+          -0.29118614735501847,
+          0.34093867895802304,
+          2.016383371986253,
+          0.4395011523274684
+        ],
+        "scale": [
+          0.3453727905625107,
+          0.39812451130660936,
+          0.32449584024030975,
+          0.29128763250176765,
+          1.7679398349176352,
+          0.6275217809400218,
+          0.37473131078240335,
+          1.1525281117209243,
+          0.9422732023562953,
+          0.3348450568863338,
+          0.33933982252531925,
+          1.9765379800191314
+        ],
+        "train_pairs": 330
+      },
+      "fit_B_score_A": {
+        "coef": [
+          0.9147771557449491,
+          -0.5449058529528166,
+          1.1854849519383068,
+          0.9217595717249218,
+          1.1454223237408083,
+          0.8059352791152747,
+          -0.8150507860746157,
+          -0.07567012681083539,
+          -0.5407590484792102,
+          0.9458101900952177,
+          -0.24739389539343443,
+          -0.40841665874130045
+        ],
+        "feats": [
+          "title_cov",
+          "h1_cov",
+          "slug_cov",
+          "title_phrase",
+          "bm25_body",
+          "bm25f",
+          "first100_cov",
+          "log_words",
+          "url_depth",
+          "is_home",
+          "serp_title_all",
+          "recency"
+        ],
+        "per_unit": [
+          3.2707287156138567,
+          -1.64123465017615,
+          3.905110663301253,
+          3.2291498401138314,
+          0.6853202425124956,
+          1.2463157381758843,
+          -2.5022916573378837,
+          -0.0653380554721653,
+          -0.5030467879112381,
+          2.155183229921205,
+          -0.7186143276091135,
+          -0.25533082224370873
+        ],
+        "scale": [
+          0.279686037970062,
+          0.3320097177416606,
+          0.3035726908020928,
+          0.2854496128592251,
+          1.6713680009531071,
+          0.646654177933151,
+          0.32572173738601073,
+          1.1581325196167134,
+          1.0749676997731399,
+          0.43885372573625553,
+          0.34426518632954817,
+          1.5995587808489256
+        ],
+        "train_pairs": 135
+      }
+    },
+    "per_top_site": {
+      "agtek.com": {
+        "loso": {
+          "hi": 0.7619047619047619,
+          "hits": 13.0,
+          "lo": 0.2727272727272727,
+          "n": 26,
+          "queries": 11,
+          "rate": 0.5
+        },
+        "model": {
+          "hi": 0.7619047619047619,
+          "hits": 12.0,
+          "lo": 0.22727272727272727,
+          "n": 26,
+          "queries": 11,
+          "rate": 0.46153846153846156
+        }
+      },
+      "hcss.com": {
+        "loso": {
+          "hi": 0.5250044964028777,
+          "hits": 88.0,
+          "lo": 0.3177021329365079,
+          "n": 200,
+          "queries": 29,
+          "rate": 0.44
+        },
+        "model": {
+          "hi": 0.5212788688852519,
+          "hits": 87.0,
+          "lo": 0.30919054353172654,
+          "n": 200,
+          "queries": 29,
+          "rate": 0.435
+        }
+      },
+      "smartcrewhq.com": {
+        "loso": {
+          "hi": 0.7321726190476189,
+          "hits": 32.0,
+          "lo": 0.4883720930232558,
+          "n": 52,
+          "queries": 24,
+          "rate": 0.6153846153846154
+        },
+        "model": {
+          "hi": 0.6842105263157895,
+          "hits": 30.0,
+          "lo": 0.4570779220779221,
+          "n": 52,
+          "queries": 24,
+          "rate": 0.5769230769230769
+        }
+      },
+      "trimble.com": {
+        "loso": {
+          "hi": 0.7352941176470589,
+          "hits": 33.0,
+          "lo": 0.45443181818181816,
+          "n": 52,
+          "queries": 11,
+          "rate": 0.6346153846153846
+        },
+        "model": {
+          "hi": 0.7273051948051946,
+          "hits": 32.0,
+          "lo": 0.3998684210526316,
+          "n": 52,
+          "queries": 11,
+          "rate": 0.6153846153846154
+        }
+      },
+      "youtube.com": {
+        "loso": {
+          "hi": 0.38636363636363635,
+          "hits": 10.0,
+          "lo": 0.11764705882352941,
+          "n": 38,
+          "queries": 20,
+          "rate": 0.2631578947368421
+        },
+        "model": {
+          "hi": 0.38636363636363635,
+          "hits": 10.0,
+          "lo": 0.11764705882352941,
+          "n": 38,
+          "queries": 20,
+          "rate": 0.2631578947368421
+        }
+      }
+    },
+    "per_top_site_single_decided": {
+      "agtek.com": {
+        "bm25f": {
+          "hi": 0.875,
+          "hits": 18.0,
+          "lo": 0.47058823529411764,
+          "n": 26,
+          "queries": 11,
+          "rate": 0.6923076923076923
+        },
+        "h1_cov": {
+          "hi": 1.0,
+          "hits": 7.0,
+          "lo": 0.625,
+          "n": 8,
+          "queries": 4,
+          "rate": 0.875
+        },
+        "slug_cov": {
+          "hi": 0.8095238095238095,
+          "hits": 10.0,
+          "lo": 0.25,
+          "n": 17,
+          "queries": 9,
+          "rate": 0.5882352941176471
+        },
+        "title_cov": {
+          "hi": 1.0,
+          "hits": 4.0,
+          "lo": 0.5,
+          "n": 5,
+          "queries": 3,
+          "rate": 0.8
+        },
+        "url_depth": {
+          "hi": 0.6111111111111112,
+          "hits": 5.0,
+          "lo": 0.0625,
+          "n": 15,
+          "queries": 8,
+          "rate": 0.3333333333333333
+        }
+      },
+      "hcss.com": {
+        "bm25f": {
+          "hi": 0.6453410382720727,
+          "hits": 117.0,
+          "lo": 0.5284039918414919,
+          "n": 200,
+          "queries": 29,
+          "rate": 0.585
+        },
+        "h1_cov": {
+          "hi": 0.769741208663251,
+          "hits": 61.0,
+          "lo": 0.5,
+          "n": 92,
+          "queries": 19,
+          "rate": 0.6630434782608695
+        },
+        "slug_cov": {
+          "hi": 0.77312675070028,
+          "hits": 52.0,
+          "lo": 0.43833476027397256,
+          "n": 82,
+          "queries": 21,
+          "rate": 0.6341463414634146
+        },
+        "title_cov": {
+          "hi": 0.7058940242763772,
+          "hits": 58.0,
+          "lo": 0.418355924459336,
+          "n": 99,
+          "queries": 21,
+          "rate": 0.5858585858585859
+        },
+        "url_depth": {
+          "hi": 0.8142857142857143,
+          "hits": 57.0,
+          "lo": 0.5599830508474577,
+          "n": 80,
+          "queries": 16,
+          "rate": 0.7125
+        }
+      },
+      "smartcrewhq.com": {
+        "bm25f": {
+          "hi": 0.7000324675324673,
+          "hits": 30.0,
+          "lo": 0.4,
+          "n": 52,
+          "queries": 24,
+          "rate": 0.5769230769230769
+        },
+        "h1_cov": {
+          "hi": 0.8125,
+          "hits": 22.0,
+          "lo": 0.5125,
+          "n": 33,
+          "queries": 21,
+          "rate": 0.6666666666666666
+        },
+        "slug_cov": {
+          "hi": 0.8648648648648649,
+          "hits": 23.0,
+          "lo": 0.5384615384615384,
+          "n": 32,
+          "queries": 22,
+          "rate": 0.71875
+        },
+        "title_cov": {
+          "hi": 0.7666666666666667,
+          "hits": 22.0,
+          "lo": 0.48140096618357486,
+          "n": 35,
+          "queries": 22,
+          "rate": 0.6285714285714286
+        },
+        "url_depth": {
+          "hi": 0.8462499999999995,
+          "hits": 10.0,
+          "lo": 0.3157894736842105,
+          "n": 18,
+          "queries": 11,
+          "rate": 0.5555555555555556
+        }
+      },
+      "trimble.com": {
+        "bm25f": {
+          "hi": 0.8703853046594981,
+          "hits": 35.0,
+          "lo": 0.5068043448180435,
+          "n": 52,
+          "queries": 11,
+          "rate": 0.6730769230769231
+        },
+        "h1_cov": {
+          "hi": 0.7931034482758621,
+          "hits": 19.0,
+          "lo": 0.35,
+          "n": 32,
+          "queries": 11,
+          "rate": 0.59375
+        },
+        "slug_cov": {
+          "hi": 0.875,
+          "hits": 16.0,
+          "lo": 0.4166666666666667,
+          "n": 24,
+          "queries": 7,
+          "rate": 0.6666666666666666
+        },
+        "title_cov": {
+          "hi": 1.0,
+          "hits": 5.0,
+          "lo": 1.0,
+          "n": 5,
+          "queries": 3,
+          "rate": 1.0
+        },
+        "url_depth": {
+          "hi": 0.7222222222222222,
+          "hits": 21.0,
+          "lo": 0.47058823529411764,
+          "n": 38,
+          "queries": 10,
+          "rate": 0.5526315789473685
+        }
+      },
+      "youtube.com": {
+        "bm25f": {
+          "hi": 0.551819923371647,
+          "hits": 15.0,
+          "lo": 0.25806451612903225,
+          "n": 38,
+          "queries": 20,
+          "rate": 0.39473684210526316
+        },
+        "h1_cov": {
+          "hi": 0.5263157894736842,
+          "hits": 6.0,
+          "lo": 0.08333333333333333,
+          "n": 23,
+          "queries": 14,
+          "rate": 0.2608695652173913
+        },
+        "slug_cov": {
+          "hi": null,
+          "hits": 0,
+          "lo": null,
+          "n": 0,
+          "queries": 0,
+          "rate": null
+        },
+        "title_cov": {
+          "hi": 0.5263157894736842,
+          "hits": 6.0,
+          "lo": 0.08333333333333333,
+          "n": 23,
+          "queries": 14,
+          "rate": 0.2608695652173913
+        },
+        "url_depth": {
+          "hi": null,
+          "hits": 0,
+          "lo": null,
+          "n": 0,
+          "queries": 0,
+          "rate": null
+        }
+      }
+    },
+    "post_hoc_equal_weight_vote": {
+      "note": "POST-HOC. Added after the pre-stated fitted model scored at chance. Not a pre-stated test.",
+      "u1_cross_full": {
+        "hi": 0.5356303909484406,
+        "hits": 8581.5,
+        "lo": 0.5007070781281876,
+        "n": 16580,
+        "queries": 134,
+        "rate": 0.5175814234016888
+      },
+      "u1_cross_text": {
+        "hi": 0.5352938116468371,
+        "hits": 8567.5,
+        "lo": 0.49942189853283964,
+        "n": 16580,
+        "queries": 134,
+        "rate": 0.5167370325693607
+      },
+      "u1_same_full": {
+        "hi": 0.6607609741653712,
+        "hits": 284.5,
+        "lo": 0.5613634282384282,
+        "n": 465,
+        "queries": 88,
+        "rate": 0.6118279569892473
+      },
+      "u1_same_text": {
+        "hi": 0.6396228352252915,
+        "hits": 277.0,
+        "lo": 0.5474029449201574,
+        "n": 465,
+        "queries": 88,
+        "rate": 0.5956989247311828
+      },
+      "u1_same_text_by_zone": {
+        "both 11-30": {
+          "hi": 0.48103279631760637,
+          "hits": 29.0,
+          "lo": 0.2597282347282347,
+          "n": 79,
+          "queries": 34,
+          "rate": 0.3670886075949367
+        },
+        "both top10": {
+          "hi": 0.7081340135139677,
+          "hits": 88.5,
+          "lo": 0.529405637254902,
+          "n": 143,
+          "queries": 42,
+          "rate": 0.6188811188811189
+        },
+        "one top10": {
+          "hi": 0.7247909734363543,
+          "hits": 159.5,
+          "lo": 0.5710526315789474,
+          "n": 243,
+          "queries": 70,
+          "rate": 0.6563786008230452
+        }
+      },
+      "u1_same_text_macro": {
+        "hi": 0.6600862470074118,
+        "lo": 0.5183412759904237,
+        "queries": 88,
+        "rate": 0.5888815099042372
+      },
+      "u1_same_text_without_top5_sites": {
+        "hi": 0.7651004016064255,
+        "hits": 65.5,
+        "lo": 0.5792014069828035,
+        "n": 97,
+        "queries": 46,
+        "rate": 0.6752577319587629
+      },
+      "u1_same_text_without_youtube": {
+        "hi": 0.6616044432533466,
+        "hits": 265.0,
+        "lo": 0.5772905408104453,
+        "n": 427,
+        "queries": 82,
+        "rate": 0.6206088992974239
+      },
+      "u2_same_full": {
+        "hi": 0.7175330871418658,
+        "hits": 100.5,
+        "lo": 0.5450743210178615,
+        "n": 159,
+        "queries": 54,
+        "rate": 0.6320754716981132
+      },
+      "u2_same_text": {
+        "hi": 0.68156319213732,
+        "hits": 96.5,
+        "lo": 0.5331112144929122,
+        "n": 159,
+        "queries": 54,
+        "rate": 0.6069182389937107
+      }
+    },
+    "top5_sites": [
+      "hcss.com",
+      "smartcrewhq.com",
+      "trimble.com",
+      "youtube.com",
+      "agtek.com"
+    ],
+    "u1_by_gap": {
+      "1-2": {
+        "cross": {
+          "hi": 0.5174751465881748,
+          "hits": 1265.0,
+          "lo": 0.4848695797076342,
+          "n": 2524,
+          "queries": 132,
+          "rate": 0.501188589540412
+        },
+        "same": {
+          "hi": 0.578125,
+          "hits": 23.0,
+          "lo": 0.3170410783055199,
+          "n": 51,
+          "queries": 29,
+          "rate": 0.45098039215686275
+        }
+      },
+      "11+": {
+        "cross": {
+          "hi": 0.5274967479772473,
+          "hits": 3223.0,
+          "lo": 0.46231705994774275,
+          "n": 6507,
+          "queries": 100,
+          "rate": 0.4953127401260181
+        },
+        "same": {
+          "hi": 0.5765404238618524,
+          "hits": 105.0,
+          "lo": 0.43119266055045874,
+          "n": 208,
+          "queries": 62,
+          "rate": 0.5048076923076923
+        }
+      },
+      "3-5": {
+        "cross": {
+          "hi": 0.5141245976269103,
+          "hits": 1640.0,
+          "lo": 0.4821294297200715,
+          "n": 3293,
+          "queries": 134,
+          "rate": 0.4980261160036441
+        },
+        "same": {
+          "hi": 0.6724865651589785,
+          "hits": 39.0,
+          "lo": 0.44285128805620605,
+          "n": 70,
+          "queries": 36,
+          "rate": 0.5571428571428572
+        }
+      },
+      "6-10": {
+        "cross": {
+          "hi": 0.5108771868487763,
+          "hits": 2093.0,
+          "lo": 0.47284664325975595,
+          "n": 4256,
+          "queries": 124,
+          "rate": 0.4917763157894737
+        },
+        "same": {
+          "hi": 0.5167785234899329,
+          "hits": 59.0,
+          "lo": 0.3488216362126246,
+          "n": 136,
+          "queries": 60,
+          "rate": 0.4338235294117647
+        }
+      }
+    },
+    "u1_cross_site_by_zone": {
+      "both 11-30": {
+        "hi": 0.5189532461678534,
+        "hits": 3155.0,
+        "lo": 0.4776067513454188,
+        "n": 6338,
+        "queries": 100,
+        "rate": 0.4977911012937835
+      },
+      "both top10": {
+        "hi": 0.5150184148650617,
+        "hits": 1233.0,
+        "lo": 0.4592324766119771,
+        "n": 2534,
+        "queries": 134,
+        "rate": 0.48658247829518547
+      },
+      "one top10": {
+        "hi": 0.5284009021937808,
+        "hits": 3833.0,
+        "lo": 0.46400048885429634,
+        "n": 7708,
+        "queries": 100,
+        "rate": 0.4972755578619616
+      }
+    },
+    "u1_cross_site_gap_matched_point": 0.49533134425891673,
+    "u1_cross_site_same_model": {
+      "hi": 0.5150755543624691,
+      "hits": 8221.0,
+      "lo": 0.47891016303533884,
+      "n": 16580,
+      "queries": 134,
+      "rate": 0.49583835946924004
+    },
+    "u1_same_minus_cross": {
+      "diff": -0.009816854092895955,
+      "hi": 0.03950628360403584,
+      "lo": -0.06598100643008567
+    },
+    "u1_same_site": {
+      "hi": 0.5355748331629409,
+      "hits": 226.0,
+      "lo": 0.42818967511650197,
+      "n": 465,
+      "queries": 88,
+      "rate": 0.4860215053763441
+    },
+    "u1_same_site_by_fold": {
+      "A": {
+        "hi": 0.5542250821467689,
+        "hits": 162.0,
+        "lo": 0.41826704545454546,
+        "n": 330,
+        "queries": 59,
+        "rate": 0.4909090909090909
+      },
+      "B": {
+        "hi": 0.551525086934923,
+        "hits": 64.0,
+        "lo": 0.379831595829992,
+        "n": 135,
+        "queries": 29,
+        "rate": 0.4740740740740741
+      }
+    },
+    "u1_same_site_by_group": {
+      "a70": {
+        "hi": 0.5652272280149517,
+        "hits": 141.0,
+        "lo": 0.44175641111933767,
+        "n": 277,
+        "queries": 46,
+        "rate": 0.5090252707581228
+      },
+      "o30": {
+        "hi": 0.5116458512776342,
+        "hits": 44.0,
+        "lo": 0.2828227931488801,
+        "n": 110,
+        "queries": 28,
+        "rate": 0.4
+      },
+      "p35": {
+        "hi": 0.6567164179104478,
+        "hits": 41.0,
+        "lo": 0.3780487804878049,
+        "n": 78,
+        "queries": 14,
+        "rate": 0.5256410256410257
+      }
+    },
+    "u1_same_site_by_zone": {
+      "both 11-30": {
+        "hi": 0.46250466417910446,
+        "hits": 28.0,
+        "lo": 0.26229508196721313,
+        "n": 79,
+        "queries": 34,
+        "rate": 0.35443037974683544
+      },
+      "both top10": {
+        "hi": 0.5891621943947525,
+        "hits": 68.0,
+        "lo": 0.35554347826086957,
+        "n": 143,
+        "queries": 42,
+        "rate": 0.4755244755244755
+      },
+      "one top10": {
+        "hi": 0.6040855989038725,
+        "hits": 130.0,
+        "lo": 0.4579621848739496,
+        "n": 243,
+        "queries": 70,
+        "rate": 0.5349794238683128
+      }
+    },
+    "u1_same_site_distinct_url_pairs": 355,
+    "u1_same_site_distinct_urls": 232,
+    "u1_same_site_leave_one_site_out": {
+      "hi": 0.547072927373677,
+      "hits": 231.0,
+      "lo": 0.43665078707539356,
+      "n": 465,
+      "queries": 88,
+      "rate": 0.4967741935483871
+    },
+    "u1_same_site_macro": {
+      "bm25f_ties_half": {
+        "hi": 0.6781035426063834,
+        "lo": 0.5356813341330386,
+        "queries": 88,
+        "rate": 0.6054463213554122
+      },
+      "loso": {
+        "hi": 0.5375823115489309,
+        "lo": 0.3940961780485928,
+        "queries": 88,
+        "rate": 0.4648969874822147
+      },
+      "model": {
+        "hi": 0.5268694196428572,
+        "lo": 0.38583753683185507,
+        "queries": 88,
+        "rate": 0.4573632018234291
+      },
+      "more_title_terms_first_ties_half": {
+        "hi": 0.5891231164668664,
+        "lo": 0.48311013343506237,
+        "queries": 88,
+        "rate": 0.5370566223549177
+      },
+      "shorter_url_first_ties_half": {
+        "hi": 0.6421707614907188,
+        "lo": 0.5206451769111571,
+        "queries": 88,
+        "rate": 0.581724107647403
+      }
+    },
+    "u1_same_site_pairs_in_both_folds": 36,
+    "u1_same_site_pairs_only_one_fold": {
+      "hi": 0.5392882418360124,
+      "hits": 209.0,
+      "lo": 0.4281928462800547,
+      "n": 429,
+      "queries": 87,
+      "rate": 0.48717948717948717
+    },
+    "u1_same_site_scored_by_cross_site_model": {
+      "hi": 0.5381951086213963,
+      "hits": 227.0,
+      "lo": 0.4385935476274579,
+      "n": 465,
+      "queries": 88,
+      "rate": 0.4881720430107527
+    },
+    "u1_same_site_single_by_zone": {
+      "bm25f": {
+        "both 11-30": {
+          "hi": 0.5,
+          "hits": 30.0,
+          "lo": 0.2777777777777778,
+          "n": 78,
+          "queries": 34,
+          "rate": 0.38461538461538464
+        },
+        "both top10": {
+          "hi": 0.7152790450121654,
+          "hits": 89.0,
+          "lo": 0.5294117647058824,
+          "n": 143,
+          "queries": 42,
+          "rate": 0.6223776223776224
+        },
+        "one top10": {
+          "hi": 0.7228488739724694,
+          "hits": 158.0,
+          "lo": 0.5687861850895164,
+          "n": 243,
+          "queries": 70,
+          "rate": 0.6502057613168725
+        }
+      },
+      "title_cov": {
+        "both 11-30": {
+          "hi": 0.6666666666666666,
+          "hits": 12.0,
+          "lo": 0.27263986013986014,
+          "n": 25,
+          "queries": 19,
+          "rate": 0.48
+        },
+        "both top10": {
+          "hi": 0.7692622950819671,
+          "hits": 35.0,
+          "lo": 0.48887596899224806,
+          "n": 55,
+          "queries": 21,
+          "rate": 0.6363636363636364
+        },
+        "one top10": {
+          "hi": 0.7288263030457498,
+          "hits": 76.0,
+          "lo": 0.4883579126488939,
+          "n": 124,
+          "queries": 55,
+          "rate": 0.6129032258064516
+        }
+      },
+      "url_depth": {
+        "both 11-30": {
+          "hi": 0.761974789915966,
+          "hits": 11.0,
+          "lo": 0.2857142857142857,
+          "n": 22,
+          "queries": 15,
+          "rate": 0.5
+        },
+        "both top10": {
+          "hi": 0.7317479674796745,
+          "hits": 48.0,
+          "lo": 0.493972185036442,
+          "n": 78,
+          "queries": 27,
+          "rate": 0.6153846153846154
+        },
+        "one top10": {
+          "hi": 0.7290016318053699,
+          "hits": 62.0,
+          "lo": 0.4337248995983936,
+          "n": 104,
+          "queries": 52,
+          "rate": 0.5961538461538461
+        }
+      }
+    },
+    "u1_same_site_without_top5_sites": {
+      "loso": {
+        "hi": 0.6513838779507267,
+        "hits": 55.0,
+        "lo": 0.46478517570066863,
+        "n": 97,
+        "queries": 46,
+        "rate": 0.5670103092783505
+      },
+      "model": {
+        "hi": 0.6513838779507267,
+        "hits": 55.0,
+        "lo": 0.46478517570066863,
+        "n": 97,
+        "queries": 46,
+        "rate": 0.5670103092783505
+      }
+    },
+    "u1_same_site_without_ugc": {
+      "hi": 0.5551205255784745,
+      "hits": 216.0,
+      "lo": 0.45237382378100943,
+      "n": 427,
+      "queries": 82,
+      "rate": 0.5058548009367682
+    },
+    "u1_same_site_zone_sites": {
+      "both 11-30": [
+        [
+          "hcss.com",
+          37
+        ],
+        [
+          "youtube.com",
+          12
+        ],
+        [
+          "smartcrewhq.com",
+          7
+        ],
+        [
+          "trimble.com",
+          6
+        ]
+      ],
+      "both top10": [
+        [
+          "hcss.com",
+          65
+        ],
+        [
+          "trimble.com",
+          22
+        ],
+        [
+          "smartcrewhq.com",
+          11
+        ],
+        [
+          "assignar.com",
+          11
+        ]
+      ],
+      "one top10": [
+        [
+          "hcss.com",
+          98
+        ],
+        [
+          "smartcrewhq.com",
+          34
+        ],
+        [
+          "youtube.com",
+          25
+        ],
+        [
+          "trimble.com",
+          24
+        ]
+      ]
+    },
+    "u2_cross_site_same_model": {
+      "hi": 0.5110781034432846,
+      "hits": 1809.0,
+      "lo": 0.4552148743712198,
+      "n": 3741,
+      "queries": 139,
+      "rate": 0.483560545308741
+    },
+    "u2_same_site": {
+      "hi": 0.575,
+      "hits": 76.0,
+      "lo": 0.37096507156590475,
+      "n": 159,
+      "queries": 54,
+      "rate": 0.4779874213836478
+    },
+    "u2_same_site_unanimous_multi_day": {
+      "hi": 0.8181818181818182,
+      "hits": 3.0,
+      "lo": 0.0,
+      "n": 7,
+      "queries": 5,
+      "rate": 0.42857142857142855
+    }
+  },
+  "q4_version_sensitivity": {
+    "control_no_material_change": {
+      "feature_change_counts": {
+        "bm25_body": 68,
+        "bm25f": 68,
+        "log_words": 59,
+        "recency": 24
+      },
+      "fetch_pairs": 249,
+      "median_abs_delta": 0.0,
+      "moved_down": 265,
+      "moved_rows": 437,
+      "moved_rows_nonzero_delta": 42,
+      "moved_up": 172,
+      "post_hoc_full_vote_nonzero_moved": 40,
+      "post_hoc_full_vote_sign_agrees": 20,
+      "post_hoc_text_vote_nonzero_moved": 34,
+      "post_hoc_text_vote_sign_agrees": 18,
+      "rows": 735,
+      "rows_where_a_title_or_h1_feature_changed": 0,
+      "score_unchanged_all_rows": 656,
+      "score_unchanged_moved_rows": 395,
+      "sign_agrees_with_move": 24,
+      "text_model_nonzero_moved": 34,
+      "text_model_sign_agrees": 18,
+      "urls": 97
+    },
+    "material": {
+      "feature_change_counts": {
+        "bm25_body": 27,
+        "bm25f": 28,
+        "first100_cov": 6,
+        "h1_cov": 8,
+        "log_words": 27,
+        "recency": 26,
+        "title_cov": 1,
+        "title_phrase": 5
+      },
+      "fetch_pairs": 13,
+      "median_abs_delta": 0.47013815257643543,
+      "moved_down": 10,
+      "moved_rows": 17,
+      "moved_rows_nonzero_delta": 17,
+      "moved_up": 7,
+      "post_hoc_full_vote_nonzero_moved": 16,
+      "post_hoc_full_vote_sign_agrees": 7,
+      "post_hoc_text_vote_nonzero_moved": 16,
+      "post_hoc_text_vote_sign_agrees": 7,
+      "rows": 28,
+      "rows_where_a_title_or_h1_feature_changed": 13,
+      "score_unchanged_all_rows": 0,
+      "score_unchanged_moved_rows": 0,
+      "sign_agrees_with_move": 9,
+      "text_model_nonzero_moved": 17,
+      "text_model_sign_agrees": 10,
+      "urls": 11
+    },
+    "note": "Model scores PREDICTED. URL features and SERP title held at day A; dates aged to fetch day B for both versions."
+  },
+  "q5_structure_vs_text": {
+    "canonical_elsewhere_pairs": 24,
+    "extra_descriptive": {
+      "age_published": {
+        "all_pairs_ties_half": {
+          "hi": 0.510990834386852,
+          "hits": 225.5,
+          "lo": 0.46065223383836323,
+          "n": 465,
+          "queries": 88,
+          "rate": 0.48494623655913977
+        },
+        "decided": 280,
+        "decided_rate": {
+          "hi": 0.5186610098045338,
+          "hits": 133.0,
+          "lo": 0.4317127813650353,
+          "n": 280,
+          "queries": 63,
+          "rate": 0.475
+        },
+        "missing": 156,
+        "pairs": 465,
+        "ties": 29
+      },
+      "canonical_elsewhere": {
+        "all_pairs_ties_half": {
+          "hi": 0.5072679715573938,
+          "hits": 231.0,
+          "lo": 0.48592973384640054,
+          "n": 465,
+          "queries": 88,
+          "rate": 0.4967741935483871
+        },
+        "decided": 21,
+        "decided_rate": {
+          "hi": 0.6842105263157895,
+          "hits": 9.0,
+          "lo": 0.22727272727272727,
+          "n": 21,
+          "queries": 14,
+          "rate": 0.42857142857142855
+        },
+        "missing": 0,
+        "pairs": 465,
+        "ties": 444
+      },
+      "inlinks": {
+        "all_pairs_ties_half": {
+          "hi": 0.6195919129663352,
+          "hits": 268.0,
+          "lo": 0.5357963019578842,
+          "n": 465,
+          "queries": 88,
+          "rate": 0.5763440860215053
+        },
+        "decided": 277,
+        "decided_rate": {
+          "hi": 0.6962484973262771,
+          "hits": 174.0,
+          "lo": 0.5563085823691001,
+          "n": 277,
+          "queries": 73,
+          "rate": 0.628158844765343
+        },
+        "missing": 0,
+        "pairs": 465,
+        "ties": 188
+      },
+      "url_len": {
+        "all_pairs_ties_half": {
+          "hi": 0.5991288332406655,
+          "hits": 257.5,
+          "lo": 0.5090203249974689,
+          "n": 465,
+          "queries": 88,
+          "rate": 0.553763440860215
+        },
+        "decided": 412,
+        "decided_rate": {
+          "hi": 0.6147308781869688,
+          "hits": 231.0,
+          "lo": 0.5083527247414479,
+          "n": 412,
+          "queries": 80,
+          "rate": 0.5606796116504854
+        },
+        "missing": 0,
+        "pairs": 465,
+        "ties": 53
+      }
+    },
+    "full_minus_structure": {
+      "diff": -0.054838709677419356,
+      "hi": -0.008736808780075987,
+      "lo": -0.10402024967106319,
+      "n": 465,
+      "queries": 88
+    },
+    "full_minus_text": {
+      "diff": -0.00967741935483871,
+      "hi": 0.03747854222830475,
+      "lo": -0.06324363700286588,
+      "n": 465,
+      "queries": 88
+    },
+    "homepage_ranks_higher": {
+      "hi": 0.7800121951219512,
+      "hits": 40.0,
+      "lo": 0.47169137466307276,
+      "n": 63,
+      "queries": 26,
+      "rate": 0.6349206349206349
+    },
+    "inlink_coverage": {
+      "pages": 1084,
+      "pages_with_any_same_site_inlink": 359
+    },
+    "model_full": {
+      "hi": 0.5355748331629409,
+      "hits": 226.0,
+      "lo": 0.42818967511650197,
+      "n": 465,
+      "queries": 88,
+      "rate": 0.4860215053763441
+    },
+    "model_full_minus_structure": {
+      "hi": 0.5108547008547009,
+      "hits": 217.0,
+      "lo": 0.42226472290277395,
+      "n": 465,
+      "queries": 88,
+      "rate": 0.4666666666666667
+    },
+    "model_structure": {
+      "hi": 0.5759634216589861,
+      "hits": 251.5,
+      "lo": 0.5012496141975309,
+      "n": 465,
+      "queries": 88,
+      "rate": 0.5408602150537635
+    },
+    "model_text": {
+      "hi": 0.5439304936337711,
+      "hits": 230.5,
+      "lo": 0.44952643073631665,
+      "n": 465,
+      "queries": 88,
+      "rate": 0.4956989247311828
+    },
+    "on_structure_informative": {
+      "full": {
+        "hi": 0.5866713615023474,
+        "hits": 102.0,
+        "lo": 0.3961747693155213,
+        "n": 204,
+        "queries": 66,
+        "rate": 0.5
+      },
+      "structure": {
+        "hi": 0.6666666666666666,
+        "hits": 121.0,
+        "lo": 0.5054809052333805,
+        "n": 204,
+        "queries": 66,
+        "rate": 0.5931372549019608
+      },
+      "text": {
+        "hi": 0.5628151471643934,
+        "hits": 99.5,
+        "lo": 0.4073835125448029,
+        "n": 204,
+        "queries": 66,
+        "rate": 0.4877450980392157
+      }
+    },
+    "on_structure_informative_bm25f": {
+      "all_pairs_ties_half": {
+        "hi": 0.6238095238095238,
+        "hits": 111.5,
+        "lo": 0.4718865530989489,
+        "n": 204,
+        "queries": 66,
+        "rate": 0.5465686274509803
+      },
+      "decided": 203,
+      "decided_rate": {
+        "hi": 0.6243119860970612,
+        "hits": 111.0,
+        "lo": 0.47187706543291474,
+        "n": 203,
+        "queries": 66,
+        "rate": 0.5467980295566502
+      },
+      "missing": 0,
+      "pairs": 204,
+      "ties": 1
+    },
+    "on_structure_informative_post_hoc_text_vote": {
+      "hi": 0.6328909266409266,
+      "hits": 116.5,
+      "lo": 0.497039627039627,
+      "n": 204,
+      "queries": 66,
+      "rate": 0.571078431372549
+    },
+    "on_structure_tied": {
+      "full": {
+        "hi": 0.5248247330235591,
+        "hits": 124.0,
+        "lo": 0.4279702251270879,
+        "n": 261,
+        "queries": 71,
+        "rate": 0.47509578544061304
+      },
+      "text": {
+        "hi": 0.573138728698244,
+        "hits": 131.0,
+        "lo": 0.439392697466468,
+        "n": 261,
+        "queries": 71,
+        "rate": 0.5019157088122606
+      }
+    },
+    "on_structure_tied_bm25f": {
+      "all_pairs_ties_half": {
+        "hi": 0.6892876139817629,
+        "hits": 166.0,
+        "lo": 0.577968729810053,
+        "n": 261,
+        "queries": 71,
+        "rate": 0.6360153256704981
+      },
+      "decided": 261,
+      "decided_rate": {
+        "hi": 0.6892876139817629,
+        "hits": 166.0,
+        "lo": 0.577968729810053,
+        "n": 261,
+        "queries": 71,
+        "rate": 0.6360153256704981
+      },
+      "missing": 0,
+      "pairs": 261,
+      "ties": 0
+    },
+    "on_structure_tied_post_hoc_text_vote": {
+      "hi": 0.6726937704735995,
+      "hits": 160.5,
+      "lo": 0.5506285564975032,
+      "n": 261,
+      "queries": 71,
+      "rate": 0.6149425287356322
+    },
+    "on_structure_tied_title_cov": {
+      "all_pairs_ties_half": {
+        "hi": 0.5740197848092305,
+        "hits": 135.0,
+        "lo": 0.46028521163605923,
+        "n": 261,
+        "queries": 71,
+        "rate": 0.5172413793103449
+      },
+      "decided": 117,
+      "decided_rate": {
+        "hi": 0.6725703942075624,
+        "hits": 63.0,
+        "lo": 0.4094474977540559,
+        "n": 117,
+        "queries": 53,
+        "rate": 0.5384615384615384
+      },
+      "missing": 0,
+      "pairs": 261,
+      "ties": 144
+    },
+    "pairs_with_one_homepage": 63,
+    "structure_informative_pairs": 204,
+    "structure_tied_pairs": 261,
+    "structure_vs_bm25f_on_informative": {
+      "agree": 83,
+      "agree_and_right": 56,
+      "disagree": 120,
+      "disagree_bm25f_right": 55,
+      "disagree_structure_right": 65,
+      "pairs": 204
+    },
+    "text_minus_structure": {
+      "diff": -0.04516129032258064,
+      "hi": 0.0161947105919412,
+      "lo": -0.10294117647058823,
+      "n": 465,
+      "queries": 88
+    }
+  }
+}

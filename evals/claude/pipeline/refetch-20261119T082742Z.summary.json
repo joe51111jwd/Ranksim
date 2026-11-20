@@ -1,0 +1,36 @@
+{
+  "body_bytes_ok": 5821593,
+  "db_bytes_after": {
+    "db": 3253936128,
+    "total": 3259856600,
+    "wal": 5920472
+  },
+  "db_bytes_before": {
+    "db": 3253936128,
+    "total": 3253936128,
+    "wal": 0
+  },
+  "failed": 2,
+  "failure_reasons": {
+    "http_500": 2
+  },
+  "fetched_ok": 18,
+  "finished_utc": "2026-11-19T08:28:09.223Z",
+  "hosts": 10,
+  "html_chars_stored": 5817423,
+  "http_status_hist": {
+    "200": 18,
+    "500": 2
+  },
+  "label": "smoke-limit20",
+  "ok_bytes_changed_vs_prior": 14,
+  "ok_bytes_unchanged_vs_prior": 2,
+  "ok_no_prior_http_fetch": 2,
+  "rows_inserted": 20,
+  "rows_skipped_duplicate": 0,
+  "sidecar": "evals/claude/pipeline/refetch-20261119T082742Z.jsonl",
+  "since": "2026-11-14",
+  "started_utc": "2026-11-19T08:27:42.164Z",
+  "urls_selected": 20,
+  "wall_seconds": 27.1
+}

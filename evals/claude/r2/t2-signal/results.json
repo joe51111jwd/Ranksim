@@ -1,0 +1,5322 @@
+{
+  "label": "MEASURED (no predictor). Real Google positions from Serper.",
+  "seal": {
+    "cutoff": "2026-11-17",
+    "max_serp_day_rsdata": "2026-11-17",
+    "max_serp_day_local_loader": "2026-11-17",
+    "max_page_fetch_et_day_used": "2026-11-17",
+    "max_page_fetched_at_utc_indexed": "2026-11-18T03:13:58.821Z",
+    "local_loader_rows_match_rsdata_top10": true,
+    "serp_top10_rows": 4626,
+    "extract_cache_ids": 1713,
+    "extract_cache_ids_outside_sealed_index": 0,
+    "pages_used_outside_sealed_index": 0
+  },
+  "q1_excess_movement": {
+    "round1_check": {
+      "usable_rows": 763,
+      "material_rows": 28,
+      "material_moved": 17,
+      "material_up": 7,
+      "material_down": 10,
+      "material_moved_urls": 10,
+      "material_moved_sites": 4,
+      "position_rule_material_moved": {
+        "hits": 12,
+        "n": 17,
+        "rate": 0.705882,
+        "lo": 0.461538,
+        "hi": 0.894737,
+        "queries": 12
+      },
+      "position_rule_unchanged_moved": {
+        "hits": 303,
+        "n": 437,
+        "rate": 0.693364,
+        "lo": 0.647316,
+        "hi": 0.736489,
+        "queries": 30
+      }
+    },
+    "raw_rates": {
+      "material": {
+        "moved": {
+          "hits": 17,
+          "n": 28,
+          "rate": 0.607143,
+          "lo": 0.423077,
+          "hi": 0.772727,
+          "queries": 16
+        },
+        "absd": {
+          "mean": 1.571429,
+          "n": 28
+        },
+        "crossed": {
+          "hits": 4,
+          "n": 28,
+          "rate": 0.142857,
+          "lo": 0.032258,
+          "hi": 0.285714,
+          "queries": 16
+        }
+      },
+      "not_material": {
+        "moved": {
+          "hits": 437,
+          "n": 735,
+          "rate": 0.594558,
+          "lo": 0.533873,
+          "hi": 0.651496,
+          "queries": 30
+        },
+        "absd": {
+          "mean": 1.692517,
+          "n": 735
+        },
+        "crossed": {
+          "hits": 164,
+          "n": 735,
+          "rate": 0.223129,
+          "lo": 0.165981,
+          "hi": 0.282769,
+          "queries": 30
+        }
+      },
+      "anychange": {
+        "moved": {
+          "hits": 53,
+          "n": 101,
+          "rate": 0.524752,
+          "lo": 0.429998,
+          "hi": 0.630968,
+          "queries": 29
+        },
+        "absd": {
+          "mean": 1.19802,
+          "n": 101
+        },
+        "crossed": {
+          "hits": 14,
+          "n": 101,
+          "rate": 0.138614,
+          "lo": 0.073684,
+          "hi": 0.21507,
+          "queries": 29
+        }
+      },
+      "nochange": {
+        "moved": {
+          "hits": 401,
+          "n": 662,
+          "rate": 0.60574,
+          "lo": 0.538442,
+          "hi": 0.670661,
+          "queries": 30
+        },
+        "absd": {
+          "mean": 1.76284,
+          "n": 662
+        },
+        "crossed": {
+          "hits": 154,
+          "n": 662,
+          "rate": 0.232628,
+          "lo": 0.173445,
+          "hi": 0.297387,
+          "queries": 30
+        }
+      }
+    },
+    "material_vs_not": {
+      "moved": {
+        "joint_query": {
+          "treated_rows": 28,
+          "treated_rows_matched": 25,
+          "treated_rows_dropped_no_control": 3,
+          "control_rows": 735,
+          "control_rows_in_matched_strata": 478,
+          "clusters": 30,
+          "cluster": "query",
+          "treated_mean": 0.64,
+          "matched_control_mean": 0.557185,
+          "diff": 0.082815,
+          "lo": -0.082058,
+          "hi": 0.267486,
+          "attributable_share": 0.129399,
+          "attributable_share_hi95": 0.335452,
+          "attributable_share_hi90": 0.306155,
+          "valid_draws": 2000
+        },
+        "joint_url": {
+          "treated_rows": 28,
+          "treated_rows_matched": 25,
+          "treated_rows_dropped_no_control": 3,
+          "control_rows": 735,
+          "control_rows_in_matched_strata": 478,
+          "clusters": 98,
+          "cluster": "key",
+          "treated_mean": 0.64,
+          "matched_control_mean": 0.557185,
+          "diff": 0.082815,
+          "lo": -0.113036,
+          "hi": 0.348492,
+          "attributable_share": 0.129399,
+          "attributable_share_hi95": 0.392466,
+          "attributable_share_hi90": 0.368063,
+          "valid_draws": 2000
+        },
+        "helper_controls_fixed": {
+          "diff": 0.082815,
+          "lo": -0.062295,
+          "hi": 0.230466,
+          "n": 25,
+          "queries": 16
+        }
+      },
+      "absd": {
+        "joint_query": {
+          "treated_rows": 28,
+          "treated_rows_matched": 25,
+          "treated_rows_dropped_no_control": 3,
+          "control_rows": 735,
+          "control_rows_in_matched_strata": 478,
+          "clusters": 30,
+          "cluster": "query",
+          "treated_mean": 1.72,
+          "matched_control_mean": 1.936467,
+          "diff": -0.216467,
+          "lo": -1.049043,
+          "hi": 0.592581,
+          "attributable_share": 0.0,
+          "attributable_share_hi95": 0.259481,
+          "attributable_share_hi90": 0.204535,
+          "valid_draws": 2000
+        },
+        "joint_url": {
+          "treated_rows": 28,
+          "treated_rows_matched": 25,
+          "treated_rows_dropped_no_control": 3,
+          "control_rows": 735,
+          "control_rows_in_matched_strata": 478,
+          "clusters": 98,
+          "cluster": "key",
+          "treated_mean": 1.72,
+          "matched_control_mean": 1.936467,
+          "diff": -0.216467,
+          "lo": -0.892372,
+          "hi": 0.744132,
+          "attributable_share": 0.0,
+          "attributable_share_hi95": 0.317573,
+          "attributable_share_hi90": 0.253577,
+          "valid_draws": 2000
+        },
+        "helper_controls_fixed": {
+          "diff": -0.216467,
+          "lo": -0.944508,
+          "hi": 0.587884,
+          "n": 25,
+          "queries": 16
+        }
+      },
+      "crossed": {
+        "joint_query": {
+          "treated_rows": 28,
+          "treated_rows_matched": 25,
+          "treated_rows_dropped_no_control": 3,
+          "control_rows": 735,
+          "control_rows_in_matched_strata": 478,
+          "clusters": 30,
+          "cluster": "query",
+          "treated_mean": 0.16,
+          "matched_control_mean": 0.28058,
+          "diff": -0.12058,
+          "lo": -0.257511,
+          "hi": 0.083027,
+          "attributable_share": 0.0,
+          "attributable_share_hi95": 0.294281,
+          "attributable_share_hi90": 0.171072,
+          "valid_draws": 2000
+        },
+        "joint_url": {
+          "treated_rows": 28,
+          "treated_rows_matched": 25,
+          "treated_rows_dropped_no_control": 3,
+          "control_rows": 735,
+          "control_rows_in_matched_strata": 478,
+          "clusters": 98,
+          "cluster": "key",
+          "treated_mean": 0.16,
+          "matched_control_mean": 0.28058,
+          "diff": -0.12058,
+          "lo": -0.283145,
+          "hi": 0.168126,
+          "attributable_share": 0.0,
+          "attributable_share_hi95": 0.497473,
+          "attributable_share_hi90": 0.374409,
+          "valid_draws": 2000
+        },
+        "helper_controls_fixed": {
+          "diff": -0.12058,
+          "lo": -0.248528,
+          "hi": 0.058598,
+          "n": 25,
+          "queries": 16
+        }
+      }
+    },
+    "material_vs_nochange": {
+      "moved": {
+        "treated_rows": 28,
+        "treated_rows_matched": 25,
+        "treated_rows_dropped_no_control": 3,
+        "control_rows": 662,
+        "control_rows_in_matched_strata": 432,
+        "clusters": 30,
+        "cluster": "query",
+        "treated_mean": 0.64,
+        "matched_control_mean": 0.557501,
+        "diff": 0.082499,
+        "lo": -0.092909,
+        "hi": 0.280911,
+        "attributable_share": 0.128905,
+        "attributable_share_hi95": 0.348026,
+        "attributable_share_hi90": 0.31715,
+        "valid_draws": 2000
+      },
+      "absd": {
+        "treated_rows": 28,
+        "treated_rows_matched": 25,
+        "treated_rows_dropped_no_control": 3,
+        "control_rows": 662,
+        "control_rows_in_matched_strata": 432,
+        "clusters": 30,
+        "cluster": "query",
+        "treated_mean": 1.72,
+        "matched_control_mean": 1.932591,
+        "diff": -0.212591,
+        "lo": -1.065663,
+        "hi": 0.602325,
+        "attributable_share": 0.0,
+        "attributable_share_hi95": 0.264991,
+        "attributable_share_hi90": 0.204024,
+        "valid_draws": 2000
+      },
+      "crossed": {
+        "treated_rows": 28,
+        "treated_rows_matched": 25,
+        "treated_rows_dropped_no_control": 3,
+        "control_rows": 662,
+        "control_rows_in_matched_strata": 432,
+        "clusters": 30,
+        "cluster": "query",
+        "treated_mean": 0.16,
+        "matched_control_mean": 0.287809,
+        "diff": -0.127809,
+        "lo": -0.265238,
+        "hi": 0.074355,
+        "attributable_share": 0.0,
+        "attributable_share_hi95": 0.264366,
+        "attributable_share_hi90": 0.143114,
+        "valid_draws": 2000
+      }
+    },
+    "material_vs_not_interior": {
+      "moved": {
+        "treated_rows": 16,
+        "treated_rows_matched": 16,
+        "treated_rows_dropped_no_control": 0,
+        "control_rows": 561,
+        "control_rows_in_matched_strata": 373,
+        "clusters": 30,
+        "cluster": "query",
+        "treated_mean": 0.875,
+        "matched_control_mean": 0.659963,
+        "diff": 0.215037,
+        "lo": 0.032593,
+        "hi": 0.399926,
+        "attributable_share": 0.245757,
+        "attributable_share_hi95": 0.414753,
+        "attributable_share_hi90": 0.390626,
+        "valid_draws": 2000
+      },
+      "absd": {
+        "treated_rows": 16,
+        "treated_rows_matched": 16,
+        "treated_rows_dropped_no_control": 0,
+        "control_rows": 561,
+        "control_rows_in_matched_strata": 373,
+        "clusters": 30,
+        "cluster": "query",
+        "treated_mean": 2.125,
+        "matched_control_mean": 1.995127,
+        "diff": 0.129873,
+        "lo": -0.785076,
+        "hi": 0.960003,
+        "attributable_share": 0.061117,
+        "attributable_share_hi95": 0.365901,
+        "attributable_share_hi90": 0.328073,
+        "valid_draws": 2000
+      },
+      "crossed": {
+        "treated_rows": 16,
+        "treated_rows_matched": 16,
+        "treated_rows_dropped_no_control": 0,
+        "control_rows": 561,
+        "control_rows_in_matched_strata": 373,
+        "clusters": 30,
+        "cluster": "query",
+        "treated_mean": 0.125,
+        "matched_control_mean": 0.227769,
+        "diff": -0.102769,
+        "lo": -0.325028,
+        "hi": 0.154325,
+        "attributable_share": 0.0,
+        "attributable_share_hi95": 0.540204,
+        "attributable_share_hi90": 0.45121,
+        "valid_draws": 2000
+      }
+    },
+    "material_vs_not_interior_url_cluster": {
+      "moved": {
+        "treated_rows": 16,
+        "treated_rows_matched": 16,
+        "treated_rows_dropped_no_control": 0,
+        "control_rows": 561,
+        "control_rows_in_matched_strata": 373,
+        "clusters": 98,
+        "cluster": "key",
+        "treated_mean": 0.875,
+        "matched_control_mean": 0.659963,
+        "diff": 0.215037,
+        "lo": 0.031773,
+        "hi": 0.389121,
+        "attributable_share": 0.245757,
+        "attributable_share_hi95": 0.399631,
+        "attributable_share_hi90": 0.378538,
+        "valid_draws": 2000
+      },
+      "absd": {
+        "treated_rows": 16,
+        "treated_rows_matched": 16,
+        "treated_rows_dropped_no_control": 0,
+        "control_rows": 561,
+        "control_rows_in_matched_strata": 373,
+        "clusters": 98,
+        "cluster": "key",
+        "treated_mean": 2.125,
+        "matched_control_mean": 1.995127,
+        "diff": 0.129873,
+        "lo": -0.661486,
+        "hi": 0.928839,
+        "attributable_share": 0.061117,
+        "attributable_share_hi95": 0.340418,
+        "attributable_share_hi90": 0.304692,
+        "valid_draws": 2000
+      },
+      "crossed": {
+        "treated_rows": 16,
+        "treated_rows_matched": 16,
+        "treated_rows_dropped_no_control": 0,
+        "control_rows": 561,
+        "control_rows_in_matched_strata": 373,
+        "clusters": 98,
+        "cluster": "key",
+        "treated_mean": 0.125,
+        "matched_control_mean": 0.227769,
+        "diff": -0.102769,
+        "lo": -0.281859,
+        "hi": 0.215717,
+        "attributable_share": 0.0,
+        "attributable_share_hi95": 0.554825,
+        "attributable_share_hi90": 0.467091,
+        "valid_draws": 2000
+      }
+    },
+    "material_vs_not_interior_site_cluster": {
+      "moved": {
+        "treated_rows": 16,
+        "treated_rows_matched": 16,
+        "treated_rows_dropped_no_control": 0,
+        "control_rows": 561,
+        "control_rows_in_matched_strata": 373,
+        "clusters": 57,
+        "cluster": "site",
+        "treated_mean": 0.875,
+        "matched_control_mean": 0.659963,
+        "diff": 0.215037,
+        "lo": -0.107887,
+        "hi": 0.383553,
+        "attributable_share": 0.245757,
+        "attributable_share_hi95": 0.40824,
+        "attributable_share_hi90": 0.379251,
+        "valid_draws": 1990
+      }
+    },
+    "interior_material_summary": {
+      "rows": 16,
+      "moved": 14,
+      "up": 5,
+      "down": 9,
+      "urls": 10,
+      "sites": 5,
+      "client_rows": 8,
+      "by_url_up_down": {
+        "https://agtek.com/products/underground": "1 up, 0 down, 0 static",
+        "https://agtek.com/solutions/takeoff": "2 up, 2 down, 0 static",
+        "https://bidsyncai.com/blog/heavy-civil-construction-software": "0 up, 1 down, 0 static",
+        "https://ownrops.com/guides/best-land-clearing-software": "0 up, 1 down, 0 static",
+        "https://www.hcss.com/products/construction-project-management-software": "0 up, 0 down, 1 static",
+        "https://www.smartcrewhq.com/all-in-one-dirt-work": "0 up, 2 down, 1 static",
+        "https://www.smartcrewhq.com/all-in-one-dirt-work-software": "1 up, 1 down, 0 static",
+        "https://www.smartcrewhq.com/blog/best-software-small-dirt-work-contractors": "0 up, 1 down, 0 static",
+        "https://www.smartcrewhq.com/compare/hcss-heavybid-alternative": "1 up, 0 down, 0 static",
+        "https://www.smartcrewhq.com/dirt-work-software-with-crm": "0 up, 1 down, 0 static"
+      }
+    },
+    "material_summary": {
+      "rows": 28,
+      "urls": 11,
+      "sites": 5,
+      "url_pairs": 13,
+      "client_rows": 18
+    },
+    "interior_material_rows": [
+      {
+        "query": "best excavation software",
+        "key": "https://agtek.com/products/underground",
+        "window": "2026-11-13>2026-11-16",
+        "pos_a": 4,
+        "pos_b": 2,
+        "reasons": "title+h1"
+      },
+      {
+        "query": "all in 1 dirt work software",
+        "key": "https://agtek.com/solutions/takeoff",
+        "window": "2026-11-13>2026-11-16",
+        "pos_a": 3,
+        "pos_b": 1,
+        "reasons": "title+h1"
+      },
+      {
+        "query": "all in one dirt work software",
+        "key": "https://agtek.com/solutions/takeoff",
+        "window": "2026-11-13>2026-11-16",
+        "pos_a": 3,
+        "pos_b": 2,
+        "reasons": "title+h1"
+      },
+      {
+        "query": "best all in 1 dirt work software",
+        "key": "https://agtek.com/solutions/takeoff",
+        "window": "2026-11-13>2026-11-16",
+        "pos_a": 4,
+        "pos_b": 6,
+        "reasons": "title+h1"
+      },
+      {
+        "query": "best all in one dirt work software",
+        "key": "https://agtek.com/solutions/takeoff",
+        "window": "2026-11-13>2026-11-16",
+        "pos_a": 5,
+        "pos_b": 6,
+        "reasons": "title+h1"
+      },
+      {
+        "query": "all in one heavy civil software",
+        "key": "https://bidsyncai.com/blog/heavy-civil-construction-software",
+        "window": "2026-11-13>2026-11-16",
+        "pos_a": 6,
+        "pos_b": 11,
+        "reasons": "text"
+      },
+      {
+        "query": "dirt work software with crm",
+        "key": "https://ownrops.com/guides/best-land-clearing-software",
+        "window": "2026-11-13>2026-11-16",
+        "pos_a": 10,
+        "pos_b": 11,
+        "reasons": "text"
+      },
+      {
+        "query": "hcss heavyjob alternative",
+        "key": "https://www.hcss.com/products/construction-project-management-software",
+        "window": "2026-11-13>2026-11-16",
+        "pos_a": 2,
+        "pos_b": 2,
+        "reasons": "title+h1+text"
+      },
+      {
+        "query": "all in 1 dirt work software",
+        "key": "https://www.smartcrewhq.com/all-in-one-dirt-work",
+        "window": "2026-11-09>2026-11-11",
+        "pos_a": 8,
+        "pos_b": 9,
+        "reasons": "title+h1"
+      },
+      {
+        "query": "all in 1 dirt work software",
+        "key": "https://www.smartcrewhq.com/all-in-one-dirt-work",
+        "window": "2026-11-11>2026-11-13",
+        "pos_a": 9,
+        "pos_b": 9,
+        "reasons": "title"
+      },
+      {
+        "query": "best all-in-one dirtworks software",
+        "key": "https://www.smartcrewhq.com/all-in-one-dirt-work",
+        "window": "2026-11-11>2026-11-13",
+        "pos_a": 5,
+        "pos_b": 10,
+        "reasons": "title"
+      },
+      {
+        "query": "best all-in-one dirtworks software",
+        "key": "https://www.smartcrewhq.com/all-in-one-dirt-work-software",
+        "window": "2026-11-09>2026-11-11",
+        "pos_a": 3,
+        "pos_b": 1,
+        "reasons": "title+h1"
+      },
+      {
+        "query": "all in one dirtwork software",
+        "key": "https://www.smartcrewhq.com/all-in-one-dirt-work-software",
+        "window": "2026-11-11>2026-11-16",
+        "pos_a": 4,
+        "pos_b": 10,
+        "reasons": "title"
+      },
+      {
+        "query": "dirt work management software",
+        "key": "https://www.smartcrewhq.com/blog/best-software-small-dirt-work-contractors",
+        "window": "2026-11-09>2026-11-11",
+        "pos_a": 6,
+        "pos_b": 7,
+        "reasons": "title"
+      },
+      {
+        "query": "hcss heavybid alternative",
+        "key": "https://www.smartcrewhq.com/compare/hcss-heavybid-alternative",
+        "window": "2026-11-09>2026-11-11",
+        "pos_a": 10,
+        "pos_b": 9,
+        "reasons": "title+h1"
+      },
+      {
+        "query": "dirt work software with crm",
+        "key": "https://www.smartcrewhq.com/dirt-work-software-with-crm",
+        "window": "2026-11-09>2026-11-11",
+        "pos_a": 2,
+        "pos_b": 6,
+        "reasons": "title"
+      }
+    ],
+    "material_vs_not_without_client": {
+      "moved": {
+        "treated_rows": 10,
+        "treated_rows_matched": 10,
+        "treated_rows_dropped_no_control": 0,
+        "control_rows": 689,
+        "control_rows_in_matched_strata": 162,
+        "clusters": 30,
+        "cluster": "query",
+        "treated_mean": 0.8,
+        "matched_control_mean": 0.542754,
+        "diff": 0.257246,
+        "lo": -0.003278,
+        "hi": 0.496496,
+        "attributable_share": 0.321557,
+        "attributable_share_hi95": 0.528333,
+        "attributable_share_hi90": 0.495591,
+        "valid_draws": 2000
+      },
+      "absd": {
+        "treated_rows": 10,
+        "treated_rows_matched": 10,
+        "treated_rows_dropped_no_control": 0,
+        "control_rows": 689,
+        "control_rows_in_matched_strata": 162,
+        "clusters": 30,
+        "cluster": "query",
+        "treated_mean": 2.0,
+        "matched_control_mean": 1.420432,
+        "diff": 0.579568,
+        "lo": -0.699559,
+        "hi": 1.918018,
+        "attributable_share": 0.289784,
+        "attributable_share_hi95": 0.611382,
+        "attributable_share_hi90": 0.566244,
+        "valid_draws": 2000
+      },
+      "crossed": {
+        "treated_rows": 10,
+        "treated_rows_matched": 10,
+        "treated_rows_dropped_no_control": 0,
+        "control_rows": 689,
+        "control_rows_in_matched_strata": 162,
+        "clusters": 30,
+        "cluster": "query",
+        "treated_mean": 0.3,
+        "matched_control_mean": 0.149331,
+        "diff": 0.150669,
+        "lo": -0.135396,
+        "hi": 0.432578,
+        "attributable_share": 0.50223,
+        "attributable_share_hi95": 0.789312,
+        "attributable_share_hi90": 0.749049,
+        "valid_draws": 2000
+      }
+    },
+    "material_vs_not_interior_without_client": {
+      "moved": {
+        "treated_rows": 8,
+        "treated_rows_matched": 8,
+        "treated_rows_dropped_no_control": 0,
+        "control_rows": 524,
+        "control_rows_in_matched_strata": 118,
+        "clusters": 30,
+        "cluster": "query",
+        "treated_mean": 0.875,
+        "matched_control_mean": 0.621625,
+        "diff": 0.253375,
+        "lo": -0.009965,
+        "hi": 0.500044,
+        "attributable_share": 0.289572,
+        "attributable_share_hi95": 0.514196,
+        "attributable_share_hi90": 0.478799,
+        "valid_draws": 2000
+      },
+      "absd": {
+        "treated_rows": 8,
+        "treated_rows_matched": 8,
+        "treated_rows_dropped_no_control": 0,
+        "control_rows": 524,
+        "control_rows_in_matched_strata": 118,
+        "clusters": 30,
+        "cluster": "query",
+        "treated_mean": 1.75,
+        "matched_control_mean": 1.497131,
+        "diff": 0.252869,
+        "lo": -0.816467,
+        "hi": 1.352466,
+        "attributable_share": 0.144496,
+        "attributable_share_hi95": 0.531267,
+        "attributable_share_hi90": 0.477875,
+        "valid_draws": 2000
+      }
+    },
+    "client_only_interior": {
+      "moved": {
+        "treated_rows": 8,
+        "treated_rows_matched": 2,
+        "treated_rows_dropped_no_control": 6,
+        "control_rows": 37,
+        "control_rows_in_matched_strata": 5,
+        "clusters": 24,
+        "cluster": "query",
+        "treated_mean": 0.5,
+        "matched_control_mean": 1.0,
+        "diff": -0.5,
+        "lo": -1.0,
+        "hi": 0.0,
+        "attributable_share": 0.0,
+        "attributable_share_hi95": 0.0,
+        "attributable_share_hi90": 0.0,
+        "valid_draws": 1545
+      },
+      "absd": {
+        "treated_rows": 8,
+        "treated_rows_matched": 2,
+        "treated_rows_dropped_no_control": 6,
+        "control_rows": 37,
+        "control_rows_in_matched_strata": 5,
+        "clusters": 24,
+        "cluster": "query",
+        "treated_mean": 2.5,
+        "matched_control_mean": 3.125,
+        "diff": -0.625,
+        "lo": -3.333333,
+        "hi": 1.0,
+        "attributable_share": 0.0,
+        "attributable_share_hi95": 0.2,
+        "attributable_share_hi90": 0.2,
+        "valid_draws": 1545
+      }
+    },
+    "anychange_vs_none": {
+      "moved": {
+        "treated_rows": 101,
+        "treated_rows_matched": 97,
+        "treated_rows_dropped_no_control": 4,
+        "control_rows": 662,
+        "control_rows_in_matched_strata": 532,
+        "clusters": 30,
+        "cluster": "query",
+        "treated_mean": 0.536082,
+        "matched_control_mean": 0.540475,
+        "diff": -0.004393,
+        "lo": -0.120982,
+        "hi": 0.114115,
+        "attributable_share": 0.0,
+        "attributable_share_hi95": 0.186002,
+        "attributable_share_hi90": 0.162919,
+        "valid_draws": 2000
+      },
+      "absd": {
+        "treated_rows": 101,
+        "treated_rows_matched": 97,
+        "treated_rows_dropped_no_control": 4,
+        "control_rows": 662,
+        "control_rows_in_matched_strata": 532,
+        "clusters": 30,
+        "cluster": "query",
+        "treated_mean": 1.237113,
+        "matched_control_mean": 1.792725,
+        "diff": -0.555612,
+        "lo": -1.116457,
+        "hi": 0.091192,
+        "attributable_share": 0.0,
+        "attributable_share_hi95": 0.052461,
+        "attributable_share_hi90": 0.0,
+        "valid_draws": 2000
+      },
+      "crossed": {
+        "treated_rows": 101,
+        "treated_rows_matched": 97,
+        "treated_rows_dropped_no_control": 4,
+        "control_rows": 662,
+        "control_rows_in_matched_strata": 532,
+        "clusters": 30,
+        "cluster": "query",
+        "treated_mean": 0.14433,
+        "matched_control_mean": 0.240778,
+        "diff": -0.096448,
+        "lo": -0.182265,
+        "hi": 0.003275,
+        "attributable_share": 0.0,
+        "attributable_share_hi95": 0.017519,
+        "attributable_share_hi90": 0.0,
+        "valid_draws": 2000
+      }
+    },
+    "dose_bins_vs_none": {
+      "1-49": {
+        "moved": {
+          "treated_rows": 42,
+          "treated_rows_matched": 39,
+          "treated_rows_dropped_no_control": 3,
+          "control_rows": 662,
+          "control_rows_in_matched_strata": 417,
+          "clusters": 30,
+          "cluster": "query",
+          "treated_mean": 0.589744,
+          "matched_control_mean": 0.510068,
+          "diff": 0.079676,
+          "lo": -0.049766,
+          "hi": 0.216405,
+          "attributable_share": 0.135103,
+          "attributable_share_hi95": 0.322536,
+          "attributable_share_hi90": 0.29701,
+          "valid_draws": 2000
+        },
+        "absd": {
+          "treated_rows": 42,
+          "treated_rows_matched": 39,
+          "treated_rows_dropped_no_control": 3,
+          "control_rows": 662,
+          "control_rows_in_matched_strata": 417,
+          "clusters": 30,
+          "cluster": "query",
+          "treated_mean": 1.564103,
+          "matched_control_mean": 1.678973,
+          "diff": -0.114871,
+          "lo": -0.79802,
+          "hi": 0.726789,
+          "attributable_share": 0.0,
+          "attributable_share_hi95": 0.319062,
+          "attributable_share_hi90": 0.275037,
+          "valid_draws": 2000
+        }
+      },
+      "50-249": {
+        "moved": {
+          "treated_rows": 55,
+          "treated_rows_matched": 54,
+          "treated_rows_dropped_no_control": 1,
+          "control_rows": 662,
+          "control_rows_in_matched_strata": 457,
+          "clusters": 30,
+          "cluster": "query",
+          "treated_mean": 0.481481,
+          "matched_control_mean": 0.556847,
+          "diff": -0.075366,
+          "lo": -0.21504,
+          "hi": 0.071768,
+          "attributable_share": 0.0,
+          "attributable_share_hi95": 0.119496,
+          "attributable_share_hi90": 0.086117,
+          "valid_draws": 2000
+        },
+        "absd": {
+          "treated_rows": 55,
+          "treated_rows_matched": 54,
+          "treated_rows_dropped_no_control": 1,
+          "control_rows": 662,
+          "control_rows_in_matched_strata": 457,
+          "clusters": 30,
+          "cluster": "query",
+          "treated_mean": 0.907407,
+          "matched_control_mean": 1.86379,
+          "diff": -0.956382,
+          "lo": -1.691849,
+          "hi": -0.170502,
+          "attributable_share": 0.0,
+          "attributable_share_hi95": 0.0,
+          "attributable_share_hi90": 0.0,
+          "valid_draws": 2000
+        }
+      },
+      "250+": {
+        "moved": {
+          "treated_rows": 3,
+          "treated_rows_matched": 3,
+          "treated_rows_dropped_no_control": 0,
+          "control_rows": 662,
+          "control_rows_in_matched_strata": 127,
+          "clusters": 30,
+          "cluster": "query",
+          "treated_mean": 0.666667,
+          "matched_control_mean": 0.669716,
+          "diff": -0.003049,
+          "lo": -0.7,
+          "hi": 0.387327,
+          "attributable_share": 0.0,
+          "attributable_share_hi95": 0.387327,
+          "attributable_share_hi90": 0.343681,
+          "valid_draws": 1907
+        },
+        "absd": {
+          "treated_rows": 3,
+          "treated_rows_matched": 3,
+          "treated_rows_dropped_no_control": 0,
+          "control_rows": 662,
+          "control_rows_in_matched_strata": 127,
+          "clusters": 30,
+          "cluster": "query",
+          "treated_mean": 2.0,
+          "matched_control_mean": 1.847484,
+          "diff": 0.152516,
+          "lo": -3.039983,
+          "hi": 3.335667,
+          "attributable_share": 0.076258,
+          "attributable_share_hi95": 0.670816,
+          "attributable_share_hi90": 0.631818,
+          "valid_draws": 1907
+        }
+      },
+      "title_or_h1": {
+        "moved": {
+          "treated_rows": 26,
+          "treated_rows_matched": 23,
+          "treated_rows_dropped_no_control": 3,
+          "control_rows": 662,
+          "control_rows_in_matched_strata": 370,
+          "clusters": 30,
+          "cluster": "query",
+          "treated_mean": 0.608696,
+          "matched_control_mean": 0.541399,
+          "diff": 0.067296,
+          "lo": -0.106419,
+          "hi": 0.276449,
+          "attributable_share": 0.110558,
+          "attributable_share_hi95": 0.352908,
+          "attributable_share_hi90": 0.320442,
+          "valid_draws": 2000
+        },
+        "absd": {
+          "treated_rows": 26,
+          "treated_rows_matched": 23,
+          "treated_rows_dropped_no_control": 3,
+          "control_rows": 662,
+          "control_rows_in_matched_strata": 370,
+          "clusters": 30,
+          "cluster": "query",
+          "treated_mean": 1.608696,
+          "matched_control_mean": 1.950764,
+          "diff": -0.342068,
+          "lo": -1.183998,
+          "hi": 0.407533,
+          "attributable_share": 0.0,
+          "attributable_share_hi95": 0.198741,
+          "attributable_share_hi90": 0.141768,
+          "valid_draws": 2000
+        }
+      }
+    },
+    "dose_bin_counts": {
+      "none": {
+        "rows": 663,
+        "moved": 402,
+        "urls": 92
+      },
+      "1-49": {
+        "rows": 42,
+        "moved": 23,
+        "urls": 11
+      },
+      "50-249": {
+        "rows": 55,
+        "moved": 27,
+        "urls": 12
+      },
+      "250+": {
+        "rows": 3,
+        "moved": 2,
+        "urls": 3
+      }
+    },
+    "dose_slope_log1p_edit_tokens": {
+      "moved": {
+        "slope": -0.001682,
+        "lo": -0.029,
+        "hi": 0.026884,
+        "rows": 763,
+        "clusters": 30
+      },
+      "absd": {
+        "slope": -0.131361,
+        "lo": -0.258324,
+        "hi": 0.018425,
+        "rows": 763,
+        "clusters": 30
+      }
+    },
+    "stratum_table": [
+      {
+        "date_pair": "2026-11-06>2026-11-09",
+        "band_a": "1",
+        "material": false,
+        "rows": 16,
+        "moved": 3,
+        "absd": 0.4375
+      },
+      {
+        "date_pair": "2026-11-06>2026-11-09",
+        "band_a": "2-3",
+        "material": false,
+        "rows": 27,
+        "moved": 15,
+        "absd": 2.407407
+      },
+      {
+        "date_pair": "2026-11-06>2026-11-09",
+        "band_a": "4-6",
+        "material": false,
+        "rows": 52,
+        "moved": 38,
+        "absd": 2.153846
+      },
+      {
+        "date_pair": "2026-11-06>2026-11-09",
+        "band_a": "7-10",
+        "material": false,
+        "rows": 65,
+        "moved": 45,
+        "absd": 1.446154
+      },
+      {
+        "date_pair": "2026-11-06>2026-11-11",
+        "band_a": "2-3",
+        "material": false,
+        "rows": 1,
+        "moved": 0,
+        "absd": 0.0
+      },
+      {
+        "date_pair": "2026-11-06>2026-11-11",
+        "band_a": "7-10",
+        "material": false,
+        "rows": 2,
+        "moved": 2,
+        "absd": 2.5
+      },
+      {
+        "date_pair": "2026-11-06>2026-11-13",
+        "band_a": "4-6",
+        "material": false,
+        "rows": 2,
+        "moved": 2,
+        "absd": 3.5
+      },
+      {
+        "date_pair": "2026-11-06>2026-11-13",
+        "band_a": "7-10",
+        "material": false,
+        "rows": 2,
+        "moved": 2,
+        "absd": 1.5
+      },
+      {
+        "date_pair": "2026-11-06>2026-11-16",
+        "band_a": "7-10",
+        "material": false,
+        "rows": 1,
+        "moved": 1,
+        "absd": 2.0
+      },
+      {
+        "date_pair": "2026-11-09>2026-11-11",
+        "band_a": "1",
+        "material": false,
+        "rows": 16,
+        "moved": 2,
+        "absd": 0.875
+      },
+      {
+        "date_pair": "2026-11-09>2026-11-11",
+        "band_a": "11",
+        "material": false,
+        "rows": 27,
+        "moved": 13,
+        "absd": 2.407407
+      },
+      {
+        "date_pair": "2026-11-09>2026-11-11",
+        "band_a": "11",
+        "material": true,
+        "rows": 4,
+        "moved": 0,
+        "absd": 0.0
+      },
+      {
+        "date_pair": "2026-11-09>2026-11-11",
+        "band_a": "2-3",
+        "material": false,
+        "rows": 26,
+        "moved": 13,
+        "absd": 2.230769
+      },
+      {
+        "date_pair": "2026-11-09>2026-11-11",
+        "band_a": "2-3",
+        "material": true,
+        "rows": 2,
+        "moved": 2,
+        "absd": 3.0
+      },
+      {
+        "date_pair": "2026-11-09>2026-11-11",
+        "band_a": "4-6",
+        "material": false,
+        "rows": 46,
+        "moved": 26,
+        "absd": 1.586957
+      },
+      {
+        "date_pair": "2026-11-09>2026-11-11",
+        "band_a": "4-6",
+        "material": true,
+        "rows": 1,
+        "moved": 1,
+        "absd": 1.0
+      },
+      {
+        "date_pair": "2026-11-09>2026-11-11",
+        "band_a": "7-10",
+        "material": false,
+        "rows": 60,
+        "moved": 43,
+        "absd": 1.4
+      },
+      {
+        "date_pair": "2026-11-09>2026-11-11",
+        "band_a": "7-10",
+        "material": true,
+        "rows": 2,
+        "moved": 2,
+        "absd": 1.0
+      },
+      {
+        "date_pair": "2026-11-09>2026-11-13",
+        "band_a": "1",
+        "material": true,
+        "rows": 1,
+        "moved": 1,
+        "absd": 1.0
+      },
+      {
+        "date_pair": "2026-11-09>2026-11-13",
+        "band_a": "11",
+        "material": false,
+        "rows": 1,
+        "moved": 0,
+        "absd": 0.0
+      },
+      {
+        "date_pair": "2026-11-09>2026-11-13",
+        "band_a": "7-10",
+        "material": false,
+        "rows": 5,
+        "moved": 4,
+        "absd": 2.4
+      },
+      {
+        "date_pair": "2026-11-09>2026-11-16",
+        "band_a": "7-10",
+        "material": false,
+        "rows": 2,
+        "moved": 2,
+        "absd": 1.5
+      },
+      {
+        "date_pair": "2026-11-11>2026-11-13",
+        "band_a": "1",
+        "material": false,
+        "rows": 19,
+        "moved": 9,
+        "absd": 1.947368
+      },
+      {
+        "date_pair": "2026-11-11>2026-11-13",
+        "band_a": "11",
+        "material": false,
+        "rows": 28,
+        "moved": 9,
+        "absd": 1.5
+      },
+      {
+        "date_pair": "2026-11-11>2026-11-13",
+        "band_a": "11",
+        "material": true,
+        "rows": 3,
+        "moved": 1,
+        "absd": 1.0
+      },
+      {
+        "date_pair": "2026-11-11>2026-11-13",
+        "band_a": "2-3",
+        "material": false,
+        "rows": 25,
+        "moved": 17,
+        "absd": 2.32
+      },
+      {
+        "date_pair": "2026-11-11>2026-11-13",
+        "band_a": "4-6",
+        "material": false,
+        "rows": 40,
+        "moved": 25,
+        "absd": 1.8
+      },
+      {
+        "date_pair": "2026-11-11>2026-11-13",
+        "band_a": "4-6",
+        "material": true,
+        "rows": 1,
+        "moved": 1,
+        "absd": 5.0
+      },
+      {
+        "date_pair": "2026-11-11>2026-11-13",
+        "band_a": "7-10",
+        "material": false,
+        "rows": 59,
+        "moved": 44,
+        "absd": 1.457627
+      },
+      {
+        "date_pair": "2026-11-11>2026-11-13",
+        "band_a": "7-10",
+        "material": true,
+        "rows": 1,
+        "moved": 0,
+        "absd": 0.0
+      },
+      {
+        "date_pair": "2026-11-11>2026-11-16",
+        "band_a": "1",
+        "material": true,
+        "rows": 1,
+        "moved": 0,
+        "absd": 0.0
+      },
+      {
+        "date_pair": "2026-11-11>2026-11-16",
+        "band_a": "11",
+        "material": true,
+        "rows": 1,
+        "moved": 0,
+        "absd": 0.0
+      },
+      {
+        "date_pair": "2026-11-11>2026-11-16",
+        "band_a": "4-6",
+        "material": false,
+        "rows": 1,
+        "moved": 1,
+        "absd": 5.0
+      },
+      {
+        "date_pair": "2026-11-11>2026-11-16",
+        "band_a": "4-6",
+        "material": true,
+        "rows": 1,
+        "moved": 1,
+        "absd": 6.0
+      },
+      {
+        "date_pair": "2026-11-11>2026-11-16",
+        "band_a": "7-10",
+        "material": false,
+        "rows": 4,
+        "moved": 4,
+        "absd": 2.5
+      },
+      {
+        "date_pair": "2026-11-13>2026-11-16",
+        "band_a": "1",
+        "material": false,
+        "rows": 17,
+        "moved": 5,
+        "absd": 1.882353
+      },
+      {
+        "date_pair": "2026-11-13>2026-11-16",
+        "band_a": "11",
+        "material": false,
+        "rows": 50,
+        "moved": 12,
+        "absd": 1.18
+      },
+      {
+        "date_pair": "2026-11-13>2026-11-16",
+        "band_a": "11",
+        "material": true,
+        "rows": 2,
+        "moved": 1,
+        "absd": 3.0
+      },
+      {
+        "date_pair": "2026-11-13>2026-11-16",
+        "band_a": "2-3",
+        "material": false,
+        "rows": 22,
+        "moved": 11,
+        "absd": 2.0
+      },
+      {
+        "date_pair": "2026-11-13>2026-11-16",
+        "band_a": "2-3",
+        "material": true,
+        "rows": 3,
+        "moved": 2,
+        "absd": 1.0
+      },
+      {
+        "date_pair": "2026-11-13>2026-11-16",
+        "band_a": "4-6",
+        "material": false,
+        "rows": 45,
+        "moved": 33,
+        "absd": 1.822222
+      },
+      {
+        "date_pair": "2026-11-13>2026-11-16",
+        "band_a": "4-6",
+        "material": true,
+        "rows": 4,
+        "moved": 4,
+        "absd": 2.5
+      },
+      {
+        "date_pair": "2026-11-13>2026-11-16",
+        "band_a": "7-10",
+        "material": false,
+        "rows": 74,
+        "moved": 56,
+        "absd": 1.527027
+      },
+      {
+        "date_pair": "2026-11-13>2026-11-16",
+        "band_a": "7-10",
+        "material": true,
+        "rows": 1,
+        "moved": 1,
+        "absd": 1.0
+      }
+    ]
+  },
+  "q2_test_size": {
+    "formula": "n = DEFF * (z_0.975 + z_0.80)^2 * (E[D^2] - mu^2) / mu^2, D = 1[content-aware right] - 1[position-only right] on one changed-and-moved row. Gated (best case, content used only on rows where the edit caused the move): mu = s*f*(q - a_c), E[D^2] = s*f*(q*(1-a_c) + (1-q)*a_c). Ungated (content used wherever the content step fires, firing rate r independent of causation): mu = s*r*(f*(q - a_c) + (1-f)*(0.5 - a0)), E[D^2] = s*r*(f*(q*(1-a_c)+(1-q)*a_c) + (1-f)*0.5). Boundary rows (start 1 or 11) give D = 0 because both rules make the forced call.",
+    "inputs": {
+      "z_alpha_two_sided_95": 1.959964,
+      "z_power_80": 0.841621,
+      "changed_and_moved_rows": 17,
+      "interior_changed_and_moved_rows": 14,
+      "s_interior_share": 0.823529,
+      "r_content_step_fires_interior": 0.357143,
+      "content_fires_rows": 5,
+      "a0_position_rule_unchanged_moved_all": {
+        "hits": 303,
+        "n": 437,
+        "rate": 0.693364,
+        "lo": 0.647316,
+        "hi": 0.736489,
+        "queries": 30
+      },
+      "a0_position_rule_unchanged_moved_interior": {
+        "hits": 250,
+        "n": 384,
+        "rate": 0.651042,
+        "lo": 0.60567,
+        "hi": 0.693629,
+        "queries": 30
+      },
+      "f_point_attributable_share_interior": 0.245757,
+      "f_upper95_interior_max_of_query_and_url_cluster": 0.414753,
+      "f_upper95_interior_query_cluster": 0.414753,
+      "f_upper95_interior_url_cluster": 0.399631,
+      "f_all_rows_point_and_upper95": [
+        0.129399,
+        0.335452
+      ],
+      "deff_moved_rows_per_changed_url_pair": 1.416667,
+      "yield_url_days": 728.0,
+      "yield_urls": 98,
+      "changed_and_moved_rows_per_url_day": 0.023352,
+      "changed_and_moved_rows_per_week_current_set": 16.019231,
+      "changed_and_moved_rows_per_week_per_100_urls": 16.346154,
+      "cap_on_accuracy_gain_perfect_content_gated_f_upper": 0.170781,
+      "cap_on_accuracy_gain_perfect_content_gated_f_point": 0.101194
+    },
+    "scenarios": [
+      {
+        "a_c": "a_c=0.5 (edit direction independent of the position cue)",
+        "a_c_value": 0.5,
+        "f": 0.2458,
+        "q": 0.6,
+        "gated_gain": 0.020242,
+        "gated_rows": 2735.410844,
+        "gated_weeks": 170.75794,
+        "ungated_gain": -0.026275,
+        "ungated_rows": Infinity,
+        "ungated_weeks": Infinity,
+        "break_even_f_ungated": 0.60166
+      },
+      {
+        "a_c": "a_c=0.5 (edit direction independent of the position cue)",
+        "a_c_value": 0.5,
+        "f": 0.2458,
+        "q": 0.7,
+        "gated_gain": 0.040485,
+        "gated_rows": 675.513276,
+        "gated_weeks": 42.168896,
+        "ungated_gain": -0.019046,
+        "ungated_rows": Infinity,
+        "ungated_weeks": Infinity,
+        "break_even_f_ungated": 0.430267
+      },
+      {
+        "a_c": "a_c=0.5 (edit direction independent of the position cue)",
+        "a_c_value": 0.5,
+        "f": 0.2458,
+        "q": 0.8,
+        "gated_gain": 0.060727,
+        "gated_rows": 294.050764,
+        "gated_weeks": 18.35611,
+        "ungated_gain": -0.011816,
+        "ungated_rows": Infinity,
+        "ungated_weeks": Infinity,
+        "break_even_f_ungated": 0.334873
+      },
+      {
+        "a_c": "a_c=0.5 (edit direction independent of the position cue)",
+        "a_c_value": 0.5,
+        "f": 0.4148,
+        "q": 0.6,
+        "gated_gain": 0.03416,
+        "gated_rows": 1616.405094,
+        "gated_weeks": 100.904039,
+        "ungated_gain": -0.013797,
+        "ungated_rows": Infinity,
+        "ungated_weeks": Infinity,
+        "break_even_f_ungated": 0.60166
+      },
+      {
+        "a_c": "a_c=0.5 (edit direction independent of the position cue)",
+        "a_c_value": 0.5,
+        "f": 0.4148,
+        "q": 0.7,
+        "gated_gain": 0.06832,
+        "gated_rows": 395.761839,
+        "gated_weeks": 24.705421,
+        "ungated_gain": -0.001597,
+        "ungated_rows": Infinity,
+        "ungated_weeks": Infinity,
+        "break_even_f_ungated": 0.430267
+      },
+      {
+        "a_c": "a_c=0.5 (edit direction independent of the position cue)",
+        "a_c_value": 0.5,
+        "f": 0.4148,
+        "q": 0.8,
+        "gated_gain": 0.10248,
+        "gated_rows": 169.716791,
+        "gated_weeks": 10.594566,
+        "ungated_gain": 0.010603,
+        "ungated_rows": 14533.544791,
+        "ungated_weeks": 907.256097,
+        "break_even_f_ungated": 0.334873
+      },
+      {
+        "a_c": "a_c=0.5 (edit direction independent of the position cue)",
+        "a_c_value": 0.5,
+        "f": 0.5,
+        "q": 0.6,
+        "gated_gain": 0.041176,
+        "gated_rows": 1339.074946,
+        "gated_weeks": 83.591713,
+        "ungated_gain": -0.007506,
+        "ungated_rows": Infinity,
+        "ungated_weeks": Infinity,
+        "break_even_f_ungated": 0.60166
+      },
+      {
+        "a_c": "a_c=0.5 (edit direction independent of the position cue)",
+        "a_c_value": 0.5,
+        "f": 0.5,
+        "q": 0.7,
+        "gated_gain": 0.082353,
+        "gated_rows": 326.429302,
+        "gated_weeks": 20.377339,
+        "ungated_gain": 0.0072,
+        "ungated_rows": 31533.915698,
+        "ungated_weeks": 1968.503741,
+        "break_even_f_ungated": 0.430267
+      },
+      {
+        "a_c": "a_c=0.5 (edit direction independent of the position cue)",
+        "a_c_value": 0.5,
+        "f": 0.5,
+        "q": 0.8,
+        "gated_gain": 0.123529,
+        "gated_rows": 138.902331,
+        "gated_weeks": 8.670974,
+        "ungated_gain": 0.021906,
+        "ungated_rows": 3396.528179,
+        "ungated_weeks": 212.02817,
+        "break_even_f_ungated": 0.334873
+      },
+      {
+        "a_c": "a_c=0.5 (edit direction independent of the position cue)",
+        "a_c_value": 0.5,
+        "f": 1.0,
+        "q": 0.6,
+        "gated_gain": 0.082353,
+        "gated_rows": 663.97785,
+        "gated_weeks": 41.448797,
+        "ungated_gain": 0.029412,
+        "ungated_rows": 1879.152623,
+        "ungated_weeks": 117.306046,
+        "break_even_f_ungated": 0.60166
+      },
+      {
+        "a_c": "a_c=0.5 (edit direction independent of the position cue)",
+        "a_c_value": 0.5,
+        "f": 1.0,
+        "q": 0.7,
+        "gated_gain": 0.164706,
+        "gated_rows": 157.655028,
+        "gated_weeks": 9.84161,
+        "ungated_gain": 0.058824,
+        "ungated_rows": 461.448721,
+        "ungated_weeks": 28.805923,
+        "break_even_f_ungated": 0.430267
+      },
+      {
+        "a_c": "a_c=0.5 (edit direction independent of the position cue)",
+        "a_c_value": 0.5,
+        "f": 1.0,
+        "q": 0.8,
+        "gated_gain": 0.247059,
+        "gated_rows": 63.891542,
+        "gated_weeks": 3.988428,
+        "ungated_gain": 0.088235,
+        "ungated_rows": 198.910961,
+        "ungated_weeks": 12.417011,
+        "break_even_f_ungated": 0.334873
+      },
+      {
+        "a_c": "a_c=a0 interior (0.651, position as good on caused rows)",
+        "a_c_value": 0.651042,
+        "f": 0.2458,
+        "q": 0.6,
+        "gated_gain": -0.010332,
+        "gated_rows": Infinity,
+        "gated_weeks": Infinity,
+        "ungated_gain": -0.037195,
+        "ungated_rows": Infinity,
+        "ungated_weeks": Infinity,
+        "break_even_f_ungated": 1.510417
+      },
+      {
+        "a_c": "a_c=a0 interior (0.651, position as good on caused rows)",
+        "a_c_value": 0.651042,
+        "f": 0.2458,
+        "q": 0.7,
+        "gated_gain": 0.00991,
+        "gated_rows": 10062.889538,
+        "gated_weeks": 628.175577,
+        "ungated_gain": -0.029965,
+        "ungated_rows": Infinity,
+        "ungated_weeks": Infinity,
+        "break_even_f_ungated": 0.755208
+      },
+      {
+        "a_c": "a_c=a0 interior (0.651, position as good on caused rows)",
+        "a_c_value": 0.651042,
+        "f": 0.2458,
+        "q": 0.8,
+        "gated_gain": 0.030153,
+        "gated_rows": 1002.339478,
+        "gated_weeks": 62.571012,
+        "ungated_gain": -0.022736,
+        "ungated_rows": Infinity,
+        "ungated_weeks": Infinity,
+        "break_even_f_ungated": 0.503472
+      },
+      {
+        "a_c": "a_c=a0 interior (0.651, position as good on caused rows)",
+        "a_c_value": 0.651042,
+        "f": 0.4148,
+        "q": 0.6,
+        "gated_gain": -0.017436,
+        "gated_rows": Infinity,
+        "gated_weeks": Infinity,
+        "ungated_gain": -0.032224,
+        "ungated_rows": Infinity,
+        "ungated_weeks": Infinity,
+        "break_even_f_ungated": 1.510417
+      },
+      {
+        "a_c": "a_c=a0 interior (0.651, position as good on caused rows)",
+        "a_c_value": 0.651042,
+        "f": 0.4148,
+        "q": 0.7,
+        "gated_gain": 0.016724,
+        "gated_rows": 5958.483837,
+        "gated_weeks": 371.958175,
+        "ungated_gain": -0.020024,
+        "ungated_rows": Infinity,
+        "ungated_weeks": Infinity,
+        "break_even_f_ungated": 0.755208
+      },
+      {
+        "a_c": "a_c=a0 interior (0.651, position as good on caused rows)",
+        "a_c_value": 0.651042,
+        "f": 0.4148,
+        "q": 0.8,
+        "gated_gain": 0.050884,
+        "gated_rows": 589.430788,
+        "gated_weeks": 36.795199,
+        "ungated_gain": -0.007824,
+        "ungated_rows": Infinity,
+        "ungated_weeks": Infinity,
+        "break_even_f_ungated": 0.503472
+      },
+      {
+        "a_c": "a_c=a0 interior (0.651, position as good on caused rows)",
+        "a_c_value": 0.651042,
+        "f": 0.5,
+        "q": 0.6,
+        "gated_gain": -0.021017,
+        "gated_rows": Infinity,
+        "gated_weeks": Infinity,
+        "ungated_gain": -0.029718,
+        "ungated_rows": Infinity,
+        "ungated_weeks": Infinity,
+        "break_even_f_ungated": 1.510417
+      },
+      {
+        "a_c": "a_c=a0 interior (0.651, position as good on caused rows)",
+        "a_c_value": 0.651042,
+        "f": 0.5,
+        "q": 0.7,
+        "gated_gain": 0.020159,
+        "gated_rows": 4941.263472,
+        "gated_weeks": 308.458224,
+        "ungated_gain": -0.015012,
+        "ungated_rows": Infinity,
+        "ungated_weeks": Infinity,
+        "break_even_f_ungated": 0.755208
+      },
+      {
+        "a_c": "a_c=a0 interior (0.651, position as good on caused rows)",
+        "a_c_value": 0.651042,
+        "f": 0.5,
+        "q": 0.8,
+        "gated_gain": 0.061336,
+        "gated_rows": 487.097062,
+        "gated_weeks": 30.40702,
+        "ungated_gain": -0.000306,
+        "ungated_rows": Infinity,
+        "ungated_weeks": Infinity,
+        "break_even_f_ungated": 0.503472
+      },
+      {
+        "a_c": "a_c=a0 interior (0.651, position as good on caused rows)",
+        "a_c_value": 0.651042,
+        "f": 1.0,
+        "q": 0.6,
+        "gated_gain": -0.042034,
+        "gated_rows": Infinity,
+        "gated_weeks": Infinity,
+        "ungated_gain": -0.015012,
+        "ungated_rows": Infinity,
+        "ungated_weeks": Infinity,
+        "break_even_f_ungated": 1.510417
+      },
+      {
+        "a_c": "a_c=a0 interior (0.651, position as good on caused rows)",
+        "a_c_value": 0.651042,
+        "f": 1.0,
+        "q": 0.7,
+        "gated_gain": 0.040319,
+        "gated_rows": 2465.072113,
+        "gated_weeks": 153.882053,
+        "ungated_gain": 0.0144,
+        "ungated_rows": 6922.216559,
+        "ungated_weeks": 432.119161,
+        "break_even_f_ungated": 0.755208
+      },
+      {
+        "a_c": "a_c=a0 interior (0.651, position as good on caused rows)",
+        "a_c_value": 0.651042,
+        "f": 1.0,
+        "q": 0.8,
+        "gated_gain": 0.122672,
+        "gated_rows": 237.988908,
+        "gated_weeks": 14.85645,
+        "ungated_gain": 0.043811,
+        "ungated_rows": 686.383586,
+        "ungated_weeks": 42.847475,
+        "break_even_f_ungated": 0.503472
+      }
+    ]
+  },
+  "q3_serp_signals": {
+    "noise": {
+      "within_day_all": {
+        "pairs": 1865,
+        "queries": 30,
+        "title_exact_diff": {
+          "hits": 50,
+          "n": 1865,
+          "rate": 0.02681,
+          "lo": 0.012311,
+          "hi": 0.044298,
+          "queries": 30
+        },
+        "title_norm_diff": {
+          "hits": 50,
+          "n": 1865,
+          "rate": 0.02681,
+          "lo": 0.012311,
+          "hi": 0.044298,
+          "queries": 30
+        },
+        "title_core_diff": {
+          "hits": 1,
+          "n": 1865,
+          "rate": 0.000536,
+          "lo": 0.0,
+          "hi": 0.001673,
+          "queries": 30
+        },
+        "snippet_norm_diff": {
+          "hits": 445,
+          "n": 1865,
+          "rate": 0.238606,
+          "lo": 0.191276,
+          "hi": 0.285949,
+          "queries": 30
+        },
+        "date_presence_diff_given_any": {
+          "hits": 29,
+          "n": 801,
+          "rate": 0.036205,
+          "lo": 0.016406,
+          "hi": 0.058131,
+          "queries": 30
+        },
+        "date_value_diff_given_both": {
+          "hits": 0,
+          "n": 763,
+          "rate": 0.0,
+          "lo": 0.0,
+          "hi": 0.0,
+          "queries": 30
+        },
+        "date_raw_string_diff_given_both_present": {
+          "hits": 3,
+          "n": 772,
+          "rate": 0.003886,
+          "lo": 0.0,
+          "hi": 0.013277,
+          "queries": 30
+        }
+      },
+      "within_day_by_day": {
+        "2026-11-16": {
+          "pairs": 1216,
+          "queries": 30,
+          "title_exact_diff": {
+            "hits": 45,
+            "n": 1216,
+            "rate": 0.037007,
+            "lo": 0.015319,
+            "hi": 0.065186,
+            "queries": 30
+          },
+          "title_norm_diff": {
+            "hits": 45,
+            "n": 1216,
+            "rate": 0.037007,
+            "lo": 0.015319,
+            "hi": 0.065186,
+            "queries": 30
+          },
+          "title_core_diff": {
+            "hits": 0,
+            "n": 1216,
+            "rate": 0.0,
+            "lo": 0.0,
+            "hi": 0.0,
+            "queries": 30
+          },
+          "snippet_norm_diff": {
+            "hits": 290,
+            "n": 1216,
+            "rate": 0.238487,
+            "lo": 0.192876,
+            "hi": 0.284597,
+            "queries": 30
+          },
+          "date_presence_diff_given_any": {
+            "hits": 23,
+            "n": 513,
+            "rate": 0.044834,
+            "lo": 0.014536,
+            "hi": 0.079697,
+            "queries": 29
+          },
+          "date_value_diff_given_both": {
+            "hits": 0,
+            "n": 484,
+            "rate": 0.0,
+            "lo": 0.0,
+            "hi": 0.0,
+            "queries": 29
+          },
+          "date_raw_string_diff_given_both_present": {
+            "hits": 3,
+            "n": 490,
+            "rate": 0.006122,
+            "lo": 0.0,
+            "hi": 0.02148,
+            "queries": 29
+          }
+        },
+        "2026-11-17": {
+          "pairs": 649,
+          "queries": 30,
+          "title_exact_diff": {
+            "hits": 5,
+            "n": 649,
+            "rate": 0.007704,
+            "lo": 0.0,
+            "hi": 0.01738,
+            "queries": 30
+          },
+          "title_norm_diff": {
+            "hits": 5,
+            "n": 649,
+            "rate": 0.007704,
+            "lo": 0.0,
+            "hi": 0.01738,
+            "queries": 30
+          },
+          "title_core_diff": {
+            "hits": 1,
+            "n": 649,
+            "rate": 0.001541,
+            "lo": 0.0,
+            "hi": 0.004854,
+            "queries": 30
+          },
+          "snippet_norm_diff": {
+            "hits": 155,
+            "n": 649,
+            "rate": 0.238829,
+            "lo": 0.17472,
+            "hi": 0.304359,
+            "queries": 30
+          },
+          "date_presence_diff_given_any": {
+            "hits": 6,
+            "n": 288,
+            "rate": 0.020833,
+            "lo": 0.0,
+            "hi": 0.045016,
+            "queries": 30
+          },
+          "date_value_diff_given_both": {
+            "hits": 0,
+            "n": 279,
+            "rate": 0.0,
+            "lo": 0.0,
+            "hi": 0.0,
+            "queries": 30
+          },
+          "date_raw_string_diff_given_both_present": {
+            "hits": 0,
+            "n": 282,
+            "rate": 0.0,
+            "lo": 0.0,
+            "hi": 0.0,
+            "queries": 30
+          }
+        }
+      },
+      "within_day_by_gap": {
+        "<1.5h": {
+          "pairs": 1238,
+          "queries": 30,
+          "title_exact_diff": {
+            "hits": 22,
+            "n": 1238,
+            "rate": 0.017771,
+            "lo": 0.006935,
+            "hi": 0.030733,
+            "queries": 30
+          },
+          "title_norm_diff": {
+            "hits": 22,
+            "n": 1238,
+            "rate": 0.017771,
+            "lo": 0.006935,
+            "hi": 0.030733,
+            "queries": 30
+          },
+          "title_core_diff": {
+            "hits": 1,
+            "n": 1238,
+            "rate": 0.000808,
+            "lo": 0.0,
+            "hi": 0.002532,
+            "queries": 30
+          },
+          "snippet_norm_diff": {
+            "hits": 296,
+            "n": 1238,
+            "rate": 0.239095,
+            "lo": 0.18979,
+            "hi": 0.290595,
+            "queries": 30
+          },
+          "date_presence_diff_given_any": {
+            "hits": 14,
+            "n": 541,
+            "rate": 0.025878,
+            "lo": 0.008,
+            "hi": 0.049386,
+            "queries": 30
+          },
+          "date_value_diff_given_both": {
+            "hits": 0,
+            "n": 521,
+            "rate": 0.0,
+            "lo": 0.0,
+            "hi": 0.0,
+            "queries": 30
+          },
+          "date_raw_string_diff_given_both_present": {
+            "hits": 0,
+            "n": 527,
+            "rate": 0.0,
+            "lo": 0.0,
+            "hi": 0.0,
+            "queries": 30
+          }
+        },
+        ">4h": {
+          "pairs": 627,
+          "queries": 30,
+          "title_exact_diff": {
+            "hits": 28,
+            "n": 627,
+            "rate": 0.044657,
+            "lo": 0.013909,
+            "hi": 0.08805,
+            "queries": 30
+          },
+          "title_norm_diff": {
+            "hits": 28,
+            "n": 627,
+            "rate": 0.044657,
+            "lo": 0.013909,
+            "hi": 0.08805,
+            "queries": 30
+          },
+          "title_core_diff": {
+            "hits": 0,
+            "n": 627,
+            "rate": 0.0,
+            "lo": 0.0,
+            "hi": 0.0,
+            "queries": 30
+          },
+          "snippet_norm_diff": {
+            "hits": 149,
+            "n": 627,
+            "rate": 0.23764,
+            "lo": 0.184,
+            "hi": 0.294532,
+            "queries": 30
+          },
+          "date_presence_diff_given_any": {
+            "hits": 15,
+            "n": 260,
+            "rate": 0.057692,
+            "lo": 0.015564,
+            "hi": 0.10728,
+            "queries": 29
+          },
+          "date_value_diff_given_both": {
+            "hits": 0,
+            "n": 242,
+            "rate": 0.0,
+            "lo": 0.0,
+            "hi": 0.0,
+            "queries": 29
+          },
+          "date_raw_string_diff_given_both_present": {
+            "hits": 3,
+            "n": 245,
+            "rate": 0.012245,
+            "lo": 0.0,
+            "hi": 0.04187,
+            "queries": 29
+          }
+        }
+      },
+      "across_days_all": {
+        "pairs": 1282,
+        "queries": 44,
+        "title_exact_diff": {
+          "hits": 100,
+          "n": 1282,
+          "rate": 0.078003,
+          "lo": 0.054616,
+          "hi": 0.102258,
+          "queries": 44
+        },
+        "title_norm_diff": {
+          "hits": 100,
+          "n": 1282,
+          "rate": 0.078003,
+          "lo": 0.054616,
+          "hi": 0.102258,
+          "queries": 44
+        },
+        "title_core_diff": {
+          "hits": 14,
+          "n": 1282,
+          "rate": 0.01092,
+          "lo": 0.005391,
+          "hi": 0.016937,
+          "queries": 44
+        },
+        "snippet_norm_diff": {
+          "hits": 317,
+          "n": 1282,
+          "rate": 0.24727,
+          "lo": 0.208989,
+          "hi": 0.287971,
+          "queries": 44
+        },
+        "date_presence_diff_given_any": {
+          "hits": 70,
+          "n": 523,
+          "rate": 0.133843,
+          "lo": 0.095231,
+          "hi": 0.180358,
+          "queries": 42
+        },
+        "date_value_diff_given_both": {
+          "hits": 1,
+          "n": 447,
+          "rate": 0.002237,
+          "lo": 0.0,
+          "hi": 0.007078,
+          "queries": 41
+        },
+        "date_raw_string_diff_given_both_present": {
+          "hits": 23,
+          "n": 453,
+          "rate": 0.050773,
+          "lo": 0.027472,
+          "hi": 0.074596,
+          "queries": 41
+        }
+      },
+      "across_by_day_pair": {
+        "2026-11-06>2026-11-09": {
+          "pairs": 202,
+          "queries": 29,
+          "title_exact_diff": {
+            "hits": 46,
+            "n": 202,
+            "rate": 0.227723,
+            "lo": 0.160799,
+            "hi": 0.296121,
+            "queries": 29
+          },
+          "title_norm_diff": {
+            "hits": 46,
+            "n": 202,
+            "rate": 0.227723,
+            "lo": 0.160799,
+            "hi": 0.296121,
+            "queries": 29
+          },
+          "title_core_diff": {
+            "hits": 4,
+            "n": 202,
+            "rate": 0.019802,
+            "lo": 0.0,
+            "hi": 0.045873,
+            "queries": 29
+          },
+          "snippet_norm_diff": {
+            "hits": 55,
+            "n": 202,
+            "rate": 0.272277,
+            "lo": 0.187184,
+            "hi": 0.356445,
+            "queries": 29
+          },
+          "date_presence_diff_given_any": {
+            "hits": 32,
+            "n": 78,
+            "rate": 0.410256,
+            "lo": 0.305867,
+            "hi": 0.535211,
+            "queries": 27
+          },
+          "date_value_diff_given_both": {
+            "hits": 0,
+            "n": 46,
+            "rate": 0.0,
+            "lo": 0.0,
+            "hi": 0.0,
+            "queries": 21
+          },
+          "date_raw_string_diff_given_both_present": {
+            "hits": 8,
+            "n": 46,
+            "rate": 0.173913,
+            "lo": 0.081619,
+            "hi": 0.289474,
+            "queries": 21
+          }
+        },
+        "2026-11-09>2026-11-11": {
+          "pairs": 208,
+          "queries": 29,
+          "title_exact_diff": {
+            "hits": 6,
+            "n": 208,
+            "rate": 0.028846,
+            "lo": 0.0,
+            "hi": 0.067978,
+            "queries": 29
+          },
+          "title_norm_diff": {
+            "hits": 6,
+            "n": 208,
+            "rate": 0.028846,
+            "lo": 0.0,
+            "hi": 0.067978,
+            "queries": 29
+          },
+          "title_core_diff": {
+            "hits": 1,
+            "n": 208,
+            "rate": 0.004808,
+            "lo": 0.0,
+            "hi": 0.015306,
+            "queries": 29
+          },
+          "snippet_norm_diff": {
+            "hits": 49,
+            "n": 208,
+            "rate": 0.235577,
+            "lo": 0.171562,
+            "hi": 0.305833,
+            "queries": 29
+          },
+          "date_presence_diff_given_any": {
+            "hits": 3,
+            "n": 81,
+            "rate": 0.037037,
+            "lo": 0.0,
+            "hi": 0.097568,
+            "queries": 28
+          },
+          "date_value_diff_given_both": {
+            "hits": 1,
+            "n": 78,
+            "rate": 0.012821,
+            "lo": 0.0,
+            "hi": 0.040014,
+            "queries": 28
+          },
+          "date_raw_string_diff_given_both_present": {
+            "hits": 10,
+            "n": 78,
+            "rate": 0.128205,
+            "lo": 0.067568,
+            "hi": 0.183119,
+            "queries": 28
+          }
+        },
+        "2026-11-11>2026-11-13": {
+          "pairs": 194,
+          "queries": 29,
+          "title_exact_diff": {
+            "hits": 13,
+            "n": 194,
+            "rate": 0.06701,
+            "lo": 0.022854,
+            "hi": 0.119627,
+            "queries": 29
+          },
+          "title_norm_diff": {
+            "hits": 13,
+            "n": 194,
+            "rate": 0.06701,
+            "lo": 0.022854,
+            "hi": 0.119627,
+            "queries": 29
+          },
+          "title_core_diff": {
+            "hits": 1,
+            "n": 194,
+            "rate": 0.005155,
+            "lo": 0.0,
+            "hi": 0.016577,
+            "queries": 29
+          },
+          "snippet_norm_diff": {
+            "hits": 48,
+            "n": 194,
+            "rate": 0.247423,
+            "lo": 0.175251,
+            "hi": 0.321429,
+            "queries": 29
+          },
+          "date_presence_diff_given_any": {
+            "hits": 10,
+            "n": 75,
+            "rate": 0.133333,
+            "lo": 0.043478,
+            "hi": 0.263176,
+            "queries": 28
+          },
+          "date_value_diff_given_both": {
+            "hits": 0,
+            "n": 64,
+            "rate": 0.0,
+            "lo": 0.0,
+            "hi": 0.0,
+            "queries": 25
+          },
+          "date_raw_string_diff_given_both_present": {
+            "hits": 2,
+            "n": 65,
+            "rate": 0.030769,
+            "lo": 0.0,
+            "hi": 0.069453,
+            "queries": 25
+          }
+        },
+        "2026-11-13>2026-11-16": {
+          "pairs": 242,
+          "queries": 29,
+          "title_exact_diff": {
+            "hits": 26,
+            "n": 242,
+            "rate": 0.107438,
+            "lo": 0.062762,
+            "hi": 0.158333,
+            "queries": 29
+          },
+          "title_norm_diff": {
+            "hits": 26,
+            "n": 242,
+            "rate": 0.107438,
+            "lo": 0.062762,
+            "hi": 0.158333,
+            "queries": 29
+          },
+          "title_core_diff": {
+            "hits": 7,
+            "n": 242,
+            "rate": 0.028926,
+            "lo": 0.012242,
+            "hi": 0.046809,
+            "queries": 29
+          },
+          "snippet_norm_diff": {
+            "hits": 62,
+            "n": 242,
+            "rate": 0.256198,
+            "lo": 0.191662,
+            "hi": 0.326545,
+            "queries": 29
+          },
+          "date_presence_diff_given_any": {
+            "hits": 22,
+            "n": 108,
+            "rate": 0.203704,
+            "lo": 0.106171,
+            "hi": 0.314548,
+            "queries": 29
+          },
+          "date_value_diff_given_both": {
+            "hits": 0,
+            "n": 85,
+            "rate": 0.0,
+            "lo": 0.0,
+            "hi": 0.0,
+            "queries": 29
+          },
+          "date_raw_string_diff_given_both_present": {
+            "hits": 0,
+            "n": 86,
+            "rate": 0.0,
+            "lo": 0.0,
+            "hi": 0.0,
+            "queries": 29
+          }
+        },
+        "2026-11-16>2026-11-17": {
+          "pairs": 436,
+          "queries": 44,
+          "title_exact_diff": {
+            "hits": 9,
+            "n": 436,
+            "rate": 0.020642,
+            "lo": 0.006682,
+            "hi": 0.038651,
+            "queries": 44
+          },
+          "title_norm_diff": {
+            "hits": 9,
+            "n": 436,
+            "rate": 0.020642,
+            "lo": 0.006682,
+            "hi": 0.038651,
+            "queries": 44
+          },
+          "title_core_diff": {
+            "hits": 1,
+            "n": 436,
+            "rate": 0.002294,
+            "lo": 0.0,
+            "hi": 0.006977,
+            "queries": 44
+          },
+          "snippet_norm_diff": {
+            "hits": 103,
+            "n": 436,
+            "rate": 0.236239,
+            "lo": 0.18291,
+            "hi": 0.29025,
+            "queries": 44
+          },
+          "date_presence_diff_given_any": {
+            "hits": 3,
+            "n": 181,
+            "rate": 0.016575,
+            "lo": 0.0,
+            "hi": 0.042786,
+            "queries": 42
+          },
+          "date_value_diff_given_both": {
+            "hits": 0,
+            "n": 174,
+            "rate": 0.0,
+            "lo": 0.0,
+            "hi": 0.0,
+            "queries": 41
+          },
+          "date_raw_string_diff_given_both_present": {
+            "hits": 3,
+            "n": 178,
+            "rate": 0.016854,
+            "lo": 0.0,
+            "hi": 0.052949,
+            "queries": 41
+          }
+        }
+      }
+    },
+    "obs": {
+      "observations": 4626,
+      "date_present": 1798,
+      "date_parsed": 1781,
+      "date_unparsed_values": 17,
+      "pulled_days_by_query_group": {
+        "o30": [
+          "2026-11-06",
+          "2026-11-09",
+          "2026-11-11",
+          "2026-11-13",
+          "2026-11-16",
+          "2026-11-17"
+        ],
+        "a70": [
+          "2026-11-16"
+        ],
+        "p35": [
+          "2026-11-16"
+        ],
+        "rev": [
+          "2026-11-16",
+          "2026-11-17"
+        ],
+        "other": [
+          "2026-11-17"
+        ]
+      }
+    },
+    "event_counts": {
+      "2026-11-06>2026-11-09": {
+        "gap_days": 3,
+        "units_shown_both_days": 202,
+        "units_title_stable_both_days": 202,
+        "units_verified_multi_pull_both_days": 0,
+        "title_unstable_within_day": 0,
+        "display_title_events": 46,
+        "title_events": 4,
+        "date_value_events": 0,
+        "date_presence_events": 32,
+        "reindex_events": 4,
+        "reindex_events_verified": 0,
+        "event_urls": 4,
+        "event_sites": 4,
+        "event_queries": 3,
+        "confirmed_urls_title_on_2plus_queries_or_date": 0,
+        "confirmed_sites": 0,
+        "events_per_calendar_day": 1.333333,
+        "unverified_stable_units": 202,
+        "expected_title_events_from_within_day_noise": 0.108311,
+        "expected_display_events_from_within_day_noise": 5.41555,
+        "title_events_seen_before": 1,
+        "strict_events": 3,
+        "strict_event_urls": 3,
+        "strict_event_sites": 3,
+        "event_examples": [
+          "https://congenius.com/industries/excavation-estimating-software: 'The Best Excavation Estimating, Takeoff, and Proposal Software' -> 'The Best Estimating Software for Excavation & Earthwork'",
+          "https://www.fieldwire.com/blog/best-construction-management-software: '13 Best Construction Management Software (2026 Comparison)' -> '13 Best Construction Management Software in 2026'",
+          "https://www.hcss.com/: 'HCSS' -> 'HCSS: Construction Software for Contractors of Every Size' (title shown before)",
+          "https://www.ingenious.build/blog-posts/best-civil-project-management-software: 'Best Civil Construction Project Management Software (2026 Guide)' -> 'Top Civil Construction Project Management Software (2026)'"
+        ]
+      },
+      "2026-11-09>2026-11-11": {
+        "gap_days": 2,
+        "units_shown_both_days": 208,
+        "units_title_stable_both_days": 208,
+        "units_verified_multi_pull_both_days": 0,
+        "title_unstable_within_day": 0,
+        "display_title_events": 6,
+        "title_events": 1,
+        "date_value_events": 1,
+        "date_presence_events": 3,
+        "reindex_events": 2,
+        "reindex_events_verified": 0,
+        "event_urls": 2,
+        "event_sites": 2,
+        "event_queries": 2,
+        "confirmed_urls_title_on_2plus_queries_or_date": 1,
+        "confirmed_sites": 1,
+        "events_per_calendar_day": 1.0,
+        "unverified_stable_units": 208,
+        "expected_title_events_from_within_day_noise": 0.111528,
+        "expected_display_events_from_within_day_noise": 5.576408,
+        "title_events_seen_before": 0,
+        "strict_events": 2,
+        "strict_event_urls": 2,
+        "strict_event_sites": 2,
+        "event_examples": [
+          "https://www.smartcrewhq.com/blog/best-software-small-dirt-work-contractors: 'Best All-in-One Software for Small Dirtwork Contractors (2026)' -> 'Best all-in-one software for small dirtwork contractors'"
+        ]
+      },
+      "2026-11-11>2026-11-13": {
+        "gap_days": 2,
+        "units_shown_both_days": 194,
+        "units_title_stable_both_days": 194,
+        "units_verified_multi_pull_both_days": 0,
+        "title_unstable_within_day": 0,
+        "display_title_events": 13,
+        "title_events": 1,
+        "date_value_events": 0,
+        "date_presence_events": 10,
+        "reindex_events": 1,
+        "reindex_events_verified": 0,
+        "event_urls": 1,
+        "event_sites": 1,
+        "event_queries": 1,
+        "confirmed_urls_title_on_2plus_queries_or_date": 0,
+        "confirmed_sites": 0,
+        "events_per_calendar_day": 0.5,
+        "unverified_stable_units": 194,
+        "expected_title_events_from_within_day_noise": 0.104021,
+        "expected_display_events_from_within_day_noise": 5.201072,
+        "title_events_seen_before": 0,
+        "strict_events": 1,
+        "strict_event_urls": 1,
+        "strict_event_sites": 1,
+        "event_examples": [
+          "https://www.explorer-software.com/erp/contractor-types/heavy-civil-contractor: 'Eclipse ERP - Heavy Civil Contractor' -> 'Construction Software for Heavy Civil Contractors | Eclipse ERP'"
+        ]
+      },
+      "2026-11-13>2026-11-16": {
+        "gap_days": 3,
+        "units_shown_both_days": 242,
+        "units_title_stable_both_days": 242,
+        "units_verified_multi_pull_both_days": 0,
+        "title_unstable_within_day": 0,
+        "display_title_events": 19,
+        "title_events": 7,
+        "date_value_events": 0,
+        "date_presence_events": 17,
+        "reindex_events": 7,
+        "reindex_events_verified": 0,
+        "event_urls": 4,
+        "event_sites": 4,
+        "event_queries": 7,
+        "confirmed_urls_title_on_2plus_queries_or_date": 1,
+        "confirmed_sites": 1,
+        "events_per_calendar_day": 2.333333,
+        "unverified_stable_units": 242,
+        "expected_title_events_from_within_day_noise": 0.129759,
+        "expected_display_events_from_within_day_noise": 6.219839,
+        "title_events_seen_before": 2,
+        "strict_events": 5,
+        "strict_event_urls": 2,
+        "strict_event_sites": 2,
+        "event_examples": [
+          "https://agtek.com/solutions/takeoff: 'Construction Takeoff Software for Earthworks and Excavation' -> 'Earthworks Takeoff Software for Construction'",
+          "https://www.fieldwire.com/blog/best-construction-management-software: '13 Best Construction Management Software (2026 Comparison)' -> '13 Best Construction Management Software in 2026' (title shown before)",
+          "https://www.hcss.com/products/construction-project-management-software: 'Construction Management Software | HeavyJob' -> 'Construction Field & Project Management Software'",
+          "https://www.explorer-software.com/erp/contractor-types/heavy-civil-contractor: 'Construction Software for Heavy Civil Contractors | Eclipse ERP' -> 'Eclipse ERP - Heavy Civil Contractor' (title shown before)"
+        ]
+      },
+      "2026-11-16>2026-11-17": {
+        "gap_days": 1,
+        "units_shown_both_days": 436,
+        "units_title_stable_both_days": 436,
+        "units_verified_multi_pull_both_days": 233,
+        "title_unstable_within_day": 0,
+        "display_title_events": 6,
+        "title_events": 1,
+        "date_value_events": 0,
+        "date_presence_events": 1,
+        "reindex_events": 1,
+        "reindex_events_verified": 0,
+        "event_urls": 1,
+        "event_sites": 1,
+        "event_queries": 1,
+        "confirmed_urls_title_on_2plus_queries_or_date": 0,
+        "confirmed_sites": 0,
+        "events_per_calendar_day": 1.0,
+        "unverified_stable_units": 203,
+        "expected_title_events_from_within_day_noise": 0.108847,
+        "expected_display_events_from_within_day_noise": 5.36193,
+        "title_events_seen_before": 0,
+        "strict_events": 1,
+        "strict_event_urls": 1,
+        "strict_event_sites": 1,
+        "event_examples": [
+          "https://www.smartcrewhq.com/compare/hcss-alternative: 'hcss alternative' -> 'HCSS Alternative: Read This Before You Sign'"
+        ]
+      }
+    },
+    "event_totals": {
+      "units": 1282,
+      "title_stable_units": 1282,
+      "reindex_events": 15,
+      "title_events": 14,
+      "date_value_events": 1,
+      "display_title_events": 90,
+      "verified_units": 233,
+      "reindex_events_verified": 0,
+      "event_urls": 10,
+      "event_sites": 8,
+      "strict_events": 12,
+      "strict_event_urls": 9,
+      "strict_event_sites": 8,
+      "title_events_seen_before": 3
+    },
+    "after_event": {
+      "units": 1282,
+      "events": 15,
+      "same": {
+        "rows": 1282,
+        "event_rows": 15,
+        "reindex_event": {
+          "moved": {
+            "treated_rows": 15,
+            "treated_rows_matched": 15,
+            "treated_rows_dropped_no_control": 0,
+            "control_rows": 1267,
+            "control_rows_in_matched_strata": 627,
+            "clusters": 44,
+            "cluster": "query",
+            "treated_mean": 0.6,
+            "matched_control_mean": 0.594036,
+            "diff": 0.005964,
+            "lo": -0.24624,
+            "hi": 0.295492,
+            "attributable_share": 0.00994,
+            "attributable_share_hi95": 0.349873,
+            "attributable_share_hi90": 0.297179,
+            "valid_draws": 2000
+          },
+          "absd": {
+            "treated_rows": 15,
+            "treated_rows_matched": 15,
+            "treated_rows_dropped_no_control": 0,
+            "control_rows": 1267,
+            "control_rows_in_matched_strata": 627,
+            "clusters": 44,
+            "cluster": "query",
+            "treated_mean": 0.866667,
+            "matched_control_mean": 1.339102,
+            "diff": -0.472436,
+            "lo": -0.976698,
+            "hi": 0.029087,
+            "attributable_share": 0.0,
+            "attributable_share_hi95": 0.027688,
+            "attributable_share_hi90": 0.0,
+            "valid_draws": 2000
+          },
+          "crossed": {
+            "treated_rows": 15,
+            "treated_rows_matched": 15,
+            "treated_rows_dropped_no_control": 0,
+            "control_rows": 1267,
+            "control_rows_in_matched_strata": 627,
+            "clusters": 44,
+            "cluster": "query",
+            "treated_mean": 0.066667,
+            "matched_control_mean": 0.083708,
+            "diff": -0.017041,
+            "lo": -0.111072,
+            "hi": 0.117982,
+            "attributable_share": 0.0,
+            "attributable_share_hi95": 0.539351,
+            "attributable_share_hi90": 0.472927,
+            "valid_draws": 2000
+          },
+          "moved_url_cluster": {
+            "treated_rows": 15,
+            "treated_rows_matched": 15,
+            "treated_rows_dropped_no_control": 0,
+            "control_rows": 1267,
+            "control_rows_in_matched_strata": 627,
+            "clusters": 278,
+            "cluster": "key",
+            "treated_mean": 0.6,
+            "matched_control_mean": 0.594036,
+            "diff": 0.005964,
+            "lo": -0.369073,
+            "hi": 0.255747,
+            "attributable_share": 0.00994,
+            "attributable_share_hi95": 0.311284,
+            "attributable_share_hi90": 0.272811,
+            "valid_draws": 2000
+          }
+        },
+        "reindex_event_strict": {
+          "moved": {
+            "treated_rows": 12,
+            "treated_rows_matched": 12,
+            "treated_rows_dropped_no_control": 0,
+            "control_rows": 1270,
+            "control_rows_in_matched_strata": 512,
+            "clusters": 44,
+            "cluster": "query",
+            "treated_mean": 0.666667,
+            "matched_control_mean": 0.610693,
+            "diff": 0.055974,
+            "lo": -0.217589,
+            "hi": 0.394059,
+            "attributable_share": 0.083961,
+            "attributable_share_hi95": 0.417303,
+            "attributable_share_hi90": 0.373226,
+            "valid_draws": 2000
+          },
+          "absd": {
+            "treated_rows": 12,
+            "treated_rows_matched": 12,
+            "treated_rows_dropped_no_control": 0,
+            "control_rows": 1270,
+            "control_rows_in_matched_strata": 512,
+            "clusters": 44,
+            "cluster": "query",
+            "treated_mean": 1.0,
+            "matched_control_mean": 1.421285,
+            "diff": -0.421285,
+            "lo": -0.951946,
+            "hi": 0.124493,
+            "attributable_share": 0.0,
+            "attributable_share_hi95": 0.09066,
+            "attributable_share_hi90": 0.033331,
+            "valid_draws": 2000
+          },
+          "crossed": {
+            "treated_rows": 12,
+            "treated_rows_matched": 12,
+            "treated_rows_dropped_no_control": 0,
+            "control_rows": 1270,
+            "control_rows_in_matched_strata": 512,
+            "clusters": 44,
+            "cluster": "query",
+            "treated_mean": 0.083333,
+            "matched_control_mean": 0.067597,
+            "diff": 0.015736,
+            "lo": -0.07444,
+            "hi": 0.165871,
+            "attributable_share": 0.18883,
+            "attributable_share_hi95": 0.634697,
+            "attributable_share_hi90": 0.593417,
+            "valid_draws": 2000
+          }
+        },
+        "title_event": {
+          "moved": {
+            "treated_rows": 14,
+            "treated_rows_matched": 14,
+            "treated_rows_dropped_no_control": 0,
+            "control_rows": 1268,
+            "control_rows_in_matched_strata": 560,
+            "clusters": 44,
+            "cluster": "query",
+            "treated_mean": 0.642857,
+            "matched_control_mean": 0.587426,
+            "diff": 0.055431,
+            "lo": -0.175182,
+            "hi": 0.307042,
+            "attributable_share": 0.086226,
+            "attributable_share_hi95": 0.365599,
+            "attributable_share_hi90": 0.320563,
+            "valid_draws": 2000
+          },
+          "absd": {
+            "treated_rows": 14,
+            "treated_rows_matched": 14,
+            "treated_rows_dropped_no_control": 0,
+            "control_rows": 1268,
+            "control_rows_in_matched_strata": 560,
+            "clusters": 44,
+            "cluster": "query",
+            "treated_mean": 0.928571,
+            "matched_control_mean": 1.334539,
+            "diff": -0.405968,
+            "lo": -0.893257,
+            "hi": 0.048752,
+            "attributable_share": 0.0,
+            "attributable_share_hi95": 0.036783,
+            "attributable_share_hi90": 0.0,
+            "valid_draws": 2000
+          },
+          "crossed": {
+            "treated_rows": 14,
+            "treated_rows_matched": 14,
+            "treated_rows_dropped_no_control": 0,
+            "control_rows": 1268,
+            "control_rows_in_matched_strata": 560,
+            "clusters": 44,
+            "cluster": "query",
+            "treated_mean": 0.071429,
+            "matched_control_mean": 0.089687,
+            "diff": -0.018258,
+            "lo": -0.118123,
+            "hi": 0.125686,
+            "attributable_share": 0.0,
+            "attributable_share_hi95": 0.539351,
+            "attributable_share_hi90": 0.472927,
+            "valid_draws": 2000
+          }
+        },
+        "date_value_event": {
+          "moved": {
+            "treated_rows": 1,
+            "treated_rows_matched": 1,
+            "treated_rows_dropped_no_control": 0,
+            "control_rows": 1281,
+            "control_rows_in_matched_strata": 67,
+            "clusters": 44,
+            "cluster": "query",
+            "treated_mean": 0.0,
+            "matched_control_mean": 0.686567,
+            "diff": -0.686567,
+            "lo": -0.823891,
+            "hi": -0.534881,
+            "attributable_share": 0.0,
+            "attributable_share_hi95": 0.0,
+            "attributable_share_hi90": 0.0,
+            "valid_draws": 1227
+          },
+          "absd": {
+            "treated_rows": 1,
+            "treated_rows_matched": 1,
+            "treated_rows_dropped_no_control": 0,
+            "control_rows": 1281,
+            "control_rows_in_matched_strata": 67,
+            "clusters": 44,
+            "cluster": "query",
+            "treated_mean": 0.0,
+            "matched_control_mean": 1.402985,
+            "diff": -1.402985,
+            "lo": -1.833333,
+            "hi": -1.020808,
+            "attributable_share": 0.0,
+            "attributable_share_hi95": 0.0,
+            "attributable_share_hi90": 0.0,
+            "valid_draws": 1227
+          },
+          "crossed": {
+            "treated_rows": 1,
+            "treated_rows_matched": 1,
+            "treated_rows_dropped_no_control": 0,
+            "control_rows": 1281,
+            "control_rows_in_matched_strata": 67,
+            "clusters": 44,
+            "cluster": "query",
+            "treated_mean": 0.0,
+            "matched_control_mean": 0.0,
+            "diff": 0.0,
+            "lo": 0.0,
+            "hi": 0.0,
+            "attributable_share": 0.0,
+            "attributable_share_hi95": 0.0,
+            "attributable_share_hi90": 0.0,
+            "valid_draws": 1227
+          }
+        },
+        "display_event": {
+          "moved": {
+            "treated_rows": 90,
+            "treated_rows_matched": 90,
+            "treated_rows_dropped_no_control": 0,
+            "control_rows": 1165,
+            "control_rows_in_matched_strata": 978,
+            "clusters": 44,
+            "cluster": "query",
+            "treated_mean": 0.566667,
+            "matched_control_mean": 0.542898,
+            "diff": 0.023768,
+            "lo": -0.063021,
+            "hi": 0.103641,
+            "attributable_share": 0.041944,
+            "attributable_share_hi95": 0.168864,
+            "attributable_share_hi90": 0.14948,
+            "valid_draws": 2000
+          },
+          "absd": {
+            "treated_rows": 90,
+            "treated_rows_matched": 90,
+            "treated_rows_dropped_no_control": 0,
+            "control_rows": 1165,
+            "control_rows_in_matched_strata": 978,
+            "clusters": 44,
+            "cluster": "query",
+            "treated_mean": 1.233333,
+            "matched_control_mean": 1.125522,
+            "diff": 0.107811,
+            "lo": -0.232777,
+            "hi": 0.418019,
+            "attributable_share": 0.087414,
+            "attributable_share_hi95": 0.277923,
+            "attributable_share_hi90": 0.253743,
+            "valid_draws": 2000
+          },
+          "crossed": {
+            "treated_rows": 90,
+            "treated_rows_matched": 90,
+            "treated_rows_dropped_no_control": 0,
+            "control_rows": 1165,
+            "control_rows_in_matched_strata": 978,
+            "clusters": 44,
+            "cluster": "query",
+            "treated_mean": 0.066667,
+            "matched_control_mean": 0.042782,
+            "diff": 0.023885,
+            "lo": -0.020365,
+            "hi": 0.081244,
+            "attributable_share": 0.358271,
+            "attributable_share_hi95": 0.679062,
+            "attributable_share_hi90": 0.647751,
+            "valid_draws": 2000
+          }
+        },
+        "raw": {
+          "event": {
+            "rows": 15,
+            "moved": 9
+          },
+          "no_event": {
+            "rows": 1267,
+            "moved": 646
+          }
+        }
+      },
+      "next": {
+        "rows": 846,
+        "event_rows": 14,
+        "reindex_event": {
+          "moved": {
+            "treated_rows": 14,
+            "treated_rows_matched": 14,
+            "treated_rows_dropped_no_control": 0,
+            "control_rows": 832,
+            "control_rows_in_matched_strata": 481,
+            "clusters": 30,
+            "cluster": "query",
+            "treated_mean": 0.357143,
+            "matched_control_mean": 0.542475,
+            "diff": -0.185332,
+            "lo": -0.398922,
+            "hi": 0.018188,
+            "attributable_share": 0.0,
+            "attributable_share_hi95": 0.03346,
+            "attributable_share_hi90": 0.0,
+            "valid_draws": 2000
+          },
+          "absd": {
+            "treated_rows": 14,
+            "treated_rows_matched": 14,
+            "treated_rows_dropped_no_control": 0,
+            "control_rows": 832,
+            "control_rows_in_matched_strata": 481,
+            "clusters": 30,
+            "cluster": "query",
+            "treated_mean": 0.785714,
+            "matched_control_mean": 1.238386,
+            "diff": -0.452672,
+            "lo": -1.004476,
+            "hi": 0.141346,
+            "attributable_share": 0.0,
+            "attributable_share_hi95": 0.095309,
+            "attributable_share_hi90": 0.026345,
+            "valid_draws": 2000
+          },
+          "crossed": {
+            "treated_rows": 14,
+            "treated_rows_matched": 14,
+            "treated_rows_dropped_no_control": 0,
+            "control_rows": 832,
+            "control_rows_in_matched_strata": 481,
+            "clusters": 30,
+            "cluster": "query",
+            "treated_mean": 0.214286,
+            "matched_control_mean": 0.17582,
+            "diff": 0.038465,
+            "lo": -0.130006,
+            "hi": 0.248935,
+            "attributable_share": 0.179506,
+            "attributable_share_hi95": 0.599053,
+            "attributable_share_hi90": 0.554219,
+            "valid_draws": 2000
+          },
+          "moved_url_cluster": {
+            "treated_rows": 14,
+            "treated_rows_matched": 14,
+            "treated_rows_dropped_no_control": 0,
+            "control_rows": 832,
+            "control_rows_in_matched_strata": 481,
+            "clusters": 155,
+            "cluster": "key",
+            "treated_mean": 0.357143,
+            "matched_control_mean": 0.542475,
+            "diff": -0.185332,
+            "lo": -0.420128,
+            "hi": 0.074671,
+            "attributable_share": 0.0,
+            "attributable_share_hi95": 0.09976,
+            "attributable_share_hi90": 0.030001,
+            "valid_draws": 2000
+          }
+        },
+        "reindex_event_strict": {
+          "moved": {
+            "treated_rows": 11,
+            "treated_rows_matched": 11,
+            "treated_rows_dropped_no_control": 0,
+            "control_rows": 835,
+            "control_rows_in_matched_strata": 386,
+            "clusters": 30,
+            "cluster": "query",
+            "treated_mean": 0.363636,
+            "matched_control_mean": 0.550005,
+            "diff": -0.186369,
+            "lo": -0.384163,
+            "hi": 0.083334,
+            "attributable_share": 0.0,
+            "attributable_share_hi95": 0.125113,
+            "attributable_share_hi90": 0.044447,
+            "valid_draws": 2000
+          },
+          "absd": {
+            "treated_rows": 11,
+            "treated_rows_matched": 11,
+            "treated_rows_dropped_no_control": 0,
+            "control_rows": 835,
+            "control_rows_in_matched_strata": 386,
+            "clusters": 30,
+            "cluster": "query",
+            "treated_mean": 0.727273,
+            "matched_control_mean": 1.225363,
+            "diff": -0.49809,
+            "lo": -1.095468,
+            "hi": 0.364879,
+            "attributable_share": 0.0,
+            "attributable_share_hi95": 0.229119,
+            "attributable_share_hi90": 0.130944,
+            "valid_draws": 2000
+          },
+          "crossed": {
+            "treated_rows": 11,
+            "treated_rows_matched": 11,
+            "treated_rows_dropped_no_control": 0,
+            "control_rows": 835,
+            "control_rows_in_matched_strata": 386,
+            "clusters": 30,
+            "cluster": "query",
+            "treated_mean": 0.181818,
+            "matched_control_mean": 0.179888,
+            "diff": 0.001931,
+            "lo": -0.177971,
+            "hi": 0.278351,
+            "attributable_share": 0.010618,
+            "attributable_share_hi95": 0.617214,
+            "attributable_share_hi90": 0.562985,
+            "valid_draws": 2000
+          }
+        },
+        "title_event": {
+          "moved": {
+            "treated_rows": 13,
+            "treated_rows_matched": 13,
+            "treated_rows_dropped_no_control": 0,
+            "control_rows": 833,
+            "control_rows_in_matched_strata": 482,
+            "clusters": 30,
+            "cluster": "query",
+            "treated_mean": 0.384615,
+            "matched_control_mean": 0.516928,
+            "diff": -0.132312,
+            "lo": -0.332865,
+            "hi": 0.044719,
+            "attributable_share": 0.0,
+            "attributable_share_hi95": 0.082316,
+            "attributable_share_hi90": 0.028456,
+            "valid_draws": 2000
+          },
+          "absd": {
+            "treated_rows": 13,
+            "treated_rows_matched": 13,
+            "treated_rows_dropped_no_control": 0,
+            "control_rows": 833,
+            "control_rows_in_matched_strata": 482,
+            "clusters": 30,
+            "cluster": "query",
+            "treated_mean": 0.846154,
+            "matched_control_mean": 1.189483,
+            "diff": -0.343329,
+            "lo": -0.87463,
+            "hi": 0.214234,
+            "attributable_share": 0.0,
+            "attributable_share_hi95": 0.156195,
+            "attributable_share_hi90": 0.09512,
+            "valid_draws": 2000
+          },
+          "crossed": {
+            "treated_rows": 13,
+            "treated_rows_matched": 13,
+            "treated_rows_dropped_no_control": 0,
+            "control_rows": 833,
+            "control_rows_in_matched_strata": 482,
+            "clusters": 30,
+            "cluster": "query",
+            "treated_mean": 0.230769,
+            "matched_control_mean": 0.150901,
+            "diff": 0.079868,
+            "lo": -0.075008,
+            "hi": 0.272652,
+            "attributable_share": 0.346094,
+            "attributable_share_hi95": 0.637928,
+            "attributable_share_hi90": 0.594221,
+            "valid_draws": 2000
+          }
+        },
+        "date_value_event": {
+          "moved": {
+            "treated_rows": 1,
+            "treated_rows_matched": 1,
+            "treated_rows_dropped_no_control": 0,
+            "control_rows": 845,
+            "control_rows_in_matched_strata": 66,
+            "clusters": 30,
+            "cluster": "query",
+            "treated_mean": 0.0,
+            "matched_control_mean": 0.863636,
+            "diff": -0.863636,
+            "lo": -0.952074,
+            "hi": -0.773585,
+            "attributable_share": 0.0,
+            "attributable_share_hi95": 0.0,
+            "attributable_share_hi90": 0.0,
+            "valid_draws": 1257
+          },
+          "absd": {
+            "treated_rows": 1,
+            "treated_rows_matched": 1,
+            "treated_rows_dropped_no_control": 0,
+            "control_rows": 845,
+            "control_rows_in_matched_strata": 66,
+            "clusters": 30,
+            "cluster": "query",
+            "treated_mean": 0.0,
+            "matched_control_mean": 1.878788,
+            "diff": -1.878788,
+            "lo": -2.236813,
+            "hi": -1.536052,
+            "attributable_share": 0.0,
+            "attributable_share_hi95": 0.0,
+            "attributable_share_hi90": 0.0,
+            "valid_draws": 1257
+          },
+          "crossed": {
+            "treated_rows": 1,
+            "treated_rows_matched": 1,
+            "treated_rows_dropped_no_control": 0,
+            "control_rows": 845,
+            "control_rows_in_matched_strata": 66,
+            "clusters": 30,
+            "cluster": "query",
+            "treated_mean": 0.0,
+            "matched_control_mean": 0.5,
+            "diff": -0.5,
+            "lo": -0.626,
+            "hi": -0.362069,
+            "attributable_share": 0.0,
+            "attributable_share_hi95": 0.0,
+            "attributable_share_hi90": 0.0,
+            "valid_draws": 1257
+          }
+        },
+        "display_event": {
+          "moved": {
+            "treated_rows": 84,
+            "treated_rows_matched": 84,
+            "treated_rows_dropped_no_control": 0,
+            "control_rows": 752,
+            "control_rows_in_matched_strata": 726,
+            "clusters": 30,
+            "cluster": "query",
+            "treated_mean": 0.607143,
+            "matched_control_mean": 0.559949,
+            "diff": 0.047193,
+            "lo": -0.095773,
+            "hi": 0.167116,
+            "attributable_share": 0.07773,
+            "attributable_share_hi95": 0.243696,
+            "attributable_share_hi90": 0.221512,
+            "valid_draws": 2000
+          },
+          "absd": {
+            "treated_rows": 84,
+            "treated_rows_matched": 84,
+            "treated_rows_dropped_no_control": 0,
+            "control_rows": 752,
+            "control_rows_in_matched_strata": 726,
+            "clusters": 30,
+            "cluster": "query",
+            "treated_mean": 1.845238,
+            "matched_control_mean": 1.557146,
+            "diff": 0.288092,
+            "lo": -0.236672,
+            "hi": 0.758347,
+            "attributable_share": 0.156128,
+            "attributable_share_hi95": 0.345665,
+            "attributable_share_hi90": 0.322467,
+            "valid_draws": 2000
+          },
+          "crossed": {
+            "treated_rows": 84,
+            "treated_rows_matched": 84,
+            "treated_rows_dropped_no_control": 0,
+            "control_rows": 752,
+            "control_rows_in_matched_strata": 726,
+            "clusters": 30,
+            "cluster": "query",
+            "treated_mean": 0.214286,
+            "matched_control_mean": 0.177244,
+            "diff": 0.037042,
+            "lo": -0.056646,
+            "hi": 0.127372,
+            "attributable_share": 0.172863,
+            "attributable_share_hi95": 0.411347,
+            "attributable_share_hi90": 0.390389,
+            "valid_draws": 2000
+          }
+        },
+        "raw": {
+          "event": {
+            "rows": 14,
+            "moved": 5
+          },
+          "no_event": {
+            "rows": 832,
+            "moved": 481
+          }
+        }
+      },
+      "direction": {
+        "same": {
+          "title_event_rows_moved": 9,
+          "with_term_count_change": 2,
+          "terms_up": 1,
+          "terms_down": 1,
+          "term_rule": {
+            "hits": 2,
+            "n": 2,
+            "rate": 1.0,
+            "lo": 1.0,
+            "hi": 1.0,
+            "queries": 1
+          },
+          "position_rule_same_rows": {
+            "hits": 1,
+            "n": 2,
+            "rate": 0.5,
+            "lo": 0.5,
+            "hi": 0.5,
+            "queries": 1
+          },
+          "term_minus_position": {
+            "diff": 0.5,
+            "lo": 0.5,
+            "hi": 0.5,
+            "n": 2,
+            "queries": 1
+          },
+          "date_rule_newer_up": {
+            "hits": 0,
+            "n": 0,
+            "rate": null,
+            "lo": null,
+            "hi": null,
+            "queries": 0
+          },
+          "date_events_moved": 0,
+          "date_newer_moved": 0
+        },
+        "next": {
+          "title_event_rows_moved": 5,
+          "with_term_count_change": 2,
+          "terms_up": 1,
+          "terms_down": 1,
+          "term_rule": {
+            "hits": 1,
+            "n": 2,
+            "rate": 0.5,
+            "lo": 0.5,
+            "hi": 0.5,
+            "queries": 1
+          },
+          "position_rule_same_rows": {
+            "hits": 2,
+            "n": 2,
+            "rate": 1.0,
+            "lo": 1.0,
+            "hi": 1.0,
+            "queries": 1
+          },
+          "term_minus_position": {
+            "diff": -0.5,
+            "lo": -0.5,
+            "hi": -0.5,
+            "n": 2,
+            "queries": 1
+          },
+          "date_rule_newer_up": {
+            "hits": 0,
+            "n": 0,
+            "rate": null,
+            "lo": null,
+            "hi": null,
+            "queries": 0
+          },
+          "date_events_moved": 0,
+          "date_newer_moved": 0
+        }
+      }
+    },
+    "title_tag_changes": [
+      {
+        "key": "https://agtek.com/products/underground",
+        "site": "agtek.com",
+        "fetch_old_day": "2026-11-13",
+        "fetch_new_day": "2026-11-16",
+        "old_title": "Underground Utility & Excavation Takeoff Software - AGTEK",
+        "new_title": "Underground Utility Estimating Software - AGTEK",
+        "serp_queries": 1,
+        "serp_days_after_new_fetch": [
+          "2026-11-16",
+          "2026-11-17"
+        ],
+        "last_serp_day": "2026-11-17",
+        "queries_with_new_serp_title": 0,
+        "first_serp_new_day": null,
+        "lag_days_vs_fetch_new": null,
+        "serp_title_events_any_time": [],
+        "serp_title_events_after_old_fetch": [],
+        "verdict": "SERP still shows the old tag",
+        "labels_by_day": {
+          "2026-11-06": [
+            "old"
+          ],
+          "2026-11-09": [
+            "old"
+          ],
+          "2026-11-11": [
+            "old"
+          ],
+          "2026-11-13": [
+            "old"
+          ],
+          "2026-11-16": [
+            "old"
+          ],
+          "2026-11-17": [
+            "old"
+          ]
+        },
+        "per_query": [
+          {
+            "query": "best excavation software",
+            "days": [
+              "2026-11-06",
+              "2026-11-09",
+              "2026-11-11",
+              "2026-11-13",
+              "2026-11-16",
+              "2026-11-17"
+            ],
+            "labels": "OOOOOO",
+            "first_new": null
+          }
+        ]
+      },
+      {
+        "key": "https://agtek.com/solutions/takeoff",
+        "site": "agtek.com",
+        "fetch_old_day": "2026-11-13",
+        "fetch_new_day": "2026-11-16",
+        "old_title": "Construction Takeoff Software\u00a0| Earthworks Takeoff Guide-AGTEK - AGTEK",
+        "new_title": "Earthworks Takeoff Software for Construction - AGTEK",
+        "serp_queries": 12,
+        "serp_days_after_new_fetch": [
+          "2026-11-16",
+          "2026-11-17"
+        ],
+        "last_serp_day": "2026-11-17",
+        "queries_with_new_serp_title": 12,
+        "first_serp_new_day": "2026-11-16",
+        "lag_days_vs_fetch_new": 0,
+        "serp_title_events_any_time": [
+          "2026-11-13>2026-11-16"
+        ],
+        "serp_title_events_after_old_fetch": [
+          "2026-11-13>2026-11-16"
+        ],
+        "verdict": "SERP took the new tag",
+        "labels_by_day": {
+          "2026-11-06": [
+            "neither"
+          ],
+          "2026-11-09": [
+            "neither"
+          ],
+          "2026-11-11": [
+            "neither"
+          ],
+          "2026-11-13": [
+            "neither"
+          ],
+          "2026-11-16": [
+            "new"
+          ],
+          "2026-11-17": [
+            "new"
+          ]
+        },
+        "per_query": [
+          {
+            "query": "all in 1 dirt work software",
+            "days": [
+              "2026-11-06",
+              "2026-11-09",
+              "2026-11-11",
+              "2026-11-13",
+              "2026-11-16",
+              "2026-11-17"
+            ],
+            "labels": "xxxxNN",
+            "first_new": "2026-11-16"
+          },
+          {
+            "query": "all in one dirt work software",
+            "days": [
+              "2026-11-06",
+              "2026-11-09",
+              "2026-11-11",
+              "2026-11-13",
+              "2026-11-16",
+              "2026-11-17"
+            ],
+            "labels": "xxxxNN",
+            "first_new": "2026-11-16"
+          },
+          {
+            "query": "all in one dirtwork software",
+            "days": [
+              "2026-11-16"
+            ],
+            "labels": "N",
+            "first_new": "2026-11-16"
+          },
+          {
+            "query": "best all in 1 dirt work software",
+            "days": [
+              "2026-11-06",
+              "2026-11-09",
+              "2026-11-11",
+              "2026-11-13",
+              "2026-11-16",
+              "2026-11-17"
+            ],
+            "labels": "xxxxNN",
+            "first_new": "2026-11-16"
+          },
+          {
+            "query": "best all in one dirt work software",
+            "days": [
+              "2026-11-06",
+              "2026-11-09",
+              "2026-11-11",
+              "2026-11-13",
+              "2026-11-16",
+              "2026-11-17"
+            ],
+            "labels": "xxxxNN",
+            "first_new": "2026-11-16"
+          },
+          {
+            "query": "best all-in-one dirt work and excavation software",
+            "days": [
+              "2026-11-06",
+              "2026-11-16"
+            ],
+            "labels": "xN",
+            "first_new": "2026-11-16"
+          },
+          {
+            "query": "best construction software for dirtwork",
+            "days": [
+              "2026-11-16"
+            ],
+            "labels": "N",
+            "first_new": "2026-11-16"
+          },
+          {
+            "query": "best dirt work software",
+            "days": [
+              "2026-11-06",
+              "2026-11-11",
+              "2026-11-16",
+              "2026-11-17"
+            ],
+            "labels": "xxNN",
+            "first_new": "2026-11-16"
+          },
+          {
+            "query": "best software for dirtwork companies",
+            "days": [
+              "2026-11-16"
+            ],
+            "labels": "N",
+            "first_new": "2026-11-16"
+          },
+          {
+            "query": "best software for small dirt work contractors",
+            "days": [
+              "2026-11-16"
+            ],
+            "labels": "N",
+            "first_new": "2026-11-16"
+          },
+          {
+            "query": "earthwork takeoff software",
+            "days": [
+              "2026-11-16"
+            ],
+            "labels": "N",
+            "first_new": "2026-11-16"
+          },
+          {
+            "query": "excavation software",
+            "days": [
+              "2026-11-17"
+            ],
+            "labels": "N",
+            "first_new": "2026-11-17"
+          }
+        ]
+      },
+      {
+        "key": "https://www.hcss.com/products/construction-project-management-software",
+        "site": "hcss.com",
+        "fetch_old_day": "2026-11-13",
+        "fetch_new_day": "2026-11-16",
+        "old_title": "Construction Management Software | HeavyJob",
+        "new_title": "Construction Field & Project Management Software | HeavyJob",
+        "serp_queries": 8,
+        "serp_days_after_new_fetch": [
+          "2026-11-16",
+          "2026-11-17"
+        ],
+        "last_serp_day": "2026-11-17",
+        "queries_with_new_serp_title": 8,
+        "first_serp_new_day": "2026-11-16",
+        "lag_days_vs_fetch_new": 0,
+        "serp_title_events_any_time": [
+          "2026-11-13>2026-11-16"
+        ],
+        "serp_title_events_after_old_fetch": [
+          "2026-11-13>2026-11-16"
+        ],
+        "verdict": "SERP took the new tag",
+        "labels_by_day": {
+          "2026-11-06": [
+            "old"
+          ],
+          "2026-11-09": [
+            "old"
+          ],
+          "2026-11-11": [
+            "old"
+          ],
+          "2026-11-13": [
+            "old"
+          ],
+          "2026-11-16": [
+            "new"
+          ],
+          "2026-11-17": [
+            "new"
+          ]
+        },
+        "per_query": [
+          {
+            "query": "dirt work management software",
+            "days": [
+              "2026-11-16",
+              "2026-11-17"
+            ],
+            "labels": "NN",
+            "first_new": "2026-11-16"
+          },
+          {
+            "query": "hcss heavyjob alternative",
+            "days": [
+              "2026-11-06",
+              "2026-11-09",
+              "2026-11-11",
+              "2026-11-13",
+              "2026-11-16",
+              "2026-11-17"
+            ],
+            "labels": "OOOONN",
+            "first_new": "2026-11-16"
+          },
+          {
+            "query": "hcss heavyjob pricing",
+            "days": [
+              "2026-11-16"
+            ],
+            "labels": "N",
+            "first_new": "2026-11-16"
+          },
+          {
+            "query": "heavy civil field management software",
+            "days": [
+              "2026-11-16",
+              "2026-11-17"
+            ],
+            "labels": "NN",
+            "first_new": "2026-11-16"
+          },
+          {
+            "query": "heavy job",
+            "days": [
+              "2026-11-16"
+            ],
+            "labels": "N",
+            "first_new": "2026-11-16"
+          },
+          {
+            "query": "heavyjob alternative",
+            "days": [
+              "2026-11-16"
+            ],
+            "labels": "N",
+            "first_new": "2026-11-16"
+          },
+          {
+            "query": "heavyjob pricing",
+            "days": [
+              "2026-11-16"
+            ],
+            "labels": "N",
+            "first_new": "2026-11-16"
+          },
+          {
+            "query": "smartcrew vs heavyjob",
+            "days": [
+              "2026-11-16"
+            ],
+            "labels": "N",
+            "first_new": "2026-11-16"
+          }
+        ]
+      },
+      {
+        "key": "https://www.smartcrewhq.com/all-in-one-dirt-work",
+        "site": "smartcrewhq.com",
+        "fetch_old_day": "2026-11-09",
+        "fetch_new_day": "2026-11-11",
+        "old_title": "Best all in one dirtworks software",
+        "new_title": "Best All in One Dirtworks Software (2026): Honest Contractor Guide",
+        "serp_queries": 11,
+        "serp_days_after_new_fetch": [
+          "2026-11-11",
+          "2026-11-13",
+          "2026-11-16",
+          "2026-11-17"
+        ],
+        "last_serp_day": "2026-11-17",
+        "queries_with_new_serp_title": 0,
+        "first_serp_new_day": null,
+        "lag_days_vs_fetch_new": null,
+        "serp_title_events_any_time": [],
+        "serp_title_events_after_old_fetch": [],
+        "verdict": "SERP shows neither tag",
+        "labels_by_day": {
+          "2026-11-06": [
+            "neither"
+          ],
+          "2026-11-09": [
+            "neither"
+          ],
+          "2026-11-11": [
+            "neither"
+          ],
+          "2026-11-13": [
+            "neither"
+          ],
+          "2026-11-16": [
+            "neither"
+          ],
+          "2026-11-17": [
+            "neither"
+          ]
+        },
+        "per_query": [
+          {
+            "query": "all in 1 dirt work software",
+            "days": [
+              "2026-11-06",
+              "2026-11-09",
+              "2026-11-11",
+              "2026-11-13",
+              "2026-11-16",
+              "2026-11-17"
+            ],
+            "labels": "xxxxxx",
+            "first_new": null
+          },
+          {
+            "query": "all in one dirt work management software",
+            "days": [
+              "2026-11-06",
+              "2026-11-17"
+            ],
+            "labels": "xx",
+            "first_new": null
+          },
+          {
+            "query": "all in one dirt work software",
+            "days": [
+              "2026-11-06",
+              "2026-11-16",
+              "2026-11-17"
+            ],
+            "labels": "xxx",
+            "first_new": null
+          },
+          {
+            "query": "all in one dirtwork software",
+            "days": [
+              "2026-11-06",
+              "2026-11-13",
+              "2026-11-16",
+              "2026-11-17"
+            ],
+            "labels": "xxxx",
+            "first_new": null
+          },
+          {
+            "query": "best all in one dirt work management software",
+            "days": [
+              "2026-11-16",
+              "2026-11-17"
+            ],
+            "labels": "xx",
+            "first_new": null
+          },
+          {
+            "query": "best all-in-one dirt work and excavation software",
+            "days": [
+              "2026-11-17"
+            ],
+            "labels": "x",
+            "first_new": null
+          },
+          {
+            "query": "best all-in-one dirt work management software",
+            "days": [
+              "2026-11-16",
+              "2026-11-17"
+            ],
+            "labels": "xx",
+            "first_new": null
+          },
+          {
+            "query": "best all-in-one dirtworks software",
+            "days": [
+              "2026-11-11",
+              "2026-11-13",
+              "2026-11-16",
+              "2026-11-17"
+            ],
+            "labels": "xxxx",
+            "first_new": null
+          },
+          {
+            "query": "best construction software for dirtwork",
+            "days": [
+              "2026-11-16"
+            ],
+            "labels": "x",
+            "first_new": null
+          },
+          {
+            "query": "dirt work contractor software",
+            "days": [
+              "2026-11-16",
+              "2026-11-17"
+            ],
+            "labels": "xx",
+            "first_new": null
+          },
+          {
+            "query": "dirt work management software",
+            "days": [
+              "2026-11-16",
+              "2026-11-17"
+            ],
+            "labels": "xx",
+            "first_new": null
+          }
+        ]
+      },
+      {
+        "key": "https://www.smartcrewhq.com/all-in-one-dirt-work",
+        "site": "smartcrewhq.com",
+        "fetch_old_day": "2026-11-11",
+        "fetch_new_day": "2026-11-13",
+        "old_title": "Best All in One Dirtworks Software (2026): Honest Contractor Guide",
+        "new_title": "Best All-in-One Dirtwork and Heavy Civil Software (2026)",
+        "serp_queries": 11,
+        "serp_days_after_new_fetch": [
+          "2026-11-13",
+          "2026-11-16",
+          "2026-11-17"
+        ],
+        "last_serp_day": "2026-11-17",
+        "queries_with_new_serp_title": 0,
+        "first_serp_new_day": null,
+        "lag_days_vs_fetch_new": null,
+        "serp_title_events_any_time": [],
+        "serp_title_events_after_old_fetch": [],
+        "verdict": "SERP shows neither tag",
+        "labels_by_day": {
+          "2026-11-06": [
+            "neither"
+          ],
+          "2026-11-09": [
+            "neither"
+          ],
+          "2026-11-11": [
+            "neither"
+          ],
+          "2026-11-13": [
+            "neither"
+          ],
+          "2026-11-16": [
+            "neither"
+          ],
+          "2026-11-17": [
+            "neither"
+          ]
+        },
+        "per_query": [
+          {
+            "query": "all in 1 dirt work software",
+            "days": [
+              "2026-11-06",
+              "2026-11-09",
+              "2026-11-11",
+              "2026-11-13",
+              "2026-11-16",
+              "2026-11-17"
+            ],
+            "labels": "xxxxxx",
+            "first_new": null
+          },
+          {
+            "query": "all in one dirt work management software",
+            "days": [
+              "2026-11-06",
+              "2026-11-17"
+            ],
+            "labels": "xx",
+            "first_new": null
+          },
+          {
+            "query": "all in one dirt work software",
+            "days": [
+              "2026-11-06",
+              "2026-11-16",
+              "2026-11-17"
+            ],
+            "labels": "xxx",
+            "first_new": null
+          },
+          {
+            "query": "all in one dirtwork software",
+            "days": [
+              "2026-11-06",
+              "2026-11-13",
+              "2026-11-16",
+              "2026-11-17"
+            ],
+            "labels": "xxxx",
+            "first_new": null
+          },
+          {
+            "query": "best all in one dirt work management software",
+            "days": [
+              "2026-11-16",
+              "2026-11-17"
+            ],
+            "labels": "xx",
+            "first_new": null
+          },
+          {
+            "query": "best all-in-one dirt work and excavation software",
+            "days": [
+              "2026-11-17"
+            ],
+            "labels": "x",
+            "first_new": null
+          },
+          {
+            "query": "best all-in-one dirt work management software",
+            "days": [
+              "2026-11-16",
+              "2026-11-17"
+            ],
+            "labels": "xx",
+            "first_new": null
+          },
+          {
+            "query": "best all-in-one dirtworks software",
+            "days": [
+              "2026-11-11",
+              "2026-11-13",
+              "2026-11-16",
+              "2026-11-17"
+            ],
+            "labels": "xxxx",
+            "first_new": null
+          },
+          {
+            "query": "best construction software for dirtwork",
+            "days": [
+              "2026-11-16"
+            ],
+            "labels": "x",
+            "first_new": null
+          },
+          {
+            "query": "dirt work contractor software",
+            "days": [
+              "2026-11-16",
+              "2026-11-17"
+            ],
+            "labels": "xx",
+            "first_new": null
+          },
+          {
+            "query": "dirt work management software",
+            "days": [
+              "2026-11-16",
+              "2026-11-17"
+            ],
+            "labels": "xx",
+            "first_new": null
+          }
+        ]
+      },
+      {
+        "key": "https://www.smartcrewhq.com/all-in-one-dirt-work-software",
+        "site": "smartcrewhq.com",
+        "fetch_old_day": "2026-11-09",
+        "fetch_new_day": "2026-11-11",
+        "old_title": "Best all in one dirtworks software",
+        "new_title": "Best All in One Dirtworks Software (2026): Honest Contractor Guide",
+        "serp_queries": 6,
+        "serp_days_after_new_fetch": [
+          "2026-11-11",
+          "2026-11-16",
+          "2026-11-17"
+        ],
+        "last_serp_day": "2026-11-17",
+        "queries_with_new_serp_title": 0,
+        "first_serp_new_day": null,
+        "lag_days_vs_fetch_new": null,
+        "serp_title_events_any_time": [],
+        "serp_title_events_after_old_fetch": [],
+        "verdict": "SERP still shows the old tag",
+        "labels_by_day": {
+          "2026-11-06": [
+            "neither"
+          ],
+          "2026-11-09": [
+            "neither"
+          ],
+          "2026-11-11": [
+            "neither"
+          ],
+          "2026-11-16": [
+            "neither",
+            "old"
+          ],
+          "2026-11-17": [
+            "neither"
+          ]
+        },
+        "per_query": [
+          {
+            "query": "all in one dirtwork software",
+            "days": [
+              "2026-11-11",
+              "2026-11-16",
+              "2026-11-17"
+            ],
+            "labels": "xxx",
+            "first_new": null
+          },
+          {
+            "query": "best all in one dirt work management software",
+            "days": [
+              "2026-11-06"
+            ],
+            "labels": "x",
+            "first_new": null
+          },
+          {
+            "query": "best all in one dirt work software",
+            "days": [
+              "2026-11-16"
+            ],
+            "labels": "x",
+            "first_new": null
+          },
+          {
+            "query": "best all-in-one dirt work management software",
+            "days": [
+              "2026-11-16"
+            ],
+            "labels": "O",
+            "first_new": null
+          },
+          {
+            "query": "best all-in-one dirtworks software",
+            "days": [
+              "2026-11-06",
+              "2026-11-09",
+              "2026-11-11",
+              "2026-11-16",
+              "2026-11-17"
+            ],
+            "labels": "xxxxx",
+            "first_new": null
+          },
+          {
+            "query": "best dirt work software",
+            "days": [
+              "2026-11-16"
+            ],
+            "labels": "x",
+            "first_new": null
+          }
+        ]
+      },
+      {
+        "key": "https://www.smartcrewhq.com/all-in-one-dirt-work-software",
+        "site": "smartcrewhq.com",
+        "fetch_old_day": "2026-11-11",
+        "fetch_new_day": "2026-11-16",
+        "old_title": "Best All in One Dirtworks Software (2026): Honest Contractor Guide",
+        "new_title": "Best All-in-One Dirtwork and Heavy Civil Software (2026)",
+        "serp_queries": 6,
+        "serp_days_after_new_fetch": [
+          "2026-11-16",
+          "2026-11-17"
+        ],
+        "last_serp_day": "2026-11-17",
+        "queries_with_new_serp_title": 0,
+        "first_serp_new_day": null,
+        "lag_days_vs_fetch_new": null,
+        "serp_title_events_any_time": [],
+        "serp_title_events_after_old_fetch": [],
+        "verdict": "SERP shows neither tag",
+        "labels_by_day": {
+          "2026-11-06": [
+            "neither"
+          ],
+          "2026-11-09": [
+            "neither"
+          ],
+          "2026-11-11": [
+            "neither"
+          ],
+          "2026-11-16": [
+            "neither"
+          ],
+          "2026-11-17": [
+            "neither"
+          ]
+        },
+        "per_query": [
+          {
+            "query": "all in one dirtwork software",
+            "days": [
+              "2026-11-11",
+              "2026-11-16",
+              "2026-11-17"
+            ],
+            "labels": "xxx",
+            "first_new": null
+          },
+          {
+            "query": "best all in one dirt work management software",
+            "days": [
+              "2026-11-06"
+            ],
+            "labels": "x",
+            "first_new": null
+          },
+          {
+            "query": "best all in one dirt work software",
+            "days": [
+              "2026-11-16"
+            ],
+            "labels": "x",
+            "first_new": null
+          },
+          {
+            "query": "best all-in-one dirt work management software",
+            "days": [
+              "2026-11-16"
+            ],
+            "labels": "x",
+            "first_new": null
+          },
+          {
+            "query": "best all-in-one dirtworks software",
+            "days": [
+              "2026-11-06",
+              "2026-11-09",
+              "2026-11-11",
+              "2026-11-16",
+              "2026-11-17"
+            ],
+            "labels": "xxxxx",
+            "first_new": null
+          },
+          {
+            "query": "best dirt work software",
+            "days": [
+              "2026-11-16"
+            ],
+            "labels": "x",
+            "first_new": null
+          }
+        ]
+      },
+      {
+        "key": "https://www.smartcrewhq.com/best-all-in-one-dirt-work-software",
+        "site": "smartcrewhq.com",
+        "fetch_old_day": "2026-11-09",
+        "fetch_new_day": "2026-11-13",
+        "old_title": "Best all in one dirtworks software",
+        "new_title": "Best All-in-One Dirtwork and Heavy Civil Software (2026)",
+        "serp_queries": 6,
+        "serp_days_after_new_fetch": [
+          "2026-11-13",
+          "2026-11-16",
+          "2026-11-17"
+        ],
+        "last_serp_day": "2026-11-17",
+        "queries_with_new_serp_title": 0,
+        "first_serp_new_day": null,
+        "lag_days_vs_fetch_new": null,
+        "serp_title_events_any_time": [],
+        "serp_title_events_after_old_fetch": [],
+        "verdict": "SERP shows neither tag",
+        "labels_by_day": {
+          "2026-11-06": [
+            "neither"
+          ],
+          "2026-11-09": [
+            "neither"
+          ],
+          "2026-11-13": [
+            "neither"
+          ],
+          "2026-11-16": [
+            "neither"
+          ],
+          "2026-11-17": [
+            "neither"
+          ]
+        },
+        "per_query": [
+          {
+            "query": "all in 1 dirt work software",
+            "days": [
+              "2026-11-16"
+            ],
+            "labels": "x",
+            "first_new": null
+          },
+          {
+            "query": "all in one dirt work management software",
+            "days": [
+              "2026-11-17"
+            ],
+            "labels": "x",
+            "first_new": null
+          },
+          {
+            "query": "all in one dirtwork software",
+            "days": [
+              "2026-11-13",
+              "2026-11-16",
+              "2026-11-17"
+            ],
+            "labels": "xxx",
+            "first_new": null
+          },
+          {
+            "query": "best all in one dirt work software",
+            "days": [
+              "2026-11-16"
+            ],
+            "labels": "x",
+            "first_new": null
+          },
+          {
+            "query": "best all in one excavation software",
+            "days": [
+              "2026-11-16"
+            ],
+            "labels": "x",
+            "first_new": null
+          },
+          {
+            "query": "best all-in-one dirtworks software",
+            "days": [
+              "2026-11-06",
+              "2026-11-09",
+              "2026-11-13"
+            ],
+            "labels": "xxx",
+            "first_new": null
+          }
+        ]
+      },
+      {
+        "key": "https://www.smartcrewhq.com/blog/best-software-small-dirt-work-contractors",
+        "site": "smartcrewhq.com",
+        "fetch_old_day": "2026-11-09",
+        "fetch_new_day": "2026-11-11",
+        "old_title": "Best dirt work software for small companies",
+        "new_title": "Best Dirt Work Software for Small Companies (2026)",
+        "serp_queries": 5,
+        "serp_days_after_new_fetch": [
+          "2026-11-11",
+          "2026-11-13",
+          "2026-11-16",
+          "2026-11-17"
+        ],
+        "last_serp_day": "2026-11-17",
+        "queries_with_new_serp_title": 0,
+        "first_serp_new_day": null,
+        "lag_days_vs_fetch_new": null,
+        "serp_title_events_any_time": [
+          "2026-11-09>2026-11-11"
+        ],
+        "serp_title_events_after_old_fetch": [
+          "2026-11-09>2026-11-11"
+        ],
+        "verdict": "SERP shows neither tag",
+        "labels_by_day": {
+          "2026-11-09": [
+            "neither"
+          ],
+          "2026-11-11": [
+            "neither"
+          ],
+          "2026-11-13": [
+            "neither"
+          ],
+          "2026-11-16": [
+            "neither"
+          ],
+          "2026-11-17": [
+            "neither"
+          ]
+        },
+        "per_query": [
+          {
+            "query": "best all in one dirt work management software",
+            "days": [
+              "2026-11-11"
+            ],
+            "labels": "x",
+            "first_new": null
+          },
+          {
+            "query": "best dirt work software for small business",
+            "days": [
+              "2026-11-16"
+            ],
+            "labels": "x",
+            "first_new": null
+          },
+          {
+            "query": "dirt work contractor software",
+            "days": [
+              "2026-11-13",
+              "2026-11-16",
+              "2026-11-17"
+            ],
+            "labels": "xxx",
+            "first_new": null
+          },
+          {
+            "query": "dirt work management software",
+            "days": [
+              "2026-11-09",
+              "2026-11-11",
+              "2026-11-16"
+            ],
+            "labels": "xxx",
+            "first_new": null
+          },
+          {
+            "query": "dirt work software with crm",
+            "days": [
+              "2026-11-16",
+              "2026-11-17"
+            ],
+            "labels": "xx",
+            "first_new": null
+          }
+        ]
+      },
+      {
+        "key": "https://www.smartcrewhq.com/compare/hcss-heavybid-alternative",
+        "site": "smartcrewhq.com",
+        "fetch_old_day": "2026-11-09",
+        "fetch_new_day": "2026-11-11",
+        "old_title": "HCSS HeavyBid alternative",
+        "new_title": "HCSS HeavyBid Alternative? Keep HeavyBid, Fix the Field",
+        "serp_queries": 5,
+        "serp_days_after_new_fetch": [
+          "2026-11-11",
+          "2026-11-13",
+          "2026-11-16",
+          "2026-11-17"
+        ],
+        "last_serp_day": "2026-11-17",
+        "queries_with_new_serp_title": 0,
+        "first_serp_new_day": null,
+        "lag_days_vs_fetch_new": null,
+        "serp_title_events_any_time": [],
+        "serp_title_events_after_old_fetch": [],
+        "verdict": "SERP still shows the old tag",
+        "labels_by_day": {
+          "2026-11-06": [
+            "old"
+          ],
+          "2026-11-09": [
+            "old"
+          ],
+          "2026-11-11": [
+            "old"
+          ],
+          "2026-11-13": [
+            "old"
+          ],
+          "2026-11-16": [
+            "old"
+          ],
+          "2026-11-17": [
+            "old"
+          ]
+        },
+        "per_query": [
+          {
+            "query": "hcss alternative",
+            "days": [
+              "2026-11-13",
+              "2026-11-16",
+              "2026-11-17"
+            ],
+            "labels": "OOO",
+            "first_new": null
+          },
+          {
+            "query": "hcss heavybid alternative",
+            "days": [
+              "2026-11-06",
+              "2026-11-09",
+              "2026-11-11",
+              "2026-11-16",
+              "2026-11-17"
+            ],
+            "labels": "OOOOO",
+            "first_new": null
+          },
+          {
+            "query": "hcss heavyjob alternative",
+            "days": [
+              "2026-11-11",
+              "2026-11-16"
+            ],
+            "labels": "OO",
+            "first_new": null
+          },
+          {
+            "query": "heavybid alternative",
+            "days": [
+              "2026-11-16"
+            ],
+            "labels": "O",
+            "first_new": null
+          },
+          {
+            "query": "smartcrew vs hcss",
+            "days": [
+              "2026-11-16"
+            ],
+            "labels": "O",
+            "first_new": null
+          }
+        ]
+      },
+      {
+        "key": "https://www.smartcrewhq.com/dirt-work-software-with-crm",
+        "site": "smartcrewhq.com",
+        "fetch_old_day": "2026-11-09",
+        "fetch_new_day": "2026-11-11",
+        "old_title": "Dirt work software with CRM",
+        "new_title": "Dirt Work Software With CRM: Leads to Crew in One App",
+        "serp_queries": 2,
+        "serp_days_after_new_fetch": [
+          "2026-11-11",
+          "2026-11-13",
+          "2026-11-16",
+          "2026-11-17"
+        ],
+        "last_serp_day": "2026-11-17",
+        "queries_with_new_serp_title": 0,
+        "first_serp_new_day": null,
+        "lag_days_vs_fetch_new": null,
+        "serp_title_events_any_time": [],
+        "serp_title_events_after_old_fetch": [],
+        "verdict": "SERP still shows the old tag",
+        "labels_by_day": {
+          "2026-11-06": [
+            "old"
+          ],
+          "2026-11-09": [
+            "old"
+          ],
+          "2026-11-11": [
+            "old"
+          ],
+          "2026-11-13": [
+            "old"
+          ],
+          "2026-11-16": [
+            "old"
+          ],
+          "2026-11-17": [
+            "old"
+          ]
+        },
+        "per_query": [
+          {
+            "query": "all in one dirt work management software",
+            "days": [
+              "2026-11-16"
+            ],
+            "labels": "O",
+            "first_new": null
+          },
+          {
+            "query": "dirt work software with crm",
+            "days": [
+              "2026-11-06",
+              "2026-11-09",
+              "2026-11-11",
+              "2026-11-13",
+              "2026-11-16",
+              "2026-11-17"
+            ],
+            "labels": "OOOOOO",
+            "first_new": null
+          }
+        ]
+      }
+    ],
+    "material_rows_vs_serp_event": {
+      "event|moved": 5,
+      "event|static": 1,
+      "no event|moved": 8,
+      "no event|static": 1,
+      "not shown both days|moved": 4,
+      "not shown both days|static": 9
+    }
+  },
+  "q4_lag": {
+    "next": {
+      "rows": 763,
+      "material_rows": 28,
+      "moved": {
+        "treated_rows": 28,
+        "treated_rows_matched": 28,
+        "treated_rows_dropped_no_control": 0,
+        "control_rows": 735,
+        "control_rows_in_matched_strata": 492,
+        "clusters": 30,
+        "cluster": "query",
+        "treated_mean": 0.428571,
+        "matched_control_mean": 0.401429,
+        "diff": 0.027142,
+        "lo": -0.166347,
+        "hi": 0.205346,
+        "attributable_share": 0.063332,
+        "attributable_share_hi95": 0.339119,
+        "attributable_share_hi90": 0.311522,
+        "valid_draws": 2000
+      },
+      "absd": {
+        "treated_rows": 28,
+        "treated_rows_matched": 28,
+        "treated_rows_dropped_no_control": 0,
+        "control_rows": 735,
+        "control_rows_in_matched_strata": 492,
+        "clusters": 30,
+        "cluster": "query",
+        "treated_mean": 2.178571,
+        "matched_control_mean": 1.066966,
+        "diff": 1.111606,
+        "lo": -0.36105,
+        "hi": 2.648531,
+        "attributable_share": 0.510245,
+        "attributable_share_hi95": 0.740444,
+        "attributable_share_hi90": 0.714588,
+        "valid_draws": 2000
+      },
+      "crossed": {
+        "treated_rows": 28,
+        "treated_rows_matched": 28,
+        "treated_rows_dropped_no_control": 0,
+        "control_rows": 735,
+        "control_rows_in_matched_strata": 492,
+        "clusters": 30,
+        "cluster": "query",
+        "treated_mean": 0.25,
+        "matched_control_mean": 0.180356,
+        "diff": 0.069644,
+        "lo": -0.101514,
+        "hi": 0.234106,
+        "attributable_share": 0.278575,
+        "attributable_share_hi95": 0.611506,
+        "attributable_share_hi90": 0.574612,
+        "valid_draws": 2000
+      },
+      "moved_excluding_pages_changed_again": {
+        "treated_rows": 22,
+        "treated_rows_matched": 22,
+        "treated_rows_dropped_no_control": 0,
+        "control_rows": 717,
+        "control_rows_in_matched_strata": 432,
+        "clusters": 30,
+        "cluster": "query",
+        "treated_mean": 0.454545,
+        "matched_control_mean": 0.410325,
+        "diff": 0.044221,
+        "lo": -0.125713,
+        "hi": 0.183637,
+        "attributable_share": 0.097286,
+        "attributable_share_hi95": 0.328856,
+        "attributable_share_hi90": 0.287855,
+        "valid_draws": 2000
+      },
+      "anychange_moved": {
+        "treated_rows": 101,
+        "treated_rows_matched": 101,
+        "treated_rows_dropped_no_control": 0,
+        "control_rows": 662,
+        "control_rows_in_matched_strata": 545,
+        "clusters": 30,
+        "cluster": "query",
+        "treated_mean": 0.445545,
+        "matched_control_mean": 0.445269,
+        "diff": 0.000275,
+        "lo": -0.105873,
+        "hi": 0.102147,
+        "attributable_share": 0.000618,
+        "attributable_share_hi95": 0.192451,
+        "attributable_share_hi90": 0.170431,
+        "valid_draws": 2000
+      },
+      "absd_url_cluster": {
+        "treated_rows": 28,
+        "treated_rows_matched": 28,
+        "treated_rows_dropped_no_control": 0,
+        "control_rows": 735,
+        "control_rows_in_matched_strata": 492,
+        "clusters": 98,
+        "cluster": "key",
+        "treated_mean": 2.178571,
+        "matched_control_mean": 1.066966,
+        "diff": 1.111606,
+        "lo": -0.140312,
+        "hi": 2.446801,
+        "attributable_share": 0.510245,
+        "attributable_share_hi95": 0.714842,
+        "attributable_share_hi90": 0.679844,
+        "valid_draws": 2000
+      },
+      "moved_url_cluster": {
+        "treated_rows": 28,
+        "treated_rows_matched": 28,
+        "treated_rows_dropped_no_control": 0,
+        "control_rows": 735,
+        "control_rows_in_matched_strata": 492,
+        "clusters": 98,
+        "cluster": "key",
+        "treated_mean": 0.428571,
+        "matched_control_mean": 0.401429,
+        "diff": 0.027142,
+        "lo": -0.109458,
+        "hi": 0.151582,
+        "attributable_share": 0.063332,
+        "attributable_share_hi95": 0.270762,
+        "attributable_share_hi90": 0.241694,
+        "valid_draws": 2000
+      },
+      "without_client": {
+        "moved": {
+          "treated_rows": 10,
+          "treated_rows_matched": 10,
+          "treated_rows_dropped_no_control": 0,
+          "control_rows": 689,
+          "control_rows_in_matched_strata": 135,
+          "clusters": 30,
+          "cluster": "query",
+          "treated_mean": 0.1,
+          "matched_control_mean": 0.248492,
+          "diff": -0.148492,
+          "lo": -0.321178,
+          "hi": 0.057981,
+          "attributable_share": 0.0,
+          "attributable_share_hi95": 0.215183,
+          "attributable_share_hi90": 0.09151,
+          "valid_draws": 2000
+        },
+        "absd": {
+          "treated_rows": 10,
+          "treated_rows_matched": 10,
+          "treated_rows_dropped_no_control": 0,
+          "control_rows": 689,
+          "control_rows_in_matched_strata": 135,
+          "clusters": 30,
+          "cluster": "query",
+          "treated_mean": 0.1,
+          "matched_control_mean": 0.538394,
+          "diff": -0.438394,
+          "lo": -0.773155,
+          "hi": -0.113991,
+          "attributable_share": 0.0,
+          "attributable_share_hi95": 0.0,
+          "attributable_share_hi90": 0.0,
+          "valid_draws": 2000
+        }
+      },
+      "client_only": {
+        "moved": {
+          "treated_rows": 18,
+          "treated_rows_matched": 6,
+          "treated_rows_dropped_no_control": 12,
+          "control_rows": 46,
+          "control_rows_in_matched_strata": 25,
+          "clusters": 24,
+          "cluster": "query",
+          "treated_mean": 0.5,
+          "matched_control_mean": 0.2,
+          "diff": 0.3,
+          "lo": -0.25,
+          "hi": 0.75,
+          "attributable_share": 0.6,
+          "attributable_share_hi95": 1.0,
+          "attributable_share_hi90": 1.0,
+          "valid_draws": 1992
+        },
+        "absd": {
+          "treated_rows": 18,
+          "treated_rows_matched": 6,
+          "treated_rows_dropped_no_control": 12,
+          "control_rows": 46,
+          "control_rows_in_matched_strata": 25,
+          "clusters": 24,
+          "cluster": "query",
+          "treated_mean": 3.833333,
+          "matched_control_mean": 0.938889,
+          "diff": 2.894444,
+          "lo": -1.25,
+          "hi": 6.385238,
+          "attributable_share": 0.755072,
+          "attributable_share_hi95": 1.0,
+          "attributable_share_hi90": 1.0,
+          "valid_draws": 1992
+        }
+      },
+      "material_detail": [
+        {
+          "query": "best excavation software",
+          "key": "https://agtek.com/products/underground",
+          "fetch_window": "2026-11-13>2026-11-16",
+          "pos_a": 4,
+          "pos_b": 2,
+          "pos_c": 2,
+          "pos_d": null
+        },
+        {
+          "query": "all in 1 dirt work software",
+          "key": "https://agtek.com/solutions/takeoff",
+          "fetch_window": "2026-11-13>2026-11-16",
+          "pos_a": 3,
+          "pos_b": 1,
+          "pos_c": 1,
+          "pos_d": null
+        },
+        {
+          "query": "all in one dirt work software",
+          "key": "https://agtek.com/solutions/takeoff",
+          "fetch_window": "2026-11-13>2026-11-16",
+          "pos_a": 3,
+          "pos_b": 2,
+          "pos_c": 2,
+          "pos_d": null
+        },
+        {
+          "query": "best all in 1 dirt work software",
+          "key": "https://agtek.com/solutions/takeoff",
+          "fetch_window": "2026-11-13>2026-11-16",
+          "pos_a": 4,
+          "pos_b": 6,
+          "pos_c": 6,
+          "pos_d": null
+        },
+        {
+          "query": "best all in one dirt work software",
+          "key": "https://agtek.com/solutions/takeoff",
+          "fetch_window": "2026-11-13>2026-11-16",
+          "pos_a": 5,
+          "pos_b": 6,
+          "pos_c": 6,
+          "pos_d": null
+        },
+        {
+          "query": "best all-in-one dirt work and excavation software",
+          "key": "https://agtek.com/solutions/takeoff",
+          "fetch_window": "2026-11-13>2026-11-16",
+          "pos_a": 11,
+          "pos_b": 11,
+          "pos_c": 11,
+          "pos_d": null
+        },
+        {
+          "query": "best dirt work software",
+          "key": "https://agtek.com/solutions/takeoff",
+          "fetch_window": "2026-11-13>2026-11-16",
+          "pos_a": 11,
+          "pos_b": 5,
+          "pos_c": 4,
+          "pos_d": null
+        },
+        {
+          "query": "all in one heavy civil software",
+          "key": "https://bidsyncai.com/blog/heavy-civil-construction-software",
+          "fetch_window": "2026-11-13>2026-11-16",
+          "pos_a": 6,
+          "pos_b": 11,
+          "pos_c": 11,
+          "pos_d": null
+        },
+        {
+          "query": "dirt work software with crm",
+          "key": "https://ownrops.com/guides/best-land-clearing-software",
+          "fetch_window": "2026-11-13>2026-11-16",
+          "pos_a": 10,
+          "pos_b": 11,
+          "pos_c": 11,
+          "pos_d": null
+        },
+        {
+          "query": "hcss heavyjob alternative",
+          "key": "https://www.hcss.com/products/construction-project-management-software",
+          "fetch_window": "2026-11-13>2026-11-16",
+          "pos_a": 2,
+          "pos_b": 2,
+          "pos_c": 2,
+          "pos_d": null
+        },
+        {
+          "query": "all in 1 dirt work software",
+          "key": "https://www.smartcrewhq.com/all-in-one-dirt-work",
+          "fetch_window": "2026-11-09>2026-11-11",
+          "pos_a": 8,
+          "pos_b": 9,
+          "pos_c": 9,
+          "pos_d": 6
+        },
+        {
+          "query": "all in one dirt work management software",
+          "key": "https://www.smartcrewhq.com/all-in-one-dirt-work",
+          "fetch_window": "2026-11-09>2026-11-11",
+          "pos_a": 11,
+          "pos_b": 11,
+          "pos_c": 11,
+          "pos_d": 11
+        },
+        {
+          "query": "all in one dirt work software",
+          "key": "https://www.smartcrewhq.com/all-in-one-dirt-work",
+          "fetch_window": "2026-11-09>2026-11-11",
+          "pos_a": 11,
+          "pos_b": 11,
+          "pos_c": 11,
+          "pos_d": 6
+        },
+        {
+          "query": "all in one dirtwork software",
+          "key": "https://www.smartcrewhq.com/all-in-one-dirt-work",
+          "fetch_window": "2026-11-09>2026-11-11",
+          "pos_a": 11,
+          "pos_b": 11,
+          "pos_c": 8,
+          "pos_d": 11
+        },
+        {
+          "query": "all in 1 dirt work software",
+          "key": "https://www.smartcrewhq.com/all-in-one-dirt-work",
+          "fetch_window": "2026-11-11>2026-11-13",
+          "pos_a": 9,
+          "pos_b": 9,
+          "pos_c": 6,
+          "pos_d": 6
+        },
+        {
+          "query": "all in one dirt work management software",
+          "key": "https://www.smartcrewhq.com/all-in-one-dirt-work",
+          "fetch_window": "2026-11-11>2026-11-13",
+          "pos_a": 11,
+          "pos_b": 11,
+          "pos_c": 11,
+          "pos_d": 11
+        },
+        {
+          "query": "all in one dirt work software",
+          "key": "https://www.smartcrewhq.com/all-in-one-dirt-work",
+          "fetch_window": "2026-11-11>2026-11-13",
+          "pos_a": 11,
+          "pos_b": 11,
+          "pos_c": 6,
+          "pos_d": 6
+        },
+        {
+          "query": "all in one dirtwork software",
+          "key": "https://www.smartcrewhq.com/all-in-one-dirt-work",
+          "fetch_window": "2026-11-11>2026-11-13",
+          "pos_a": 11,
+          "pos_b": 8,
+          "pos_c": 11,
+          "pos_d": 5
+        },
+        {
+          "query": "best all-in-one dirtworks software",
+          "key": "https://www.smartcrewhq.com/all-in-one-dirt-work",
+          "fetch_window": "2026-11-11>2026-11-13",
+          "pos_a": 5,
+          "pos_b": 10,
+          "pos_c": 2,
+          "pos_d": 2
+        },
+        {
+          "query": "best all in one dirt work management software",
+          "key": "https://www.smartcrewhq.com/all-in-one-dirt-work-software",
+          "fetch_window": "2026-11-09>2026-11-11",
+          "pos_a": 11,
+          "pos_b": 11,
+          "pos_c": 11,
+          "pos_d": 11
+        },
+        {
+          "query": "best all-in-one dirtworks software",
+          "key": "https://www.smartcrewhq.com/all-in-one-dirt-work-software",
+          "fetch_window": "2026-11-09>2026-11-11",
+          "pos_a": 3,
+          "pos_b": 1,
+          "pos_c": 11,
+          "pos_d": 1
+        },
+        {
+          "query": "all in one dirtwork software",
+          "key": "https://www.smartcrewhq.com/all-in-one-dirt-work-software",
+          "fetch_window": "2026-11-11>2026-11-16",
+          "pos_a": 4,
+          "pos_b": 10,
+          "pos_c": 1,
+          "pos_d": null
+        },
+        {
+          "query": "best all in one dirt work management software",
+          "key": "https://www.smartcrewhq.com/all-in-one-dirt-work-software",
+          "fetch_window": "2026-11-11>2026-11-16",
+          "pos_a": 11,
+          "pos_b": 11,
+          "pos_c": 11,
+          "pos_d": null
+        },
+        {
+          "query": "best all-in-one dirtworks software",
+          "key": "https://www.smartcrewhq.com/all-in-one-dirt-work-software",
+          "fetch_window": "2026-11-11>2026-11-16",
+          "pos_a": 1,
+          "pos_b": 1,
+          "pos_c": 1,
+          "pos_d": null
+        },
+        {
+          "query": "best all-in-one dirtworks software",
+          "key": "https://www.smartcrewhq.com/best-all-in-one-dirt-work-software",
+          "fetch_window": "2026-11-09>2026-11-13",
+          "pos_a": 1,
+          "pos_b": 2,
+          "pos_c": 11,
+          "pos_d": 11
+        },
+        {
+          "query": "dirt work management software",
+          "key": "https://www.smartcrewhq.com/blog/best-software-small-dirt-work-contractors",
+          "fetch_window": "2026-11-09>2026-11-11",
+          "pos_a": 6,
+          "pos_b": 7,
+          "pos_c": 11,
+          "pos_d": 11
+        },
+        {
+          "query": "hcss heavybid alternative",
+          "key": "https://www.smartcrewhq.com/compare/hcss-heavybid-alternative",
+          "fetch_window": "2026-11-09>2026-11-11",
+          "pos_a": 10,
+          "pos_b": 9,
+          "pos_c": 11,
+          "pos_d": 6
+        },
+        {
+          "query": "dirt work software with crm",
+          "key": "https://www.smartcrewhq.com/dirt-work-software-with-crm",
+          "fetch_window": "2026-11-09>2026-11-11",
+          "pos_a": 2,
+          "pos_b": 6,
+          "pos_c": 2,
+          "pos_d": 2
+        }
+      ]
+    },
+    "next2": {
+      "rows": 534,
+      "material_rows": 15,
+      "moved": {
+        "treated_rows": 15,
+        "treated_rows_matched": 15,
+        "treated_rows_dropped_no_control": 0,
+        "control_rows": 519,
+        "control_rows_in_matched_strata": 256,
+        "clusters": 30,
+        "cluster": "query",
+        "treated_mean": 0.4,
+        "matched_control_mean": 0.280652,
+        "diff": 0.119348,
+        "lo": -0.093828,
+        "hi": 0.326725,
+        "attributable_share": 0.298371,
+        "attributable_share_hi95": 0.585999,
+        "attributable_share_hi90": 0.55372,
+        "valid_draws": 2000
+      },
+      "absd": {
+        "treated_rows": 15,
+        "treated_rows_matched": 15,
+        "treated_rows_dropped_no_control": 0,
+        "control_rows": 519,
+        "control_rows_in_matched_strata": 256,
+        "clusters": 30,
+        "cluster": "query",
+        "treated_mean": 2.133333,
+        "matched_control_mean": 0.781033,
+        "diff": 1.352301,
+        "lo": 0.086353,
+        "hi": 2.508878,
+        "attributable_share": 0.633891,
+        "attributable_share_hi95": 0.807577,
+        "attributable_share_hi90": 0.788095,
+        "valid_draws": 2000
+      },
+      "crossed": {
+        "treated_rows": 15,
+        "treated_rows_matched": 15,
+        "treated_rows_dropped_no_control": 0,
+        "control_rows": 519,
+        "control_rows_in_matched_strata": 256,
+        "clusters": 30,
+        "cluster": "query",
+        "treated_mean": 0.333333,
+        "matched_control_mean": 0.118406,
+        "diff": 0.214928,
+        "lo": -0.037913,
+        "hi": 0.467325,
+        "attributable_share": 0.644783,
+        "attributable_share_hi95": 0.820004,
+        "attributable_share_hi90": 0.799054,
+        "valid_draws": 2000
+      },
+      "moved_excluding_pages_changed_again": {
+        "treated_rows": 15,
+        "treated_rows_matched": 15,
+        "treated_rows_dropped_no_control": 0,
+        "control_rows": 519,
+        "control_rows_in_matched_strata": 256,
+        "clusters": 30,
+        "cluster": "query",
+        "treated_mean": 0.4,
+        "matched_control_mean": 0.280652,
+        "diff": 0.119348,
+        "lo": -0.093828,
+        "hi": 0.326725,
+        "attributable_share": 0.298371,
+        "attributable_share_hi95": 0.585999,
+        "attributable_share_hi90": 0.55372,
+        "valid_draws": 2000
+      },
+      "anychange_moved": {
+        "treated_rows": 63,
+        "treated_rows_matched": 63,
+        "treated_rows_dropped_no_control": 0,
+        "control_rows": 471,
+        "control_rows_in_matched_strata": 365,
+        "clusters": 30,
+        "cluster": "query",
+        "treated_mean": 0.349206,
+        "matched_control_mean": 0.36823,
+        "diff": -0.019023,
+        "lo": -0.132026,
+        "hi": 0.092847,
+        "attributable_share": 0.0,
+        "attributable_share_hi95": 0.213949,
+        "attributable_share_hi90": 0.18236,
+        "valid_draws": 2000
+      },
+      "absd_url_cluster": {
+        "treated_rows": 15,
+        "treated_rows_matched": 15,
+        "treated_rows_dropped_no_control": 0,
+        "control_rows": 519,
+        "control_rows_in_matched_strata": 256,
+        "clusters": 81,
+        "cluster": "key",
+        "treated_mean": 2.133333,
+        "matched_control_mean": 0.781033,
+        "diff": 1.352301,
+        "lo": -0.69383,
+        "hi": 3.3304,
+        "attributable_share": 0.633891,
+        "attributable_share_hi95": 0.848208,
+        "attributable_share_hi90": 0.819189,
+        "valid_draws": 1993
+      },
+      "moved_url_cluster": {
+        "treated_rows": 15,
+        "treated_rows_matched": 15,
+        "treated_rows_dropped_no_control": 0,
+        "control_rows": 519,
+        "control_rows_in_matched_strata": 256,
+        "clusters": 81,
+        "cluster": "key",
+        "treated_mean": 0.4,
+        "matched_control_mean": 0.280652,
+        "diff": 0.119348,
+        "lo": -0.224786,
+        "hi": 0.429098,
+        "attributable_share": 0.298371,
+        "attributable_share_hi95": 0.745889,
+        "attributable_share_hi90": 0.6875,
+        "valid_draws": 1993
+      },
+      "without_client": {
+        "moved": {
+          "treated_rows": 0,
+          "treated_rows_matched": 0,
+          "treated_rows_dropped_no_control": 0,
+          "control_rows": 504,
+          "control_rows_in_matched_strata": 0,
+          "clusters": 30,
+          "cluster": "query",
+          "treated_mean": null,
+          "matched_control_mean": null,
+          "diff": null,
+          "lo": null,
+          "hi": null,
+          "attributable_share": 0.0,
+          "attributable_share_hi95": null,
+          "attributable_share_hi90": null,
+          "valid_draws": 0
+        },
+        "absd": {
+          "treated_rows": 0,
+          "treated_rows_matched": 0,
+          "treated_rows_dropped_no_control": 0,
+          "control_rows": 504,
+          "control_rows_in_matched_strata": 0,
+          "clusters": 30,
+          "cluster": "query",
+          "treated_mean": null,
+          "matched_control_mean": null,
+          "diff": null,
+          "lo": null,
+          "hi": null,
+          "attributable_share": 0.0,
+          "attributable_share_hi95": null,
+          "attributable_share_hi90": null,
+          "valid_draws": 0
+        }
+      },
+      "client_only": {
+        "moved": {
+          "treated_rows": 15,
+          "treated_rows_matched": 6,
+          "treated_rows_dropped_no_control": 9,
+          "control_rows": 15,
+          "control_rows_in_matched_strata": 6,
+          "clusters": 10,
+          "cluster": "query",
+          "treated_mean": 0.166667,
+          "matched_control_mean": 0.333333,
+          "diff": -0.166667,
+          "lo": -0.805833,
+          "hi": 1.0,
+          "attributable_share": 0.0,
+          "attributable_share_hi95": 1.0,
+          "attributable_share_hi90": 1.0,
+          "valid_draws": 1994
+        },
+        "absd": {
+          "treated_rows": 15,
+          "treated_rows_matched": 6,
+          "treated_rows_dropped_no_control": 9,
+          "control_rows": 15,
+          "control_rows_in_matched_strata": 6,
+          "clusters": 10,
+          "cluster": "query",
+          "treated_mean": 1.0,
+          "matched_control_mean": 0.333333,
+          "diff": 0.666667,
+          "lo": -0.805833,
+          "hi": 6.0,
+          "attributable_share": 0.666667,
+          "attributable_share_hi95": 1.0,
+          "attributable_share_hi90": 1.0,
+          "valid_draws": 1994
+        }
+      },
+      "material_detail": [
+        {
+          "query": "all in 1 dirt work software",
+          "key": "https://www.smartcrewhq.com/all-in-one-dirt-work",
+          "fetch_window": "2026-11-09>2026-11-11",
+          "pos_a": 8,
+          "pos_b": 9,
+          "pos_c": 9,
+          "pos_d": 6
+        },
+        {
+          "query": "all in one dirt work management software",
+          "key": "https://www.smartcrewhq.com/all-in-one-dirt-work",
+          "fetch_window": "2026-11-09>2026-11-11",
+          "pos_a": 11,
+          "pos_b": 11,
+          "pos_c": 11,
+          "pos_d": 11
+        },
+        {
+          "query": "all in one dirt work software",
+          "key": "https://www.smartcrewhq.com/all-in-one-dirt-work",
+          "fetch_window": "2026-11-09>2026-11-11",
+          "pos_a": 11,
+          "pos_b": 11,
+          "pos_c": 11,
+          "pos_d": 6
+        },
+        {
+          "query": "all in one dirtwork software",
+          "key": "https://www.smartcrewhq.com/all-in-one-dirt-work",
+          "fetch_window": "2026-11-09>2026-11-11",
+          "pos_a": 11,
+          "pos_b": 11,
+          "pos_c": 8,
+          "pos_d": 11
+        },
+        {
+          "query": "all in 1 dirt work software",
+          "key": "https://www.smartcrewhq.com/all-in-one-dirt-work",
+          "fetch_window": "2026-11-11>2026-11-13",
+          "pos_a": 9,
+          "pos_b": 9,
+          "pos_c": 6,
+          "pos_d": 6
+        },
+        {
+          "query": "all in one dirt work management software",
+          "key": "https://www.smartcrewhq.com/all-in-one-dirt-work",
+          "fetch_window": "2026-11-11>2026-11-13",
+          "pos_a": 11,
+          "pos_b": 11,
+          "pos_c": 11,
+          "pos_d": 11
+        },
+        {
+          "query": "all in one dirt work software",
+          "key": "https://www.smartcrewhq.com/all-in-one-dirt-work",
+          "fetch_window": "2026-11-11>2026-11-13",
+          "pos_a": 11,
+          "pos_b": 11,
+          "pos_c": 6,
+          "pos_d": 6
+        },
+        {
+          "query": "all in one dirtwork software",
+          "key": "https://www.smartcrewhq.com/all-in-one-dirt-work",
+          "fetch_window": "2026-11-11>2026-11-13",
+          "pos_a": 11,
+          "pos_b": 8,
+          "pos_c": 11,
+          "pos_d": 5
+        },
+        {
+          "query": "best all-in-one dirtworks software",
+          "key": "https://www.smartcrewhq.com/all-in-one-dirt-work",
+          "fetch_window": "2026-11-11>2026-11-13",
+          "pos_a": 5,
+          "pos_b": 10,
+          "pos_c": 2,
+          "pos_d": 2
+        },
+        {
+          "query": "best all in one dirt work management software",
+          "key": "https://www.smartcrewhq.com/all-in-one-dirt-work-software",
+          "fetch_window": "2026-11-09>2026-11-11",
+          "pos_a": 11,
+          "pos_b": 11,
+          "pos_c": 11,
+          "pos_d": 11
+        },
+        {
+          "query": "best all-in-one dirtworks software",
+          "key": "https://www.smartcrewhq.com/all-in-one-dirt-work-software",
+          "fetch_window": "2026-11-09>2026-11-11",
+          "pos_a": 3,
+          "pos_b": 1,
+          "pos_c": 11,
+          "pos_d": 1
+        },
+        {
+          "query": "best all-in-one dirtworks software",
+          "key": "https://www.smartcrewhq.com/best-all-in-one-dirt-work-software",
+          "fetch_window": "2026-11-09>2026-11-13",
+          "pos_a": 1,
+          "pos_b": 2,
+          "pos_c": 11,
+          "pos_d": 11
+        },
+        {
+          "query": "dirt work management software",
+          "key": "https://www.smartcrewhq.com/blog/best-software-small-dirt-work-contractors",
+          "fetch_window": "2026-11-09>2026-11-11",
+          "pos_a": 6,
+          "pos_b": 7,
+          "pos_c": 11,
+          "pos_d": 11
+        },
+        {
+          "query": "hcss heavybid alternative",
+          "key": "https://www.smartcrewhq.com/compare/hcss-heavybid-alternative",
+          "fetch_window": "2026-11-09>2026-11-11",
+          "pos_a": 10,
+          "pos_b": 9,
+          "pos_c": 11,
+          "pos_d": 6
+        },
+        {
+          "query": "dirt work software with crm",
+          "key": "https://www.smartcrewhq.com/dirt-work-software-with-crm",
+          "fetch_window": "2026-11-09>2026-11-11",
+          "pos_a": 2,
+          "pos_b": 6,
+          "pos_c": 2,
+          "pos_d": 2
+        }
+      ]
+    },
+    "material_row_patterns_same_next_next2": {
+      "M-?": 7,
+      "--?": 4,
+      "MM-": 4,
+      "---": 3,
+      "MMM": 3,
+      "MM?": 2,
+      "-M-": 2,
+      "M-M": 1,
+      "--M": 1,
+      "-MM": 1
+    },
+    "material_rows_by_window": {
+      "same_moved": 17,
+      "same_rows": 28,
+      "next_moved": 12,
+      "next_rows": 28,
+      "next2_moved": 6,
+      "next2_rows": 15,
+      "still_in_place_same_then_moved_next": 3,
+      "rows_static_same_window": 11,
+      "static_same_window_with_next_day": 11
+    },
+    "serp_event_same_vs_next": {
+      "same_moved": {
+        "treated_rows": 15,
+        "treated_rows_matched": 15,
+        "treated_rows_dropped_no_control": 0,
+        "control_rows": 1267,
+        "control_rows_in_matched_strata": 627,
+        "clusters": 44,
+        "cluster": "query",
+        "treated_mean": 0.6,
+        "matched_control_mean": 0.594036,
+        "diff": 0.005964,
+        "lo": -0.24624,
+        "hi": 0.295492,
+        "attributable_share": 0.00994,
+        "attributable_share_hi95": 0.349873,
+        "attributable_share_hi90": 0.297179,
+        "valid_draws": 2000
+      },
+      "next_moved": {
+        "treated_rows": 14,
+        "treated_rows_matched": 14,
+        "treated_rows_dropped_no_control": 0,
+        "control_rows": 832,
+        "control_rows_in_matched_strata": 481,
+        "clusters": 30,
+        "cluster": "query",
+        "treated_mean": 0.357143,
+        "matched_control_mean": 0.542475,
+        "diff": -0.185332,
+        "lo": -0.398922,
+        "hi": 0.018188,
+        "attributable_share": 0.0,
+        "attributable_share_hi95": 0.03346,
+        "attributable_share_hi90": 0.0,
+        "valid_draws": 2000
+      }
+    }
+  }
+}

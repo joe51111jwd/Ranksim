@@ -1,0 +1,56 @@
+{
+  "body_bytes_ok": 333454029,
+  "db_bytes_after": {
+    "db": 3594469376,
+    "total": 3616964608,
+    "wal": 22495232
+  },
+  "db_bytes_before": {
+    "db": 3253936128,
+    "total": 3259856600,
+    "wal": 5920472
+  },
+  "failed": 423,
+  "failure_reasons": {
+    "challenge_page": 57,
+    "error:ConnectError": 3,
+    "error:ReadTimeout": 6,
+    "http_202": 10,
+    "http_402": 1,
+    "http_403": 125,
+    "http_404": 2,
+    "http_429": 3,
+    "http_454": 1,
+    "http_500": 2,
+    "http_503": 1,
+    "non_html": 3,
+    "robots_disallow": 209
+  },
+  "fetched_ok": 785,
+  "finished_utc": "2026-11-19T08:59:59.457Z",
+  "hosts": 506,
+  "html_chars_stored": 333307262,
+  "http_status_hist": {
+    "200": 845,
+    "202": 10,
+    "402": 1,
+    "403": 125,
+    "404": 2,
+    "429": 3,
+    "454": 1,
+    "500": 2,
+    "503": 1,
+    "None": 218
+  },
+  "label": "full-2026-11-19",
+  "ok_bytes_changed_vs_prior": 453,
+  "ok_bytes_unchanged_vs_prior": 123,
+  "ok_no_prior_http_fetch": 209,
+  "rows_inserted": 1208,
+  "rows_skipped_duplicate": 0,
+  "sidecar": "evals/claude/pipeline/refetch-20261119T082812Z.jsonl",
+  "since": "2026-11-14",
+  "started_utc": "2026-11-19T08:28:12.894Z",
+  "urls_selected": 1208,
+  "wall_seconds": 302.9
+}

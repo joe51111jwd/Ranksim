@@ -1,0 +1,18 @@
+{
+  "plan": "heldout1",
+  "cell": "test1 sites x test search groups",
+  "first_pass": "one list per site",
+  "second_pass": "a second list for some sites",
+  "per_query_cap": 8,
+  "lists_first_pass": 93,
+  "lists_second_pass": 11,
+  "pulls_per_list": 2,
+  "command": "python scripts/claude/r3_plans.py heldout1",
+  "note": "The only draw of the held-out cell that is pulled. An earlier draft plan (test1, 132 lists) was never pulled. The seed tags heldout1-first and heldout1-second were used once; no other tag was tried. universe.json as committed is the frozen split; rerunning the universe command later could differ because it reads fetch success.",
+  "design_max_date": "2026-11-17",
+  "seed": 20261119,
+  "sites_in_plan": 93,
+  "searches_in_plan": 46,
+  "requests": 104,
+  "sha256": "055e6a7157ff3e9fb6f79cc5341ea0cf73f12da281961f619c3cc25cc0d96834"
+}

@@ -1,0 +1,215 @@
+{
+  "A_topic_match_readings": {
+    "cross-encoder minilm-l12: H1 alone": {
+      "ci_site": [
+        0.6267210041571795,
+        0.6718945721236554
+      ],
+      "n": 5623,
+      "rate": 0.649653210030233
+    },
+    "cross-encoder minilm-l12: URL words": {
+      "ci_site": [
+        0.6123471729413041,
+        0.6604405549769198
+      ],
+      "n": 5623,
+      "rate": 0.6364040547750311
+    },
+    "cross-encoder minilm-l12: headings": {
+      "ci_site": [
+        0.623699250996115,
+        0.6661257805766315
+      ],
+      "n": 5623,
+      "rate": 0.6444069002311933
+    },
+    "cross-encoder minilm-l12: intro (first 120 words)": {
+      "ci_site": [
+        0.6485752527431901,
+        0.6861047107014848
+      ],
+      "n": 5623,
+      "rate": 0.6674373110439268
+    },
+    "cross-encoder minilm-l12: title alone": {
+      "ci_site": [
+        0.6600405964428201,
+        0.702380345525863
+      ],
+      "n": 5623,
+      "rate": 0.6806864662991285
+    },
+    "cross-encoder minilm-l12: title, H1 and meta": {
+      "ci_site": [
+        0.6723382453155741,
+        0.7123052059411836
+      ],
+      "n": 5623,
+      "rate": 0.692335052463098
+    },
+    "cross-encoder minilm-l6: H1 alone": {
+      "ci_site": [
+        0.6301753970438989,
+        0.6795510643890368
+      ],
+      "n": 5623,
+      "rate": 0.6553441223546149
+    },
+    "cross-encoder minilm-l6: URL words": {
+      "ci_site": [
+        0.6129643060565787,
+        0.6656135836543806
+      ],
+      "n": 5623,
+      "rate": 0.6394273519473591
+    },
+    "cross-encoder minilm-l6: headings": {
+      "ci_site": [
+        0.6257149878869309,
+        0.6678858542640898
+      ],
+      "n": 5623,
+      "rate": 0.6468966743731105
+    },
+    "cross-encoder minilm-l6: intro (first 120 words)": {
+      "ci_site": [
+        0.6458442098820146,
+        0.6842446871402799
+      ],
+      "n": 5623,
+      "rate": 0.6645918548817358
+    },
+    "cross-encoder minilm-l6: title alone": {
+      "ci_site": [
+        0.6708945168414318,
+        0.7149981552097566
+      ],
+      "n": 5623,
+      "rate": 0.6926018139783034
+    },
+    "cross-encoder minilm-l6: title, H1 and meta": {
+      "ci_site": [
+        0.6728312583106405,
+        0.7155250263014565
+      ],
+      "n": 5623,
+      "rate": 0.6941134625644674
+    },
+    "embedding bge-small: H1 alone": {
+      "ci_site": [
+        0.626596541730479,
+        0.6653736585993743
+      ],
+      "n": 5623,
+      "rate": 0.6459185488173573
+    },
+    "embedding bge-small: URL words": {
+      "ci_site": [
+        0.6129620597613471,
+        0.6656957560468734
+      ],
+      "n": 5623,
+      "rate": 0.6392495109372222
+    },
+    "embedding bge-small: headings": {
+      "ci_site": [
+        0.6403050983109704,
+        0.6849824952502543
+      ],
+      "n": 5623,
+      "rate": 0.6621910012448871
+    },
+    "embedding bge-small: intro (first 120 words)": {
+      "ci_site": [
+        0.6416964746996607,
+        0.6843812586862839
+      ],
+      "n": 5623,
+      "rate": 0.6640583318513249
+    },
+    "embedding bge-small: title alone": {
+      "ci_site": [
+        0.6580959230338778,
+        0.704002913551253
+      ],
+      "n": 5623,
+      "rate": 0.6806864662991285
+    },
+    "embedding bge-small: title, H1 and meta": {
+      "ci_site": [
+        0.6649447839135206,
+        0.7095167919511914
+      ],
+      "n": 5623,
+      "rate": 0.6869998221589899
+    },
+    "mix: both cross-encoders + embedding on title H1 meta, plus URL words": {
+      "ci_site": [
+        0.6630481439007815,
+        0.7062441975669487
+      ],
+      "n": 5623,
+      "rate": 0.6840654454917304
+    },
+    "mix: cross-encoder l6 + embedding, title H1 meta": {
+      "ci_site": [
+        0.6723227320128397,
+        0.7184249473952841
+      ],
+      "n": 5623,
+      "rate": 0.6946469855948781
+    },
+    "mix: title, URL words, intro, headings": {
+      "ci_site": [
+        0.6728743134684628,
+        0.7167028937195467
+      ],
+      "n": 5623,
+      "rate": 0.6937577805441935
+    }
+  },
+  "B_twice_pulled_lists": {
+    "lists": 20,
+    "pairs": 594,
+    "scorers": {
+      "blend, site and search group held out": {
+        "both missing": 0.6363636363636364,
+        "consensus (missing page ranks below)": 0.6747252747252748,
+        "consensus, both pages in the second pull": 0.6794520547945205,
+        "flipped in the second pull": 0.6,
+        "half credit on all pairs": 0.6464646464646465,
+        "higher page missing from the second pull": 0.7586206896551724,
+        "lower page missing from the second pull": 0.6555555555555556,
+        "single pull, all pairs": 0.6683501683501684
+      },
+      "blend, site held out": {
+        "both missing": 0.6545454545454545,
+        "consensus (missing page ranks below)": 0.6857142857142857,
+        "consensus, both pages in the second pull": 0.6958904109589041,
+        "flipped in the second pull": 0.5454545454545454,
+        "half credit on all pairs": 0.6565656565656566,
+        "higher page missing from the second pull": 0.7241379310344828,
+        "lower page missing from the second pull": 0.6444444444444445,
+        "single pull, all pairs": 0.6717171717171717
+      },
+      "bm25f": {
+        "both missing": 0.5818181818181818,
+        "consensus (missing page ranks below)": 0.5802197802197803,
+        "consensus, both pages in the second pull": 0.5863013698630137,
+        "flipped in the second pull": 0.5272727272727272,
+        "half credit on all pairs": 0.569023569023569,
+        "higher page missing from the second pull": 0.41379310344827586,
+        "lower page missing from the second pull": 0.5555555555555556,
+        "single pull, all pairs": 0.5673400673400674
+      }
+    },
+    "status": {
+      "both_missing": 55,
+      "consensus_both": 365,
+      "consensus_lower_missing": 90,
+      "disagree_flipped": 55,
+      "disagree_higher_missing": 29
+    }
+  }
+}

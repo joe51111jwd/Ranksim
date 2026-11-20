@@ -1,0 +1,35 @@
+{
+  "label": "PREDICTED",
+  "frozen_at_utc": "2026-11-20T01:14:39Z",
+  "sha256": {
+    "evals/preregistered/claude-r2-samesite/preregistration.md": "574175d5fa596ddead7fe777d9a6ec5256dc94eb3ae53ab177e2d02dfa48823b",
+    "scripts/claude/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "scripts/claude/freeze.py": "7800190726721cf6dce44322c0638efa1c8365cf83ea11d8e919fcee8f6ce5b1",
+    "scripts/claude/heldout.py": "99305313b704d1f436a7ffe1aa722812f82abc78c46779cac72e0517ae05f9e5",
+    "scripts/claude/metrics.py": "81673f3e4d0f026a7d064cd401276a8b5843dabe142911a1db3df692cf44380d",
+    "scripts/claude/r2_samesite_check.py": "2b10b194b6fb7eb9be68056a14e68a4eea580caa2ac99627f3fbf8d2640a9ffd",
+    "scripts/claude/r2_samesite_pairs.py": "2337e06b62030fbcb693ba52b77e828cefa23eb9b304ce81fa895492934f4544",
+    "scripts/claude/r2_score.py": "b222e940015b16daa2f5bd6ab1f92fd47b381ef6913add380161a6e8c110470d",
+    "scripts/claude/rsdata.py": "b5852b6b23f6e9aa2aaa51bf77068b09a75d638712aeab4880919a0e3851a958",
+    "scripts/claude/score_heldout.py": "5e2730b291ac98ab8500400cace058391917c23144555779468c904335689525",
+    "scripts/claude/t2_changes.py": "7f70062aef22f042fc738c587a55e0821091497f915b9f4b195072b3de5e7a59",
+    "scripts/claude/t2_common.py": "a5f56d0918bef859a7ee4ad9f3d0b90da618193ecdfc1b39ac45ac8b637694ca",
+    "src/aeo/__init__.py": "77eed6fe4a3041e3d33b4716c5a93242a313ed1de3c9dfe18f2343bc52634ba5",
+    "src/aeo/crawl/__init__.py": "f4710241737af8291224ac6cc98173b1aac674bbdb93112580eda3885cd5170e",
+    "src/aeo/crawl/extract.py": "759b58ce5d2f438c89bf9c8e8b0f5f1f258386756a29636dacbfa29ca59c4534",
+    "src/aeo/crawl/urls.py": "0d715e4b2b88bf82f4518e296265b51bfb7478c2ce16c9beb37b999615bf42d0",
+    "src/aeo/errors.py": "7f78a78e1118f8889fefd7fcbc980da990907dbae11284fa263bdbfc7ba2d14f",
+    "src/aeo/ranksim/__init__.py": "f7dccd6ac816f7e4ee7fe0da68a8f8f009b9ebf4a1b54df17323e27e3d5407c0",
+    "src/aeo/ranksim/consensus.py": "4d241399b9a14cc15e79f374caa1338a13bd6e3c8b55d49724421dfd18f0ef59",
+    "src/aeo/ranksim/site_history.py": "9b0d36ceff1042e57203671b589137f25f0ce8015ad22bfbefb978b0826d14df",
+    "src/aeo/textutil.py": "1d8503f9d2e909253d975bbbbf437061d1b5fd302a14be5ab91fcf619b368a00"
+  },
+  "modules": [
+    "scripts.claude.r2_samesite_check"
+  ],
+  "versions": {
+    "python": "3.13.5",
+    "numpy": "2.5.5",
+    "pandas": "3.1.1"
+  }
+}

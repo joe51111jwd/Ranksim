@@ -19,7 +19,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8.3"]
+dev = ["pytest>=8.3", "pandas>=2.2"]
+# Round 3 semantic features (scripts/claude/r3_semantic.py). CPU only, no torch.
+semantic = ["onnxruntime>=1.18", "tokenizers>=0.15", "huggingface_hub>=0.23"]
 
 [project.scripts]
 aeo-worker = "aeo.worker:main"

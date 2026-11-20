@@ -1,0 +1,339 @@
+{
+  "label": "PREDICTED",
+  "day_a": "2026-11-18",
+  "day_b": "2026-11-19",
+  "gap_days": 1,
+  "max_date": "2026-11-19",
+  "groups": [
+    "o30",
+    "a70"
+  ],
+  "searches": 30,
+  "prereg": "evals/preregistered/claude-r2-t3-latent",
+  "manifest_frozen_at": "2026-11-20T01:14:38Z",
+  "pulls": {
+    "day_a": {
+      "day": "2026-11-18",
+      "searches": 30,
+      "min_pulls": 2,
+      "max_pulls": 3,
+      "by_count": {
+        "2": 15,
+        "3": 15
+      }
+    },
+    "day_b": {
+      "day": "2026-11-19",
+      "searches": 30,
+      "min_pulls": 2,
+      "max_pulls": 3,
+      "by_count": {
+        "2": 6,
+        "3": 24
+      }
+    }
+  },
+  "fixed_by_theory": {
+    "half_life_days": 2.0,
+    "prior_each_side": 0.5,
+    "consensus_pulls": 3,
+    "r1_threshold": 0.5,
+    "r2_floor": 0.5
+  },
+  "vote_weights": [
+    {
+      "day": "2026-11-06",
+      "age_days": 12,
+      "weight": 0.015625,
+      "pulls": 30
+    },
+    {
+      "day": "2026-11-09",
+      "age_days": 9,
+      "weight": 0.04419417382415922,
+      "pulls": 30
+    },
+    {
+      "day": "2026-11-11",
+      "age_days": 7,
+      "weight": 0.08838834764831845,
+      "pulls": 30
+    },
+    {
+      "day": "2026-11-13",
+      "age_days": 5,
+      "weight": 0.1767766952966369,
+      "pulls": 30
+    },
+    {
+      "day": "2026-11-16",
+      "age_days": 2,
+      "weight": 0.5,
+      "pulls": 120
+    },
+    {
+      "day": "2026-11-17",
+      "age_days": 1,
+      "weight": 0.7071067811865476,
+      "pulls": 90
+    },
+    {
+      "day": "2026-11-18",
+      "age_days": 0,
+      "weight": 1.0,
+      "pulls": 75
+    }
+  ],
+  "universe": {
+    "pairs": 963,
+    "queries": 28,
+    "calls_r1": 79,
+    "calls_r2": 161,
+    "r2_lowest_p_flip_called": 0.22697217036330286,
+    "r2_mean_p_flip_called": 0.5020387577690663,
+    "pulls_per_search": {
+      "13": 14,
+      "14": 14
+    }
+  },
+  "summary": {
+    "pairs": 562,
+    "flips": 39,
+    "queries": 27,
+    "flip_queries": 15,
+    "expected_flips_model": 58.13899131977015,
+    "persistence": {
+      "hits": 523,
+      "n": 562,
+      "rate": 0.9306049822064056,
+      "lo": 0.8859210159369325,
+      "hi": 0.9620957925612769,
+      "queries": 27
+    },
+    "calibration": [
+      {
+        "p_flip_band": "[0, 0.05]",
+        "pairs": 376,
+        "expected_flips": 5.747440213481876,
+        "observed_flips": 10
+      },
+      {
+        "p_flip_band": "(0.05, 0.2]",
+        "pairs": 99,
+        "expected_flips": 11.32181880863092,
+        "observed_flips": 5
+      },
+      {
+        "p_flip_band": "(0.2, 0.5]",
+        "pairs": 48,
+        "expected_flips": 16.316566981741907,
+        "observed_flips": 11
+      },
+      {
+        "p_flip_band": "(0.5, 1]",
+        "pairs": 39,
+        "expected_flips": 24.75316531591545,
+        "observed_flips": 13
+      }
+    ],
+    "r1": {
+      "calls": 39,
+      "right": 13,
+      "flip_recall": {
+        "hits": 13,
+        "n": 39,
+        "rate": 0.3333333333333333,
+        "lo": 0.14285714285714285,
+        "hi": 0.5238095238095238,
+        "queries": 15
+      },
+      "precision": {
+        "hits": 13,
+        "n": 39,
+        "rate": 0.3333333333333333,
+        "lo": 0.1296146953405018,
+        "hi": 0.59375,
+        "queries": 15
+      },
+      "all_pairs_rule": {
+        "hits": 510,
+        "n": 562,
+        "rate": 0.9074733096085409,
+        "lo": 0.874730467055964,
+        "hi": 0.9376195855584463,
+        "queries": 27
+      },
+      "all_pairs_minus_persistence": {
+        "diff": -0.023131672597864767,
+        "lo": -0.05409885290776708,
+        "hi": 0.014312831287904103,
+        "n": 562,
+        "queries": 27
+      },
+      "expected_precision_model": 0.6346965465619346,
+      "expected_recall_model": 0.4257584239769592,
+      "recall_lower_bound_above_half": false,
+      "not_below_persistence": false
+    },
+    "r2": {
+      "calls": 81,
+      "right": 22,
+      "flip_recall": {
+        "hits": 22,
+        "n": 39,
+        "rate": 0.5641025641025641,
+        "lo": 0.34480064655172415,
+        "hi": 0.7407706093189962,
+        "queries": 15
+      },
+      "precision": {
+        "hits": 22,
+        "n": 81,
+        "rate": 0.2716049382716049,
+        "lo": 0.11626682986536108,
+        "hi": 0.4594861308677097,
+        "queries": 20
+      },
+      "all_pairs_rule": {
+        "hits": 486,
+        "n": 562,
+        "rate": 0.8647686832740213,
+        "lo": 0.8314602188917014,
+        "hi": 0.8984231360617659,
+        "queries": 27
+      },
+      "all_pairs_minus_persistence": {
+        "diff": -0.06583629893238434,
+        "lo": -0.10761984297849436,
+        "hi": -0.01359863945578235,
+        "n": 562,
+        "queries": 27
+      },
+      "expected_precision_model": 0.4912440409762804,
+      "expected_recall_model": 0.684407596620065,
+      "recall_lower_bound_above_half": false,
+      "not_below_persistence": false
+    }
+  },
+  "by_group": {
+    "o30": {
+      "pairs": 562,
+      "flips": 39,
+      "queries": 27,
+      "flip_queries": 15,
+      "expected_flips_model": 58.13899131977015,
+      "persistence": {
+        "hits": 523,
+        "n": 562,
+        "rate": 0.9306049822064056,
+        "lo": 0.8859210159369325,
+        "hi": 0.9620957925612769,
+        "queries": 27
+      },
+      "calibration": [
+        {
+          "p_flip_band": "[0, 0.05]",
+          "pairs": 376,
+          "expected_flips": 5.747440213481876,
+          "observed_flips": 10
+        },
+        {
+          "p_flip_band": "(0.05, 0.2]",
+          "pairs": 99,
+          "expected_flips": 11.32181880863092,
+          "observed_flips": 5
+        },
+        {
+          "p_flip_band": "(0.2, 0.5]",
+          "pairs": 48,
+          "expected_flips": 16.316566981741907,
+          "observed_flips": 11
+        },
+        {
+          "p_flip_band": "(0.5, 1]",
+          "pairs": 39,
+          "expected_flips": 24.75316531591545,
+          "observed_flips": 13
+        }
+      ],
+      "r1": {
+        "calls": 39,
+        "right": 13,
+        "flip_recall": {
+          "hits": 13,
+          "n": 39,
+          "rate": 0.3333333333333333,
+          "lo": 0.14285714285714285,
+          "hi": 0.5238095238095238,
+          "queries": 15
+        },
+        "precision": {
+          "hits": 13,
+          "n": 39,
+          "rate": 0.3333333333333333,
+          "lo": 0.1296146953405018,
+          "hi": 0.59375,
+          "queries": 15
+        },
+        "all_pairs_rule": {
+          "hits": 510,
+          "n": 562,
+          "rate": 0.9074733096085409,
+          "lo": 0.874730467055964,
+          "hi": 0.9376195855584463,
+          "queries": 27
+        },
+        "all_pairs_minus_persistence": {
+          "diff": -0.023131672597864767,
+          "lo": -0.05409885290776708,
+          "hi": 0.014312831287904103,
+          "n": 562,
+          "queries": 27
+        },
+        "expected_precision_model": 0.6346965465619346,
+        "expected_recall_model": 0.4257584239769592,
+        "recall_lower_bound_above_half": false,
+        "not_below_persistence": false
+      },
+      "r2": {
+        "calls": 81,
+        "right": 22,
+        "flip_recall": {
+          "hits": 22,
+          "n": 39,
+          "rate": 0.5641025641025641,
+          "lo": 0.34480064655172415,
+          "hi": 0.7407706093189962,
+          "queries": 15
+        },
+        "precision": {
+          "hits": 22,
+          "n": 81,
+          "rate": 0.2716049382716049,
+          "lo": 0.11626682986536108,
+          "hi": 0.4594861308677097,
+          "queries": 20
+        },
+        "all_pairs_rule": {
+          "hits": 486,
+          "n": 562,
+          "rate": 0.8647686832740213,
+          "lo": 0.8314602188917014,
+          "hi": 0.8984231360617659,
+          "queries": 27
+        },
+        "all_pairs_minus_persistence": {
+          "diff": -0.06583629893238434,
+          "lo": -0.10761984297849436,
+          "hi": -0.01359863945578235,
+          "n": 562,
+          "queries": 27
+        },
+        "expected_precision_model": 0.4912440409762804,
+        "expected_recall_model": 0.684407596620065,
+        "recall_lower_bound_above_half": false,
+        "not_below_persistence": false
+      }
+    }
+  }
+}

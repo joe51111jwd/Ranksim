@@ -1,0 +1,30 @@
+{
+  "label": "PREDICTED",
+  "frozen_at_utc": "2026-11-20T01:14:38Z",
+  "sha256": {
+    "evals/preregistered/claude-r2-t3-latent/preregistration.md": "4d7b224956d97018739f9d5854fab5170a880a33effeec8adeab520ec4b341e1",
+    "scripts/claude/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "scripts/claude/freeze.py": "7800190726721cf6dce44322c0638efa1c8365cf83ea11d8e919fcee8f6ce5b1",
+    "scripts/claude/metrics.py": "81673f3e4d0f026a7d064cd401276a8b5843dabe142911a1db3df692cf44380d",
+    "scripts/claude/r2_t3_latent.py": "21b5ce54620f601db836be82fae4ff34ef4216b8dd4816cdf0007d1c85312761",
+    "scripts/claude/r2_t3_noise.py": "0073846aa21e5392a0ddf27fa2afe5eb0ca2046ecbb68cc6e5f0aa4ad4ab4eb3",
+    "scripts/claude/r2_t3_noise_check.py": "ca29efc71a5e59ba0e40c699a6b8a384ac131b64784e7b8ba502c173b4541c41",
+    "scripts/claude/rsdata.py": "b5852b6b23f6e9aa2aaa51bf77068b09a75d638712aeab4880919a0e3851a958",
+    "src/aeo/__init__.py": "77eed6fe4a3041e3d33b4716c5a93242a313ed1de3c9dfe18f2343bc52634ba5",
+    "src/aeo/crawl/__init__.py": "f4710241737af8291224ac6cc98173b1aac674bbdb93112580eda3885cd5170e",
+    "src/aeo/crawl/urls.py": "0d715e4b2b88bf82f4518e296265b51bfb7478c2ce16c9beb37b999615bf42d0",
+    "src/aeo/errors.py": "7f78a78e1118f8889fefd7fcbc980da990907dbae11284fa263bdbfc7ba2d14f",
+    "src/aeo/ranksim/__init__.py": "f7dccd6ac816f7e4ee7fe0da68a8f8f009b9ebf4a1b54df17323e27e3d5407c0",
+    "src/aeo/ranksim/consensus.py": "4d241399b9a14cc15e79f374caa1338a13bd6e3c8b55d49724421dfd18f0ef59",
+    "src/aeo/ranksim/site_history.py": "9b0d36ceff1042e57203671b589137f25f0ce8015ad22bfbefb978b0826d14df"
+  },
+  "modules": [
+    "scripts.claude.r2_t3_latent",
+    "scripts.claude.r2_t3_noise_check"
+  ],
+  "versions": {
+    "python": "3.13.5",
+    "numpy": "2.5.5",
+    "pandas": "3.1.1"
+  }
+}

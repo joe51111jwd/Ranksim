@@ -1,0 +1,14 @@
+{
+  "plan": "validity",
+  "design_max_date": "2026-11-17",
+  "seed": 20261119,
+  "per_site_cap": 4,
+  "combos_available": 231,
+  "sites_available": 52,
+  "sites_in_plan": 36,
+  "excluded_sites": [
+    "smartcrewhq.com"
+  ],
+  "requests": 70,
+  "sha256": "4df5bf74a86d1fca960b8227314449e7ab827b1c638b1f26a27f944fbf6fbbf4"
+}

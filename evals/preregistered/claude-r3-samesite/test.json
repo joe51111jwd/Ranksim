@@ -1,0 +1,35 @@
+{
+  "plan": "evals/claude/r3/plans/heldout1.jsonl",
+  "slices": "evals/claude/r3/plans/heldout1.slices.json",
+  "labels": [
+    "heldout1-a",
+    "heldout1-b"
+  ],
+  "site_fold": "test1",
+  "query_fold": "test",
+  "min_minutes_between_pulls": 30,
+  "max_hours_between_pulls": 6,
+  "fetch_rule": "one plain-HTTP pass, python scripts/claude/r3_fetch.py --label heldout1-a, started after the first pull ends; no browser fetch, no second pass; no page version stored after the pass ends is read",
+  "truth": "pairs of readable own-site pages of the first pull; consensus when the second pull orders the pair the same way, a page missing from the second pull ranking below every page present; excluded only when both pages are missing",
+  "primary": {
+    "name": "page-blend",
+    "model_dir": "evals/claude/r3/model/page-blend"
+  },
+  "secondary": [
+    {
+      "name": "page-site-blend",
+      "model_dir": "evals/claude/r3/model/page-site-blend"
+    },
+    {
+      "name": "text-logit",
+      "model_dir": "evals/claude/r3/model/text-logit"
+    }
+  ],
+  "pass_rule": {
+    "interval": "two-way bootstrap over sites and search groups",
+    "threshold": 0.65,
+    "stretch": 0.75,
+    "min_sites": 40,
+    "min_pairs": 800
+  }
+}

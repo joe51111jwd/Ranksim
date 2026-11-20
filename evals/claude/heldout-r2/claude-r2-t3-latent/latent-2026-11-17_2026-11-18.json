@@ -1,0 +1,331 @@
+{
+  "label": "PREDICTED",
+  "day_a": "2026-11-17",
+  "day_b": "2026-11-18",
+  "gap_days": 1,
+  "max_date": "2026-11-18",
+  "groups": [
+    "o30",
+    "a70"
+  ],
+  "searches": 30,
+  "prereg": "evals/preregistered/claude-r2-t3-latent",
+  "manifest_frozen_at": "2026-11-20T01:14:38Z",
+  "pulls": {
+    "day_a": {
+      "day": "2026-11-17",
+      "searches": 30,
+      "min_pulls": 3,
+      "max_pulls": 3,
+      "by_count": {
+        "3": 30
+      }
+    },
+    "day_b": {
+      "day": "2026-11-18",
+      "searches": 30,
+      "min_pulls": 2,
+      "max_pulls": 3,
+      "by_count": {
+        "2": 15,
+        "3": 15
+      }
+    }
+  },
+  "fixed_by_theory": {
+    "half_life_days": 2.0,
+    "prior_each_side": 0.5,
+    "consensus_pulls": 3,
+    "r1_threshold": 0.5,
+    "r2_floor": 0.5
+  },
+  "vote_weights": [
+    {
+      "day": "2026-11-06",
+      "age_days": 11,
+      "weight": 0.02209708691207961,
+      "pulls": 30
+    },
+    {
+      "day": "2026-11-09",
+      "age_days": 8,
+      "weight": 0.0625,
+      "pulls": 30
+    },
+    {
+      "day": "2026-11-11",
+      "age_days": 6,
+      "weight": 0.125,
+      "pulls": 30
+    },
+    {
+      "day": "2026-11-13",
+      "age_days": 4,
+      "weight": 0.25,
+      "pulls": 30
+    },
+    {
+      "day": "2026-11-16",
+      "age_days": 1,
+      "weight": 0.7071067811865476,
+      "pulls": 120
+    },
+    {
+      "day": "2026-11-17",
+      "age_days": 0,
+      "weight": 1.0,
+      "pulls": 90
+    }
+  ],
+  "universe": {
+    "pairs": 1109,
+    "queries": 30,
+    "calls_r1": 51,
+    "calls_r2": 120,
+    "r2_lowest_p_flip_called": 0.2992362787493926,
+    "r2_mean_p_flip_called": 0.5009377335076989,
+    "pulls_per_search": {
+      "11": 30
+    }
+  },
+  "summary": {
+    "pairs": 673,
+    "flips": 59,
+    "queries": 28,
+    "flip_queries": 23,
+    "expected_flips_model": 56.25062030918811,
+    "persistence": {
+      "hits": 614,
+      "n": 673,
+      "rate": 0.912332838038633,
+      "lo": 0.8736239495798319,
+      "hi": 0.9453382860245736,
+      "queries": 28
+    },
+    "calibration": [
+      {
+        "p_flip_band": "[0, 0.05]",
+        "pairs": 444,
+        "expected_flips": 7.750721534392593,
+        "observed_flips": 16
+      },
+      {
+        "p_flip_band": "(0.05, 0.2]",
+        "pairs": 144,
+        "expected_flips": 15.640225889781409,
+        "observed_flips": 18
+      },
+      {
+        "p_flip_band": "(0.2, 0.5]",
+        "pairs": 66,
+        "expected_flips": 20.361374586817014,
+        "observed_flips": 16
+      },
+      {
+        "p_flip_band": "(0.5, 1]",
+        "pairs": 19,
+        "expected_flips": 12.498298298197088,
+        "observed_flips": 9
+      }
+    ],
+    "r1": {
+      "calls": 19,
+      "right": 9,
+      "flip_recall": {
+        "hits": 9,
+        "n": 59,
+        "rate": 0.15254237288135594,
+        "lo": 0.03389830508474576,
+        "hi": 0.3137394957983192,
+        "queries": 23
+      },
+      "precision": {
+        "hits": 9,
+        "n": 19,
+        "rate": 0.47368421052631576,
+        "lo": 0.2,
+        "hi": 0.75,
+        "queries": 8
+      },
+      "all_pairs_rule": {
+        "hits": 613,
+        "n": 673,
+        "rate": 0.9108469539375929,
+        "lo": 0.8721870944449323,
+        "hi": 0.9437003121989717,
+        "queries": 28
+      },
+      "all_pairs_minus_persistence": {
+        "diff": -0.0014858841010401188,
+        "lo": -0.015603595123248703,
+        "hi": 0.012391712591901598,
+        "n": 673,
+        "queries": 28
+      },
+      "expected_precision_model": 0.6578051735893204,
+      "expected_recall_model": 0.22218951950216248,
+      "recall_lower_bound_above_half": false,
+      "not_below_persistence": false
+    },
+    "r2": {
+      "calls": 49,
+      "right": 15,
+      "flip_recall": {
+        "hits": 15,
+        "n": 59,
+        "rate": 0.2542372881355932,
+        "lo": 0.09259259259259259,
+        "hi": 0.4697192513368983,
+        "queries": 23
+      },
+      "precision": {
+        "hits": 15,
+        "n": 49,
+        "rate": 0.30612244897959184,
+        "lo": 0.14277408637873754,
+        "hi": 0.4461607142857143,
+        "queries": 19
+      },
+      "all_pairs_rule": {
+        "hits": 595,
+        "n": 673,
+        "rate": 0.8841010401188707,
+        "lo": 0.8426027364262658,
+        "hi": 0.9170279293138217,
+        "queries": 28
+      },
+      "all_pairs_minus_persistence": {
+        "diff": -0.02823179791976226,
+        "lo": -0.05000391849529781,
+        "hi": -0.007351333390499065,
+        "n": 673,
+        "queries": 28
+      },
+      "expected_precision_model": 0.4911822445622529,
+      "expected_recall_model": 0.42786959239308303,
+      "recall_lower_bound_above_half": false,
+      "not_below_persistence": false
+    }
+  },
+  "by_group": {
+    "o30": {
+      "pairs": 673,
+      "flips": 59,
+      "queries": 28,
+      "flip_queries": 23,
+      "expected_flips_model": 56.25062030918811,
+      "persistence": {
+        "hits": 614,
+        "n": 673,
+        "rate": 0.912332838038633,
+        "lo": 0.8736239495798319,
+        "hi": 0.9453382860245736,
+        "queries": 28
+      },
+      "calibration": [
+        {
+          "p_flip_band": "[0, 0.05]",
+          "pairs": 444,
+          "expected_flips": 7.750721534392593,
+          "observed_flips": 16
+        },
+        {
+          "p_flip_band": "(0.05, 0.2]",
+          "pairs": 144,
+          "expected_flips": 15.640225889781409,
+          "observed_flips": 18
+        },
+        {
+          "p_flip_band": "(0.2, 0.5]",
+          "pairs": 66,
+          "expected_flips": 20.361374586817014,
+          "observed_flips": 16
+        },
+        {
+          "p_flip_band": "(0.5, 1]",
+          "pairs": 19,
+          "expected_flips": 12.498298298197088,
+          "observed_flips": 9
+        }
+      ],
+      "r1": {
+        "calls": 19,
+        "right": 9,
+        "flip_recall": {
+          "hits": 9,
+          "n": 59,
+          "rate": 0.15254237288135594,
+          "lo": 0.03389830508474576,
+          "hi": 0.3137394957983192,
+          "queries": 23
+        },
+        "precision": {
+          "hits": 9,
+          "n": 19,
+          "rate": 0.47368421052631576,
+          "lo": 0.2,
+          "hi": 0.75,
+          "queries": 8
+        },
+        "all_pairs_rule": {
+          "hits": 613,
+          "n": 673,
+          "rate": 0.9108469539375929,
+          "lo": 0.8721870944449323,
+          "hi": 0.9437003121989717,
+          "queries": 28
+        },
+        "all_pairs_minus_persistence": {
+          "diff": -0.0014858841010401188,
+          "lo": -0.015603595123248703,
+          "hi": 0.012391712591901598,
+          "n": 673,
+          "queries": 28
+        },
+        "expected_precision_model": 0.6578051735893204,
+        "expected_recall_model": 0.22218951950216248,
+        "recall_lower_bound_above_half": false,
+        "not_below_persistence": false
+      },
+      "r2": {
+        "calls": 49,
+        "right": 15,
+        "flip_recall": {
+          "hits": 15,
+          "n": 59,
+          "rate": 0.2542372881355932,
+          "lo": 0.09259259259259259,
+          "hi": 0.4697192513368983,
+          "queries": 23
+        },
+        "precision": {
+          "hits": 15,
+          "n": 49,
+          "rate": 0.30612244897959184,
+          "lo": 0.14277408637873754,
+          "hi": 0.4461607142857143,
+          "queries": 19
+        },
+        "all_pairs_rule": {
+          "hits": 595,
+          "n": 673,
+          "rate": 0.8841010401188707,
+          "lo": 0.8426027364262658,
+          "hi": 0.9170279293138217,
+          "queries": 28
+        },
+        "all_pairs_minus_persistence": {
+          "diff": -0.02823179791976226,
+          "lo": -0.05000391849529781,
+          "hi": -0.007351333390499065,
+          "n": 673,
+          "queries": 28
+        },
+        "expected_precision_model": 0.4911822445622529,
+        "expected_recall_model": 0.42786959239308303,
+        "recall_lower_bound_above_half": false,
+        "not_below_persistence": false
+      }
+    }
+  }
+}

@@ -1,6 +1,4 @@
-# Ranksim master plan: from same-site content order to an approximate Google rank
-
-> REVIEW IN PROGRESS (Nov 20, 15:50 ET). Sections 3 to 8 carry the review fixes. Sections 0, 1, 2.8, 2.9, 9 and the appendices are still the pre-review text and are being rewritten. Do not act on this file until this note is gone.
+# Ranksim master plan: where a new client site will rank across its key searches, and what an edit does to a page that ranks
 
 Written 2026-11-20 by the lead (Claude goal run), branch `claude/goal-ranksim-works`. Revised the same day after an adversarial review (Appendix D) and after James's two directions of 2:52 and 2:53 PM ET. This is a plan and a theory. No production code was written and no Serper credit was spent to make it. Every model number in it is labeled PREDICTED, SIMULATED or DERIVED. Every REAL number names its source. James reviews this file before any coding agent runs a stage.
 
@@ -55,7 +53,7 @@ A weak site is placed on page one only where weak sites already hold page-one sl
 - Every eligible site in turn: about 400 sites, 100 searches with a top-20 list and 40 more with page one only. The model's form is chosen on this data, so the reading is PROVISIONAL.
 - The 145 sites that no fit of this project has ever used, scored once. This one is small. REAL counts: they hold 67 page-one placements on 35 sites and 84 page-two placements.
 
-All bars are measured on the searches a site targets (a rule frozen without looking at ranks, section 7), so easy "this site has nothing on that topic" cases cannot inflate them.
+All bars are measured on the searches a site targets (a rule fixed on the design sites and frozen before any held-out site is scored, section 7), so easy "this site has nothing on that topic" cases cannot inflate them.
 
 | Measure | Sellable bar (lead's proposal, D8) | Continue bar. Below it: stop | PREDICTED from free data (lead's estimate) |
 | --- | --- | --- | --- |
@@ -106,7 +104,7 @@ REAL, read 2026-11-20 15:45 ET: the shared free Serper balance is 513. This plan
 
 | # | Decision | Why it matters | Default if no answer |
 | --- | --- | --- | --- |
-| **D1, today** | What to do with the last free credits. **(C, recommended) Pause both other users of the key today.** Then nothing is urgent and the 253 credits go to whichever test Checkpoint P shows is worth it. If they cannot be paused, the credits are gone by about Nov 23 and only one of these fits, tonight, before 09:00 ET Nov 21: **(A)** the stage 1 test, 208 credits, a part and not a product. **(B)** fresh result lists for Product 1: 100 new searches, pages 1 and 2, 200 credits, sealed until the model is frozen. This is the only unseen data for the product you named, and it needs a small pull script first. Lead's pick if no pause: B | After tomorrow morning's runs the balance is about 408 and neither A nor B ever fits again without new credits. With no pause, the other users also take the balance under your 250 floor by Nov 21 to 23, whatever this plan does | No stage runs on its own. If an agent is started without an answer, it spends nothing and runs the 0-credit stages |
+| **D1, today** | What to do with the last free credits. **(C, recommended) Pause both other users of the key today.** Then nothing is urgent and the 253 credits go to whichever test Checkpoint P shows is worth it. If they cannot be paused, the credits are gone by about Nov 23 and only one of these fits, tonight, before 09:00 ET Nov 21: **(A)** the stage 1 test, 208 credits, a part and not a product. **(B)** fresh result lists for Product 1: 100 new searches, pages 1 and 2, 200 credits, sealed until the model is frozen. This is the only unseen data for the product you named, and it needs a small pull script first. Lead's pick if no pause: B | After tomorrow morning's runs the balance is about 408. A then never fits again without new credits, and B shrinks to 51 searches and to none a day later. With no pause, the other users also take the balance under your 250 floor by Nov 21 to 23, whatever this plan does | No stage runs on its own. If an agent is started without an answer, it spends nothing and runs the 0-credit stages |
 | D2 | Connect Google Search Console for the client's site (free, read only) | Real positions for hundreds of the client's searches at no cost. It is pivot 1 for Product 1, and the only free way to read the PR 41 and PR 45 edits for Gate E | Use the exports on disk only (through mid November) |
 | D3 | More credits: one free signup for extra Google lists, or lifting the no-money rule for Serper credits | Without them there is no unseen test of Product 1 beyond D1 (B), no PR 41 read, and no client run of 300 searches | None |
 | D4 | Allow the client's domain to be sent to free public lookups (Google autocomplete, Wikidata, RDAP) | Brand-demand and age signals for the client's site | Never sent. Its values come from local data only |
@@ -115,7 +113,7 @@ REAL, read 2026-11-20 15:45 ET: the shared free Serper balance is 513. This plan
 | D8 | Confirm or change the sellable bars and continue bars of 0.2 and 0.3 | They decide when to stop. They are the lead's proposal, not a measured market fact | Used as written |
 | D9 | Confirm the target map: GOAL Target 1 is scored as Checkpoint 3c, Target 2 becomes Gate E, Target 3 (one-day movers) is retired under your Nov 19 note | GOAL.md still names all three | Used as written |
 
-The adversarial review is logged in Appendix D: five Opus reviewers and seven skeptic passes, 71 objections, 61 accepted. The largest changes: the credit numbers were stale and the fresh test was no longer affordable, several gates could be passed by an empty or a silent tool, the content score was being tested on sites it was trained on, one gate could not be passed even by a perfect tool, and no gate compared anything with a real product outcome. The last point is what your Nov 20 directions fix.
+The adversarial review is logged in Appendix D: five Opus reviewers and five skeptic passes, 66 distinct objections, 61 accepted and 5 rejected. The largest changes: the credit numbers were stale and the fresh test was no longer affordable, several gates could be passed by an empty or a silent tool, the content score was being tested on sites it was trained on, one gate could not be passed even by a perfect tool, and no gate compared anything with a real product outcome. The last point is what your Nov 20 directions fix.
 
 ---
 
@@ -369,7 +367,7 @@ Neither product will say: an exact position, a guarantee, or that an edit "will"
 | Counts only on Nov 20 collector rows (rows, client rows, URLs new to a top 10). No position was scored | this review, Appendix D |
 | Counts only of the test2 sites' placements by band in the Nov 16 deep lists (67 on page one, 84 on page two). No model or signal was scored on them | this review, section 1 |
 
-No model with the stage 2 site features has been fitted on any of it. History-based cross-site models and footprint-type transfers have been read. Because of these reads, every test on stored lists dated Nov 19 or earlier (Checkpoints 2, 3a and 4) is PROVISIONAL. Only data dated Nov 20 or later counts as unseen: the fresh pull (Checkpoint 3b, not affordable today, see section 9) and the collector days of Checkpoint 3c.
+No model with the stage 2 site features has been fitted on any of it. History-based cross-site models and footprint-type transfers have been read. Because of these reads, every test on stored lists dated Nov 19 or earlier (Checkpoints 2, 3a and 4) is PROVISIONAL. Only data dated Nov 20 or later counts as unseen: the fresh lists of group 3D (which fit the free balance only under D1 option B) and the collector days of Checkpoint 3c. Checkpoint P-sealed scores sites that no fit has seen, but on these same stored lists.
 
 ---
 
@@ -384,7 +382,7 @@ No model with the stage 2 site features has been fitted on any of it. History-ba
 | 0.1 | Confirm the branch is level with origin (`git status -sb` shows no "ahead") | pushed branch |
 | 0.2 | Write every gate of Appendix A into `evals/preregistered/claude-r4-gates/gates.json` in machine form: gate id, metric key, comparison, value, row-level file, interval type. Build the manifest with `freeze.py`, commit, push, and list the commit in `VERSIONS.json` in the same folder (append only). This happens before the stage 1 pulls, so the advance rules cannot drift. A later version of `gates.json` is allowed only for a rule 6 or rule 8 check, before that stage's first gate run, and it must name the check that forced it. `r4_gate.py` refuses a version unless every bar is equal or stricter and every interval equal or wider than in version 1 | frozen gate file |
 | 0.3 | Build `scripts/claude/r4_gate.py <checkpoint>`. It contains no threshold of its own. Each checkpoint has one named producer script. The producer's result file holds a provenance block: HEAD commit, clean-tree flag, command line, sha256 of the inputs, of the row-level file (`pairs.csv` or `rows.csv`) and of the manifest. The gate script recomputes every gated number from the row-level file with the frozen `r4_stats.py`, checks the provenance against git, and never trusts a summary field. Every commit that touches `gates.json` or its manifest must be listed in `VERSIONS.json`, or the script prints REFUSED | gate script |
-| 0.4 | Credit check (section 9). Read the balance B and the other users' run times from `serp_raw` (on Nov 17 to 20: a 15-credit tracker at about 09:10 ET, then three 30-credit collector pulls between about 09:30 and 11:00 ET). Stage 1 may start only if all three hold. (a) D1 is answered. (b) B is at least 478: the 260 reserve inside `r3_pull.py`, 208 for the pulls, 10 for charges with no stored response. (c) Pull A starts after the other users' last run of the day and pull B ends before their first run of the next day, so no other spend can fall between the two pulls. If pull B is refused or comes more than 6 hours after pull A, `r3_score.py` can never score the test, the held-out sites are spent, and 104 credits are lost | balance note in `RESULTS-claude.md` |
+| 0.4 | Credit check (section 9). Read the balance B and the other users' run times from `serp_raw` (on Nov 17 to 20: a 15-credit tracker at about 09:10 ET, then three 30-credit collector pulls between about 09:30 and 11:00 ET). A pull may start only if all three hold. (a) D1 is answered and names this pull. (b) For the stage 1 pulls B is at least 478: the 260 reserve inside `r3_pull.py`, 208 for the pulls, 10 for charges with no stored response. For the fresh lists of group 3D, B is at least 260 + 2N + 46. (c) The whole pull falls in one clear window: it starts after the other users' last run of the day and ends before their first run of the next day, so for stage 1 no other spend can fall between pull A and pull B. If pull B is refused or comes more than 6 hours after pull A, `r3_score.py` can never score the test, the held-out sites are spent, and 104 credits are lost | balance note in `RESULTS-claude.md` |
 | 0.5 | Run `python -m pytest` and record the counts and the ids of the failing tests in `evals/claude/r4/baseline_tests.json`. Expected: the six known DNS failures in `tests/test_layered_fetch.py` and no other failure | baseline test record |
 | 0.6 | Housekeeping from the inventory: use `index.sqlite`, not the parquet files (no `pyarrow` in the venv). Note that `r3_pages.load_pages` writes a cache under `/workspace/ranksim-data`. Fix the dead citation in theory R3.8 (`t1-postmortem/notes.md` does not exist; point to `results.md`). D6 decides the untracked script | notes |
 | 0.7 | Write `scripts/claude/r4_c1_fallbacks.py` before the stage 1 pulls and freeze it with `gates.json`. It reads only `heldout/claude-r3-samesite/pairs.csv` and `heldout1.slices.json`, and uses `r3_model.accuracy` and `r3_model.difference` with the frozen seed and draws. It writes `c1_fallbacks.json`: the unfitted cross-encoder's accuracy, sites and pairs; cross-encoder minus BM25F; and, on the construction consensus pairs, `page-blend` accuracy, sites, pairs and `page-blend` minus BM25F, all with two-way intervals. The frozen `r3_score.py` writes none of these, so without this script the fallbacks of stage 1 would be computed by code written after the result is open | frozen fallback script |
@@ -397,7 +395,7 @@ No model with the stage 2 site features has been fitted on any of it. History-ba
 
 ---
 
-## 5. Stage 1: freeze and verify the same-site content scorer on unseen sites (Checkpoint 1)
+## 5. Stage 1: freeze the same-site content scorer and, if D1 gives it the credits, score it on unseen sites (Checkpoint 1, a part check)
 
 **Purpose.** A check of one part, not a product gate. It was James's first priority on Nov 19. On Nov 20 he said that pair accuracy is not what anyone pays for, so D1 now decides whether this test gets the last free credits. The scorer is fitted but not frozen and not scored. Everything is designed and reviewed (`evals/preregistered/claude-r3-samesite/preregistration.md`). This stage only executes it. The preregistration is not changed.
 
@@ -553,8 +551,8 @@ Reported next to the gate, not gated: the cold estimate on the same boundary pai
 | Case | Next step |
 | --- | --- |
 | G2.2 fails only on the paired difference against the best single signal | FAIL, fallback taken: the best single signal becomes the site-strength value, with the same shrinkage. Stage 3 runs with it. Say plainly that the model added nothing over it |
-| G2.3 fails (small sites cannot be told apart) | For a small site with no footprint, the no-anchor mode says "cannot tell: site not established for this topic". The product leans on the anchored modes. Raise D2 and D5 with James |
-| G2.2 lower bound at or under 0.60 with every signal | One loop allowed, and it must change the theory: move the test to "does the site reach the top 10 at all" as a per-domain classification, add the page-two labels from D5 if approved. If that also fails, stage 3 runs content plus the raw domain prior only, and the no-anchor mode is tiers only |
+| G2.3 fails (small sites cannot be told apart) | For a small site with no footprint, the no-anchor mode says "cannot tell: site not established for this topic". Product 1 will then very likely miss its continue bars, and the stage 2 report says so before stage 3 starts. Raise D2 with James |
+| G2.2 lower bound at or under 0.60 with every signal | One loop allowed, and it must change the theory: move the test to "does the site reach the top 10 at all" as a per-domain classification, which is the form Checkpoint P uses anyway. If that also fails, stage 3 runs content plus the domain prior only, and the no-anchor mode is tiers only |
 | G2.0 fails | Use the logistic part alone as the content score, as task 2A.4 says |
 
 ---
@@ -581,7 +579,7 @@ Reported next to the gate, not gated: the cold estimate on the same boundary pai
 - `evals/claude/r4/plans/xs_fresh.jsonl` (the fresh-search plan) and its meta file, only if 3b runs.
 - `evals/claude/r4/stage3/{stored, forward, fresh}/{results.json, rows.csv, pairs.csv, report.md}`.
 
-### The three tasks the model is scored on
+### The three tasks of the part checks
 
 Tiers are the same everywhere in this plan: 1 to 3, 4 to 10, 11 to 20, 21 to 30, beyond 30.
 
@@ -600,7 +598,8 @@ Tiers are the same everywhere in this plan: 1 to 3, 4 to 10, 11 to 20, 21 to 30,
 6. **Calls.** The called band is the most probable one. The call is confident when that probability is at least 0.5, else the output is "cannot tell". Coverage is the share of targeted cells with a confident call.
 7. **Readings.** P-cv: 5 folds by site (seeded), every design site scored by a fit that never saw it, XS-design searches. P-sealed: one fit on all design sites, frozen, then the 145 test2 sites scored once on all 140 searches, reported apart for XS-design searches (unseen sites) and XS-test-stored searches (unseen sites and unseen searches). P-fresh, only if the fresh lists of group 3D exist: every site scored on the fresh searches by a fit that never saw it. Before P-cv runs, freeze `evals/preregistered/claude-r4-newsite/` with the code, the crawl list, the content-score level rule, the ridge value, the fold seed and the call threshold. One gate run each, logged (rule 13).
 8. **Baselines on the same cells.** B0: always "not ranking". B1: difficulty only, the same model with features (c) and site type alone, so every site gets the same answer on a search. B2: B1 plus the cold strength. B3: B1 plus the content score.
-9. **Slices, each with its count.** Small sites (in neither Majestic nor Tranco). Young domains (registered under two years ago, where RDAP gives a date): the closest stored stand-in for a brand-new site. Site type. Search type. A slice with fewer than 20 sites is descriptive only. If the young-domain slice is that small, the report says plainly that brand-new sites are untested.
+9. **Interface, built only if the decision rule says continue.** `python scripts/claude/r4_newsite.py score-site --site URL --searches FILE`: crawls the site, reads the stored list of each search, and writes one record per search (the four band chances, the called band or "cannot tell", the reasons) and one per site (the expected number of searches in each band), every number labeled PREDICTED. It never pulls. A search with no stored list returns `no_list`.
+10. **Slices, each with its count.** Small sites (in neither Majestic nor Tranco). Young domains (registered under two years ago, where RDAP gives a date): the closest stored stand-in for a brand-new site. Site type. Search type. A slice with fewer than 20 sites is descriptive only. If the young-domain slice is that small, the report says plainly that brand-new sites are untested.
 
 A known bias, on the safe side: a held-out site's crawl is capped, so it can miss the page that ranks. A client's own site is crawled in full. The test therefore finds fewer real rankings than the product would.
 
@@ -612,7 +611,7 @@ A known bias, on the safe side: a held-out site's crawl is capped, so it can mis
 3. Bands: split-conformal error quantiles from leave-group-out placements on XS-design, by tier of the predicted position. The noise model alone never sets a band.
 4. Expected rank `1 + sum P(rival beats page)` is computed as a cross-check. Reuse `src/aeo/ranksim/position_aggregate.py` where it fits.
 
-**Group 3C. Checkpoint 3a, stored test (0 credits, PROVISIONAL).** Freeze the model and the preregistration `evals/preregistered/claude-r4-xs/`. Before the freeze, compute the power of each gate at the PREDICTED effect for the real size of XS-test-stored, by simulation from the XS-design errors. If power is under 0.8, the gate stays as written and the report says a fail is uninformative. Then score XS-test-stored once with `scripts/claude/r4_stage3_score.py --cell stored`. T-A and T-C use the deep-list searches only. The top-10-only searches of the fold (PR 41 baseline and ClockShark searches) are a separate reported slice. If the model is refitted afterwards, the stored cell is design data from then on. With today's balance this is the main test of the cross-site model.
+**Group 3C. Checkpoint 3a, stored test (0 credits, PROVISIONAL).** Freeze the model and the preregistration `evals/preregistered/claude-r4-xs/`. Before the freeze, compute the power of each gate at the PREDICTED effect for the real size of XS-test-stored, by simulation from the XS-design errors. If power is under 0.8, the gate stays as written and the report says a fail is uninformative. Then score XS-test-stored once with `scripts/claude/r4_stage3_score.py --cell stored`. T-A and T-C use the deep-list searches only. The top-10-only searches of the fold (PR 41 baseline and ClockShark searches) are a separate reported slice. If the model is refitted afterwards, the stored cell is design data from then on. This is the main part check of the cross-site model.
 
 **Group 3D. Fresh lists, for P-fresh and Checkpoint 3b.** These are the only unseen result lists this plan can get. They fit the free balance only in place of the stage 1 test (D1 option B), or with new credits (D3). After a stage 1 run the size rule below gives a negative N and the group does not run.
 1. `scripts/claude/r4_stage3_plan.py`: candidate searches are the related searches and "people also ask" strings in stored raw responses dated on or before Nov 19 (1,028 and 542 distinct strings). Eligibility is computed for each candidate against the stored searches only, never through other candidates. With t = `r2_samesite_pairs._fold_tokens`, a candidate c is excluded if, for any of the 155 stored searches s, the token sets of t(c) and t(s) are equal, they share a token trigram, or one token set contains the other (any size, including one-token stored searches). It is also excluded if it contains a brand token from a frozen list (every brand named in a stored search, the client's brand, and every PR 45 brand token) or a navigational word from a frozen list (login, sign in, app, download, careers, glassdoor, support, reddit, complaints). It must contain a niche term from a frozen list. All three lists are written to the plan's meta file before sampling. Fresh groups come from `assign_folds` over the eligible candidates alone. The 71 universe groups are never recomputed. Draw by seeded hash, at most 2 searches per new group. The eligible list and its count are written before the draw.
@@ -634,6 +633,7 @@ A known bias, on the safe side: a held-out site's crawl is capped, so it can mis
 - `tests/test_claude_r4_position.py`: on synthetic data at pair accuracy 0.65 the posterior median beats the middle guess and matches the table of section 2.6 within 0.15 places. The raw win count shows its known bias. Bands cover at their stated rate on synthetic data. The expected-rank identity holds. The T-A prediction does not change when the hidden page's true slot moves and the rivals' order is kept.
 - `tests/test_claude_r4_rank_model.py`: save and load round trip gives identical scores. Scores are list invariant. A test2 site has no domain effect.
 - `tests/test_claude_r4_score_guards.py`: scoring refuses without a manifest, with an unpushed freeze, with a second pull, with a second fetch pass, or when a result file exists locally or on the pushed branch. A forward-cell run refuses a day that the preregistration does not name.
+- `tests/test_claude_r4_newsite_gate.py`: on a synthetic world with a known answer the band model beats baseline B1 and its P1, P2 and P3 match hand-computed values. Shuffling site labels inside each search brings P1 to the base rate. No cell of a site is scored by a fit that saw that site. No test2 site is in any training table. A second run of a reading is refused.
 - `tests/test_claude_r4_plan.py`: `raken alternative free`, `raken pricing per month`, `raken time tracking` and `busybusy login` are not eligible. `universe.json` is unchanged. The draw is deterministic. N follows the formula.
 
 ### Gate P (Checkpoint P, the Product 1 gate)
@@ -648,7 +648,7 @@ All numbers are on targeted cells, with a bootstrap over sites for every interva
 | P4 | Coverage: share of targeted cells with a confident call | reported | at least 0.80 |
 | P5 | Guard tests: the new-site tests of stage 2, and a shuffle of site labels inside each search, which must bring P1 down to the base rate | all pass | all pass |
 
-Always reported next to the gate: the plain share of cells placed in the correct band, with the same number for B0, B1, B2 and B3; the area under the curve for page one; the all-cells versions; the slices of task 9; the count of cells and sites behind every number.
+Always reported next to the gate: the plain share of cells placed in the correct band, with the same number for B0, B1, B2 and B3; the area under the curve for page one; the all-cells versions; the slices of task 10; the count of cells and sites behind every number.
 
 **Decision rule, fixed now.**
 - **Kill.** P1 or P2 misses its continue bar on P-cv. Product 1 stops on free data. No second model is tried on the same data beyond the one loop of rule 13. The pivots are in section 0.2.
@@ -866,7 +866,7 @@ The rule, the baselines and the row filter are frozen in `evals/preregistered/cl
 | Use | Credits | Fits today (253 to spend) | Fits after the Nov 21 morning runs (about 148 to spend) |
 | --- | ---: | --- | --- |
 | A. Stage 1 test: 104 site-restricted lists, two pulls | 208 | yes, alone | no |
-| B. Fresh lists for Product 1 and Checkpoint 3b: 100 new searches, pages 1 and 2 | 200 | yes, alone | no (N = 51 at most) |
+| B. Fresh lists for Product 1 and Checkpoint 3b: 100 new searches, pages 1 and 2 | 200 | yes, alone | in part: 51 searches. None a day later |
 | A and B together | 408 | no | no |
 | Two PR 45 reads (Dec 17, Jan 14): 6 searches, 3 pulls | 36 | yes, next to A or next to B | yes |
 | One PR 41 read: 74 searches, 3 pulls | 222 | only in place of A and B | no |
@@ -906,56 +906,178 @@ If Checkpoint P hits its kill rule, stage 4 still runs (Product 2 does not depen
 
 ## Appendix A. Every gate in one table (source for `gates.json`)
 
+Product gates come first. They decide what can be sold. The G gates check parts.
+
 | Gate | Metric | Bar |
 | --- | --- | --- |
-| G0 | branch pushed; gate manifest verifies; balance; tests | level with origin; verify passes; at least 468; no new failure |
-| G1-GOAL | `page-blend`, consensus pairs, two-way interval | at least 40 sites and 800 pairs; lower bound above 0.65; minus BM25F lower bound above 0; minus each ranker variant lower bound above 0 |
-| G1-ADV | same run | valid run; at least 40 sites and 800 pairs; point at least 0.65; lower bound at least 0.60; minus BM25F lower bound above 0 |
-| F1-A | unfitted cross-encoder, same run | conditions 2 to 4 of G1-ADV |
-| F1-B | `page-blend`, construction lists only | at least 25 sites and 500 pairs; point at least 0.65; lower bound at least 0.60; minus BM25F lower bound above 0 |
-| G2.0 | list-invariant score against the frozen scorer | accuracy within 0.005; rank correlation at least 0.98 |
-| G2.1 | coverage of site-strength estimates | at least 0.95; client's domain covered |
-| G2.2 | site-only, boundary pairs, leave-group-out | dyadic lower bound above 0.60; point at least best single signal plus 0.02 |
-| G2.3 | site-only, small-site boundary pairs | point at least 0.58; dyadic lower bound above 0.52 |
+| **P1** (Product 1) | page one or not, on targeted cells: share right among the top-ranked cells that find the stated share of real page-one cells | continue: at least 0.35 when 0.30 are found, and log loss below baseline B1 with a lower bound of the difference above 0. Sellable: at least 0.70 when 0.40 are found |
+| **P2** | right band, over cells truly in the top 20 | continue: at least 0.25. Sellable: at least 0.60 |
+| **P3** | per site, predicted against real number of page-one searches, sites with at least 5 targeted cells | continue: rank correlation at least 0.4. Sellable: within 25% or 2 searches for at least 0.70 of sites |
+| **P4** | coverage: share of targeted cells with a confident call | sellable: at least 0.80 |
+| **P5** | new-site tests and the site-label shuffle | all pass |
+| P decision | kill, continue or sellable | kill if P1 or P2 misses its continue bar on P-cv. Continue if the continue bars hold on P-cv and P-sealed agrees. Sellable only after P-fresh |
+| **E1** (Product 2) | direction on real edits: share of confident up, down and stay calls that match | sellable: at least 0.70 and above "always stay". Kill after 40 independent rows: under 0.60 |
+| **E2** | predicted position within 2 places of the real one, confident calls | sellable: at least 0.70 and at least 10 points above "predict no change". Kill: not above "predict no change" |
+| **E3** | coverage of confident calls on real edits | sellable: at least 0.50 |
+| G0 | branch pushed; gate manifest verifies and is listed in `VERSIONS.json`; credits; tests | level with origin; verify passes; the three conditions of task 0.4 before any pull; no failing test outside `baseline_tests.json` |
+| G1-GOAL | `page-blend`, consensus pairs, two-way interval | at least 40 sites and 800 pairs; lower bound above 0.65; minus BM25F lower bound above 0; minus each ranker variant lower bound above 0. NOT RUN if D1 gives the credits elsewhere |
+| G1-ADV | same run, the scorer's own rate (ties and missing count one half) | valid run; at least 40 sites and 800 pairs; point at least 0.65; lower bound at least 0.60; minus BM25F lower bound above 0 |
+| F1-A | unfitted cross-encoder, from `c1_fallbacks.json` | conditions 2 to 4 of G1-ADV |
+| F1-B | `page-blend`, construction lists only, from `c1_fallbacks.json` | at least 25 sites and 500 pairs; point at least 0.65; lower bound at least 0.60; minus BM25F lower bound above 0 |
+| G2.0 | list-invariant score against the in-list score, site-held-out fits | accuracy within 0.005; rank correlation at least 0.98 |
+| G2.1 | share of non-platform top-30 domains with a real signal or own-list evidence | at least 0.80; client's domain has an estimate |
+| G2.2 | site-only model, URL-new boundary pairs, fixed pair set, design cross-validation | dyadic lower bound above 0.60; minus best single signal: paired dyadic lower bound above 0 |
+| G2.3 | same, small-site boundary pairs | point at least 0.58; dyadic lower bound above 0.52; point above the footprint-only score |
 | G2.4 | leak tests | all pass |
-| G2.5 | baseline dominance | no baseline and no shuffle passes G2.2 |
-| G3 validity | fresh test size | at least 30 searches and 300 target rows |
-| G3.1 | T-A mean absolute error | at least 8% below the middle guess; paired lower bound above 0 against the middle guess and the raw domain prior |
-| G3.2 | T-A band coverage | 80% band 0.72 to 0.88; 50% band 0.42 to 0.58 |
-| G3.3 | T-C pair accuracy | all top-30 pairs dyadic lower bound above 0.55; boundary pairs above 0.58 |
+| G2.5 | within-search label shuffle through the absolute bar of G2.2 | fails |
+| G3 validity | size | 3a: at least 30 deep-list searches and 200 gated T-A rows. 3b: at least 30 searches and 200 gated rows. Under it: not tested |
+| G3.1 | T-A mean absolute error, gated rows | at least 8% below the middle guess; paired lower bound above 0 against the middle guess and the shrunk domain prior |
+| G3.2 | T-A band coverage and width | 80% band 0.72 to 0.88; 50% band 0.42 to 0.58; median 80% width at most 0.85 of the middle guess's |
+| G3.3 | T-C pair accuracy per rule 7 | all pairs dyadic lower bound above 0.55; boundary pairs above 0.58; on both, minus best single signal: paired lower bound above 0 |
 | G3.4 | T-A tier forecast | ranked probability skill above 0, lower bound above 0 |
-| G3.5 | kappa | bootstrap lower bound above 0; combined not worse than site-only by more than 0.10 places |
+| G3.5a | content matters across sites: T-C, combined minus site-only | paired dyadic lower bound above 0, or "not testable" if its power is under 0.8 |
+| G3.5b | no harm from content: T-A error, combined minus site-only | two-way upper bound under 0.10 places |
 | G3.6 | cold sites | T-A error at most the middle guess's |
-| G3.7 | reach | T-B log loss at most the footprint-only baseline's |
-| G4.1 | sanity suite | invariance: median under 0.25 places and at least 90% no change or cannot tell; direction: at least 90% right or cannot tell, under 5% wrong; stuffing flagged 100% |
-| G4.2 | band coverage, no edit | within 7 points of stated, per start tier and horizon with at least 150 rows |
-| G4.3 | virtual edits, swap pairs, position backtest | monotone at least 90%; swap lower bound above 0.5; direction at least 0.60 with lower bound above 0.5; log-rank error not above no change |
-| G4.4 | `kappa_A` | by-site lower bound above 0 |
-| G4.5 | software | tests pass; deterministic; under 60 seconds |
+| G3.7 | reach, known-site reading | log loss below the base-rate forecast with a lower bound above 0; not above footprint-only |
+| 3c (GOAL Target 1) | pages new to a top 10 on collector days: share within 3 places, against the best of domain prior, position 7 and position 11 | interval of the difference above 0 on at least two days. One day: not decided |
+| G4.1 | sanity suite, sealed half | invariance: median under 0.25 places and at least 90% no change or cannot tell. Direction: a call on at least 70%, right on at least 85% of calls, wrong on under 5% of all. Stuffing flagged 100%. Each guard fires on at most 5% of clean cases and of real material changes |
+| G4.2 | coverage of the 80% band, no edit, start tier (1 to 3, 4 to 10) by horizon (1, 2, 3 days) | at least 0.72 in every cell with at least 30 searches and 3 outcome days; at least 4 such cells; narrowest-band rule unit tested |
+| G4.3 | virtual edits, swap pairs, position backtest | full-text step moves toward B in at least 90% and closes a median of at least half the gap; swap lower bound above 0.5; backtest (valid with at least 5 sites and 100 pairs) direction at least 0.60 and at least 0.03 above BM25F, log-rank error below no change |
+| G4.4 | `kappa_A`, lower figure | by-site lower bound above 0 with all sites and without hcss.com; valid only with at least 8 other sites of at least 5 pairs, else untested |
+| G4.5 | software | tests pass except the baseline ids; byte-identical JSON on two runs; under 60 seconds |
 
 ## Appendix B. New code, by stage
 
 | Stage | Files |
 | --- | --- |
-| 0 | `scripts/claude/r4_gate.py`, `evals/preregistered/claude-r4-gates/`, `tests/test_claude_r4_gate.py` |
+| 0 | `scripts/claude/r4_gate.py`, `r4_c1_fallbacks.py`, `evals/preregistered/claude-r4-gates/` (`gates.json`, `VERSIONS.json`, manifest), `evals/claude/r4/gate_runs.jsonl`, `evals/claude/r4/baseline_tests.json`, `tests/test_claude_r4_gate.py`, `tests/test_claude_r4_c1_fallbacks.py` |
 | 1 | `scripts/claude/r4_pair_calibration.py` (everything else exists) |
-| 2 | `scripts/claude/r4_split.py`, `r4_sitetype.py`, `r4_xsdata.py`, `r4_content_scores.py`, `r4_signals_local.py`, `r4_signals_cc.py`, `r4_signals_focus.py`, `r4_signals_lists.py`, `r4_signals_brand.py`, `r4_site_model.py`, `r4_stats.py`, `r4_stage2_eval.py`, and their tests |
-| 3 | `scripts/claude/r4_rank_model.py`, `r4_position.py`, `r4_stage3_plan.py`, `r4_stage3_pull.py`, `r4_stage3_score.py`, `evals/preregistered/claude-r4-xs/`, and their tests |
-| 4 | `src/aeo/ranksim/editsim/{content, anchor, effect, guards, output}.py`, the CLI hook, `scripts/claude/r4_sanity_suite.py`, `r4_band_backtest.py`, `r4_virtual_edits.py`, `r4_cc_versions.py`, `r4_ledger_score.py`, and their tests |
+| 2 | `scripts/claude/r4_sealed.py`, `r4_split.py`, `r4_sitetype.py`, `r4_xsdata.py`, `r4_content_scores.py`, `r4_site_crawl.py`, `r4_signals_local.py`, `r4_signals_cc.py`, `r4_signals_focus.py`, `r4_signals_lists.py`, `r4_signals_brand.py`, `r4_site_model.py`, `r4_stats.py`, `r4_stage2_eval.py`, `evals/preregistered/claude-r4-site/`, and their tests |
+| 3 | `scripts/claude/r4_newsite.py`, `r4_rank_model.py`, `r4_position.py`, `r4_stage3_plan.py`, `r4_stage3_pull.py`, `r4_stage3_score.py`, `evals/preregistered/claude-r4-newsite/`, `evals/preregistered/claude-r4-xs/`, and their tests |
+| 4 | `src/aeo/ranksim/editsim/{content, anchor, effect, guards, output}.py`, the CLI hook, `scripts/claude/r4_gsc.py`, `r4_sanity_suite.py`, `r4_band_backtest.py`, `r4_virtual_edits.py`, `r4_cc_versions.py`, `r4_ledger_score.py`, `evals/preregistered/claude-r4-editsim/`, `evals/preregistered/claude-r4-gate-e/`, and their tests |
+| every checkpoint | `evals/claude/r4/audits/<checkpoint>.md`, written by a reviewer that wrote none of the stage's code |
 
-Existing code to reuse: `scripts/claude/rsdata.py`, `r3_model.py` (`FrozenScorer`, `twoway_interval`), `r3_features.py`, `r3_semantic.py`, `r3_dataset.py`, `r3_pull.py`, `r3_fetch.py`, `freeze.py`, `metrics.py`; `src/aeo/ranksim/position_aggregate.py`, `site_history.py`, `offpage.py`, `bands.py`, `ledger.py`, `draft_ledger.py`. Do not use `src/aeo/ranksim/authority.py` (a paid service client).
+Existing code to reuse by import, never by editing while it is frozen (rule 16): `scripts/claude/rsdata.py`, `r3_model.py` (`FrozenScorer`, `fit_predict`, `site_folds`, `twoway_interval`), `r3_features.py`, `r3_semantic.py`, `r3_dataset.py`, `r3_pull.py`, `r3_fetch.py`, `r2_samesite_pairs.py` (`_fold_tokens`, `assign_folds`), `t2_changes.py`, `freeze.py`, `metrics.py`; `src/aeo/ranksim/position_aggregate.py`, `site_history.py`, `offpage.py`, `bands.py`, `ledger.py`, `draft_ledger.py`. Do not use `src/aeo/ranksim/authority.py` (a paid service client).
 
 ## Appendix C. Words used
 
+- **Band**: top 3, 4 to 10, page 2 (11 to 20), not ranking (not in the top 20). In the part checks that go to depth 30 the tiers are 1 to 3, 4 to 10, 11 to 20, 21 to 30, beyond 30.
+- **Cell**: one (site, search). **Targeted cell**: a cell where the site has a page whose content score is at or above the frozen level.
+- **Scored as new**: scored under rule 17, with no trace of the site's own rankings.
+- **Cold estimate**: site strength from outside signals only, with no footprint.
+- **Design sites**: the round 3 train and test1 sites. **Held-out sites**: the 145 test2 sites.
 - **Site-restricted order**: the order Google returns for `site:<site> <search>`.
 - **Consensus**: the median position over a day's pulls, as defined in `RESULTS-claude.md` section 0.
 - **Boundary pair**: one page in the top 10, the other at 11 to 30.
 - **Middle guess**: always predicting the middle position of the list.
-- **Raw domain prior**: the unshrunk mean position of the page's site on other search groups, the middle guess where the site was never seen.
+- **Domain prior**: the site's mean position on other search groups, shrunk toward the middle position with weight n / (n + k), where n is the number of other groups the site appears in and k is chosen by leave-group-out error on XS-design and frozen. The middle guess where the site was never seen.
+- **Best single signal**: the best row of the frozen single-signal table of group 2C on the gate's own pair set.
 - **Decided pair**: a pair where the scorer gives two different, non-missing scores.
-- **Anchor**: the page's current latent position, from at least 3 pulls on at least 2 days.
+- **Anchor**: the page's current latent position, from at least 3 page-one pulls in total over at least 2 days. With less it is a thin anchor.
 - **Transfer factor (lambda)**: how much of the settled content effect an edit actually delivers, between 0 and 1.
+- **Independent rows**: rows divided by the design effect of rows that share a search.
 
 ## Appendix D. Adversarial review log
 
-Pending. The review of this file and the list of changes it forced are added here before the plan is handed to James.
+**How the review ran (Nov 20).** Five reviewer subagents on Opus attacked the draft of commit `9acc643`, one lens each: leakage, arithmetic and gate strength, credits and feasibility, hidden assumptions and missing free signals, and ways to fake a pass. Each wrote a report, kept in `evals/claude/r4/reviews/`. Five skeptic subagents on Opus then tried to refute every serious finding and the lead's own 38 candidate flaws. A flaw was accepted only if a skeptic or the lead confirmed its evidence independently. The reviewers read code and counted rows. They fitted and scored nothing on real ranking data, spent no credits and read no held-out list. The table below merges duplicates: 66 distinct objections, 61 accepted in full or in part, 5 rejected.
+
+Ids: L leakage, B, M, m math, C credits, A assumptions, FP fake pass, LL, LM, LC, LA, LF the lead's candidates, "missed" an item a skeptic added.
+
+### Credits and feasibility
+
+| # | Objection (ids) | Verdict | What changed |
+| --- | --- | --- | --- |
+| 1 | The balance in the draft (617) was stale and the fresh test was no longer affordable after stage 1 (B1, A1, FP10, C3, LC1) | accepted | Sections 0.5, 1 and 9 rebuilt on the measured 513. The fresh pull is re-sized and fits only in place of stage 1 |
+| 2 | Stage 1 fits only until the other users' next run, and a run between pull A and pull B would spoil the test for good (C1, LC2, LC3) | accepted | Task 0.4, group 1C and rule 9: bar of 478, one clear window, balance read before each pull |
+| 3 | The default "run stage 1 at once" lets the shared balance fall under 250 (C2, A1) | accepted, different fix | A default of "do not run" would have lost the test for good, so D1 is now an explicit choice with a recommendation, and no stage starts on its own |
+| 4 | A second user (a 15-credit daily tracker) and unmatched charges: about 105 to 111 a day, not 90 (LC5, missed) | accepted | Sections 1 and 9 |
+| 5 | The live ledger reads were listed at 0 credits but need 18 (PR 45) and 222 (PR 41) a date (C4, LC4) | accepted | Group 4E, the Checkpoint 5 table, section 9. PR 41 reads are marked not funded |
+| 6 | The plan asked to pause the collector and also relied on its later days (C5, LC6) | accepted | No gate depends on a collector day that does not exist. D5 (swap a collector pull) is dropped: the collector has no page option |
+| 7 | The anchor rule cannot be met at 11 to 30 or for searches pulled once, and anchor age was ignored (C6, A4) | accepted | Anchor definition, thin-anchor flag, age in the band |
+| 8 | A page that left the top 10 was stored as position 11 and could count as covered. Tier 11 to 30 has no rows. Cells could be merged at will (C7, FP6) | accepted | G4.2 and group 4B |
+| 9 | The stored test would usually miss its own validity bar (C8, M1, FP11, LM8) | accepted, different fix | Test share raised from 35% to 50% of search groups with a count-only size check, and 3a has its own validity bar |
+| 10 | `kappa_A` rests on about five sites, one of them with 60% of the pairs (C9, A9) | accepted | G4.4 validity rule. PREDICTED: untested, so the scale ships as SIMULATED |
+| 11 | The fetch summary is not committed by the script, and none is written when nothing needs fetching (C10) | accepted | Group 1C step 2, group 1A |
+| 12 | Stage 2 could edit files inside the round 3 manifest and block the scorer (C11) | accepted | Rule 16 |
+| 13 | An agent could lower `--reserve` to force pull B through (missed) | accepted | Group 1C, section 9 |
+| 14 | 66 deep lists reach position 30, not 70 (missed) | accepted | Section 1, task 2A.3 |
+| 15 | Best use of the credits left after stage 1 (missed) | accepted | The two PR 45 reads of the 6 searches with a before rank |
+| 16 | The collector does not finish every run and skips its floor check when the balance call fails (missed) | accepted | Balance read before every chunk. Section 9 plans on the worst case |
+
+### Leakage
+
+| # | Objection (ids) | Verdict | What changed |
+| --- | --- | --- | --- |
+| 17 | The fresh test would read client rows and PR 45 searches before ledger version 2 is frozen (L1, LL4) | accepted | Rule 2: one sealed loader, with a planted-row test |
+| 18 | The "frozen linker" is a lookup table, so near-duplicate searches would enter the unseen test (L2, C12, LL5) | accepted | Group 3D eligibility rule, candidate against stored only. The result-page overlap slice is reporting only |
+| 19 | The content score is in sample on most stored rows: 85 of 100 deep-list searches are in its training groups (L3, LL1) | accepted | Task 2A.4: out-of-fold scores wherever a stored row enters a fit or a gate |
+| 20 | G3.5 "content matters" could not fail on held-out data (L4, M5, missed) | accepted | Split into G3.5a (a real test, or "not testable") and G3.5b (no harm) |
+| 21 | Placement rows gave the model answers a new page lacks: the empty slot, a same-site page in the list, the URL's rank elsewhere (L5, LL2, LL3) | accepted | T-A: rivals as an order only, gated rows defined, rule 4 |
+| 22 | The site-strength gate counted a page's own rankings in its site's footprint (LL7) | accepted | G2.2 and G2.3 on URL-new pairs |
+| 23 | The stage 1 fallbacks needed numbers the frozen scorer does not write, and gave three routes to advance (L6, FP9) | accepted | Task 0.7, and the route is named in every record |
+| 24 | Checkpoint 2 is a cross-validation on design data and could be rerun until it passed (L7, LL6, FP2) | accepted | Rule 1 (design gates are frozen too), group 2E, PROVISIONAL label |
+| 25 | The table of earlier reads was incomplete (L8) | accepted | Section 3 |
+| 26 | The seal used a date, but the PR 45 merge fell inside that date (L9) | accepted | Rule 2: a time |
+| 27 | The PR 45 ledger's anchor could include pulls from after the merge (missed) | accepted | Anchor `as_of`, group 4E |
+| 28 | Stage 3 claimed "sites nothing has seen" when only searches were held out (missed) | accepted | Stage 3 purpose. Then made real by Checkpoint P, which holds sites out |
+
+### Arithmetic, ceilings and gate strength
+
+| # | Objection (ids) | Verdict | What changed |
+| --- | --- | --- | --- |
+| 29 | G4.2 could not be passed by a perfectly calibrated band, and failed by chance about half the time (B2, missed) | accepted | One-sided rule on the 80% band, narrowest-band rule, fixed cells, a check of the rule before the freeze |
+| 30 | The `kappa_A` fit is biased toward zero and barely tracks the truth. The log-rank ratio is not constant near the top or past 20 (M2) | accepted, skeptic's fix | The fitted slope is a lower figure and the tool carries a range. The edit is applied on the latent curve. The reviewer's own estimator was rejected: it is not identified |
+| 31 | One free signal already clears G2.2's absolute bar, the rest was a point margin, and missing values had two rules (M3, FP4, FP5, LM4) | accepted | G2.2, rule 7 |
+| 32 | G2.1 was met by construction (LM5, FP4) | accepted | G2.1 |
+| 33 | G2.3 had no baseline (m4) | accepted | G2.3 |
+| 34 | G2.5 could not fail for a single signal (L7, M3) | accepted | G2.5, rule 6 |
+| 35 | A tool that always says "cannot tell" passed G4.1, guards could fire on everything, and the cases were tuned on (M4, FP3, LM6, LF4, LF5) | accepted | G4.1, rung 0 |
+| 36 | G4.3's direction bar sat 0.003 above BM25F, its error clause passed at zero effect, and "monotone" passed for a constant (M4, FP8, LM6) | accepted, with a change | G4.3. A strict step-by-step rule looked impossible for real pages, so the gate is on the full-text step |
+| 37 | G3.1 compared against an unshrunk prior that almost always loses (M5) | accepted | Domain prior in Appendix C, G3.1 |
+| 38 | G3.2 and G3.3 had no width bar and no paired baseline (FP4) | accepted | G3.2, G3.3. The content comparison lives in G3.5a |
+| 39 | Ceilings were quoted for R = 3 only, R itself is loosely known, and "at most 0.69" depends on the pool (M6, LM2) | accepted | Sections 2.2 and 2.8 |
+| 40 | Two-pull agreement and the label ceiling were mixed up, and "90% is above the ceiling" was false (m1, LM1, LM3) | accepted in part | Sections 2.2 and 2.8. The claim that only 0.72 is supported was rejected: the data cannot separate the two label models |
+| 41 | The stage 3 placement prediction did not follow from its own pair prediction (m2) | accepted | Stage 3 PREDICTED line |
+| 42 | "5 to 10 appearances" used the wrong information figure (m3) | accepted | Section 2.5 |
+| 43 | A 0.35 chance for all stage 3 gates was too high (LM9) | accepted | About 0.15 |
+| 44 | Placement rows exist only for pages that reached the list, and reach had no real gate (LM10, missed) | accepted | G3.7, a defined reach model, and then Checkpoint P |
+| 45 | Tier sets differed in four places (LM11, FP7) | accepted | One set everywhere, Appendix C |
+| 46 | G4.2 could pass at 1 to 3 days while the default horizon is 28 (LM7) | accepted, with a change | No percentage band is shown for an untested tier or horizon. The default stays 28 days so the paired effect is still shown |
+| 47 | Google puts a site's second result next to its first, which would shrink same-site gaps (LM12) | rejected | Counts on the deep lists show no excess of adjacent same-site pairs |
+| 48 | The 0.85 chance for the stage 1 advance rule is optimistic (reviewer suspicion) | rejected | The twice-pulled lists are harder on the same label, so they do not move the predicted centre |
+
+### Ways to fake or drift into a pass
+
+| # | Objection (ids) | Verdict | What changed |
+| --- | --- | --- | --- |
+| 49 | The gate script trusted a result file its own author wrote, and nothing required an independent audit (FP1, LF1, LF2) | accepted | Tasks 0.2 and 0.3, rule 15 |
+| 50 | `gates.json` could not be built mechanically and could be re-frozen weaker (FP7, LF3) | accepted | Machine form, `VERSIONS.json`, a stricter-only rule |
+| 51 | Nothing enforced "scored once" or "one loop" (LF6, FP2) | accepted | Rule 13: a pushed run log, VOID on a second run |
+| 52 | A report could read as a win while the gate that counts failed (FP12) | accepted, with a change | Rule 14. A stored-test pass enables the no-anchor mode only with a PROVISIONAL label on every output |
+| 53 | The reach task had no model (missed) | accepted | Group 3A, then group 3P |
+| 54 | The outcome table left out G3.6 and G3.7 (missed, FP7) | accepted | G3 passes only with G3.1 to G3.7 |
+| 55 | The position backtest cannot see a shrunken scale (missed) | accepted | G4.3 text, group 4C |
+
+### Hidden assumptions and missing free signals
+
+| # | Objection (ids) | Verdict | What changed |
+| --- | --- | --- | --- |
+| 56 | One standard deviation of content score is not a realistic edit. A rewrite that keeps the title and H1 is 0.1 to 0.3 (A2) | accepted | Sections 2.7 and 2.8, task 4C.5 |
+| 57 | The "chance the edit helps" had no source of sign error, and its "cannot tell" range clashed with the word scale (A3) | accepted | Task 4C.4, 0.34 to 0.66 |
+| 58 | A page at 14, or outside the top 30, would get a flagged or empty answer (A4) | accepted | Stage 4 "what is covered today", `no_list` |
+| 59 | The client's Search Console exports are on disk and no task read them (A5, LA1) | accepted | Task 4B.2. D2 is now the first pivot |
+| 60 | GOAL Targets 1 to 3 were never mapped, and a free forward test was unused (A6, LA4, LA7) | accepted | Checkpoint 3c, section 10, D9 |
+| 61 | Build the anchored simulator before the site model (A7, LA5) | rejected | It goes against James's stated order and would open the stored test fold early |
+| 62 | Add a rule to re-measure everything after the core update ends (A8) | rejected | The outputs already carry the update status, and bands measured during it err on the wide side |
+| 63 | Section 0 overstated the evidence and hid that no gate compares an edit prediction with Google (A10, LA6) | accepted in part | Section 0 rewritten. The proposed decision to accept anchoring as the main product was rejected, and James's Nov 20 directions then settled the question the other way |
+| 64 | Fields in the stored responses go unused (A11, LA3) | accepted in part | The snippet check (`text_mismatch`) and the reprocessing marker are in. Sitelinks and the knowledge graph are out: too rare, and they repeat the footprint |
+| 65 | Train on known losers (LA2, A12) | rejected for the pairwise model | Mixing label designs changes the coefficient scale. The band model of Product 1 does train on cells where the site does not rank |
+| 66 | The best-scoring indexed page is taken as Google's pick, and more pages means a higher best score by chance (A12) | accepted | Page-count covariate, and for Product 1 the label-blind crawl |
+
+### Changes that came from James's Nov 20 directions, not from the reviewers
+
+| Direction | What changed |
+| --- | --- |
+| "No one would pay for 71%." | Pair accuracy is a part check only (rule 18). Two product gates were added, each with a sellable bar, an honest forecast and a kill rule: Gate P and Gate E |
+| The product is a new client site scored across hundreds of key searches | Section 0 and stage 3 are rebuilt around it: rule 17 (scored as new), the label-blind crawl (2A.6), the cold estimate (2D-cold), the band model and Checkpoint P (group 3P), the fresh-list option B in D1, sections 2.9 and 2.10 |
+| Keep the edit effect as a secondary product | Stage 4 is Product 2. Gate E is its product gate, on real edits |

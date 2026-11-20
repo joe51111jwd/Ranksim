@@ -5,8 +5,9 @@
 Reads only the training lists (train sites x train search groups, see
 evals/claude/r3/plans/universe.json). Every model number is PREDICTED and comes
 from site-held-out cross-validation: each site's lists are scored by a model that
-never saw any list of that site. The stricter column also drops the held-out
-fold's search groups from the training side.
+never saw any list of that site. In the stricter column each list is scored by
+a model that saw neither its site nor its search group (one fit per search group
+inside each site fold).
 
 This is design, not a test. The held-out test lists (plan test1) are pulled only
 after the chosen scorer is frozen.
@@ -29,7 +30,7 @@ if str(REPO) not in sys.path:
     sys.path.insert(0, str(REPO))
 
 from scripts.claude import r3_dataset, r3_model as R  # noqa: E402
-from scripts.claude import r3_plans  # noqa: E402
+from scripts.claude import r3_plans, r3_ranker_baseline  # noqa: E402
 
 OUT = REPO / "evals" / "claude" / "r3" / "design"
 
@@ -115,7 +116,7 @@ def main(argv: list[str] | None = None) -> int:
     # Single features, raw direction.
     singles = {}
     for name in sorted(set(sum(R.TIERS.values(), [])) & available - set(R.TIERS["query"])):
-        hits = R.pair_hits(pairs, table[name].astype(float).fillna(table.groupby("list_id")[name].transform("mean")).fillna(0.0))
+        hits = R.pair_hits(pairs, table[name].astype(float).fillna(table.groupby("list_id")[name].transform("mean")))
         entry = R.accuracy(pairs, hits)
         decided = hits != 0.5
         entry["decided"] = int(decided.sum())
@@ -130,6 +131,9 @@ def main(argv: list[str] | None = None) -> int:
     if sem:
         scorers["ce_title alone"] = table["ce_title"].astype(float)
         scorers["ce_body_max alone"] = table["ce_body_max"].astype(float)
+    # The current product ranker with an empty history: its content part (two title variants, nothing fitted here).
+    for variant in r3_ranker_baseline.VARIANTS:
+        scorers[f"current ranker, no history ({variant})"] = r3_ranker_baseline.scores(table, variant=variant)
     variants = {
         "logit text": ("logit", ["lexical", "semantic"]),
         "logit text+url": ("logit", ["lexical", "semantic", "url"]),
@@ -154,20 +158,30 @@ def main(argv: list[str] | None = None) -> int:
     masks = strata(pairs, table)
     out_scorers = {}
     for name, scores in scorers.items():
-        hits = R.pair_hits(pairs, scores.fillna(0.0))
+        hits = R.pair_hits(pairs, scores)
         entry = {"all": R.accuracy(pairs, hits), "minus_bm25f": R.difference(pairs, hits, base_hits)}
         entry["strata"] = {label: R.accuracy(pairs[mask], hits[mask]) for label, mask in masks.items()}
         if name in strict:
-            s_hits = R.pair_hits(pairs, strict[name].fillna(0.0))
+            s_hits = R.pair_hits(pairs, strict[name])
             entry["strict_sites_and_search_groups"] = R.accuracy(pairs, s_hits)
+            entry["strict_minus_bm25f"] = R.difference(pairs, s_hits, base_hits)
+            if "ce_title alone" in scorers:
+                entry["strict_minus_ce_title"] = R.difference(pairs, s_hits, R.pair_hits(pairs, scorers["ce_title alone"]))
         out_scorers[name] = entry
     res["scorers"] = out_scorers
+    # Spread of accuracy across search groups (how much the kind of search matters).
+    main = "blend text+url+shape"
+    if main in strict:
+        frame = pairs.assign(hit=R.pair_hits(pairs, strict[main]))
+        by_group = frame.groupby("group")["hit"].agg(["mean", "size"])
+        big = by_group[by_group["size"] >= 40]
+        res["strict_blend_by_search_group"] = {"groups_with_40_pairs": int(len(big)), "min": float(big["mean"].min()), "max": float(big["mean"].max())}
 
     swaps = swap_pairs(pairs, table)
     res["swap_pairs"] = {"rows": int(len(swaps)), "sites": int(swaps["site"].nunique()) if len(swaps) else 0}
     if len(swaps):
         for name, scores in scorers.items():
-            hits = R.pair_hits(swaps, scores.fillna(0.0))
+            hits = R.pair_hits(swaps, scores)
             res["swap_pairs"][name] = R.accuracy(swaps, hits)
 
     OUT.mkdir(parents=True, exist_ok=True)
@@ -183,12 +197,16 @@ def main(argv: list[str] | None = None) -> int:
         "",
         f"Counts: {json.dumps(res['counts'])}",
         "",
-        "| Scorer | All pairs | Minus BM25F | Also holding out search groups |",
-        "| --- | --- | --- | --- |",
+        "| Scorer | All pairs, site held out | Minus BM25F | Site and search group both held out | That, minus the unfitted cross-encoder on title text |",
+        "| --- | --- | --- | --- | --- |",
     ]
     for name, entry in out_scorers.items():
         strict_text = R.fmt(entry["strict_sites_and_search_groups"]) if "strict_sites_and_search_groups" in entry else ""
-        lines.append(f"| {name} | {R.fmt(entry['all'])} | {R.fmt_diff(entry['minus_bm25f'])} | {strict_text} |")
+        ce_text = R.fmt_diff(entry["strict_minus_ce_title"]) if "strict_minus_ce_title" in entry else ""
+        lines.append(f"| {name} | {R.fmt(entry['all'])} | {R.fmt_diff(entry['minus_bm25f'])} | {strict_text} | {ce_text} |")
+    if "strict_blend_by_search_group" in res:
+        spread = res["strict_blend_by_search_group"]
+        lines += ["", f"Spread of the blend across search groups with at least 40 pairs ({spread['groups_with_40_pairs']} groups, site and group held out): {spread['min']:.3f} to {spread['max']:.3f}."]
     lines += ["", "## Slices", ""]
     show = [name for name in ("bm25f", "vote", "logit text+url+shape", "gbm text+url+shape", "blend text+url+shape", "blend text+url+shape+site") if name in out_scorers]
     lines.append("| Slice | " + " | ".join(show) + " |")

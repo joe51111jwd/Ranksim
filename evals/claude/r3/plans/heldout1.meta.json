@@ -7,6 +7,8 @@
   "lists_first_pass": 93,
   "lists_second_pass": 11,
   "pulls_per_list": 2,
+  "command": "python scripts/claude/r3_plans.py heldout1",
+  "note": "The only draw of the held-out cell that is pulled. An earlier draft plan (test1, 132 lists) was never pulled. The seed tags heldout1-first and heldout1-second were used once; no other tag was tried. universe.json as committed is the frozen split; rerunning the universe command later could differ because it reads fetch success.",
   "design_max_date": "2026-11-17",
   "seed": 20261119,
   "sites_in_plan": 93,

@@ -83,7 +83,9 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         stamp = datetime.now().strftime("%Y%m%dT%H%M%S")
         sidecar = SIDECAR_DIR / f"fetch-{'-'.join(args.label)[:60]}-{stamp}.jsonl"
+        started = rf.now_utc_iso()
         summary = rf.run_pass(con, todo, rf.make_http_fetch(), sidecar, workers=args.workers)
+        summary.update({"labels": args.label, "started_at_utc": started, "finished_at_utc": rf.now_utc_iso(), "fresh_since": args.fresh_since, "already_fresh": len(fresh)})
     finally:
         con.close()
     print(json.dumps(summary, indent=2, sort_keys=True))

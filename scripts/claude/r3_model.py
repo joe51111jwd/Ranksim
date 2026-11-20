@@ -11,7 +11,8 @@ Scorers:
   blend      mean of the within-list z-scores of logit and gbm
 
 Cross-validation always holds out whole sites (and, for the stricter variant,
-whole search groups too). Intervals are 95% bootstraps over lists and over sites.
+the list's search group too). Intervals are 95% bootstraps over lists, over sites,
+over search groups, and two-way over sites and search groups together.
 """
 
 from __future__ import annotations
@@ -77,22 +78,34 @@ def feature_set(tiers: list[str], available: set[str]) -> list[str]:
 def list_pairs_index(table: pd.DataFrame) -> pd.DataFrame:
     """Index pairs (row positions) of usable pages inside each list, higher-ranked page first."""
     usable = table[table["usable"]]
+    has_group = "group" in table.columns
     out = []
     for list_id, group in usable.groupby("list_id", sort=True):
         group = group.sort_values("rank")
         index = group.index.to_numpy()
         ranks = group["rank"].to_numpy()
+        query = group["query"].iloc[0]
+        search_group = str(group["group"].iloc[0]) if has_group else str(query)
         for i in range(len(index)):
             for j in range(i + 1, len(index)):
-                out.append((list_id, group["site"].iloc[0], group["query"].iloc[0], index[i], index[j], int(ranks[i]), int(ranks[j])))
-    return pd.DataFrame(out, columns=["list_id", "site", "query", "hi", "lo", "rank_hi", "rank_lo"])
+                out.append((list_id, group["site"].iloc[0], query, search_group, index[i], index[j], int(ranks[i]), int(ranks[j])))
+    return pd.DataFrame(out, columns=["list_id", "site", "query", "group", "hi", "lo", "rank_hi", "rank_lo"])
 
 
 def pair_hits(pairs: pd.DataFrame, scores: pd.Series) -> np.ndarray:
+    """1 right, 0 wrong, 0.5 for a tie. A pair with a missing score on either side is a tie."""
+    scores = scores.reindex(np.unique(np.concatenate([pairs["hi"].to_numpy(), pairs["lo"].to_numpy()])))
     hi = scores.loc[pairs["hi"]].to_numpy(dtype=float)
     lo = scores.loc[pairs["lo"]].to_numpy(dtype=float)
     diff = hi - lo
-    return np.where(diff > 1e-12, 1.0, np.where(diff < -1e-12, 0.0, 0.5))
+    hits = np.where(diff > 1e-12, 1.0, np.where(diff < -1e-12, 0.0, 0.5))
+    return np.where(np.isfinite(diff), hits, 0.5)
+
+
+def unscored_pairs(pairs: pd.DataFrame, scores: pd.Series) -> int:
+    """Pairs where a page has no score (counted as ties by pair_hits)."""
+    scores = scores.reindex(np.unique(np.concatenate([pairs["hi"].to_numpy(), pairs["lo"].to_numpy()])))
+    return int((~np.isfinite(scores.loc[pairs["hi"]].to_numpy(dtype=float) - scores.loc[pairs["lo"]].to_numpy(dtype=float))).sum())
 
 
 def accuracy(pairs: pd.DataFrame, hits: np.ndarray) -> dict:
@@ -101,7 +114,8 @@ def accuracy(pairs: pd.DataFrame, hits: np.ndarray) -> dict:
         return {"n": 0}
     by_list = M.bootstrap_rate(frame, "hit", query_col="list_id")
     by_site = M.bootstrap_rate(frame, "hit", query_col="site")
-    by_query = M.bootstrap_rate(frame, "hit", query_col="query")
+    # The search bootstrap resamples search groups (near-duplicate wordings move together), not query strings.
+    by_query = M.bootstrap_rate(frame, "hit", query_col="group")
     return {
         "n": int(len(frame)),
         "hits": float(frame["hit"].sum()),
@@ -111,17 +125,49 @@ def accuracy(pairs: pd.DataFrame, hits: np.ndarray) -> dict:
         "ci_site": [by_site["lo"], by_site["hi"]],
         "sites": by_site["queries"],
         "ci_query": [by_query["lo"], by_query["hi"]],
-        "queries": by_query["queries"],
+        "queries": int(frame["query"].nunique()),
+        "search_groups": by_query["queries"],
+        "ci_twoway": twoway_interval(frame, frame["hit"].to_numpy(dtype=float)),
         "macro_site": float(frame.groupby("site")["hit"].mean().mean()),
     }
+
+
+def twoway_interval(pairs: pd.DataFrame, values: np.ndarray, draws: int = M.BOOT_DRAWS, seed: int = M.BOOT_SEED) -> list[float]:
+    """95% interval of the mean of ``values`` when sites and search groups are both resampled.
+
+    Each draw resamples sites with replacement and, independently, search groups with
+    replacement. A pair's weight is the product of its site's and its search's
+    multiplicities. This is wider than either one-way bootstrap and is the right
+    interval for a claim about unseen sites and unseen searches at once.
+    """
+    if len(pairs) == 0:
+        return [float("nan"), float("nan")]
+    rng = np.random.default_rng(seed)
+    sites = pairs["site"].astype("category").cat.codes.to_numpy()
+    queries = pairs["group"].astype("category").cat.codes.to_numpy()
+    n_sites, n_queries = int(sites.max()) + 1, int(queries.max()) + 1
+    stats = np.empty(draws)
+    for draw in range(draws):
+        w_site = np.bincount(rng.integers(0, n_sites, n_sites), minlength=n_sites)
+        w_query = np.bincount(rng.integers(0, n_queries, n_queries), minlength=n_queries)
+        weight = w_site[sites] * w_query[queries]
+        total = weight.sum()
+        stats[draw] = (weight * values).sum() / total if total else np.nan
+    return [float(np.nanpercentile(stats, 2.5)), float(np.nanpercentile(stats, 97.5))]
 
 
 def difference(pairs: pd.DataFrame, hits: np.ndarray, base: np.ndarray) -> dict:
     frame = pairs.assign(hit=hits, base=base)
     by_list = M.bootstrap_difference(frame, "hit", "base", query_col="list_id")
     by_site = M.bootstrap_difference(frame, "hit", "base", query_col="site")
-    by_query = M.bootstrap_difference(frame, "hit", "base", query_col="query")
-    return {"diff": by_list["diff"], "ci_list": [by_list["lo"], by_list["hi"]], "ci_site": [by_site["lo"], by_site["hi"]], "ci_query": [by_query["lo"], by_query["hi"]]}
+    by_query = M.bootstrap_difference(frame, "hit", "base", query_col="group")
+    return {
+        "diff": by_list["diff"],
+        "ci_list": [by_list["lo"], by_list["hi"]],
+        "ci_site": [by_site["lo"], by_site["hi"]],
+        "ci_query": [by_query["lo"], by_query["hi"]],
+        "ci_twoway": twoway_interval(frame, (frame["hit"] - frame["base"]).to_numpy(dtype=float)),
+    }
 
 
 def fmt(entry: dict) -> str:
@@ -129,14 +175,15 @@ def fmt(entry: dict) -> str:
         return "0/0"
     return (
         f"{entry['hits']:.1f}/{entry['n']} ({entry['rate']:.3f}) list [{entry['ci_list'][0]:.3f}, {entry['ci_list'][1]:.3f}] "
-        f"site [{entry['ci_site'][0]:.3f}, {entry['ci_site'][1]:.3f}] query [{entry['ci_query'][0]:.3f}, {entry['ci_query'][1]:.3f}]"
+        f"site [{entry['ci_site'][0]:.3f}, {entry['ci_site'][1]:.3f}] search group [{entry['ci_query'][0]:.3f}, {entry['ci_query'][1]:.3f}] "
+        f"two-way [{entry['ci_twoway'][0]:.3f}, {entry['ci_twoway'][1]:.3f}]"
     )
 
 
 def fmt_diff(entry: dict) -> str:
     return (
         f"{entry['diff']:+.3f} list [{entry['ci_list'][0]:+.3f}, {entry['ci_list'][1]:+.3f}] site [{entry['ci_site'][0]:+.3f}, {entry['ci_site'][1]:+.3f}] "
-        f"query [{entry['ci_query'][0]:+.3f}, {entry['ci_query'][1]:+.3f}]"
+        f"search group [{entry['ci_query'][0]:+.3f}, {entry['ci_query'][1]:+.3f}] two-way [{entry['ci_twoway'][0]:+.3f}, {entry['ci_twoway'][1]:+.3f}]"
     )
 
 
@@ -261,8 +308,11 @@ def site_folds(table: pd.DataFrame, n_splits: int = 5, seed: int = SEED) -> dict
 def cross_validate(table: pd.DataFrame, kind: str, features: list[str], n_splits: int = 5, seed: int = SEED, also_hold_out_queries: bool = False, group_of: dict[str, int] | None = None) -> pd.Series:
     """Out-of-fold scores: each site's lists are scored by a model that never saw that site.
 
-    With ``also_hold_out_queries`` the training side also drops every list whose
-    search group appears in the held-out fold.
+    With ``also_hold_out_queries`` each held-out list is scored by a model that saw
+    neither its site nor its search group: inside a site fold, one model is fit per
+    search group of the fold, on the other folds' lists minus that group. (Dropping
+    every group of the fold at once would leave almost no training data, because one
+    group holds a third of the lists.)
     """
     folds = site_folds(table, n_splits, seed)
     fold_of_row = table["site"].map(folds)
@@ -270,10 +320,18 @@ def cross_validate(table: pd.DataFrame, kind: str, features: list[str], n_splits
     for fold in range(n_splits):
         test = table[fold_of_row == fold]
         train = table[fold_of_row != fold]
-        if also_hold_out_queries and group_of is not None:
-            held = set(test["query"].map(group_of))
-            train = train[~train["query"].map(group_of).isin(held)]
         if test[test["usable"]].empty or train[train["usable"]].empty:
+            continue
+        if also_hold_out_queries and group_of is not None:
+            test_groups = test["query"].map(group_of)
+            train_groups = train["query"].map(group_of)
+            for held in sorted(set(test_groups.dropna())):
+                part = test[test_groups == held]
+                rest = train[train_groups != held]
+                if part[part["usable"]].empty or rest[rest["usable"]].empty:
+                    continue
+                scores = fit_predict(kind, features, rest, part)
+                out.loc[scores.index] = scores
             continue
         scores = fit_predict(kind, features, train, test)
         out.loc[scores.index] = scores

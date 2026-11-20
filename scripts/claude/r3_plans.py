@@ -6,6 +6,7 @@
   python scripts/claude/r3_plans.py test1        # held-out lists (test sites x test search groups), pulled only after the freeze
   python scripts/claude/r3_plans.py noise        # a repeat of some validity lists, to measure label noise
   python scripts/claude/r3_plans.py heldout1     # the held-out plan that is actually pulled: 104 lists, one per site first
+  python scripts/claude/r3_plans.py heldout1-slices   # pre-stated report slices for the held-out plan (search text and site names only)
 
 Every plan is built from SERP rows dated 2026-11-17 or earlier (rsdata.DESIGN_MAX_DATE),
 with a fixed seed, and written to evals/claude/r3/plans/<name>.jsonl plus a
@@ -190,9 +191,63 @@ def draw_lists(frame: pd.DataFrame, total: int, per_site: int, per_query: int, s
     return picked
 
 
+# Brand names that appear both in a training search and in a held-out search (from the theory review).
+BRANDS_ALSO_IN_TRAINING = ("b2w", "agtek", "quoteiq", "assignar", "procore", "hcss")
+# Held-out sites that are sister domains of a training site.
+SISTER_SITES = ("hcssapps.com", "revorion.ai")
+
+
+def heldout1_slices(universe: dict) -> int:
+    """Report slices for the held-out plan, fixed before any held-out list is pulled.
+
+    Reads only the plan's search texts and site names and the design-day source
+    label of each search (rsdata.query_groups). Topic area: the Revorion searches
+    (revenue recovery, revenue leakage, royalties) against the construction
+    software searches. No training list is in the revenue area.
+    """
+    rows = rs.load_rows(rs.DESIGN_MAX_DATE)
+    labels = rs.query_groups(rows)
+    plan = [json.loads(line) for line in (PLAN_DIR / "heldout1.jsonl").read_text(encoding="utf-8").splitlines() if line.strip()]
+    train_searches = {item["query"] for item in universe["combos"] if item["query_fold"] == "train"}
+    searches = {}
+    for query in sorted({item["query"] for item in plan}):
+        words = query.lower().split()
+        searches[query] = {
+            "topic": "revenue and royalties" if labels.get(query) == "rev" else "construction software",
+            "bare_brand": len(words) == 1,
+            "brand_in_training": any(brand in words for brand in BRANDS_ALSO_IN_TRAINING),
+        }
+    for brand in BRANDS_ALSO_IN_TRAINING:
+        if not any(brand in search.lower().split() for search in train_searches):
+            raise SystemExit(f"{brand} is not in any training search.")
+    out = {
+        "plan": "heldout1",
+        "searches": searches,
+        "sister_sites_of_training_sites": [site for site in SISTER_SITES if any(item["site"] == site for item in plan)],
+        "brands_also_in_training": list(BRANDS_ALSO_IN_TRAINING),
+        "counts": {
+            "lists_by_topic": {topic: sum(1 for item in plan if searches[item["query"]]["topic"] == topic) for topic in sorted({v["topic"] for v in searches.values()})},
+            "lists_one_word_brand": sum(1 for item in plan if searches[item["query"]]["bare_brand"]),
+            "lists_brand_in_training": sum(1 for item in plan if searches[item["query"]]["brand_in_training"]),
+            "search_groups": len({universe_group(universe, item["query"]) for item in plan}),
+        },
+    }
+    path = PLAN_DIR / "heldout1.slices.json"
+    path.write_text(json.dumps(out, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    print(f"{path.relative_to(REPO)}: {json.dumps(out['counts'])}")
+    return 0
+
+
+def universe_group(universe: dict, query: str) -> int:
+    for index, group in enumerate(universe["groups"]):
+        if query in group:
+            return index
+    raise KeyError(query)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    parser.add_argument("plan", choices=["validity", "universe", "train", "test1", "noise", "heldout1"])
+    parser.add_argument("plan", choices=["validity", "universe", "train", "test1", "noise", "heldout1", "heldout1-slices"])
     parser.add_argument("--total", type=int, default=None)
     args = parser.parse_args(argv)
     if args.plan == "validity":
@@ -210,6 +265,8 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     universe = load_universe()
     validity = [json.loads(line) for line in (PLAN_DIR / "validity.jsonl").read_text(encoding="utf-8").splitlines() if line.strip()]
+    if args.plan == "heldout1-slices":
+        return heldout1_slices(universe)
     if args.plan == "train":
         used = {(item["query"], item["site"]) for item in validity}
         site_used: dict[str, int] = {}
@@ -243,7 +300,11 @@ def main(argv: list[str] | None = None) -> int:
                     break
         requests = first + extra
         meta = {"plan": "heldout1", "cell": "test1 sites x test search groups", "first_pass": "one list per site", "second_pass": "a second list for some sites",
-                "per_query_cap": 8, "lists_first_pass": len(first), "lists_second_pass": len(extra), "pulls_per_list": 2}
+                "per_query_cap": 8, "lists_first_pass": len(first), "lists_second_pass": len(extra), "pulls_per_list": 2,
+                "command": "python scripts/claude/r3_plans.py heldout1",
+                "note": "The only draw of the held-out cell that is pulled. An earlier draft plan (test1, 132 lists) was never pulled. "
+                        "The seed tags heldout1-first and heldout1-second were used once; no other tag was tried. "
+                        "universe.json as committed is the frozen split; rerunning the universe command later could differ because it reads fetch success."}
     else:
         # Repeat one list per validity site that had readable pages, seeded order.
         rate = fetchable_sites()

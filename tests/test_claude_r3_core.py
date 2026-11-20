@@ -131,28 +131,35 @@ def test_missing_values_do_not_decide_a_pair():
     assert filled.loc[table.index[0], "good"] == pytest.approx(table.loc[first_list, "good"].mean())
 
 
-def test_confirm_pairs_consensus_flipped_unconfirmed():
+def test_pair_status_absent_ranks_below():
     from scripts.claude import r3_score as SC
 
     table = pd.DataFrame(
         {
-            "list_id": ["a|site:x.com q"] * 4,
-            "q": ["site:x.com q"] * 4,
-            "site": ["x.com"] * 4,
-            "query": ["q"] * 4,
-            "key": ["x.com/1", "x.com/2", "x.com/3", "x.com/4"],
-            "rank": [1, 2, 3, 4],
-            "usable": [True, True, True, True],
+            "list_id": ["a|site:x.com q"] * 5,
+            "q": ["site:x.com q"] * 5,
+            "site": ["x.com"] * 5,
+            "query": ["q"] * 5,
+            "key": ["x.com/1", "x.com/2", "x.com/3", "x.com/4", "x.com/5"],
+            "rank": [1, 2, 3, 4, 5],
+            "usable": [True] * 5,
         }
     )
     pairs = R.list_pairs_index(table)
-    # Second pull: pages 1 and 2 swapped, page 4 gone.
+    # Second pull: pages 1 and 2 swapped, pages 4 and 5 gone.
     second = pd.DataFrame({"q": ["site:x.com q"] * 3, "key": ["x.com/2", "x.com/1", "x.com/3"], "position": [1, 2, 3]})
-    status = SC.confirm_pairs(pairs, table, second)
+    status = SC.pair_status(pairs, table, second)
     by_pair = {(int(r.rank_hi), int(r.rank_lo)): s for r, s in zip(pairs.itertuples(index=False), status)}
-    assert by_pair[(1, 2)] == "flipped"
-    assert by_pair[(1, 3)] == "consensus" and by_pair[(2, 3)] == "consensus"
-    assert by_pair[(1, 4)] == by_pair[(2, 4)] == by_pair[(3, 4)] == "unconfirmed"
+    assert by_pair[(1, 2)] == "disagree_flipped"
+    assert by_pair[(1, 3)] == by_pair[(2, 3)] == "consensus_both"
+    # The lower page dropped out of the second pull: the second pull still ranks the present page higher.
+    assert by_pair[(1, 4)] == by_pair[(3, 5)] == "consensus_lower_missing"
+    assert by_pair[(4, 5)] == "both_missing"
+    # The higher page dropped out and the lower one stayed: the second pull disagrees.
+    second2 = pd.DataFrame({"q": ["site:x.com q"] * 2, "key": ["x.com/2", "x.com/3"], "position": [1, 2]})
+    status2 = SC.pair_status(pairs, table, second2)
+    by_pair2 = {(int(r.rank_hi), int(r.rank_lo)): s for r, s in zip(pairs.itertuples(index=False), status2)}
+    assert by_pair2[(1, 2)] == by_pair2[(1, 3)] == "disagree_higher_missing"
 
 
 def test_check_pulls_guards():
@@ -162,17 +169,37 @@ def test_check_pulls_guards():
     frozen = pd.Timestamp("2026-11-19T22:00:00Z")
 
     def requests(times):
-        return pd.DataFrame({"q": ["site:x.com q", "site:y.com q"], "fetched_at": times})
+        return pd.DataFrame({"q": ["site:x.com q", "site:y.com q"], "fetched_at": times, "n_results": [10, 0]})
 
     first = requests(["2026-11-19T22:10:00+00:00", "2026-11-19T22:10:05+00:00"])
-    ok = SC.check_pulls(plan, first, requests(["2026-11-19T22:45:00+00:00", "2026-11-19T22:45:05+00:00"]), frozen, 30)
+    ok = SC.check_pulls(plan, first, requests(["2026-11-19T22:45:00+00:00", "2026-11-19T22:45:05+00:00"]), frozen, 30, 6)
     assert ok["min_gap_minutes"] == pytest.approx(35.0)
+    assert ok["lists_with_no_results_first_pull"] == 1
     with pytest.raises(SystemExit):  # second pull too soon
-        SC.check_pulls(plan, first, requests(["2026-11-19T22:20:00+00:00", "2026-11-19T22:45:05+00:00"]), frozen, 30)
+        SC.check_pulls(plan, first, requests(["2026-11-19T22:20:00+00:00", "2026-11-19T22:45:05+00:00"]), frozen, 30, 6)
+    with pytest.raises(SystemExit):  # second pull too late
+        SC.check_pulls(plan, first, requests(["2026-11-20T08:20:00+00:00", "2026-11-19T22:45:05+00:00"]), frozen, 30, 6)
     with pytest.raises(SystemExit):  # a pull before the freeze
-        SC.check_pulls(plan, requests(["2026-11-19T21:59:00+00:00", "2026-11-19T22:10:05+00:00"]), requests(["2026-11-19T22:45:00+00:00", "2026-11-19T22:45:05+00:00"]), frozen, 30)
+        SC.check_pulls(plan, requests(["2026-11-19T21:59:00+00:00", "2026-11-19T22:10:05+00:00"]), requests(["2026-11-19T22:45:00+00:00", "2026-11-19T22:45:05+00:00"]), frozen, 30, 6)
     with pytest.raises(SystemExit):  # not the plan
-        SC.check_pulls(plan + [{"q": "site:z.com q"}], first, first, frozen, 30)
+        SC.check_pulls(plan + [{"q": "site:z.com q"}], first, first, frozen, 30, 6)
+    with pytest.raises(SystemExit):  # a request pulled twice under one label
+        twice = pd.concat([first, first.iloc[[0]]], ignore_index=True)
+        SC.check_pulls(plan, twice, requests(["2026-11-19T22:45:00+00:00", "2026-11-19T22:45:05+00:00"]), frozen, 30, 6)
+
+
+def test_missing_score_is_a_tie_and_groups_cluster():
+    table = _toy_table(n_sites=4)
+    table["group"] = np.where(table["query"].str.startswith("q0"), "g0", "g1")
+    pairs = R.list_pairs_index(table)
+    assert set(pairs["group"]) == {"g0", "g1"}
+    scores = -table["rank"].astype(float)
+    scores.iloc[0] = np.nan
+    hits = R.pair_hits(pairs, scores)
+    assert R.unscored_pairs(pairs, scores) == 5 and (hits == 0.5).sum() == 5
+    entry = R.accuracy(pairs, hits)
+    assert entry["search_groups"] == 2 and len(entry["ci_twoway"]) == 2
+    assert entry["ci_twoway"][0] <= entry["rate"] <= entry["ci_twoway"][1]
 
 
 def test_frozen_scorer_round_trip(tmp_path):

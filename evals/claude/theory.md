@@ -198,7 +198,9 @@ On the real design pairs, a predictor of this kind that sees the four Nov 16 pul
 
 # Round 3 theory: validate the edit simulator without waiting on Google
 
-Written 2026-11-19 between 20:30 and 21:30 ET. At this point the round 3 scorer is not frozen and no held-out list has been pulled. Every count below comes from a committed script and from training lists only (train sites and train search groups, see R3.3). Every forecast is labeled PREDICTED. Outside sources are in `evals/claude/research/r3-matched-pairs.md`.
+First written 2026-11-19 between 20:30 and 21:30 ET (commit `0179385`). Revised at about 22:50 ET after an independent review attacked it (`evals/claude/r3/reviews/theory-review.md`): the truth definition, the intervals, the predictions and several statements changed, and R3.10 lists every change. At the time of this revision the round 3 scorer is fitted but not frozen, and no held-out list has been pulled. Every count below comes from a committed script and from training lists only (train sites and train search groups, see R3.3). Every forecast is labeled PREDICTED. Outside sources are in `evals/claude/research/r3-matched-pairs.md`.
+
+A word used throughout: **site-restricted order** is the order in which Google returns the pages of one site for a search of the form `site:<site> <search>`. It is not the same thing as a position in an ordinary result list, and most pages in such a list never appear in an ordinary top 30.
 
 ## R3.0 What round 3 asks
 
@@ -206,15 +208,15 @@ Round 2 showed that an edit cannot be scored by waiting for Google: days to week
 
 ## R3.1 The idea, attacked before anything was built
 
-The idea is kept, with three repairs. Each repair answers an objection that the research memo and the design data raised.
+The idea is kept, with repairs. Each repair answers an objection that the research memo, the design data or the review raised.
 
-**Objection 1: where do thousands of same-site pairs come from?** Ordinary results hold few. Google shows at most about two pages per site, so 100 searches with a top-30 list gave 465 usable same-site pairs, 43% of them from one site (round 2, `evals/claude/r2/samesite/notes.md`). The repair is the site-restricted search: `site:<site> <search>` returns up to 10 pages of one site, in Google's order for that search, for one credit. That is up to 45 ordered pairs with the site held fixed.
+**Objection 1: where do thousands of same-site pairs come from?** Ordinary results hold few. Google shows at most about two pages per site, so 100 searches with a top-30 list gave 465 usable same-site pairs, 43% of them from one site (round 2, `evals/claude/r2/samesite/notes.md`). The repair is the site-restricted search: up to 10 pages of one site, in Google's order for that search, for one credit. That is up to 45 ordered pairs with the site held fixed.
 
-**Objection 2: is that order Google's real order?** Google staff say a site-restricted search with a keyword runs on the normal ranking path (one 2021 statement and one 2017 remark, medium evidence), and nobody has published a measurement. So it was measured first (R3.3, study 1). It agrees with the ordinary list about as well as two ordinary pulls a few days apart agree with each other.
+**Objection 2: is that order Google's real order?** Google staff say a site-restricted search with a keyword runs on the normal ranking path (one 2021 statement and one 2017 remark, medium evidence), and nobody has published a measurement. So it was measured first (R3.3, study 1). Where the two can be compared they agree about as well as two ordinary pulls a few days apart. The comparison only covers pages that also sit in an ordinary top 30. For deeper pages the site-restricted order is unvalidated against ordinary order, and this theory calls it by its own name.
 
 **Objection 3: within a site, order is not only content.** Site quality cancels in a same-site pair. What remains is topic match (body, anchors, clicks per search) and page-level links. Only the page's own text and URL can be read from its HTML. Internal links can be read from the site's other pages. Clicks and outside links cannot be seen. So content alone has a ceiling well under the label ceiling, and the scorer is built in tiers so the report can say how much comes from the page itself.
 
-**Objection 4: settled order is not edit response.** A settled page carries months of clicks and links. An edit changes the text at once and the rest slowly. So accuracy on settled pairs is an upper bound for edit direction, not edit accuracy. Two things address this without waiting: swap pairs (two pages of one site whose order reverses between two searches, which no search-blind page property can explain), and a ledger of PREDICTED directions for the real SmartCrew PR 45 edit, frozen from before and after HTML before any after-merge result is read. PR 45 outcomes are a later confirmation, not part of this test.
+**Objection 4: settled order is not edit response.** A settled page carries months of clicks and links. An edit changes the text at once and the rest slowly. So accuracy on settled pairs is an upper bound for edit direction, not edit accuracy. The first real check is a ledger of PREDICTED directions for the SmartCrew PR 45 edit, frozen from before and after HTML before any after-merge result is read. PR 45 outcomes are a later confirmation, not part of this test.
 
 ## R3.2 Mechanism
 
@@ -229,76 +231,117 @@ Why this should hold: Google's own testimony calls anchors, body and clicks the 
 
 ## R3.3 Real counts (training lists only)
 
-**The split, fixed before any model existed** (`scripts/claude/r3_plans.py universe`, `evals/claude/r3/plans/universe.json`). Universe: every (search, site) combination where the site appeared in a stored list for the search on design days (through Nov 17), without the client's site, without user-content platforms, and without sites that plain HTTP cannot read. That is 2,004 combinations on 579 sites and 155 searches. Sites are split by a seeded hash into train (0.40), test1 (0.35) and test2 (0.25, kept back for a later loop). Search groups (near-duplicate wordings are linked, 71 groups) are split into train (the 19 groups the first study touched) and test (the other 52). Training lists are train sites with train groups. Held-out lists are test1 sites with test groups: 177 combinations on 93 sites. No training list shares a site or a search group with a held-out list.
+**The split, fixed before any model existed** (`scripts/claude/r3_plans.py universe`, `evals/claude/r3/plans/universe.json`). Universe: every (search, site) combination where the site appeared in a stored list for the search on design days (through Nov 17), without the client's site, without user-content platforms, and without sites that plain HTTP cannot read. That is 2,004 combinations on 579 sites and 155 searches. Sites are split by a seeded hash into train (0.40), test1 (0.35) and test2 (0.25, kept back for a later loop). Search groups (near-duplicate wordings are linked, 71 groups) are split into train (the 19 groups the first study touched) and test (the other 52). Training lists are train sites with train groups. Held-out lists are test1 sites with test groups: 177 combinations on 93 sites and 48 search groups. No training list shares a site or a search group with a held-out list.
+
+What the design did see of the held-out cell: the round 2 same-site study read the ordinary Nov 16 top-30 lists of every search, including test1 sites on test groups, and its findings suggested the feature families used here. The universe was drawn from those same design-day lists. No site-restricted list of the held-out cell exists yet, and nothing was fitted on its ordinary lists. The report has a slice without the pairs those ordinary lists already showed.
 
 **Study 1: is the site-restricted order a usable label?** (`scripts/claude/r3_validity.py`, `evals/claude/r3/validity/tables.md`)
 
 - 70 site-restricted lists on 36 sites, pulled Nov 19, against the ordinary Nov 16 top-30 list of the same search.
-- The site's best ordinary page is first in the site-restricted list in 42 of 53 cases and in the top two in 49.
-- Pairs with both URLs in both lists keep the same order in 62 of 74 (0.838) [0.738, 0.906 by site]. The lists are three days apart.
-- Yardstick: two ordinary pulls of one search 2 to 3 days apart agree on 0.880 of same-site pairs and 0.870 of all pairs.
-- Label noise: the same site-restricted list pulled twice 40 minutes apart keeps the order of 486 of 554 pairs (0.877) [0.799, 0.944]. Adjacent pairs 0.839, pairs five or more places apart 0.932. If each pull shows the true order of a pair with probability p, then p squared plus (1 minus p) squared is 0.877, so p is about 0.93. No scorer can beat about 0.93 against a single pull.
+- Of the 70 lists, the site's best ordinary page is first in the site-restricted list in 42, second in 7, lower in 4, and not in the site-restricted top 10 at all in 17.
+- Pairs with both URLs in both lists keep the same order in 62 of 74 (0.838) [0.738, 0.906 by site]. The lists are three days apart. This rests on few pairs, and mostly on easy ones: 51 of the 74 have one page in the ordinary top 10 and the other at 11 to 30, 13 have both in the ordinary top 10 (4 lists, 12 agree), 10 have both at 11 to 30 (8 agree).
+- When only one page of an ordinary pair made the site-restricted top 10, it was the higher ordinary page in 51 of 74 cases. For pairs with both pages at ordinary positions 11 to 30 that is only 10 of 25.
+- Yardstick: two ordinary pulls of one search 2 to 3 days apart agree on 44 of 50 same-site pairs (0.880, 5 sites) and on 0.870 of all pairs.
+- Label noise: the same site-restricted list pulled twice 40 minutes apart keeps the order of 486 of 554 pairs that are in both pulls (0.877) [0.799, 0.944]. Adjacent pairs 0.839, pairs five or more places apart 0.932. If each pull shows the true order of a pair with probability p, then p squared plus (1 minus p) squared is 0.877, so p is about 0.93. No scorer can beat about 0.93 against a single pull. List membership also changes: of 187 URLs in the first pulls, 156 were in the second.
 
-**Study 2: what orders the pages of one site?** (`scripts/claude/r3_design.py`, `evals/claude/r3/design/tables.md`)
+**Study 2: what orders the pages of one site?** (`scripts/claude/r3_design.py`, `evals/claude/r3/design/tables.md`; extra studies `scripts/claude/r3_design_extra.py`, `evals/claude/r3/design/extra.md`)
 
-- 250 training lists pulled (70 plus 180 credits). 212 are inside the train cell. 182 lists have a scorable pair. 5,623 pairs on 87 sites and 80 searches, 1,160 distinct readable pages. The largest site holds 2.4% of the pairs.
+- 250 training lists pulled (70 plus 180 credits). 223 are inside the train cell (the rest are on sites outside the universe), 212 of those returned results, and 182 have a scorable pair. 5,623 pairs on 87 sites, 80 searches and 19 search groups, 1,160 distinct readable pages. The largest site holds 2.4% of the pairs. One search group (35 dirt work and excavation searches) holds about a third of the pairs. Every training search is about construction software.
 - Single features, larger value first, ties half: cross-encoder on title, H1 and meta 0.694, embedding of the same text 0.687, search terms in the title 0.659, in the H1 0.634, in the URL path 0.630 (focus), BM25F 0.614, anchor text of same-site links 0.589, linked from the home page 0.527, word count no signal. This is the mechanism's order: declared topic first, body second, site position third.
-- Scorers, site-held-out cross-validation (each site scored by a model that never saw it):
+- Scorers, cross-validated. "Site held out": each site is scored by a model that never saw it. "Site and search group held out": each list is scored by a model that saw neither its site nor its search group. Intervals are 95% by site, and two-way over sites and search groups where given.
 
-| Scorer | Pair accuracy | Minus BM25F |
+| Scorer | Site held out | Site and search group held out |
 | --- | --- | --- |
-| BM25F alone | 0.614 [0.588, 0.640] | |
-| Unfitted vote of 10 text and URL match features | 0.682 [0.660, 0.702] | +0.068 [+0.049, +0.088] |
-| Cross-encoder on the title text alone, nothing fitted | 0.694 [0.673, 0.716] | +0.080 [+0.051, +0.109] |
-| Logistic regression, text only | 0.693 [0.672, 0.714] | +0.079 |
-| Blend of logistic regression and LambdaMART, text plus URL plus page shape | 0.709 [0.689, 0.729] | +0.095 [+0.066, +0.122] |
-| Same blend plus site position (home link, links and anchors from listed pages) | 0.714 [0.695, 0.734] | +0.100 [+0.071, +0.128] |
+| BM25F alone | 0.614 [0.588, 0.640], two-way [0.571, 0.668] | same (nothing fitted) |
+| Current ranker with no history (its content part) | 0.591 [0.568, 0.612] | same (nothing fitted here) |
+| Unfitted vote of 10 text and URL match features | 0.682 [0.660, 0.702] | same |
+| Cross-encoder on the title text alone, nothing fitted | 0.694 [0.673, 0.716], two-way [0.657, 0.730] | same |
+| Logistic regression, text only | 0.693 [0.672, 0.714] | 0.685 [0.665, 0.706] |
+| Blend of logistic regression and LambdaMART, text plus URL plus page shape (the primary scorer) | 0.709 [0.689, 0.729], two-way [0.669, 0.742] | 0.704 [0.684, 0.724], two-way [0.668, 0.736] |
+| Same blend plus site position (home link, links and anchors from listed pages) | 0.714 [0.695, 0.734] | 0.710 [0.691, 0.729], two-way [0.673, 0.746] |
 
-  Intervals are 95% bootstraps over sites.
-- Holding out the search group as well as the site costs about one point: 0.704 becomes 0.696 on the 3,318 pairs of the smaller search groups (61 sites), with the two largest groups kept in training.
-- The signal has a plateau. Seventeen other ways of reading topic match (a larger cross-encoder, title alone, H1 alone, URL words, headings, the intro, embeddings of each, and unfitted mixes) all land between 0.636 and 0.695. Nothing found on the page lifts the blend past about 0.71.
-- Slices of the blend (text plus URL plus shape): pairs with the list's first page 0.879, pairs without it 0.661, adjacent pairs 0.580, pairs five or more places apart 0.832, both in the top five 0.732, same template (same first folder and depth) 0.700 against BM25F 0.640.
+- Holding out the search group as well costs about half a point (0.709 to 0.704). An earlier version of that column dropped every search group of a fold at once, trained on 9 to 47 lists, and gave 0.671. It measured a starved model, not unseen searches, and is not used.
+- **The fitted part adds little over an off-the-shelf model.** With site and search group held out, the blend minus the unfitted cross-encoder on the title text is +0.010 [-0.005, +0.024]. Minus BM25F it is +0.090. Most of the gain over BM25F is the pretrained cross-encoder reading the page's title, H1 and meta.
+- Accuracy varies a lot with the kind of search: 0.422 to 0.817 across the 16 search groups with at least 40 pairs. This is why the interval is clustered on search groups.
+- The signal has a plateau. Eighteen other single readings of topic match (two cross-encoders and one embedding model, each on title alone, H1 alone, URL words, title plus H1 plus meta, headings, the intro) land between 0.636 and 0.694, and three unfitted mixes between 0.684 and 0.695. Nothing found on the page lifts the blend past about 0.71.
+- The two title variants of the current ranker's content part (blank title slot, or the page's own HTML title in it) give identical scores on every training row. The frozen ranker puts 0.2% of its gain on that feature.
+- Slices of the blend (site held out): pairs with the list's first page 0.879 (22% of pairs), pairs without it 0.661, adjacent pairs 0.580, pairs five or more places apart 0.832, both in the top five 0.732, same template (same first folder and depth) 0.700 against BM25F 0.640.
 - Swap pairs: 286 rows on 37 sites where two pages of one site appear in two lists in opposite orders. A search-blind scorer gets exactly 0.500 on these. BM25F 0.563, the unfitted vote 0.645, the blend 0.612. So the scorers do read the search against the page, with site and page identity held fixed.
-- The current ranker with no history (its content part) orders 0.565 of the pairs of the first 44 lists, against BM25F 0.576 on the same pairs.
-- Label noise against the scorer: on 18 training lists pulled twice, the blend is right on 0.649 of all pairs of the first pull, 0.682 of the pairs both pulls agree on (365 pairs), and 0.545 of the pairs the second pull reversed (55 pairs). A third of its misses on single-pull labels are noise in the label.
+- Label noise against the scorer, on the 20 training lists pulled twice (594 pairs of the first pull; `extra.md`). Under the second pull, with a page missing from it counted as below every page present: 455 pairs keep their order, 84 are contradicted, 55 have both pages missing. The blend (site held out, and site and search group held out):
+
+| Truth | Blend, site held out | Blend, site and group held out | BM25F |
+| --- | --- | --- | --- |
+| Single pull, all 594 pairs | 0.672 | 0.668 | 0.567 |
+| Consensus pairs (455): the second pull orders the pair the same way, a missing page ranks below | 0.686 | 0.675 | 0.580 |
+| Half credit on all pairs (a contradicted pair counts one half) | 0.657 | 0.646 | 0.569 |
+| Consensus pairs with both pages in the second pull (365) | 0.696 | 0.679 | 0.586 |
+
+  The consensus label is worth about one point over a single pull (+0.007 to +0.014). The first version of this theory claimed three points. That figure came from dropping every pair with a page missing from the second pull, which is a selection that favours the scorer, and it is withdrawn.
 
 ## R3.4 What gets built
 
-1. **The frozen scorer**: the blend of a logistic regression on feature differences and a small LambdaMART, on the text, URL and page-shape tiers (`scripts/claude/r3_model.py`, fixed settings, nothing tuned). It reads the search, the URL and the page's own HTML. No rank history, no Google-written title or snippet, no site authority. It is fit once on all training lists and saved with a sha256 manifest. The same scorer plus the site-position tier is reported as a secondary line, and text only as an ablation.
-2. **Consensus labels for the test**: every held-out list is pulled twice, at least 30 minutes apart. The primary truth is the order both pulls agree on, the same idea as the consensus positions used for Targets 1 to 3. Pairs the two pulls disagree on have no consensus order. They are counted and reported, and the single-pull accuracy on all pairs is reported next to the primary number.
-3. **The held-out test** (`scripts/claude/r3_score.py`): test1 sites with test search groups, pulled only after the freeze commit is pushed. The script refuses to run otherwise and never overwrites a result.
-4. **The PR 45 ledger**: the frozen scorer on before and after HTML of the 15 edited pages, for each target search, frozen before any after-merge result is read.
+1. **The frozen scorer** (`page-blend`): the blend of a logistic regression on feature differences and a small LambdaMART, on the text, URL and page-shape tiers (`scripts/claude/r3_model.py`, fixed settings, nothing tuned). It reads the search, the URL and the page's own HTML. No rank history, no Google-written title or snippet, no site authority. It is fit once on all training lists and saved with a sha256 manifest. The same scorer plus the site-position tier (`page-site-blend`) and a text-only logistic regression (`text-logit`) are reported as secondary lines. The unfitted cross-encoder on the title text and the unfitted vote are reported as baselines, so the report shows what the fitting adds.
+2. **Consensus labels for the test.** Every held-out list is pulled twice, at least 30 minutes and at most 6 hours apart. The pair universe is every pair of readable own-site pages in the first pull, fixed before the second pull is read. A pair is a consensus pair when the second pull orders it the same way, where a page missing from the second pull's top 10 ranks below every page that is present. It is a disagreement when the second pull orders it the other way under the same rule. It is left out only when both pages are missing from the second pull. The primary number is accuracy on consensus pairs. Reported with equal prominence: the single-pull number on all pairs, half credit on all pairs, the both-present consensus pairs, and every status with its count.
+3. **Intervals.** 95% bootstraps over sites, over search groups (near-duplicate wordings move together), and two-way over both. The pass rule uses the two-way interval, the widest of the three. It is the right one for a claim about unseen sites and unseen kinds of search at once.
+4. **The held-out test** (`scripts/claude/r3_score.py`): test1 sites with test search groups, 104 lists (one for each of the 93 sites, a second for 11), pulled only after the freeze commit is pushed. The script refuses to run unless every guard holds: full manifest, no earlier result, both pulls exactly the plan, no other pull of any plan request, every chunk committed once after the freeze, one plain-HTTP fetch pass after the first pull with no later page version read.
+5. **The PR 45 ledger**: the frozen scorer on before and after HTML of the 15 edited pages, for each target search, frozen before any after-merge result is read.
 
 ## R3.5 Back of envelope: is the number reachable?
 
-- Budget: 618 credits now, 250 must stay, and the other team's daily collector spends about 90 a day from the same balance. The test gets 104 lists pulled twice (208 credits). About 150 credits stay free for a second loop on the test2 sites.
-- Expected size, from the training yield (86% of lists have a scorable pair, 31 pairs per such list, 64% of sites have one): about 89 lists, 60 sites and 2,750 single-pull pairs. About two thirds of those survive as consensus pairs (365 of 552 in the twice-pulled training lists): about 1,800.
-- Expected accuracy: cross-validated 0.709, minus about 0.01 for unseen search groups, plus about 0.03 on consensus pairs. PREDICTED 0.72 on consensus pairs (range 0.69 to 0.75) and 0.70 on all single-pull pairs (range 0.67 to 0.72).
-- Expected interval: the site bootstrap on 61 sites and 3,318 pairs had a half-width of 0.028. With 60 sites and fewer pairs it is about 0.03 to 0.035.
-- PREDICTED lower bound on consensus pairs: about 0.69 (range 0.65 to 0.72). **PREDICTED: the 0.65 target passes with probability about 0.75. The 0.75 stretch does not pass.** On single-pull labels the lower bound would be about 0.665, a coin-flip pass.
-- PREDICTED differences: scorer minus BM25F about +0.09, interval above zero. Scorer minus the current ranker's content part about +0.12, interval above zero.
+- Budget: 617 credits now, 250 must stay, and the other team's daily collector spends about 90 a day from the same balance. The test gets 104 lists pulled twice (208 credits). About 150 credits stay free for a second loop on the test2 sites.
+- Expected size, from the training yield (82% of in-cell lists and 81% of in-cell sites had a scorable pair, 80% of listed pages were readable, 31 pairs per list with pairs): about 75 to 90 lists and 65 to 80 sites with a pair, 2,000 to 2,800 pairs in the first pull, and 1,500 to 2,100 consensus pairs (77% of first-pull pairs in the twice-pulled training lists). Fewer if the held-out sites, which are smaller on average, fetch badly. The plan covers 35 search groups.
+- **The training lists do not cover the held-out topics.** 37 of the 104 held-out lists are revenue recovery, revenue leakage and music royalty searches, a topic area with no training list at all. 13 lists are one-word brand searches. The scorer's main feature is a general pretrained model, which argues for a small loss, but no number in the training data can say how small. PREDICTED shift from this: about minus 0.02, with a standard deviation of about 0.03.
+- Expected accuracy on consensus pairs: 0.704 (site and search group held out) plus about 0.01 for the consensus label, minus about 0.02 for the topic shift. PREDICTED 0.69, range 0.64 to 0.73. On all single-pull pairs about 0.68.
+- Expected interval: the two-way interval on the training lists (87 sites, 19 groups, 5,623 pairs) has a half-width of 0.034. With about 70 sites, 35 groups and a third of the pairs, about 0.04.
+- PREDICTED two-way lower bound: about 0.65, range 0.60 to 0.69. **PREDICTED: the 0.65 target passes with probability about 0.45. The reviewer's own estimate is 0.4. The 0.75 stretch does not pass.** The most likely failure is a point estimate of 0.67 to 0.69 with a lower bound between 0.62 and 0.65, while the scorer still clearly beats BM25F and the ranker's content part.
+- PREDICTED differences on the same pairs: scorer minus BM25F about +0.08, two-way interval above zero. Scorer minus the current ranker's content part about +0.10, above zero. Scorer minus the unfitted cross-encoder about +0.01, interval across zero.
 - Context from outside: the best transparent published result for predicting Google's order of a pair from outside features is 62.5% to 67.5% on held-out queries (Bifet et al. 2005), and content-tool scores correlate with position at about 0.28, which is roughly 59% of pairs. A lower bound above 0.65 would be at the top of what anyone has published. A stretch of 0.75 has no transparent precedent, and the plateau above says page content alone will not reach it.
 
 ## R3.6 What would prove this wrong
 
-- The frozen scorer does not beat BM25F on held-out sites and searches with the interval above zero. Then the gain was fitted to the training sites.
-- Its accuracy on consensus pairs is under 0.65 at the point estimate. Then topic match does not order a site's pages on unseen sites the way it did in training.
-- It is at or under 0.5 on held-out swap pairs. Then it is not reading the search against the page, only page properties.
-- The second pull agrees with the first on far fewer than 0.8 of pairs. Then the label is too unstable to test anything.
+- The frozen scorer does not beat BM25F on held-out sites and searches with the two-way interval above zero. Then the gain was fitted to the training sites.
+- Its accuracy on consensus pairs is under 0.65 at the point estimate. Then topic match does not order a site's pages on unseen sites and topics the way it did in training.
+- The second pull agrees with the first on far fewer than 0.8 of the pairs both hold. Then the label is too unstable to test anything.
+- Swap pairs are reported but cannot decide anything here: only the 11 held-out sites with two lists can produce them, a few dozen rows at most.
 
 ## R3.7 What a pass would and would not mean
 
-A pass means: shown two pages of a site it has never seen, for a search it has never seen, the scorer picks the one Google ranks higher about 7 times in 10, from the pages alone, and it does this clearly better than BM25F and the current ranker's content part. That is the product decision "which of two versions fits this search better" for versions as different as two pages of one site.
+A pass would mean this, and only this: on consensus pairs of site-restricted lists, for sites and search wordings the scorer never saw, it ordered two pages of one site the way both Google pulls did X% of the time, against Y% for BM25F and Z% for the current ranker's content part on the same pairs. It measures how well a page's text and URL match a search, across different pages of one site.
 
-It does not mean that an edit predicted to help will move the rank. Two candidate edits of one page differ less than two pages do, and a settled rank also holds clicks and links that an edit does not move at once. Accuracy on adjacent pairs (0.58 in training) is the honest guide for close calls. The PR 45 ledger is the first real check, and it is small.
+It does not measure the effect of an edit. Two candidate edits of one page differ far less than two pages do, and a settled order also holds clicks and links that an edit does not move at once. The number is an upper bound for edit direction. Accuracy on adjacent pairs (0.58 in training) and on pairs without the list's first page (0.66) is the honest guide for close calls. The first real edit check is the PR 45 ledger, and it is small.
+
+Sentences the final report will not use, whatever the result:
+
+- that the simulator picks the better of two edits some share of the time. No edit has been scored.
+- that Google "ranks" a page higher, for site-restricted order, without the word site-restricted.
+- "a search it has never seen" without saying that searches of the same kind (brand plus alternative, pricing, reviews) were in training.
+- "from the page alone" without saying that this includes the URL and that an off-the-shelf cross-encoder does most of the work.
+- any comparison of the held-out number with round 2's 0.597 as if they were measured the same way. Only the paired difference on the same held-out pairs counts.
+- the all-pairs number without the share of pairs that include the list's first page and the without-first-page and same-template numbers next to it.
 
 ## R3.8 Target 1 in round 3
 
-Unchanged. The round 1 rule (site's own slot, else the bottom of the page) is frozen and is scored on Nov 18 and Nov 19 as designed (section 1 above). Round 3 adds nothing to it.
+The round 1 rule (site's own slot, else the bottom of the page) was frozen and has now been scored on Nov 18 and Nov 19 as designed. It failed: 48 of 135 strict-new rows against 47 for a flat 7 (`evals/claude/heldout/REPORT.md`). The post-mortem and the next theory for Target 1 are in `evals/claude/r3/t1-postmortem/notes.md`.
 
 ## R3.9 If the test fails: next ways that still do not wait on Google
 
-1. **Crawl each site's link structure** (free): real internal link counts and anchor text for every listed page. The two crude site-position features already add half a point to one point. This is the largest unread signal that is still history-free.
-2. **More lists per site** to raise swap pairs from hundreds to thousands, and train on swaps only, so the scorer learns pure search-to-page match.
-3. **Wayback versions** of pages that changed months ago, scored against their settled rank now. Blocked from this box (web.archive.org does not answer here), runnable from any other network with `scripts/claude/r2_wayback.py`.
-4. **Three pulls per list** for labels as clean as the consensus positions of Targets 1 to 3.
+1. **Crawl each site's link structure** (free): real internal link counts and anchor text for every listed page. The crude site-position features already add about half a point. This is the largest unread signal that is still history-free.
+2. **Training lists in more topic areas**, so the fitted part is not all construction software.
+3. **More lists per site** to raise swap pairs from hundreds to thousands, and train on swaps only, so the scorer learns pure search-to-page match.
+4. **Wayback versions** of pages that changed months ago, scored against their settled rank now. Blocked from this box (web.archive.org does not answer here), runnable from any other network with `scripts/claude/r2_wayback.py`.
+5. **Three pulls per list** for labels as clean as the consensus positions of Targets 1 to 3.
+
+## R3.10 What the review changed (before the freeze)
+
+1. Truth: a pair with one page missing from the second pull is no longer dropped. A missing page ranks below a present one. Only pairs with both pages missing are left out. The earlier rule dropped 29% of pairs and favoured the scorer.
+2. Intervals: the search bootstrap resamples search groups, not query strings, and the pass rule names one interval, the two-way one.
+3. The claimed gain of three points on consensus pairs is withdrawn. It is about one point.
+4. The prediction now names the topic shift between training and held-out lists. Pass probability went from about 0.75 to about 0.45.
+5. Study 1 now reports all 70 lists (the first version quoted 42 of 53 and left out the 17 lists where the site's best ordinary page was absent) and says what the 0.838 rests on.
+6. The search-group column of the cross-validation was rebuilt (one fit per held-out group). The earlier column (0.671) starved the model and is not used.
+7. Every number in this part now has a committed script: the topic-match readings and the twice-pulled lists are in `r3_design_extra.py`, the ranker baseline is in `r3_design.py`.
+8. The current ranker's content part is scored in two title variants. The scorer must beat both.
+9. The swap-pair falsifier is dropped for the held-out test. It stays as a design finding.
+10. The statement that the held-out cell was "never used for any design choice" is corrected (R3.3).
+11. Guards added to the scoring script: full manifest, one fetch pass with a time cutoff, no re-pull, chunk commits after the freeze, a maximum gap between pulls.
+12. R3.7 is rewritten, with the sentences the report will not use.

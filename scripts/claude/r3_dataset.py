@@ -115,12 +115,25 @@ def semantic_features(lists: pd.DataFrame, pages: dict[str, dict]) -> pd.DataFra
     return pd.DataFrame.from_records(records)
 
 
-def build_table(labels: list[str], df_table: dict | None = None, with_semantic: bool = True) -> tuple[pd.DataFrame, dict]:
+def search_groups() -> dict[str, str]:
+    """Search text -> frozen search-group id (near-duplicate wordings share one), from the committed universe."""
+    import json
+
+    path = REPO / "evals" / "claude" / "r3" / "plans" / "universe.json"
+    if not path.exists():
+        return {}
+    universe = json.loads(path.read_text(encoding="utf-8"))
+    return {query: f"g{index}" for index, group in enumerate(universe["groups"]) for query in group}
+
+
+def build_table(labels: list[str], df_table: dict | None = None, with_semantic: bool = True, max_fetched_at: str | None = None) -> tuple[pd.DataFrame, dict]:
+    """``max_fetched_at`` (UTC ISO time) pins the page versions: no fetch stored after it is read."""
     lists = load_lists(labels)
     sites = set(lists["site"])
     homes = home_keys(sites)
     wanted = set(lists["key"]) | {key for keys in homes.values() for key in keys}
-    pages = r3_pages.load_pages(wanted)
+    pages = r3_pages.load_pages(wanted, max_fetched_at)
+    group_ids = search_groups()
     listed_pages = {key: page for key, page in pages.items() if key in set(lists["key"])}
     if df_table is None:
         df_table = make_df_table(listed_pages)
@@ -152,12 +165,14 @@ def build_table(labels: list[str], df_table: dict | None = None, with_semantic: 
                 "q": record.q,
                 "site": site,
                 "query": query,
+                "group": group_ids.get(query, f"q:{query}"),
                 "key": record.key,
                 "url": record.url,
                 "position": int(record.position),
                 "rank": int(record.rank),
                 "list_len": int(len(group)),
                 "usable": bool(record.usable),
+                "page_id": int(listed_pages[record.key]["page_id"]) if record.usable else -1,
             }
             if record.usable:
                 st = static[record.key]

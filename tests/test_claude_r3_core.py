@@ -129,3 +129,58 @@ def test_missing_values_do_not_decide_a_pair():
     filled = R._filled(table, ["good"])
     first_list = table["list_id"] == table["list_id"].iloc[0]
     assert filled.loc[table.index[0], "good"] == pytest.approx(table.loc[first_list, "good"].mean())
+
+
+def test_confirm_pairs_consensus_flipped_unconfirmed():
+    from scripts.claude import r3_score as SC
+
+    table = pd.DataFrame(
+        {
+            "list_id": ["a|site:x.com q"] * 4,
+            "q": ["site:x.com q"] * 4,
+            "site": ["x.com"] * 4,
+            "query": ["q"] * 4,
+            "key": ["x.com/1", "x.com/2", "x.com/3", "x.com/4"],
+            "rank": [1, 2, 3, 4],
+            "usable": [True, True, True, True],
+        }
+    )
+    pairs = R.list_pairs_index(table)
+    # Second pull: pages 1 and 2 swapped, page 4 gone.
+    second = pd.DataFrame({"q": ["site:x.com q"] * 3, "key": ["x.com/2", "x.com/1", "x.com/3"], "position": [1, 2, 3]})
+    status = SC.confirm_pairs(pairs, table, second)
+    by_pair = {(int(r.rank_hi), int(r.rank_lo)): s for r, s in zip(pairs.itertuples(index=False), status)}
+    assert by_pair[(1, 2)] == "flipped"
+    assert by_pair[(1, 3)] == "consensus" and by_pair[(2, 3)] == "consensus"
+    assert by_pair[(1, 4)] == by_pair[(2, 4)] == by_pair[(3, 4)] == "unconfirmed"
+
+
+def test_check_pulls_guards():
+    from scripts.claude import r3_score as SC
+
+    plan = [{"q": "site:x.com q"}, {"q": "site:y.com q"}]
+    frozen = pd.Timestamp("2026-11-19T22:00:00Z")
+
+    def requests(times):
+        return pd.DataFrame({"q": ["site:x.com q", "site:y.com q"], "fetched_at": times})
+
+    first = requests(["2026-11-19T22:10:00+00:00", "2026-11-19T22:10:05+00:00"])
+    ok = SC.check_pulls(plan, first, requests(["2026-11-19T22:45:00+00:00", "2026-11-19T22:45:05+00:00"]), frozen, 30)
+    assert ok["min_gap_minutes"] == pytest.approx(35.0)
+    with pytest.raises(SystemExit):  # second pull too soon
+        SC.check_pulls(plan, first, requests(["2026-11-19T22:20:00+00:00", "2026-11-19T22:45:05+00:00"]), frozen, 30)
+    with pytest.raises(SystemExit):  # a pull before the freeze
+        SC.check_pulls(plan, requests(["2026-11-19T21:59:00+00:00", "2026-11-19T22:10:05+00:00"]), requests(["2026-11-19T22:45:00+00:00", "2026-11-19T22:45:05+00:00"]), frozen, 30)
+    with pytest.raises(SystemExit):  # not the plan
+        SC.check_pulls(plan + [{"q": "site:z.com q"}], first, first, frozen, 30)
+
+
+def test_frozen_scorer_round_trip(tmp_path):
+    table = _toy_table()
+    table["q_flag"] = 1.0
+    scorer = R.FrozenScorer.fit(table, "blend", ["good", "noise"])
+    scorer.save(tmp_path / "m")
+    loaded = R.FrozenScorer.load(tmp_path / "m")
+    assert np.allclose(loaded.score(table), scorer.score(table), atol=1e-9)
+    pairs = R.list_pairs_index(table)
+    assert R.pair_hits(pairs, loaded.score(table)).mean() > 0.8

@@ -1,0 +1,33 @@
+{
+  "body_bytes_ok": 50649207,
+  "failed": 25,
+  "failure_reasons": {
+    "challenge_page": 2,
+    "error:ConnectError": 1,
+    "error:ReadTimeout": 2,
+    "http_202": 1,
+    "http_403": 6,
+    "http_429": 2,
+    "http_500": 2,
+    "http_503": 1,
+    "robots_disallow": 8
+  },
+  "fetched_ok": 160,
+  "hosts": 185,
+  "html_chars_stored": 50626022,
+  "http_status_hist": {
+    "200": 162,
+    "202": 1,
+    "403": 6,
+    "429": 2,
+    "500": 2,
+    "503": 1,
+    "None": 11
+  },
+  "ok_bytes_changed_vs_prior": 0,
+  "ok_bytes_unchanged_vs_prior": 0,
+  "ok_no_prior_http_fetch": 160,
+  "rows_inserted": 185,
+  "rows_skipped_duplicate": 0,
+  "urls_selected": 185
+}

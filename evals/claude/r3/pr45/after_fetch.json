@@ -1,0 +1,167 @@
+[
+  {
+    "path": "/compare/raken-alternative/",
+    "name": "_compare_raken-alternative_.html",
+    "fetched_at": "2026-11-19T20:09:57-05:00",
+    "status": 200,
+    "bytes": 134638,
+    "sha256": "0f8eeb5a0a5d410a97db9c8f7d16e7cde70316a5463c04f0f449ec0efd192f17",
+    "same_as_before": false,
+    "marker": true,
+    "marker_before": false
+  },
+  {
+    "path": "/compare/b2w-alternative/",
+    "name": "_compare_b2w-alternative_.html",
+    "fetched_at": "2026-11-19T20:09:58-05:00",
+    "status": 200,
+    "bytes": 90934,
+    "sha256": "744918ef6893175392a7448c01c26070e26290e515dbdee4c199edfef493cfe0",
+    "same_as_before": false,
+    "marker": false,
+    "marker_before": false
+  },
+  {
+    "path": "/compare/busybusy-alternative/",
+    "name": "_compare_busybusy-alternative_.html",
+    "fetched_at": "2026-11-19T20:09:59-05:00",
+    "status": 200,
+    "bytes": 120337,
+    "sha256": "5faedfac48b442afcdf6120f24947d9c74fee38aeb478a9434e8cc2776202078",
+    "same_as_before": false,
+    "marker": false,
+    "marker_before": false
+  },
+  {
+    "path": "/compare/clockshark-alternative/",
+    "name": "_compare_clockshark-alternative_.html",
+    "fetched_at": "2026-11-19T20:10:00-05:00",
+    "status": 200,
+    "bytes": 119859,
+    "sha256": "245a39fa00a285da2e43400537273d2abf06e5f0c9979d319c37f5448e42c8f7",
+    "same_as_before": false,
+    "marker": false,
+    "marker_before": false
+  },
+  {
+    "path": "/compare/jobtread-alternative/",
+    "name": "_compare_jobtread-alternative_.html",
+    "fetched_at": "2026-11-19T20:10:01-05:00",
+    "status": 200,
+    "bytes": 121973,
+    "sha256": "ff09c20e60bb68156efcb1571f42c941883ca22bef1249dd6b29b4cf17484509",
+    "same_as_before": false,
+    "marker": false,
+    "marker_before": false
+  },
+  {
+    "path": "/compare/contractor-foreman-alternative/",
+    "name": "_compare_contractor-foreman-alternative_.html",
+    "fetched_at": "2026-11-19T20:10:02-05:00",
+    "status": 200,
+    "bytes": 121407,
+    "sha256": "ebfdbd2bb1d83189fb04d923b9615f2307316d00b7c571fdb4091e0f810d7922",
+    "same_as_before": false,
+    "marker": false,
+    "marker_before": false
+  },
+  {
+    "path": "/blog/best-excavation-software-20-50-employees/",
+    "name": "_blog_best-excavation-software-20-50-employees_.html",
+    "fetched_at": "2026-11-19T20:10:03-05:00",
+    "status": 200,
+    "bytes": 106877,
+    "sha256": "fad4f51f81a693d120a952978835da08f16ae6bedaf5679e71c1aff4afe05583",
+    "same_as_before": false,
+    "marker": false,
+    "marker_before": false
+  },
+  {
+    "path": "/blog/best-time-tracking-apps-excavation-crews/",
+    "name": "_blog_best-time-tracking-apps-excavation-crews_.html",
+    "fetched_at": "2026-11-19T20:10:04-05:00",
+    "status": 200,
+    "bytes": 109615,
+    "sha256": "c378d455d5ff81bc6773247a139b84d45cf8cbf9c035940f60f62b3a3bf9df95",
+    "same_as_before": false,
+    "marker": false,
+    "marker_before": false
+  },
+  {
+    "path": "/blog/best-equipment-maintenance-software-small-contractors/",
+    "name": "_blog_best-equipment-maintenance-software-small-contractors_.html",
+    "fetched_at": "2026-11-19T20:10:05-05:00",
+    "status": 200,
+    "bytes": 127894,
+    "sha256": "2561b9ca8741902cbdfa61037b933b00902ac632950fafc63e4e3592be852841",
+    "same_as_before": false,
+    "marker": false,
+    "marker_before": false
+  },
+  {
+    "path": "/blog/best-software-small-dirt-work-contractors/",
+    "name": "_blog_best-software-small-dirt-work-contractors_.html",
+    "fetched_at": "2026-11-19T20:10:06-05:00",
+    "status": 200,
+    "bytes": 141234,
+    "sha256": "377935b8ded1aedfeff33d3131964d991b31a6e967bebfbfc144a23ba39f6029",
+    "same_as_before": false,
+    "marker": false,
+    "marker_before": false
+  },
+  {
+    "path": "/blog/construction-software-per-user-pricing/",
+    "name": "_blog_construction-software-per-user-pricing_.html",
+    "fetched_at": "2026-11-19T20:10:07-05:00",
+    "status": 200,
+    "bytes": 93273,
+    "sha256": "c0589fbf717864f5e767e7c3f1c5c7eb9903d9486f6bfa61175190e1539fcf5a",
+    "same_as_before": false,
+    "marker": false,
+    "marker_before": false
+  },
+  {
+    "path": "/earthwork-software/",
+    "name": "_earthwork-software_.html",
+    "fetched_at": "2026-11-19T20:10:08-05:00",
+    "status": 200,
+    "bytes": 50325,
+    "sha256": "d4c76b6c86d52e3b61b40a1fcbde5a145dd1eb6c8146b5905b572130841b4635",
+    "same_as_before": false,
+    "marker": false,
+    "marker_before": false
+  },
+  {
+    "path": "/all-in-one-dirt-work-software/",
+    "name": "_all-in-one-dirt-work-software_.html",
+    "fetched_at": "2026-11-19T20:10:09-05:00",
+    "status": 200,
+    "bytes": 71227,
+    "sha256": "d524174a6240a4fa05fe4ddbd8a3c6fc685e69106d88730c33d6201166416ffe",
+    "same_as_before": false,
+    "marker": false,
+    "marker_before": false
+  },
+  {
+    "path": "/features/construction-time-tracking/",
+    "name": "_features_construction-time-tracking_.html",
+    "fetched_at": "2026-11-19T20:10:10-05:00",
+    "status": 200,
+    "bytes": 84243,
+    "sha256": "ddcc1f3032d46f0ab9691184074e4c24a8506de024108f3531bd22563e5ede2f",
+    "same_as_before": false,
+    "marker": false,
+    "marker_before": false
+  },
+  {
+    "path": "/features/crew-scheduling-software/",
+    "name": "_features_crew-scheduling-software_.html",
+    "fetched_at": "2026-11-19T20:10:11-05:00",
+    "status": 200,
+    "bytes": 72263,
+    "sha256": "656813c06176d7aa1dd883ce6a773dd7b1d139b27a2f9f30a6398446269445b3",
+    "same_as_before": false,
+    "marker": false,
+    "marker_before": false
+  }
+]

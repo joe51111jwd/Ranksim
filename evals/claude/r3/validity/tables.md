@@ -26,4 +26,11 @@ REAL positions only. Ordinary lists are design days (through 2026-11-17). Site-r
 
 ## C. The same site-restricted list pulled twice on one evening
 
-- Not pulled yet.
+- Lists: 22. URLs: 187 and 186, shared 156.
+- Same first page: 19 of 22.
+- Pair order agreement: 486/554 (0.877) by list [0.799, 0.944] (22 lists), by site [0.799, 0.944] (22 sites).
+  - gap 1: 99/118 (0.839) by list [0.764, 0.911] (20 lists), by site [0.764, 0.911] (20 sites)
+  - gap 2: 88/105 (0.838) by list [0.743, 0.925] (18 lists), by site [0.743, 0.925] (18 sites)
+  - gap 3 to 4: 148/169 (0.876) by list [0.789, 0.947] (20 lists), by site [0.789, 0.947] (20 sites)
+  - gap 5 to 9: 151/162 (0.932) by list [0.855, 0.994] (18 lists), by site [0.855, 0.994] (18 sites)
+  - pairs that include the first page: 121/133 (0.910) by list [0.767, 1.000] (21 lists), by site [0.767, 1.000] (21 sites)

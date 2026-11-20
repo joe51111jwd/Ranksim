@@ -1,0 +1,868 @@
+{
+  "label": "PREDICTED",
+  "target": "t1",
+  "day": "2026-11-18",
+  "manifest_frozen_at": "2026-11-19T19:37:20Z",
+  "pulls": {
+    "day": "2026-11-18",
+    "searches": 30,
+    "min_pulls": 2,
+    "max_pulls": 3,
+    "by_count": {
+      "2": 15,
+      "3": 15
+    }
+  },
+  "slices": {
+    "strict_new": {
+      "n": 1,
+      "queries": 1,
+      "big_enough": false,
+      "band3": {
+        "pred": {
+          "hits": 1,
+          "n": 1,
+          "rate": 1.0,
+          "lo": 1.0,
+          "hi": 1.0,
+          "queries": 1
+        },
+        "domain_prior": {
+          "hits": 1,
+          "n": 1,
+          "rate": 1.0,
+          "lo": 1.0,
+          "hi": 1.0,
+          "queries": 1
+        },
+        "const7": {
+          "hits": 0,
+          "n": 1,
+          "rate": 0.0,
+          "lo": 0.0,
+          "hi": 0.0,
+          "queries": 1
+        },
+        "const11": {
+          "hits": 0,
+          "n": 1,
+          "rate": 0.0,
+          "lo": 0.0,
+          "hi": 0.0,
+          "queries": 1
+        },
+        "const9": {
+          "hits": 0,
+          "n": 1,
+          "rate": 0.0,
+          "lo": 0.0,
+          "hi": 0.0,
+          "queries": 1
+        },
+        "diff_vs_const9": {
+          "diff": 1.0,
+          "lo": 1.0,
+          "hi": 1.0,
+          "n": 1,
+          "queries": 1
+        },
+        "best_baseline": "domain_prior",
+        "diff_vs_best": {
+          "diff": 0.0,
+          "lo": 0.0,
+          "hi": 0.0,
+          "n": 1,
+          "queries": 1
+        },
+        "pass": false
+      },
+      "err3": {
+        "pred": {
+          "hits": 1,
+          "n": 1,
+          "rate": 1.0,
+          "lo": 1.0,
+          "hi": 1.0,
+          "queries": 1
+        },
+        "domain_prior": {
+          "hits": 1,
+          "n": 1,
+          "rate": 1.0,
+          "lo": 1.0,
+          "hi": 1.0,
+          "queries": 1
+        },
+        "const7": {
+          "hits": 0,
+          "n": 1,
+          "rate": 0.0,
+          "lo": 0.0,
+          "hi": 0.0,
+          "queries": 1
+        },
+        "const11": {
+          "hits": 0,
+          "n": 1,
+          "rate": 0.0,
+          "lo": 0.0,
+          "hi": 0.0,
+          "queries": 1
+        },
+        "const9": {
+          "hits": 0,
+          "n": 1,
+          "rate": 0.0,
+          "lo": 0.0,
+          "hi": 0.0,
+          "queries": 1
+        },
+        "diff_vs_const9": {
+          "diff": 1.0,
+          "lo": 1.0,
+          "hi": 1.0,
+          "n": 1,
+          "queries": 1
+        },
+        "best_baseline": "domain_prior",
+        "diff_vs_best": {
+          "diff": 0.0,
+          "lo": 0.0,
+          "hi": 0.0,
+          "n": 1,
+          "queries": 1
+        },
+        "pass": false
+      }
+    },
+    "strict_new_original_30": {
+      "n": 1,
+      "queries": 1,
+      "big_enough": false,
+      "band3": {
+        "pred": {
+          "hits": 1,
+          "n": 1,
+          "rate": 1.0,
+          "lo": 1.0,
+          "hi": 1.0,
+          "queries": 1
+        },
+        "domain_prior": {
+          "hits": 1,
+          "n": 1,
+          "rate": 1.0,
+          "lo": 1.0,
+          "hi": 1.0,
+          "queries": 1
+        },
+        "const7": {
+          "hits": 0,
+          "n": 1,
+          "rate": 0.0,
+          "lo": 0.0,
+          "hi": 0.0,
+          "queries": 1
+        },
+        "const11": {
+          "hits": 0,
+          "n": 1,
+          "rate": 0.0,
+          "lo": 0.0,
+          "hi": 0.0,
+          "queries": 1
+        },
+        "const9": {
+          "hits": 0,
+          "n": 1,
+          "rate": 0.0,
+          "lo": 0.0,
+          "hi": 0.0,
+          "queries": 1
+        },
+        "diff_vs_const9": {
+          "diff": 1.0,
+          "lo": 1.0,
+          "hi": 1.0,
+          "n": 1,
+          "queries": 1
+        },
+        "best_baseline": "domain_prior",
+        "diff_vs_best": {
+          "diff": 0.0,
+          "lo": 0.0,
+          "hi": 0.0,
+          "n": 1,
+          "queries": 1
+        },
+        "pass": false
+      },
+      "err3": {
+        "pred": {
+          "hits": 1,
+          "n": 1,
+          "rate": 1.0,
+          "lo": 1.0,
+          "hi": 1.0,
+          "queries": 1
+        },
+        "domain_prior": {
+          "hits": 1,
+          "n": 1,
+          "rate": 1.0,
+          "lo": 1.0,
+          "hi": 1.0,
+          "queries": 1
+        },
+        "const7": {
+          "hits": 0,
+          "n": 1,
+          "rate": 0.0,
+          "lo": 0.0,
+          "hi": 0.0,
+          "queries": 1
+        },
+        "const11": {
+          "hits": 0,
+          "n": 1,
+          "rate": 0.0,
+          "lo": 0.0,
+          "hi": 0.0,
+          "queries": 1
+        },
+        "const9": {
+          "hits": 0,
+          "n": 1,
+          "rate": 0.0,
+          "lo": 0.0,
+          "hi": 0.0,
+          "queries": 1
+        },
+        "diff_vs_const9": {
+          "diff": 1.0,
+          "lo": 1.0,
+          "hi": 1.0,
+          "n": 1,
+          "queries": 1
+        },
+        "best_baseline": "domain_prior",
+        "diff_vs_best": {
+          "diff": 0.0,
+          "lo": 0.0,
+          "hi": 0.0,
+          "n": 1,
+          "queries": 1
+        },
+        "pass": false
+      }
+    },
+    "strict_new_added_70": {
+      "n": 0,
+      "queries": 0,
+      "big_enough": false,
+      "band3": {
+        "pred": {
+          "hits": 0,
+          "n": 0,
+          "rate": null,
+          "lo": null,
+          "hi": null,
+          "queries": 0
+        },
+        "domain_prior": {
+          "hits": 0,
+          "n": 0,
+          "rate": null,
+          "lo": null,
+          "hi": null,
+          "queries": 0
+        },
+        "const7": {
+          "hits": 0,
+          "n": 0,
+          "rate": null,
+          "lo": null,
+          "hi": null,
+          "queries": 0
+        },
+        "const11": {
+          "hits": 0,
+          "n": 0,
+          "rate": null,
+          "lo": null,
+          "hi": null,
+          "queries": 0
+        },
+        "const9": {
+          "hits": 0,
+          "n": 0,
+          "rate": null,
+          "lo": null,
+          "hi": null,
+          "queries": 0
+        },
+        "diff_vs_const9": {
+          "diff": null,
+          "lo": null,
+          "hi": null,
+          "n": 0,
+          "queries": 0
+        },
+        "best_baseline": null,
+        "diff_vs_best": {
+          "diff": null,
+          "lo": null,
+          "hi": null,
+          "n": 0,
+          "queries": 0
+        },
+        "pass": false
+      },
+      "err3": {
+        "pred": {
+          "hits": 0,
+          "n": 0,
+          "rate": null,
+          "lo": null,
+          "hi": null,
+          "queries": 0
+        },
+        "domain_prior": {
+          "hits": 0,
+          "n": 0,
+          "rate": null,
+          "lo": null,
+          "hi": null,
+          "queries": 0
+        },
+        "const7": {
+          "hits": 0,
+          "n": 0,
+          "rate": null,
+          "lo": null,
+          "hi": null,
+          "queries": 0
+        },
+        "const11": {
+          "hits": 0,
+          "n": 0,
+          "rate": null,
+          "lo": null,
+          "hi": null,
+          "queries": 0
+        },
+        "const9": {
+          "hits": 0,
+          "n": 0,
+          "rate": null,
+          "lo": null,
+          "hi": null,
+          "queries": 0
+        },
+        "diff_vs_const9": {
+          "diff": null,
+          "lo": null,
+          "hi": null,
+          "n": 0,
+          "queries": 0
+        },
+        "best_baseline": null,
+        "diff_vs_best": {
+          "diff": null,
+          "lo": null,
+          "hi": null,
+          "n": 0,
+          "queries": 0
+        },
+        "pass": false
+      }
+    },
+    "new_no_deep_history": {
+      "n": 0,
+      "queries": 0,
+      "big_enough": false,
+      "band3": {
+        "pred": {
+          "hits": 0,
+          "n": 0,
+          "rate": null,
+          "lo": null,
+          "hi": null,
+          "queries": 0
+        },
+        "domain_prior": {
+          "hits": 0,
+          "n": 0,
+          "rate": null,
+          "lo": null,
+          "hi": null,
+          "queries": 0
+        },
+        "const7": {
+          "hits": 0,
+          "n": 0,
+          "rate": null,
+          "lo": null,
+          "hi": null,
+          "queries": 0
+        },
+        "const11": {
+          "hits": 0,
+          "n": 0,
+          "rate": null,
+          "lo": null,
+          "hi": null,
+          "queries": 0
+        },
+        "const9": {
+          "hits": 0,
+          "n": 0,
+          "rate": null,
+          "lo": null,
+          "hi": null,
+          "queries": 0
+        },
+        "diff_vs_const9": {
+          "diff": null,
+          "lo": null,
+          "hi": null,
+          "n": 0,
+          "queries": 0
+        },
+        "best_baseline": null,
+        "diff_vs_best": {
+          "diff": null,
+          "lo": null,
+          "hi": null,
+          "n": 0,
+          "queries": 0
+        },
+        "pass": false
+      },
+      "err3": {
+        "pred": {
+          "hits": 0,
+          "n": 0,
+          "rate": null,
+          "lo": null,
+          "hi": null,
+          "queries": 0
+        },
+        "domain_prior": {
+          "hits": 0,
+          "n": 0,
+          "rate": null,
+          "lo": null,
+          "hi": null,
+          "queries": 0
+        },
+        "const7": {
+          "hits": 0,
+          "n": 0,
+          "rate": null,
+          "lo": null,
+          "hi": null,
+          "queries": 0
+        },
+        "const11": {
+          "hits": 0,
+          "n": 0,
+          "rate": null,
+          "lo": null,
+          "hi": null,
+          "queries": 0
+        },
+        "const9": {
+          "hits": 0,
+          "n": 0,
+          "rate": null,
+          "lo": null,
+          "hi": null,
+          "queries": 0
+        },
+        "diff_vs_const9": {
+          "diff": null,
+          "lo": null,
+          "hi": null,
+          "n": 0,
+          "queries": 0
+        },
+        "best_baseline": null,
+        "diff_vs_best": {
+          "diff": null,
+          "lo": null,
+          "hi": null,
+          "n": 0,
+          "queries": 0
+        },
+        "pass": false
+      }
+    },
+    "reentrant": {
+      "n": 39,
+      "queries": 18,
+      "big_enough": true,
+      "band3": {
+        "pred": {
+          "hits": 21,
+          "n": 39,
+          "rate": 0.5384615384615384,
+          "lo": 0.38461538461538464,
+          "hi": 0.7096986417657045,
+          "queries": 18
+        },
+        "domain_prior": {
+          "hits": 13,
+          "n": 39,
+          "rate": 0.3333333333333333,
+          "lo": 0.1777450980392157,
+          "hi": 0.5238392857142856,
+          "queries": 18
+        },
+        "const7": {
+          "hits": 14,
+          "n": 39,
+          "rate": 0.358974358974359,
+          "lo": 0.23326923076923078,
+          "hi": 0.4864864864864865,
+          "queries": 18
+        },
+        "const11": {
+          "hits": 8,
+          "n": 39,
+          "rate": 0.20512820512820512,
+          "lo": 0.10808397683397684,
+          "hi": 0.3333333333333333,
+          "queries": 18
+        },
+        "const9": {
+          "hits": 17,
+          "n": 39,
+          "rate": 0.4358974358974359,
+          "lo": 0.3111111111111111,
+          "hi": 0.5715178571428566,
+          "queries": 18
+        },
+        "diff_vs_const9": {
+          "diff": 0.10256410256410256,
+          "lo": -0.05405405405405406,
+          "hi": 0.29411764705882354,
+          "n": 39,
+          "queries": 18
+        },
+        "best_baseline": "const7",
+        "diff_vs_best": {
+          "diff": 0.1794871794871795,
+          "lo": -0.0196078431372549,
+          "hi": 0.4,
+          "n": 39,
+          "queries": 18
+        },
+        "pass": false
+      },
+      "err3": {
+        "pred": {
+          "hits": 38,
+          "n": 39,
+          "rate": 0.9743589743589743,
+          "lo": 0.926829268292683,
+          "hi": 1.0,
+          "queries": 18
+        },
+        "domain_prior": {
+          "hits": 27,
+          "n": 39,
+          "rate": 0.6923076923076923,
+          "lo": 0.5714285714285714,
+          "hi": 0.8205128205128205,
+          "queries": 18
+        },
+        "const7": {
+          "hits": 33,
+          "n": 39,
+          "rate": 0.8461538461538461,
+          "lo": 0.7233747044917258,
+          "hi": 0.9512195121951219,
+          "queries": 18
+        },
+        "const11": {
+          "hits": 17,
+          "n": 39,
+          "rate": 0.4358974358974359,
+          "lo": 0.3111111111111111,
+          "hi": 0.5715178571428566,
+          "queries": 18
+        },
+        "const9": {
+          "hits": 27,
+          "n": 39,
+          "rate": 0.6923076923076923,
+          "lo": 0.5609756097560976,
+          "hi": 0.8250271739130433,
+          "queries": 18
+        },
+        "diff_vs_const9": {
+          "diff": 0.28205128205128205,
+          "lo": 0.15384615384615385,
+          "hi": 0.4146341463414634,
+          "n": 39,
+          "queries": 18
+        },
+        "best_baseline": "const7",
+        "diff_vs_best": {
+          "diff": 0.1282051282051282,
+          "lo": 0.0,
+          "hi": 0.2727272727272727,
+          "n": 39,
+          "queries": 18
+        },
+        "pass": false
+      }
+    },
+    "all_non_survivors": {
+      "n": 40,
+      "queries": 19,
+      "big_enough": true,
+      "band3": {
+        "pred": {
+          "hits": 22,
+          "n": 40,
+          "rate": 0.55,
+          "lo": 0.3953488372093023,
+          "hi": 0.7297297297297297,
+          "queries": 19
+        },
+        "domain_prior": {
+          "hits": 14,
+          "n": 40,
+          "rate": 0.35,
+          "lo": 0.1951219512195122,
+          "hi": 0.53125,
+          "queries": 19
+        },
+        "const7": {
+          "hits": 14,
+          "n": 40,
+          "rate": 0.35,
+          "lo": 0.21424772036474163,
+          "hi": 0.4694177671068426,
+          "queries": 19
+        },
+        "const11": {
+          "hits": 8,
+          "n": 40,
+          "rate": 0.2,
+          "lo": 0.10526315789473684,
+          "hi": 0.3157894736842105,
+          "queries": 19
+        },
+        "const9": {
+          "hits": 17,
+          "n": 40,
+          "rate": 0.425,
+          "lo": 0.30183962264150943,
+          "hi": 0.5526315789473685,
+          "queries": 19
+        },
+        "diff_vs_const9": {
+          "diff": 0.125,
+          "lo": -0.02702702702702703,
+          "hi": 0.3226242371403659,
+          "n": 40,
+          "queries": 19
+        },
+        "best_baseline": "domain_prior",
+        "diff_vs_best": {
+          "diff": 0.2,
+          "lo": 0.0,
+          "hi": 0.42105263157894735,
+          "n": 40,
+          "queries": 19
+        },
+        "pass": false
+      },
+      "err3": {
+        "pred": {
+          "hits": 39,
+          "n": 40,
+          "rate": 0.975,
+          "lo": 0.9285714285714286,
+          "hi": 1.0,
+          "queries": 19
+        },
+        "domain_prior": {
+          "hits": 28,
+          "n": 40,
+          "rate": 0.7,
+          "lo": 0.5813953488372093,
+          "hi": 0.8285714285714286,
+          "queries": 19
+        },
+        "const7": {
+          "hits": 33,
+          "n": 40,
+          "rate": 0.825,
+          "lo": 0.696969696969697,
+          "hi": 0.9362034574468083,
+          "queries": 19
+        },
+        "const11": {
+          "hits": 17,
+          "n": 40,
+          "rate": 0.425,
+          "lo": 0.30183962264150943,
+          "hi": 0.5526315789473685,
+          "queries": 19
+        },
+        "const9": {
+          "hits": 27,
+          "n": 40,
+          "rate": 0.675,
+          "lo": 0.5428571428571428,
+          "hi": 0.8055555555555556,
+          "queries": 19
+        },
+        "diff_vs_const9": {
+          "diff": 0.3,
+          "lo": 0.17142857142857143,
+          "hi": 0.4390781922525105,
+          "n": 40,
+          "queries": 19
+        },
+        "best_baseline": "const7",
+        "diff_vs_best": {
+          "diff": 0.15,
+          "lo": 0.0,
+          "hi": 0.2972972972972973,
+          "n": 40,
+          "queries": 19
+        },
+        "pass": false
+      }
+    },
+    "other_search_groups_all_non_survivors": {
+      "n": 40,
+      "queries": 13,
+      "big_enough": true,
+      "band3": {
+        "pred": {
+          "hits": 26,
+          "n": 40,
+          "rate": 0.65,
+          "lo": 0.47823616600790514,
+          "hi": 0.8571428571428571,
+          "queries": 13
+        },
+        "domain_prior": {
+          "hits": 13,
+          "n": 40,
+          "rate": 0.325,
+          "lo": 0.19508261211644376,
+          "hi": 0.5,
+          "queries": 13
+        },
+        "const7": {
+          "hits": 13,
+          "n": 40,
+          "rate": 0.325,
+          "lo": 0.18744212962962964,
+          "hi": 0.4166977611940297,
+          "queries": 13
+        },
+        "const11": {
+          "hits": 5,
+          "n": 40,
+          "rate": 0.125,
+          "lo": 0.047619047619047616,
+          "hi": 0.21428571428571427,
+          "queries": 13
+        },
+        "const9": {
+          "hits": 20,
+          "n": 40,
+          "rate": 0.5,
+          "lo": 0.4,
+          "hi": 0.625,
+          "queries": 13
+        },
+        "diff_vs_const9": {
+          "diff": 0.15,
+          "lo": 0.0,
+          "hi": 0.35714285714285715,
+          "n": 40,
+          "queries": 13
+        },
+        "best_baseline": "domain_prior",
+        "diff_vs_best": {
+          "diff": 0.325,
+          "lo": 0.18175990675990678,
+          "hi": 0.5278186274509802,
+          "n": 40,
+          "queries": 13
+        },
+        "pass": true
+      },
+      "err3": {
+        "pred": {
+          "hits": 33,
+          "n": 40,
+          "rate": 0.825,
+          "lo": 0.7187299679487179,
+          "hi": 0.9310919540229882,
+          "queries": 13
+        },
+        "domain_prior": {
+          "hits": 27,
+          "n": 40,
+          "rate": 0.675,
+          "lo": 0.5106274424663482,
+          "hi": 0.8709677419354839,
+          "queries": 13
+        },
+        "const7": {
+          "hits": 32,
+          "n": 40,
+          "rate": 0.8,
+          "lo": 0.6774193548387096,
+          "hi": 0.8888888888888888,
+          "queries": 13
+        },
+        "const11": {
+          "hits": 20,
+          "n": 40,
+          "rate": 0.5,
+          "lo": 0.4,
+          "hi": 0.625,
+          "queries": 13
+        },
+        "const9": {
+          "hits": 27,
+          "n": 40,
+          "rate": 0.675,
+          "lo": 0.5714285714285714,
+          "hi": 0.7674865831842574,
+          "queries": 13
+        },
+        "diff_vs_const9": {
+          "diff": 0.15,
+          "lo": 0.0,
+          "hi": 0.3143233082706765,
+          "n": 40,
+          "queries": 13
+        },
+        "best_baseline": "const7",
+        "diff_vs_best": {
+          "diff": 0.025,
+          "lo": -0.1276595744680851,
+          "hi": 0.20012820512820445,
+          "n": 40,
+          "queries": 13
+        },
+        "pass": false
+      }
+    }
+  },
+  "ahead_check": {
+    "ahead_file": false
+  }
+}

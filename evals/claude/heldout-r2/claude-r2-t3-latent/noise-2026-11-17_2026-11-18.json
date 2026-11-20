@@ -1,0 +1,126 @@
+{
+  "label": "PREDICTED band checked after the freeze",
+  "day_a": "2026-11-17",
+  "day_b": "2026-11-18",
+  "gap_days": 1,
+  "max_date": "2026-11-18",
+  "groups": [
+    "o30",
+    "a70"
+  ],
+  "prereg": "evals/preregistered/claude-r2-t3-latent",
+  "manifest_frozen_at": "2026-11-20T01:14:38Z",
+  "pulls": {
+    "day_a": {
+      "day": "2026-11-17",
+      "searches": 30,
+      "min_pulls": 3,
+      "max_pulls": 3,
+      "by_count": {
+        "3": 30
+      }
+    },
+    "day_b": {
+      "day": "2026-11-18",
+      "searches": 30,
+      "min_pulls": 2,
+      "max_pulls": 3,
+      "by_count": {
+        "2": 15,
+        "3": 15
+      }
+    }
+  },
+  "summary": {
+    "searches": 30,
+    "searches_with_pairs": 28,
+    "observed": {
+      "flips": 59,
+      "pairs": 673,
+      "rate": 0.08766716196136701
+    },
+    "shuffled": {
+      "permutations": 2000,
+      "seed": 20261119,
+      "expected_flips": 60.645,
+      "expected_pairs": 711.707,
+      "rate": 0.08521062740706499,
+      "total_flips_2.5_97.5": [
+        47.0,
+        75.0
+      ],
+      "p_shuffled_flips_ge_observed": 0.6155
+    },
+    "noise_share_of_flip_count": {
+      "value": 1.0278813559322035,
+      "lo": 0.7867297567191844,
+      "hi": 1.365960448916409,
+      "undefined_draws": 0,
+      "queries": 30
+    },
+    "theory_band": [
+      0.75,
+      1.3
+    ],
+    "point_in_theory_band": true,
+    "point_below_falsifier_0.7": false,
+    "exact_check": {
+      "expected_flips": 60.7,
+      "expected_pairs": 711.3000000000002,
+      "noise_share_of_flip_count": {
+        "value": 1.028813559322034,
+        "lo": 0.7846052631578947,
+        "hi": 1.368637955182073,
+        "undefined_draws": 0,
+        "queries": 30
+      }
+    }
+  },
+  "by_group": {
+    "o30": {
+      "searches": 30,
+      "searches_with_pairs": 28,
+      "observed": {
+        "flips": 59,
+        "pairs": 673,
+        "rate": 0.08766716196136701
+      },
+      "shuffled": {
+        "permutations": 2000,
+        "seed": 20261119,
+        "expected_flips": 60.645,
+        "expected_pairs": 711.707,
+        "rate": 0.08521062740706499,
+        "total_flips_2.5_97.5": [
+          47.0,
+          75.0
+        ],
+        "p_shuffled_flips_ge_observed": 0.6155
+      },
+      "noise_share_of_flip_count": {
+        "value": 1.0278813559322035,
+        "lo": 0.7867297567191844,
+        "hi": 1.365960448916409,
+        "undefined_draws": 0,
+        "queries": 30
+      },
+      "theory_band": [
+        0.75,
+        1.3
+      ],
+      "point_in_theory_band": true,
+      "point_below_falsifier_0.7": false,
+      "exact_check": {
+        "expected_flips": 60.7,
+        "expected_pairs": 711.3000000000002,
+        "noise_share_of_flip_count": {
+          "value": 1.028813559322034,
+          "lo": 0.7846052631578947,
+          "hi": 1.368637955182073,
+          "undefined_draws": 0,
+          "queries": 30
+        }
+      }
+    }
+  }
+}

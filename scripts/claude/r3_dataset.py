@@ -210,3 +210,40 @@ def pair_table(table: pd.DataFrame, features: list[str]) -> pd.DataFrame:
                 row.update({name: (0.0 if not math.isfinite(d) else float(d)) for name, d in zip(features, diff, strict=True)})
                 out.append(row)
     return pd.DataFrame.from_records(out)
+
+
+def table_for_pages(query: str, items: list[tuple[str, str, dict]], df_table: dict, list_id: str, with_semantic: bool = True) -> pd.DataFrame:
+    """Feature rows for arbitrary parsed pages under one search (for example before and after copies of a page).
+
+    ``items`` holds (key, url, parsed page). All rows share ``list_id``. The page-tier
+    features are computed exactly as in build_table. Site-position features are left
+    out (NaN): two copies of one URL have the same position in the site.
+    """
+    corpus = FrozenCorpus(df_table)
+    terms = query_terms(query)
+    idf_sum = sum(corpus.idf(term) for term in terms) or 1.0
+    flags = F.query_flags(query)
+    records = []
+    pages = {}
+    for rank, (key, url, page) in enumerate(items, 1):
+        pages[key] = page
+        st = F.static_page(page, url)
+        row = {"list_id": list_id, "label": "pages", "q": query, "site": "", "query": query, "key": key, "url": url, "position": rank, "rank": rank, "list_len": len(items), "usable": True}
+        lex = F.lexical_features(query, st, corpus)
+        lex["bm25f_norm"] = lex["bm25f"] / idf_sum
+        lex["bm25_body_norm"] = lex["bm25_body"] / idf_sum
+        row.update(lex)
+        for name in F.URL_FEATURES + F.SHAPE_FEATURES:
+            if name in st:
+                row[name] = st[name]
+        for name in ("in_list_links", "in_list_link_share", "home_linked", "anchor_cov", "has_anchor"):
+            row[name] = float("nan")
+        row.update(flags)
+        records.append(row)
+    table = pd.DataFrame.from_records(records)
+    if with_semantic:
+        sem = semantic_features(table[["query", "key"]].assign(usable=True), pages)
+        if sem is None:
+            raise RuntimeError("The semantic models are not installed.")
+        table = table.merge(sem, on=["query", "key"], how="left")
+    return table

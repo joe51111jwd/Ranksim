@@ -1,0 +1,16 @@
+{
+  "kind": "blend",
+  "name": "page-blend",
+  "role": "primary: text plus URL plus page shape",
+  "tiers": [
+    "lexical",
+    "semantic",
+    "url",
+    "shape",
+    "query"
+  ],
+  "train_labels": [
+    "validity-a",
+    "train-a"
+  ]
+}

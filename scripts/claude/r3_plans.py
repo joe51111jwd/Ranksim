@@ -5,6 +5,7 @@
   python scripts/claude/r3_plans.py train        # lists to learn from (train sites x train search groups)
   python scripts/claude/r3_plans.py test1        # held-out lists (test sites x test search groups), pulled only after the freeze
   python scripts/claude/r3_plans.py noise        # a repeat of some validity lists, to measure label noise
+  python scripts/claude/r3_plans.py heldout1     # the held-out plan that is actually pulled: 104 lists, one per site first
 
 Every plan is built from SERP rows dated 2026-11-17 or earlier (rsdata.DESIGN_MAX_DATE),
 with a fixed seed, and written to evals/claude/r3/plans/<name>.jsonl plus a
@@ -191,7 +192,7 @@ def draw_lists(frame: pd.DataFrame, total: int, per_site: int, per_query: int, s
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    parser.add_argument("plan", choices=["validity", "universe", "train", "test1", "noise"])
+    parser.add_argument("plan", choices=["validity", "universe", "train", "test1", "noise", "heldout1"])
     parser.add_argument("--total", type=int, default=None)
     args = parser.parse_args(argv)
     if args.plan == "validity":
@@ -218,7 +219,31 @@ def main(argv: list[str] | None = None) -> int:
         meta = {"plan": "train", "cell": "train sites x train search groups", "per_site_cap": 3, "per_query_cap": 8, "validity_lists_count_toward_site_cap": True}
     elif args.plan == "test1":
         requests = draw_lists(cell(universe, "test1", "test"), args.total or 140, 3, 8, set(), {}, "test1")
-        meta = {"plan": "test1", "cell": "test1 sites x test search groups", "per_site_cap": 3, "per_query_cap": 8}
+        meta = {"plan": "test1", "cell": "test1 sites x test search groups", "per_site_cap": 3, "per_query_cap": 8,
+                "status": "superseded by heldout1 before any pull; never pulled"}
+    elif args.plan == "heldout1":
+        # Each list is pulled twice, so the credit budget allows about 104 lists. The interval is driven by
+        # the number of sites, so every test1 site gets one list first, then second lists fill the rest.
+        total = args.total or 104
+        frame = cell(universe, "test1", "test")
+        first = draw_lists(frame, total, 1, 8, set(), {}, "heldout1-first")
+        used = {(item["query"], item["site"]) for item in first}
+        site_used = {item["site"]: 1 for item in first}
+        query_used: dict[str, int] = {}
+        for item in first:
+            query_used[item["query"]] = query_used.get(item["query"], 0) + 1
+        extra = []
+        if len(first) < total:
+            for item in draw_lists(frame, len(frame), 2, 8, used, site_used, "heldout1-second"):
+                if query_used.get(item["query"], 0) >= 8:
+                    continue
+                query_used[item["query"]] = query_used.get(item["query"], 0) + 1
+                extra.append(item)
+                if len(first) + len(extra) >= total:
+                    break
+        requests = first + extra
+        meta = {"plan": "heldout1", "cell": "test1 sites x test search groups", "first_pass": "one list per site", "second_pass": "a second list for some sites",
+                "per_query_cap": 8, "lists_first_pass": len(first), "lists_second_pass": len(extra), "pulls_per_list": 2}
     else:
         # Repeat one list per validity site that had readable pages, seeded order.
         rate = fetchable_sites()

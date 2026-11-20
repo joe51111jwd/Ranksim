@@ -1,0 +1,20 @@
+{
+  "in_sample_pair_accuracy": 0.7710296994486928,
+  "lists_with_pairs": 182,
+  "note": "in-sample accuracy is a training score, not accuracy",
+  "pairs": 5623,
+  "searches": 80,
+  "sites": 87,
+  "tiers": [
+    "lexical",
+    "semantic",
+    "url",
+    "shape",
+    "query"
+  ],
+  "train_labels": [
+    "validity-a",
+    "train-a"
+  ],
+  "usable_pages": 1476
+}

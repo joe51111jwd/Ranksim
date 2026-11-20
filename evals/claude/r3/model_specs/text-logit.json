@@ -1,0 +1,13 @@
+{
+  "kind": "logit",
+  "name": "text-logit",
+  "role": "ablation: text only",
+  "tiers": [
+    "lexical",
+    "semantic"
+  ],
+  "train_labels": [
+    "validity-a",
+    "train-a"
+  ]
+}

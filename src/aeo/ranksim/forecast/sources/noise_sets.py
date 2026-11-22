@@ -166,6 +166,8 @@ def agreement_report(pairs: Sequence[RepeatPair], label: str) -> dict[str, Any]:
     out["top10_units_present_in_both"] = _share(
         [1.0 if u.position_a <= TOP_DEPTH and u.position_b <= TOP_DEPTH else 0.0 for u in top10], clusters10
     )
+    both = [u for u in top10 if u.position_a <= TOP_DEPTH and u.position_b <= TOP_DEPTH]
+    out["top10_within_2_when_present_in_both"] = _share([1.0 if agrees(u) else 0.0 for u in both], [u.cluster for u in both])
     by_band: dict[str, Any] = {}
     for band in UNIT_BANDS:
         index = [i for i, u in enumerate(top50) if band_of(u.position_a) == band]

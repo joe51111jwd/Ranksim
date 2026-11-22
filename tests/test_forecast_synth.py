@@ -466,3 +466,146 @@ def test_worlds_build_fast():
     default_seconds = clock_time.perf_counter() - started
     assert small_seconds < 1.0
     assert default_seconds < 5.0
+
+
+# ---------------------------------------------------------------------------
+# Correlated poisoning (SYNTHETIC). Shaped after the REAL 19 Nov 2026 pulls, not fitted to them.
+
+from aeo.ranksim.forecast.reader import assemble_readings, fetch_round, read_clean, round_suspects  # noqa: E402
+
+CORRELATED = replace(
+    DEFAULT_KNOBS, poison_spell_minutes=90.0, poison_rate=0.3, poison_spell_share=0.9,
+    fail_rate=0.0, partial_rate=0.0, spell_rate=0.0, repaired_rate=0.0,
+)
+
+
+class StepClock:
+    """A fake clock: `sleep` moves it, nothing real waits."""
+
+    def __init__(self, moment: datetime) -> None:
+        self.moment = moment
+
+    def now(self) -> datetime:
+        return self.moment
+
+    def sleep(self, seconds: float) -> None:
+        self.moment += timedelta(seconds=seconds)
+
+
+def correlated_world(knobs=CORRELATED) -> World:
+    return World(1, niches=2, searches_per_niche=30, established_sites=200, new_sites=0, months=12, knobs=knobs)
+
+
+def classify(world: World, readings) -> dict[str, int]:
+    """right: not degraded and no injected or unrelated site in the top 10. wrong: not degraded with one. degraded."""
+    known = {info.site for info in world.sites}
+    out = {"right": 0, "wrong": 0, "degraded": 0}
+    for reading in readings:
+        if reading.degraded:
+            out["degraded"] += 1
+        elif any(entry.site not in known for entry in reading.positions if entry.position <= 10):
+            out["wrong"] += 1
+        else:
+            out["right"] += 1
+    return out
+
+
+def test_correlated_poisoning_is_off_by_default_and_shares_spells_minutes_apart():
+    assert DEFAULT_KNOBS.poison_spell_minutes == 0.0
+    assert small_world().poison_spell(0, 1_756_720_800) is None
+    world = correlated_world()
+    directories = set(world.directory_sites())
+    assert len(directories) == CORRELATED.poison_directories
+    assert all(site.endswith(".example") and site not in {info.site for info in world.sites} for site in directories)
+    epoch = int(PULL_DAY.timestamp())
+    near = far = near_both = far_both = 0
+    for info in world.searches:
+        for step in range(40):
+            moment = epoch + step * 6 * 3600
+            a, b, c = (world.poison_spell(info.index, moment + offset) for offset in (0, 60, 6 * 3600 + 7))
+            near += a is not None
+            near_both += a is not None and b is not None
+            far += a is not None
+            far_both += a is not None and c is not None
+    assert near_both / near > 0.95  # a minute apart, almost always the same spell
+    assert far_both / far < 0.45  # six hours apart, a fresh draw near the spell rate of 0.3
+    spells = sum(world.poison_spell(q.index, epoch + k * 5400) is not None for q in world.searches for k in range(50))
+    assert 0.25 <= spells / (len(world.searches) * 50) <= 0.35
+
+
+def test_altered_pulls_of_one_spell_agree_and_injected_directories_recur_across_searches():
+    world = correlated_world()
+    clock = StepClock(PULL_DAY)
+    source = SyntheticSource(world, clock.now)
+    specs = [spec_for(world, info.text) for info in world.searches]
+    pulls = []
+    for _ in range(3):
+        pulls.extend(source.fetch(specs))
+        clock.sleep(60)
+    altered = [(pull, event) for pull, event in zip(pulls, source.events) if event.poisoned]
+    assert altered
+    by_search: dict[str, list[list[str]]] = {}
+    directory_searches: dict[str, set[str]] = {}
+    for pull, _ in altered:
+        sites = [hit.site for hit in pull.hits[:10]]
+        by_search.setdefault(pull.spec.search, []).append(sites)
+        run_site = max(set(sites), key=sites.count)
+        assert sites.count(run_site) >= CORRELATED.poison_run_low
+        assert run_site in world.directory_sites()
+        directory_searches.setdefault(run_site, set()).add(pull.spec.search)
+        assert len({hit.url for hit in pull.hits}) == len(pull.hits)  # each slot of a run is its own page
+        truth = set(world.true_ranking(pull.spec.search, PULL_DAY.date())[:TOP_DEPTH])
+        assert sum(hit.site in truth for hit in pull.hits[:20]) < 10
+    assert any(len(lists) >= 2 and all(item == lists[0] for item in lists) for lists in by_search.values())
+    assert max(len(found) for found in directory_searches.values()) >= 3
+    suspects = round_suspects(pulls[: len(specs)])
+    assert suspects.sites() & set(world.directory_sites())
+
+
+def test_pulls_a_minute_apart_fool_version_1_and_not_version_2():
+    """SYNTHETIC. Five pulls one minute apart share an altered spell, so altered pulls are the majority."""
+    world = correlated_world()
+    clean_world = correlated_world(replace(CORRELATED, poison_rate=0.0))  # the same truth, no altered pages
+    specs = [spec_for(world, info.text) for info in world.searches]
+    earlier = StepClock(PULL_DAY - timedelta(days=1))
+    history = read_clean(SyntheticSource(clean_world, earlier.now), specs, pulls=5, gap_seconds=60,
+                         sleep=earlier.sleep, now=earlier.now).readings
+    results = {}
+    events = {}
+    for name, kwargs in (("v1", {"version": 1}), ("v2", {}), ("v2 history", {"history": history})):
+        clock = StepClock(PULL_DAY)
+        source = SyntheticSource(world, clock.now)
+        result = read_clean(source, specs, pulls=5, gap_seconds=60, sleep=clock.sleep, now=clock.now, **kwargs)
+        results[name] = result
+        events[name] = {event.pull_id: event for event in source.events}
+    v1, v2, v2h = (classify(world, results[name].readings) for name in ("v1", "v2", "v2 history"))
+    assert v1["wrong"] >= 10, v1
+    assert v2["wrong"] < v1["wrong"] and v2h["wrong"] == 0, (v1, v2, v2h)
+    assert v2h["right"] == v1["right"]  # version 2 never loses a reading version 1 had right
+    # Every wrong version 2 reading without history is one where every pull was altered: one cluster, kept whole.
+    known = {info.site for info in world.sites}
+    for reading in results["v2"].readings:
+        if not reading.degraded and any(e.site not in known for e in reading.positions if e.position <= 10):
+            assert all(events["v2"][pid].poisoned for pid in reading.pull_ids)
+            assert reading.pulls_kept == reading.pulls_total == 5
+
+
+def test_pulls_hours_apart_recover_under_both_versions():
+    """SYNTHETIC. Five rounds 2.5 hours apart: spells mostly do not repeat, so altered pulls are a minority."""
+    world = correlated_world()
+    specs = [spec_for(world, info.text) for info in world.searches]
+    for version in (1, 2):
+        clock = StepClock(PULL_DAY)
+        source = SyntheticSource(world, clock.now)
+        pulls = []
+        suspects = []
+        for index in range(5):
+            got = fetch_round(source, specs, round_index=index, now=clock.now)
+            pulls.extend(got)
+            suspects.append(round_suspects(got))
+            clock.sleep(2.5 * 3600)
+        readings = assemble_readings(pulls, suspects=suspects, version=version)
+        assert len(readings) == len(specs) and all(reading.pulls_total == 5 for reading in readings)
+        outcome = classify(world, readings)
+        assert outcome["wrong"] == 0, (version, outcome)
+        assert outcome["right"] >= 0.8 * len(specs), (version, outcome)

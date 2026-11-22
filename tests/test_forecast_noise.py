@@ -235,3 +235,127 @@ def test_dry_run_on_committed_pulls_is_labelled_and_reproduces_the_map():
     assert 0.85 <= single["present_in_both_top10"]["rate"] <= 0.90
     assert 0.45 <= single["headline_top10_union_absent_51"]["rate"] <= 0.60
     assert result == dry_run_on_committed_pulls(REPO)  # deterministic
+
+
+# ---------------------------------------------------------------------------
+# reader version and filter settings in the report, version comparison, calibration
+
+import gzip  # noqa: E402
+import json  # noqa: E402
+
+from aeo.ranksim.forecast.noise import (  # noqa: E402
+    calibrate_on_dataforseo_history,
+    compare_versions_on_committed_pulls,
+    history_page_pull,
+    iter_dataforseo_history_pages,
+    main,
+)
+from aeo.ranksim.forecast.reader import CONCENTRATION_MIN_SLOTS, LINK_MIN_SHARE  # noqa: E402
+
+
+def test_marker1_report_states_the_reader_version_and_keeps_the_ablation_beside_the_headline():
+    reading_pulls = [
+        (five_pulls("a", "q1", "2026-11-23", poisoned=True), five_pulls("b", "q1", "2026-11-24", poisoned=False)),
+    ]
+    report = marker1_report_from_pulls(reading_pulls)
+    reader = report["reader"]
+    assert reader["reader_version"] == "reader-v2" and reader["filter_on"] is True
+    assert reader["concentration_min_slots"] == CONCENTRATION_MIN_SLOTS and reader["link_min_share"] == LINK_MIN_SHARE
+    assert reader["history_used"] is False
+    assert reader["ablation"]["filter_on"] is False
+    beside = report["headline_beside_ablation"]
+    assert beside["filter_on"] == report["headline"]["rate"]
+    assert beside["filter_off"] == report["ablation_no_overlap_rule"]["headline"]["rate"]
+    assert beside["raw_single_pull"] == report["raw_single_pull_baseline"]["headline"]["rate"]
+    old = marker1_report_from_pulls(reading_pulls, version=1)
+    assert old["reader"]["reader_version"] == "reader-v1" and "poison_min_overlap" in old["reader"]
+    assert agreement_report([])["reader"] is None
+
+
+def test_compare_versions_on_the_committed_pulls():
+    result = compare_versions_on_committed_pulls(REPO)
+    assert result["is_marker_1"] is False and "NOT MARKER 1" in result["label"]
+    first, second = result["version_1"], result["version_2"]
+    assert first["reader"]["reader_version"] == "reader-v1" and second["reader"]["reader_version"] == "reader-v2"
+    assert first["pulls_dropped"] == 17 and first["readings_degraded"] == 15  # the v1 numbers measured before v2
+    assert first["dropped_by_reason"] == {"low_overlap": 17}
+    by_search = {entry["search"]: entry for entry in result["splits"]}
+    # The two searches named in the evidence: the clean pull is the minority and version 2 keeps it.
+    assert by_search["assignar alternative"]["kept_v1"] == ["a", "c"]
+    assert by_search["assignar alternative"]["kept_v2"] == ["b"]
+    assert by_search["hcss pricing"]["kept_v1"] == ["b", "c"]
+    assert by_search["hcss pricing"]["kept_v2"] == ["a"]
+    assert by_search["hcss pricing"]["decided_by_v2"] == "off-brand concentration"
+    assert by_search["assignar alternative"]["pulls"]["a"][:7] == ["slashdot.org"] * 7
+    assert all(entry["degraded_v2"] for entry in result["splits"] if entry["clusters_v2"] and len(entry["clusters_v2"]) > 1)
+    assert "slashdot.org" in result["round_suspects"]["pull-a"]
+    assert result == compare_versions_on_committed_pulls(REPO)  # deterministic
+    dry = dry_run_on_committed_pulls(REPO, version=1)
+    assert dry["reader"]["reader_version"] == "reader-v1"
+    assert dry["filter_on_three_pull_readings"]["degraded"] == 15
+
+
+def organic(rank: int, domain: str, path: str = "") -> dict:
+    return {"type": "organic", "rank_group": rank, "domain": f"www.{domain}", "main_domain": domain,
+            "url": f"https://www.{domain}/{path or rank}"}
+
+
+def history_line(keyword: str, pages: list[tuple[str | None, list[dict]]]) -> str:
+    return json.dumps({
+        "keyword": keyword,
+        "serp_info_history": [{"time_update": stamp, "serp": items + [{"type": "people_also_ask"}]} for stamp, items in pages],
+    })
+
+
+def write_history(folder: Path, locale: str, lines: list[str]) -> None:
+    folder.mkdir(parents=True, exist_ok=True)
+    with gzip.open(folder / f"{locale}.json.gz", "wt", encoding="utf-8") as handle:
+        handle.write("\n".join(lines) + "\n")
+
+
+def test_streaming_history_reader_and_calibration_on_a_small_fixture(tmp_path):
+    clean = [organic(i + 1, f"site{i}.com") for i in range(10)]
+    stable_next = [organic(i + 1, f"site{(i + 1) % 10}.com") for i in range(10)]
+    other = [organic(i + 1, f"other{i}.com") for i in range(10)]
+    run = [organic(i + 1, "youtube.com", f"v{i}") for i in range(5)] + [organic(i + 6, f"site{i}.com") for i in range(5)]
+    brand = [organic(i + 1, "acme.com", f"p{i}") for i in range(6)] + [organic(i + 7, f"site{i}.com") for i in range(4)]
+    with_client = [organic(1, "smartcrewhq.com")] + [organic(i + 2, f"site{i}.com") for i in range(9)]
+    write_history(tmp_path, "US_en", [
+        history_line("plumber near me", [("2025-06-01T10:00:00.1234567Z", clean), ("2025-06-01T14:00:00Z", stable_next),
+                                         ("2025-06-01T20:00:00Z", other), ("2025-07-20T10:00:00Z", clean)]),
+        history_line("music videos", [("2025-06-02T10:00:00Z", run), (None, clean)]),
+        history_line("acme login", [("2025-06-03T10:00:00Z", brand)]),
+        history_line("client page", [("2025-06-04T10:00:00Z", with_client)]),
+    ])
+    write_history(tmp_path, "DE_de", [history_line("klempner", [("2025-06-05T10:00:00Z", run)])])
+
+    pages = list(iter_dataforseo_history_pages(tmp_path))
+    assert [page.locale for page in pages] == ["DE_de"] + ["US_en"] * 7  # files in name order, the undated page skipped
+    first = pages[1]
+    assert first.time_update == "2025-06-01T10:00:00Z" and first.organic[0] == (1, "site0.com", "https://www.site0.com/1")
+    assert all(site != "smartcrewhq.com" for page in pages for _, site, _ in page.organic)
+    assert [p.locale for p in iter_dataforseo_history_pages(tmp_path, locales=["US_en"])] == ["US_en"] * 7
+    pull = history_page_pull(first, depth=10)
+    assert pull.spec.depth == 10 and len(pull.hits) == 10 and pull.ok and pull.spec.search == "plumber near me"
+
+    result = calibrate_on_dataforseo_history(tmp_path)
+    assert result["label"] == "REAL" and result["locales_read"] == 2
+    assert result["pages_with_organic_results"] == {"all": 8, "en": 7}
+    flags = result["off_brand_concentration_flag"]
+    # youtube.com holds 5 slots on "music videos" and "klempner"; acme.com is on-brand for "acme login".
+    assert flags["en"]["5"]["count"] == 1 and flags["all"]["5"]["count"] == 2 and flags["all"]["3"]["count"] == 2
+    pairs = result["repulls_under_max_gap"]
+    assert pairs["pairs"] == {"all": 2, "en": 2}  # 10:00 to 14:00 and 14:00 to 20:00; the July page is too far
+    split = pairs["split_rate_by_link_share"]["depth_50"]["all"]["0.5"]
+    assert split["count"] == 1 and split["total"] == 2  # the move to "other" sites splits, the reshuffle does not
+    assert result["chosen"]["concentration_min_slots"] == CONCENTRATION_MIN_SLOTS
+    assert result == calibrate_on_dataforseo_history(tmp_path)
+    with pytest.raises(FileNotFoundError):
+        calibrate_on_dataforseo_history(tmp_path / "missing")
+
+
+def test_command_line_dispatch(tmp_path, capsys):
+    write_history(tmp_path, "US_en", [history_line("q", [("2025-06-01T10:00:00Z", [organic(1, "a.com")])])])
+    assert main(["calibrate", str(tmp_path), "US_en"]) == 0
+    printed = json.loads(capsys.readouterr().out)
+    assert printed["locales_read"] == 1

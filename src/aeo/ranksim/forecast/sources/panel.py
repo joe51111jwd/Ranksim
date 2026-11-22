@@ -742,6 +742,14 @@ def new_site_report(panel: pd.DataFrame, *, positions: pd.DataFrame | None = Non
     }
     for band, count in entries["rank100"].map(_landing_band).value_counts().items():
         result["entry_band"][band] = int(count)
+    # An entry right after a short page may be a site that was there but below that page's last result.
+    raw_depth = sp.groupby(["keyword_id", "snap_idx"])["snapshot_depth"].first()
+    prev_depth = raw_depth.reindex(list(zip(entries["keyword_id"], entries["snap_idx"] - 1))).to_numpy()
+    deep_enough = prev_depth >= entries["rank100"].to_numpy()
+    result["entries_where_previous_page_reached_the_entry_rank"] = int(np.nansum(deep_enough))
+    result["entry_band_where_previous_page_reached_the_entry_rank"] = {band: 0 for band in LANDING_BANDS[:-1]}
+    for band, count in entries.loc[deep_enough, "rank100"].map(_landing_band).value_counts().items():
+        result["entry_band_where_previous_page_reached_the_entry_rank"][band] = int(count)
     for name, (low, high) in (("month1_30_60_days", MONTH1_WINDOW_DAYS), ("month3_75_110_days", MONTH3_WINDOW_DAYS)):
         moves = transitions(sp, low, high, positions=sp.drop(columns=["snap_idx"]))
         moves = moves[moves["new_at_a"].fillna(False).astype(bool) & moves["depth_ok"].astype(bool)].copy()
@@ -819,11 +827,16 @@ def main(argv: Sequence[str] | None = None) -> int:
         _print(build_whois_table(files.whois[0], root=args.root))
         return 0
     if args.command == "summary":
-        panel = load_panel(["dataset", "locale", "keyword_id", "snapshot_time", "snapshot_date", "rank", "site", "poison_window"], panel_dir=args.panel_dir)
-        payload = summary(panel)
-        history = panel[panel["dataset"] == dfs.DATASET_HISTORY]
-        if len(history):
-            payload["new_sites_history"] = new_site_report(history)
+        folder = Path(args.panel_dir) if args.panel_dir else default_panel_dir()
+        names = sorted({part.parent.parent.name.split("=", 1)[1] for part in _parts(folder, None, None)})
+        payload = {"label": "REAL DataForSEO result pages, country level, single pulls", "datasets": {}}
+        summary_columns = ["dataset", "locale", "keyword_id", "snapshot_time", "snapshot_date", "rank", "site", "poison_window"]
+        for name in names:  # one dataset at a time keeps memory down
+            panel = load_panel(summary_columns, datasets=[name], panel_dir=folder)
+            payload["datasets"].update(summary(panel)["datasets"])
+            if name == dfs.DATASET_HISTORY:
+                payload["new_sites_history"] = new_site_report(panel)
+            del panel
         if args.out:
             Path(args.out).parent.mkdir(parents=True, exist_ok=True)
             Path(args.out).write_text(json.dumps(payload, indent=2, default=_json_default), encoding="utf-8")

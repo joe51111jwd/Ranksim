@@ -66,6 +66,7 @@ from urllib.parse import urlsplit
 
 import httpx
 import pyarrow as pa
+import pyarrow.compute as pc
 import pyarrow.parquet as pq
 
 from aeo.ranksim.forecast.asof import AsOfGuard, Dated, add_months, as_date, utc_iso
@@ -320,8 +321,11 @@ def download_resumable(
             limiter.wait(url)
         try:
             with client.stream("GET", url, headers=headers) as response:
-                if response.status_code == 416 and total is not None and offset >= total:
-                    break
+                if response.status_code == 416:
+                    # Range not satisfiable: the partial file may already be complete.
+                    size_text = (response.headers.get("content-range") or "").rpartition("/")[2]
+                    if size_text.isdigit() and offset >= int(size_text):
+                        break
                 if response.status_code not in (200, 206):
                     raise httpx.HTTPStatusError(f"HTTP {response.status_code} for {url}", request=response.request, response=response)
                 if offset and response.status_code == 200:
@@ -390,10 +394,9 @@ def _merge_rows(old: pa.Table | None, new_rows: list[dict[str, Any]], schema: pa
     new = pa.Table.from_pylist(new_rows, schema=schema)
     if old is None or old.num_rows == 0:
         return new
-    replaced = set(new.column(key).to_pylist())
-    if replaced:
-        keep = [value not in replaced for value in old.column(key).to_pylist()]
-        old = old.filter(pa.array(keep, type=pa.bool_()))
+    replaced = pa.array(sorted(set(new.column(key).to_pylist())), type=pa.string())
+    if len(replaced):
+        old = old.filter(pc.invert(pc.is_in(old.column(key), value_set=replaced)))
     return pa.concat_tables([old.cast(schema), new])
 
 
@@ -510,7 +513,7 @@ class _ResumingStream:
                         self.etag = response.headers.get("etag")
                         length = response.headers.get("content-length")
                         self.total = int(length) if length else None
-                    for block in response.iter_raw(CHUNK_BYTES):
+                    for block in response.iter_raw():
                         self.offset += len(block)
                         self.sha256.update(block)
                         yield block
@@ -538,6 +541,12 @@ class CommonCrawlDomainRanks:
 
     def __post_init__(self) -> None:
         self.root = default_root(self.root)
+
+    def _http(self) -> httpx.Client:
+        """One client per source object, made on first use (tests inject a mock client instead)."""
+        if self.client is None:
+            self.client = make_client(timeout=120.0)
+        return self.client
 
     @property
     def cache_dir(self) -> Path:
@@ -603,7 +612,7 @@ class CommonCrawlDomainRanks:
             if not missing:
                 report[release] = {"status": "cached", "asked": len(wanted), "streamed_bytes": 0, "seconds": 0.0}
                 continue
-            client = self.client or make_client(timeout=120.0)
+            client = self._http()
             started = time.monotonic()
             stream = _ResumingStream(client, known[release]["url"], log=self.log)
             wanted_rev = {reverse_domain(site).encode("utf-8") for site in missing}
@@ -636,7 +645,10 @@ class CommonCrawlDomainRanks:
             parquet_path, searched_path = self._paths(release)
             rows: dict[str, dict[str, Any]] = {}
             if parquet_path.exists():
-                for row in pq.read_table(parquet_path).to_pylist():
+                data = pq.read_table(parquet_path).to_pydict()
+                names = list(data)
+                for values in zip(*(data[name] for name in names)):
+                    row = dict(zip(names, values))
                     rows[row["site"]] = row
             if len(self._loaded) >= 3:
                 self._loaded.pop(next(iter(self._loaded)))
@@ -647,12 +659,15 @@ class CommonCrawlDomainRanks:
         """Per site, the newest MATERIALISED release published on or before `as_of` that searched it.
 
         A site searched but not found gets `present` 0.0 and None metrics (no inbound links seen).
-        A site never searched in an eligible release is left out.
+        A site never searched in an eligible release is left out. When a newer release was
+        published by `as_of` but is not materialised, the older one is used and
+        `newer_release_not_materialised` is 1.0, so a stale value is visible, never silent.
         """
         day = as_date(as_of)
         known = self.releases()
         eligible = sorted((rid for rid in self.materialised_releases() if known[rid]["published"] <= day),
                           key=lambda rid: known[rid]["published"], reverse=True)
+        newest_published = pick_snapshot(self.snapshots(), day)
         remaining = wanted_sites(sites)
         out: dict[str, Dated] = {}
         for release in eligible:
@@ -660,11 +675,13 @@ class CommonCrawlDomainRanks:
                 break
             searched, rows = self._load(release)
             info = known[release]
+            stale = 0.0 if newest_published is None or newest_published.snapshot_id == release else 1.0
             for site in list(remaining & searched):
                 row = rows.get(site)
                 value: dict[str, Any] = {
                     "snapshot_id": release,
                     "data_end": info["data_end"].isoformat(),
+                    "newer_release_not_materialised": stale,
                     "present": 1.0 if row else 0.0,
                     "hc_pos": _float(row["harmonicc_pos"]) if row else None,
                     "hc_val": _float(row["harmonicc_val"]) if row else None,
@@ -749,10 +766,15 @@ class OpenPageRankHistory:
     name: str = "openpagerank_history"
     survivorship_limited: bool = True
     survivorship_note: str = OPR_SURVIVORSHIP_NOTE
-    _table: dict[str, dict[str, float]] | None = field(default=None, repr=False)
 
     def __post_init__(self) -> None:
         self.root = default_root(self.root)
+
+    def _http(self) -> httpx.Client:
+        """One client per source object, made on first use (tests inject a mock client instead)."""
+        if self.client is None:
+            self.client = make_client(timeout=120.0)
+        return self.client
 
     @property
     def download_path(self) -> Path:
@@ -776,7 +798,7 @@ class OpenPageRankHistory:
 
     def download(self) -> dict[str, Any]:
         """The history zip (about 952 MB), fetched once with a resumable Range download."""
-        client = self.client or make_client(timeout=120.0)
+        client = self._http()
         meta = download_resumable(client, OPR_HISTORY_URL, self.download_path, log=self.log)
         record_source(self.download_path.parent, OPR_HISTORY_FILE, meta)
         return meta
@@ -824,20 +846,38 @@ class OpenPageRankHistory:
         record_source(self.cache_dir, "opr_history", {"read_from": str(self.download_path), "url": OPR_HISTORY_URL,
                                                       "sha256": meta.get("sha256"), "built_at": utc_iso(datetime.now(timezone.utc)),
                                                       "months": months, "survivorship": OPR_SURVIVORSHIP_NOTE})
-        self._table = None
         found = len({row["site"] for row in rows})
         return {"status": "streamed", "asked": len(missing), "found": found, "seconds": round(time.monotonic() - started, 1)}
 
-    def history(self) -> dict[str, dict[str, float]]:
-        """site -> {month: opr} from the materialised parquet."""
-        if self._table is None:
-            table: dict[str, dict[str, float]] = {}
-            if self.parquet_path.exists():
-                data = pq.read_table(self.parquet_path, columns=["site", "month", "opr"]).to_pydict()
-                for site, month, value in zip(data["site"], data["month"], data["opr"]):
-                    table.setdefault(site, {})[month] = value
-            self._table = table
-        return self._table
+    def history(self, sites: Iterable[str] | None = None) -> dict[str, dict[str, float]]:
+        """site -> {month: opr} from the materialised parquet, for the given sites (all when None)."""
+        if not self.parquet_path.exists():
+            return {}
+        table = pq.read_table(self.parquet_path, columns=["site", "month", "opr"])
+        if sites is not None:
+            table = table.filter(pc.is_in(table.column("site"), value_set=pa.array(sorted(wanted_sites(sites)), type=pa.string())))
+        out: dict[str, dict[str, float]] = {}
+        data = table.to_pydict()
+        for site, month, value in zip(data["site"], data["month"], data["opr"]):
+            out.setdefault(site, {})[month] = value
+        return out
+
+    def month_scores(self, month: str) -> dict[str, float]:
+        """site -> score for one month column, read with a parquet filter (no full load)."""
+        if not self.parquet_path.exists():
+            return {}
+        data = pq.read_table(self.parquet_path, columns=["site", "opr"], filters=[("month", "=", month)]).to_pydict()
+        return dict(zip(data["site"], data["opr"]))
+
+    def first_months(self, sites: Iterable[str] | None = None) -> dict[str, str]:
+        """site -> the first month with a score."""
+        if not self.parquet_path.exists():
+            return {}
+        table = pq.read_table(self.parquet_path, columns=["site", "month"])
+        if sites is not None:
+            table = table.filter(pc.is_in(table.column("site"), value_set=pa.array(sorted(wanted_sites(sites)), type=pa.string())))
+        grouped = table.group_by("site").aggregate([("month", "min")]).to_pydict()
+        return dict(zip(grouped["site"], grouped["month_min"]))
 
     def lookup(self, sites: Iterable[str], as_of: date | str) -> dict[str, Dated]:
         """Per searched site, the score in the newest month column published on or before `as_of`.
@@ -849,10 +889,10 @@ class OpenPageRankHistory:
             return {}
         month = snap.snapshot_id.removeprefix("opr-")
         searched = _read_searched(self.searched_path)
-        table = self.history()
+        scores = self.month_scores(month)
         out: dict[str, Dated] = {}
         for site in wanted_sites(sites) & searched:
-            value = table.get(site, {}).get(month)
+            value = scores.get(site)
             out[site] = Dated(value={"snapshot_id": snap.snapshot_id, "present": 1.0 if value is not None else 0.0,
                                      "opr": value, "survivorship_limited": 1.0}, source=self.name, snapshot_date=snap.published)
         return out
@@ -932,6 +972,12 @@ class CruxTopLists:
     def __post_init__(self) -> None:
         self.root = default_root(self.root)
 
+    def _http(self) -> httpx.Client:
+        """One client per source object, made on first use (tests inject a mock client instead)."""
+        if self.client is None:
+            self.client = make_client(timeout=120.0)
+        return self.client
+
     @property
     def public_dir(self) -> Path:
         return Path(self.root) / "public" / "crux" / "global"
@@ -959,7 +1005,7 @@ class CruxTopLists:
 
     def download(self, month: str) -> dict[str, Any]:
         raw_path = self._paths(month)[0]
-        client = self.client or make_client()
+        client = self._http()
         meta = download_resumable(client, CRUX_URL.format(month=month.replace("-", "")), raw_path, log=self.log)
         record_source(self.public_dir, raw_path.name, meta)
         return meta
@@ -1046,6 +1092,12 @@ class TrancoByDate:
     def __post_init__(self) -> None:
         self.root = default_root(self.root)
 
+    def _http(self) -> httpx.Client:
+        """One client per source object, made on first use (tests inject a mock client instead)."""
+        if self.client is None:
+            self.client = make_client(timeout=120.0)
+        return self.client
+
     @property
     def public_dir(self) -> Path:
         return Path(self.root) / "public" / "tranco"
@@ -1067,7 +1119,7 @@ class TrancoByDate:
         index = self._index()
         if key in index:
             return index[key]
-        client = self.client or make_client()
+        client = self._http()
         url = TRANCO_API.format(day=key)
         self.limiter.wait(url)
         response = client.get(url)
@@ -1105,7 +1157,7 @@ class TrancoByDate:
                 continue
             raw_path = self.public_dir / f"tranco_{list_id}.csv"
             if not raw_path.exists():
-                meta = download_resumable(self.client or make_client(), record["download"], raw_path, limiter=self.limiter, log=self.log)
+                meta = download_resumable(self._http(), record["download"], raw_path, limiter=self.limiter, log=self.log)
                 record_source(self.public_dir, raw_path.name, meta)
             with open(raw_path, encoding="utf-8", errors="replace") as handle:
                 best = parse_tranco_rows(handle, missing)
@@ -1158,6 +1210,15 @@ class MajesticToday:
     path: Path | None = None
     name: str = "majestic_million_today"
 
+    @staticmethod
+    def fetch(root: str | Path | None = None, client: httpx.Client | None = None) -> "MajesticToday":
+        """Download today's file (about 80 MB) to public/majestic/ with provenance, and return a source on it."""
+        today = datetime.now(timezone.utc).date().isoformat()
+        dest = default_root(root) / "public" / "majestic" / f"majestic_million_{today}.csv"
+        meta = download_resumable(client or make_client(timeout=120.0), MAJESTIC_URL, dest)
+        record_source(dest.parent, dest.name, {**meta, "dated": False})
+        return MajesticToday(path=dest)
+
     def snapshots(self) -> list[Snapshot]:
         return [Snapshot("majestic-today", None, None, None, MAJESTIC_URL, note="undated: only the current file exists")]
 
@@ -1185,7 +1246,8 @@ FEATURE_PREFIX: dict[str, str] = {
 }
 
 FEATURE_KEYS: dict[str, tuple[str, ...]] = {
-    "commoncrawl_domain_ranks": ("present", "hc_pos", "hc_val", "pr_pos", "pr_val", "n_hosts", "hc_pos_pct"),
+    "commoncrawl_domain_ranks": ("present", "hc_pos", "hc_val", "pr_pos", "pr_val", "n_hosts", "hc_pos_pct",
+                                 "newer_release_not_materialised"),
     "openpagerank_history": ("present", "opr", "survivorship_limited"),
     "crux_top_lists": ("present", "bucket", "bucket_coarse"),
     "tranco": ("present", "rank"),
@@ -1291,6 +1353,40 @@ def _log(message: str) -> None:
     print(f"{utc_iso(datetime.now(timezone.utc))} {message}", flush=True)
 
 
+def coverage_report(sites: Iterable[str], root: str | Path | None = None) -> list[dict[str, Any]]:
+    """Per materialised snapshot: sites asked, searched, found, and the share found. Reads the cache only."""
+    base = default_root(root)
+    wanted = wanted_sites(sites)
+    rows: list[dict[str, Any]] = []
+
+    def add(source: str, snapshot: str, published: date | None, searched_path: Path, parquet_path: Path) -> None:
+        searched = _read_searched(searched_path) & wanted
+        found: set[str] = set()
+        if parquet_path.exists():
+            found = set(pq.read_table(parquet_path, columns=["site"]).column("site").to_pylist()) & searched
+        rows.append({"source": source, "snapshot": snapshot, "published": published.isoformat() if published else None,
+                     "asked": len(wanted), "searched": len(searched), "found": len(found),
+                     "share_found": round(len(found) / len(searched), 4) if searched else None})
+
+    cc = CommonCrawlDomainRanks(base)
+    known = cc.releases()
+    for release in sorted(cc.materialised_releases(), key=lambda rid: known[rid]["published"]):
+        parquet_path, searched_path = cc._paths(release)
+        add(cc.name, release, known[release]["published"], searched_path, parquet_path)
+    opr = OpenPageRankHistory(base)
+    if opr.searched_path.exists():
+        add(opr.name, "history (any month)", None, opr.searched_path, opr.parquet_path)
+    crux = CruxTopLists(base)
+    for key in crux.materialised_months():
+        _, parquet_path, searched_path = crux._paths(key)
+        add(crux.name, key, crux_month_published(key), searched_path, parquet_path)
+    tranco = TrancoByDate(base)
+    for snap in tranco.snapshots():
+        list_id = snap.snapshot_id.removeprefix("tranco-")
+        add(tranco.name, list_id, snap.published, tranco.cache_dir / f"{list_id}.searched.txt.gz", tranco.cache_dir / f"{list_id}.parquet")
+    return rows
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m aeo.ranksim.forecast.sources.strength_lists",
                                      description="Materialise dated site-strength lists for a list of sites.")
@@ -1306,7 +1402,15 @@ def main(argv: Sequence[str] | None = None) -> int:
                      help="comma list of commoncrawl, openpagerank, crux, tranco")
     mat.add_argument("--root", default=None)
     mat.add_argument("--extra-release", action="append", default=[], help="also materialise this Common Crawl release")
+    cov = sub.add_parser("coverage", help="share of the sites found in each materialised snapshot (cache only)")
+    cov.add_argument("--sites", required=True)
+    cov.add_argument("--root", default=None)
     args = parser.parse_args(argv)
+
+    if args.command == "coverage":
+        for row in coverage_report(read_sites_file(args.sites), args.root):
+            print(json.dumps(row, sort_keys=True))
+        return 0
 
     if args.command == "panel-sites":
         from glob import glob

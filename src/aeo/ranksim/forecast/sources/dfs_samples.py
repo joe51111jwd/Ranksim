@@ -526,7 +526,8 @@ def iter_labs_historical_serps(
         stats.path = str(payload)
         with open(payload, encoding="utf-8") as handle:
             payload = json.load(handle)
-    assert isinstance(payload, Mapping)
+    if not isinstance(payload, Mapping):
+        raise TypeError("a historical_serps response is a JSON object with a tasks list")
     for task in payload.get("tasks") or []:
         if not isinstance(task, Mapping):
             continue

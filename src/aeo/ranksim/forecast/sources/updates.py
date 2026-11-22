@@ -9,8 +9,12 @@ a duration. Each incident page lists its posts with a day and a Pacific time
 (PDT or PST). `start` is the time of the first post and `end` the time of the
 last post when the incident is closed ("Available status" on the history
 page). An open incident (for example a rollout still in progress) has end None.
-When an incident page cannot be read, the start is the listed day at 00:00 UTC
-and the end is that start plus the listed duration, and `precision` says so.
+Incidents from before the dashboard opened in March 2023 were back-filled, so
+their posts carry the back-fill time. A post time is used only when it agrees
+with the listed day (start) or with start plus the listed duration (end).
+Otherwise the start is the listed day at 00:00 UTC and the end is that start
+plus the listed duration. `precision` says which: incident_page, mixed or
+day_plus_duration.
 
 The parsed list is written to data/forecast/cache/updates/google_updates.json
 when fetched, and a copy taken on 2026-11-22 ships with the code in
@@ -36,17 +40,19 @@ from typing import Any, Callable, Iterable, Sequence
 import httpx
 from bs4 import BeautifulSoup
 
-from aeo.ranksim.forecast.asof import as_date, parse_utc, utc_iso
+from aeo.ranksim.forecast.asof import as_date, utc_iso
 from aeo.ranksim.forecast.chain import sha256_bytes
 from aeo.ranksim.forecast.config import forecast_paths
+from aeo.ranksim.forecast.sources.strength_lists import record_source
 
 DASHBOARD_BASE = "https://status.search.google.com"
 RANKING_PRODUCT_ID = "rGHU1u87FJnkP6W2GwMi"
 HISTORY_URL = f"{DASHBOARD_BASE}/products/{RANKING_PRODUCT_ID}/history"
-INCIDENTS_JSON_URL = f"{DASHBOARD_BASE}/incidents.json"
 MIN_INTERVAL_SECONDS = 1.0
 COVERAGE_START = "2021-12-01"
 PACIFIC_OFFSETS = {"PDT": -7, "PST": -8}
+START_TOLERANCE_DAYS = 1
+END_TOLERANCE_DAYS = 2
 PACKAGED_PATH = Path(__file__).resolve().parent / "data" / "google_updates.json"
 
 _MONTHS = {name: index for index, name in enumerate(
@@ -167,15 +173,26 @@ def build_update(row: dict[str, str], post_times: Sequence[datetime] | None) -> 
     closed = row["status"].lower().startswith("available")
     listed = parse_day(row["listed_day"])
     duration = parse_duration(row["listed_duration"])
-    if post_times:
-        start = post_times[0]
-        end = post_times[-1] if closed and len(post_times) > 1 else None
-        if closed and end is None and duration is not None:
-            end = start + duration
+    listed_start = datetime(listed.year, listed.month, listed.day, tzinfo=timezone.utc)
+    # Incidents from before the dashboard opened (March 2023) were back-filled: their posts carry the
+    # back-fill time, not the update time. A post is trusted only when it agrees with the listed day.
+    start_from_page = bool(post_times) and abs((post_times[0].date() - listed).days) <= START_TOLERANCE_DAYS
+    start = post_times[0] if start_from_page else listed_start
+    end: datetime | None = None
+    end_from_page = False
+    if closed:
+        expected = start + duration if duration is not None else None
+        if post_times and len(post_times) > 1 and expected is not None \
+                and abs((post_times[-1] - expected).total_seconds()) <= END_TOLERANCE_DAYS * 86400:
+            end = post_times[-1]
+            end_from_page = True
+        elif expected is not None:
+            end = expected
+    if start_from_page and (end_from_page or not closed):
         precision = "incident_page"
+    elif start_from_page or end_from_page:
+        precision = "mixed"
     else:
-        start = datetime(listed.year, listed.month, listed.day, tzinfo=timezone.utc)
-        end = start + duration if closed and duration is not None else None
         precision = "day_plus_duration"
     return RankingUpdate(
         incident_id=row["incident_id"], name=row["name"], kind=update_kind(row["name"]),
@@ -227,6 +244,9 @@ def fetch_updates(
     path = cache_path(root)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, indent=1, sort_keys=True), encoding="utf-8")
+    record_source(path.parent, path.name, {"url": HISTORY_URL, "fetched_at": payload["fetched_at"],
+                                           "sha256": payload["history_sha256"], "bytes": len(history_bytes),
+                                           "incident_pages_read": read_incident_pages, "count": len(updates)})
     return payload
 
 
@@ -283,11 +303,14 @@ def overlaps(
     return sorted(out, key=lambda item: (item.start, item.incident_id))
 
 
-def scoreboard_rows(updates: Iterable[RankingUpdate], recorded_at: datetime | None = None) -> list[dict[str, Any]]:
-    """Rows for the scoreboard's core_updates table: name, kind, start, end, source URL, and when we recorded them."""
-    stamp = utc_iso(recorded_at or datetime.now(timezone.utc))
-    return [{"name": item.name, "kind": item.kind, "start": item.start, "end": item.end, "status": item.status,
-             "source_url": item.url, "recorded_at": stamp} for item in updates]
+def scoreboard_rows(updates: Iterable[RankingUpdate]) -> list[dict[str, Any]]:
+    """Keyword arguments for `Scoreboard.record_core_update`: name, kind, started_on, ended_on, source_url.
+
+    Dates are UTC calendar days. The scoreboard stamps the time it records each row itself.
+    """
+    return [{"name": item.name, "kind": item.kind, "started_on": item.start_date.isoformat(),
+             "ended_on": item.end_date.isoformat() if item.end_date else None, "source_url": item.url}
+            for item in updates]
 
 
 def main() -> int:

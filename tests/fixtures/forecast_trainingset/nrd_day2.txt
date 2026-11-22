@@ -1,0 +1,14 @@
+# Newly Registered Domains (Last 10 days)
+# https://github.com/cenk/nrd
+# This file was generated from WhoisDS.com free NRD database
+# Last update: 27 Oct 2025 07:20:01 UTC
+# Domains: 9
+alreadylisted.com
+brandnewbakery.com
+freshplumbing.com
+Gardenfresh.com
+newstore.net
+olderlist.net
+quietsite.com
+zzzold.com
+xn--caf-dma.com

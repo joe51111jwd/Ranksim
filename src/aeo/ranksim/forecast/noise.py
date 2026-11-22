@@ -26,26 +26,60 @@ Definitions (docs/plan/IMPLEMENTATION_SPEC.md section 3, OUR READING):
 
 The raw single-pull baseline is measured on single pulls with the same
 definitions. It is never a quoted number.
+
+Every marker 1 report states the reader version and every filter threshold it
+used (`reader.reader_settings`) and keeps the ablation (the same readings with
+the filter after the structural drops switched off) beside the headline.
+Marker 1 never passes reading A as the history of reading B: that would choose
+B's pulls by their agreement with A and so inflate the agreement it measures.
+
+Calibration (REAL data, clean era): `calibrate_on_dataforseo_history` reads
+the DataForSEO history samples under
+data/forecast/public/dataforseo_samples/google_history/serp_advanced with its
+own small streaming reader and measures the false-alarm rates of the version 2
+reader on result pages from May 2025 to April 2026, before Google served
+altered pages to scrapers. `compare_versions_on_committed_pulls` puts reader
+versions 1 and 2 side by side on the committed 19 Nov 2026 Serper pulls, with
+the site lists of every search whose pulls split, so a person can check which
+cluster each version kept.
 """
 
 from __future__ import annotations
 
+import gzip
 import itertools
 import json
 import random
 import sys
-from collections import Counter
+from collections import Counter, defaultdict
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Mapping, Sequence
+from typing import Any, Iterable, Iterator, Mapping, Sequence
 
-from .asof import parse_utc
+from aeo.ranksim.site_history import site_key
+
+from .asof import parse_utc, utc_iso
 from .chain import canonical_json, sha256_text
 from .config import EXCLUDED_SITES, NT50, TOP_DEPTH
 from .grading import RULE_V1, fine_band_of
-from .reader import pull_site_positions, build_clean_reading, load_serper_chunk_pulls
+from .reader import (
+    CONCENTRATION_MIN_SLOTS,
+    DEFAULT_RULE_VERSION,
+    LINK_MIN_SHARE,
+    UBIQUITY_MIN_SLOTS,
+    RoundSuspects,
+    build_clean_reading,
+    clean_reading_with_verdict,
+    link_shares,
+    load_serper_chunk_pulls,
+    off_brand_concentration,
+    pull_site_positions,
+    reader_settings,
+    round_suspects,
+    ubiquity_slots,
+)
 from .stats import cluster_bootstrap_ratio, wilson
-from .types import REAL, CleanReading, Pull
+from .types import REAL, CleanReading, OrganicHit, Pull, PullSpec
 
 AGREE_WITHIN = 2
 HEADLINE_DEPTH = 10
@@ -280,13 +314,16 @@ def agreement_report(
     min_gap_hours: float = MIN_GAP_HOURS,
     max_gap_hours: float = MAX_GAP_HOURS,
     enforce_gap: bool = True,
+    reader: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """The marker 1 report for pairs of clean readings (A, B) of the same searches.
 
     `raw_pairs` are single raw pulls of the same searches: the measured
     baseline. `no_overlap_pairs` are the same readings rebuilt with the
-    overlap rule of the poisoned-page filter switched off: the ablation.
-    Degraded readings are never used.
+    filter after the structural drops switched off: the ablation. `reader`
+    names the reader version and filter settings the readings were built with
+    (`reader.reader_settings`); the report prints it as given. Degraded
+    readings are never used.
     """
     if min_gap_hours > max_gap_hours:
         raise ValueError("min_gap_hours is above max_gap_hours")
@@ -320,7 +357,7 @@ def agreement_report(
             "pairs_used": ab_used,
             "pairs_skipped_by_reason": _skip_counts(ab_skipped),
             "searches": ab_summary["searches"],
-            "note": "Same readings with the overlap rule of the poisoned-page filter switched off.",
+            "note": "Same readings with the filter after the structural drops switched off.",
         }
 
     return {
@@ -334,6 +371,12 @@ def agreement_report(
         "present_in_both_top10": summary["present_in_both_top10"],
         "raw_single_pull_baseline": raw_block,
         "ablation_no_overlap_rule": ablation,
+        "headline_beside_ablation": {
+            "filter_on": summary["headline"]["rate"],
+            "filter_off": ablation["headline"]["rate"] if ablation else None,
+            "raw_single_pull": raw_block["headline"]["rate"] if raw_block else None,
+        },
+        "reader": dict(reader) if reader is not None else None,
         "pairs_used": used,
         "pairs_skipped": skipped,
         "pairs_skipped_by_reason": _skip_counts(skipped),
@@ -359,19 +402,40 @@ def marker1_report_from_pulls(
     min_gap_hours: float = MIN_GAP_HOURS,
     max_gap_hours: float = MAX_GAP_HOURS,
     enforce_gap: bool = True,
+    version: int = DEFAULT_RULE_VERSION,
+    suspects_a: RoundSuspects | Iterable[RoundSuspects] | None = None,
+    suspects_b: RoundSuspects | Iterable[RoundSuspects] | None = None,
 ) -> dict[str, Any]:
-    """Build both readings of each search from their pulls, with and without the overlap rule, and report.
+    """Build both readings of each search from their pulls, with and without the filter, and report.
 
-    The raw baseline pairs the i-th OK pull of reading A with the i-th OK pull
-    of reading B (in requested order), so every single pull is used once.
+    `version` is the reader version. `suspects_a` and `suspects_b` are the
+    round suspects of the rounds of reading A and of reading B (version 2,
+    signal c). When they are None they are computed from the pulls given, one
+    set per side. No history is passed: reading A is never the history of
+    reading B. The raw baseline pairs the i-th OK pull of reading A with the
+    i-th OK pull of reading B (in requested order), so every single pull is
+    used once.
     """
+    if suspects_a is None:
+        suspects_a = round_suspects([pull for first, _ in reading_pulls for pull in first])
+    if suspects_b is None:
+        suspects_b = round_suspects([pull for _, second in reading_pulls for pull in second])
     pairs: list[tuple[CleanReading, CleanReading]] = []
     plain: list[tuple[CleanReading, CleanReading]] = []
     raw: list[tuple[Pull, Pull]] = []
     for first, second in reading_pulls:
-        pairs.append((build_clean_reading(first), build_clean_reading(second)))
-        plain.append((build_clean_reading(first, overlap_rule=False), build_clean_reading(second, overlap_rule=False)))
+        pairs.append((
+            build_clean_reading(first, version=version, suspects=suspects_a),
+            build_clean_reading(second, version=version, suspects=suspects_b),
+        ))
+        plain.append((
+            build_clean_reading(first, overlap_rule=False, version=version),
+            build_clean_reading(second, overlap_rule=False, version=version),
+        ))
         raw.extend(zip(_ok_in_order(first), _ok_in_order(second)))
+    settings = reader_settings(version=version)
+    settings["history_used"] = False
+    settings["ablation"] = reader_settings(version=version, overlap_rule=False)
     return agreement_report(
         pairs,
         raw_pairs=raw,
@@ -379,6 +443,7 @@ def marker1_report_from_pulls(
         min_gap_hours=min_gap_hours,
         max_gap_hours=max_gap_hours,
         enforce_gap=enforce_gap,
+        reader=settings,
     )
 
 
@@ -486,7 +551,21 @@ def _absent_as_11_block(rows: Sequence[AgreementRow]) -> dict[str, Any]:
     return _brief(_ratio_block(values, [row.search for row in top10]))
 
 
-def dry_run_on_committed_pulls(root: str | Path = ".", *, day: str = COMMITTED_DAY, labels: Sequence[str] = COMMITTED_LABELS) -> dict[str, Any]:
+def _load_committed(root: str | Path, day: str, labels: Sequence[str]) -> tuple[Path, dict[str, list[Pull]], dict[str, dict[str, Pull]], list[str]]:
+    base = Path(root) / "evals" / "claude" / "serp" / day
+    sets = {label: load_serper_chunk_pulls(base / label) for label in labels}
+    indexed = {label: _by_search(pulls) for label, pulls in sets.items()}
+    searches = sorted(set.intersection(*(set(found) for found in indexed.values())))
+    return base, sets, indexed, searches
+
+
+def dry_run_on_committed_pulls(
+    root: str | Path = ".",
+    *,
+    day: str = COMMITTED_DAY,
+    labels: Sequence[str] = COMMITTED_LABELS,
+    version: int = DEFAULT_RULE_VERSION,
+) -> dict[str, Any]:
     """What the committed pulls can honestly show. It is NOT marker 1.
 
     Loads `<root>/evals/claude/serp/<day>/<label>/chunk-NN.json.gz` for each
@@ -498,12 +577,13 @@ def dry_run_on_committed_pulls(root: str | Path = ".", *, day: str = COMMITTED_D
       stability check);
     - the 3-pull clean reading against each 2-pull reading;
     - how many pulls the poisoned-page filter dropped.
+
+    Readings are built with reader `version`. Each label is one pull round, so
+    for version 2 the round suspects are read per label and joined.
     """
-    base = Path(root) / "evals" / "claude" / "serp" / day
-    sets = {label: load_serper_chunk_pulls(base / label) for label in labels}
-    indexed = {label: _by_search(pulls) for label, pulls in sets.items()}
-    searches = sorted(set.intersection(*(set(found) for found in indexed.values())))
+    base, sets, indexed, searches = _load_committed(root, day, labels)
     failed = {label: sum(1 for pull in pulls if not pull.ok) for label, pulls in sets.items()}
+    suspects = [round_suspects(sets[label]) for label in labels]
 
     window = {"min_gap_hours": 0.0, "max_gap_hours": 0.0, "enforce_gap": False}
     pair_results: dict[str, Any] = {}
@@ -525,29 +605,37 @@ def dry_run_on_committed_pulls(root: str | Path = ".", *, day: str = COMMITTED_D
     raw_summary = summarize_rows(raw_rows)
 
     loo_rows: list[AgreementRow] = []
+    loo_kept_rows: list[AgreementRow] = []
     three_two_rows: list[AgreementRow] = []
     drops: Counter[str] = Counter()
     degraded_three = 0
+    empty_rest = 0
     dropped_plain: Counter[str] = Counter()
     for search in searches:
         group = [indexed[label][search] for label in labels]
-        full = build_clean_reading(group)
+        full = build_clean_reading(group, version=version, suspects=suspects)
         degraded_three += int(full.degraded)
         drops.update(reason.split(":")[0] for _, reason in full.dropped)
-        plain = build_clean_reading(group, overlap_rule=False)
+        plain = build_clean_reading(group, overlap_rule=False, version=version)
         dropped_plain.update(reason.split(":")[0] for _, reason in plain.dropped)
         for held in range(len(group)):
             if not group[held].ok:
                 continue
-            rest = build_clean_reading([pull for i, pull in enumerate(group) if i != held])
-            loo_rows.extend(_rows(search, pull_site_positions(group[held]), _reading_positions(rest)))
+            rest = build_clean_reading([pull for i, pull in enumerate(group) if i != held], version=version, suspects=suspects)
+            empty_rest += int(rest.pulls_kept == 0)
+            held_rows = _rows(search, pull_site_positions(group[held]), _reading_positions(rest))
+            loo_rows.extend(held_rows)
+            if rest.pulls_kept > 0:
+                loo_kept_rows.extend(held_rows)
             three_two_rows.extend(_rows(search, _reading_positions(full), _reading_positions(rest)))
     loo = summarize_rows(loo_rows)
+    loo_kept = summarize_rows(loo_kept_rows)
     three_two = summarize_rows(three_two_rows)
 
     return {
         "label": DRY_RUN_LABEL,
         "is_marker_1": False,
+        "reader": reader_settings(version=version),
         "inputs": {
             "directory": str(base),
             "labels": list(labels),
@@ -571,6 +659,9 @@ def dry_run_on_committed_pulls(root: str | Path = ".", *, day: str = COMMITTED_D
             "headline_top10_union_absent_51": loo["headline"],
             "present_in_both_top10": loo["present_in_both_top10"],
             "comparison_only_top10_union_absent_11": _absent_as_11_block(loo_rows),
+            "two_pull_readings_with_no_kept_pull": empty_rest,
+            "headline_only_where_the_two_pull_reading_kept_a_pull": loo_kept["headline"],
+            "note": "A two-pull reading with no kept pull (a tie) has no positions, so every held-out site counts as a disagreement in the first block.",
         },
         "three_pull_reading_vs_two_pull_reading": {
             "headline_top10_union_absent_51": three_two["headline"],
@@ -586,10 +677,331 @@ def dry_run_on_committed_pulls(root: str | Path = ".", *, day: str = COMMITTED_D
     }
 
 
-def _print_dry_run(root: str) -> None:
-    result = dry_run_on_committed_pulls(root)
-    print(json.dumps(result, indent=2, sort_keys=True))
+def _short_label(label: str) -> str:
+    return label.rsplit("-", 1)[-1]
+
+
+def compare_versions_on_committed_pulls(
+    root: str | Path = ".", *, day: str = COMMITTED_DAY, labels: Sequence[str] = COMMITTED_LABELS
+) -> dict[str, Any]:
+    """Reader versions 1 and 2 side by side on the committed pulls. It is NOT marker 1.
+
+    For both versions: pulls dropped, readings degraded, the leave-one-out and
+    single-pull numbers of `dry_run_on_committed_pulls`. For every search whose
+    pulls split into more than one version 2 cluster, or where version 1
+    dropped a pull: the site list of every pull, the clusters, which pulls each
+    version kept, and the signal that decided. Whether the kept pulls are the
+    clean ones is left to the person reading the lists. The code does not
+    decide it.
+    """
+    _, sets, indexed, searches = _load_committed(root, day, labels)
+    suspects = [round_suspects(sets[label]) for label in labels]
+    names = {pull.pull_id: _short_label(label) for label in labels for pull in sets[label]}
+    splits: list[dict[str, Any]] = []
+    same_choice = 0
+    for search in searches:
+        group = [indexed[label][search] for label in labels]
+        first = build_clean_reading(group, version=1)
+        second, verdict = clean_reading_with_verdict(group, version=2, suspects=suspects)
+        if (verdict is None or len(verdict.clusters) < 2) and first.pulls_kept == first.pulls_total:
+            continue
+        kept_v1 = [names[pid] for pid in first.pull_ids]
+        kept_v2 = [names[pid] for pid in second.pull_ids]
+        same_choice += int(kept_v1 == kept_v2)
+        splits.append({
+            "search": search,
+            "pulls": {names[pull.pull_id]: [hit.site for hit in sorted(pull.hits, key=lambda h: h.rank)] for pull in group},
+            "clusters_v2": [[names[pid] for pid in cluster] for cluster in (verdict.clusters if verdict else ())],
+            "kept_v1": kept_v1,
+            "kept_v2": kept_v2,
+            "decided_by_v2": verdict.decided_by if verdict else None,
+            "tie_v2": bool(verdict.tie) if verdict else False,
+            "notes_v2": list(verdict.notes) if verdict else [],
+            "degraded_v1": first.degraded,
+            "degraded_v2": second.degraded,
+        })
+
+    def summary(version: int) -> dict[str, Any]:
+        run = dry_run_on_committed_pulls(root, day=day, labels=labels, version=version)
+        filtered = run["filter_on_three_pull_readings"]
+        return {
+            "reader": run["reader"],
+            "pulls_dropped": sum(filtered["dropped_by_reason"].values()),
+            "dropped_by_reason": filtered["dropped_by_reason"],
+            "readings_degraded": filtered["degraded"],
+            "readings": filtered["readings"],
+            "leave_one_out": {
+                "headline_top10_union_absent_51": _brief(run["leave_one_out_pull_vs_other_two"]["headline_top10_union_absent_51"]),
+                "present_in_both_top10": _brief(run["leave_one_out_pull_vs_other_two"]["present_in_both_top10"]),
+                "two_pull_readings_with_no_kept_pull": run["leave_one_out_pull_vs_other_two"]["two_pull_readings_with_no_kept_pull"],
+                "headline_only_where_the_two_pull_reading_kept_a_pull": _brief(
+                    run["leave_one_out_pull_vs_other_two"]["headline_only_where_the_two_pull_reading_kept_a_pull"]
+                ),
+            },
+            "single_pull_vs_single_pull": {
+                "headline_top10_union_absent_51": _brief(run["single_pull_vs_single_pull"]["headline_top10_union_absent_51"]),
+                "present_in_both_top10": _brief(run["single_pull_vs_single_pull"]["present_in_both_top10"]),
+            },
+        }
+
+    return {
+        "label": DRY_RUN_LABEL,
+        "is_marker_1": False,
+        "round_suspects": {label: sorted(item.sites()) for label, item in zip(labels, suspects)},
+        "version_1": summary(1),
+        "version_2": summary(2),
+        "searches_with_a_split_or_a_v1_drop": len(splits),
+        "same_pulls_kept_by_both": same_choice,
+        "splits": splits,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Calibration on the clean-era DataForSEO history samples
+
+DATAFORSEO_HISTORY_DIR = "data/forecast/public/dataforseo_samples/google_history/serp_advanced"
+CALIBRATION_CONCENTRATION_SLOTS = (3, 4, 5)
+CALIBRATION_UBIQUITY_SLOTS = (3, 4, 5)
+CALIBRATION_LINK_SHARES = (0.3, 0.4, 0.5, 0.6)
+CALIBRATION_MAX_GAP_HOURS = 24.0
+CALIBRATION_DEPTHS = (TOP_DEPTH, HEADLINE_DEPTH)
+HISTORY_PROVIDER = "dataforseo-history-sample"
+
+
+@dataclass(frozen=True)
+class HistoryPage:
+    """One dated clean-era result page from a DataForSEO history sample. REAL.
+
+    `organic` holds (rank_group, site, url) for organic items only, best first,
+    with excluded sites dropped. `time_update` is the provider's UTC time.
+    """
+
+    locale: str
+    keyword: str
+    time_update: str
+    organic: tuple[tuple[int, str, str], ...]
+
+
+def iter_dataforseo_history_pages(
+    directory: str | Path = DATAFORSEO_HISTORY_DIR, *, locales: Sequence[str] | None = None
+) -> Iterator[HistoryPage]:
+    """Stream every dated result page of the history samples, one file and one line at a time.
+
+    Each file is `<CC>_<lang>.json.gz`, one keyword per line with
+    `serp_info_history`, a list of dated pages whose items of type "organic"
+    carry rank_group, domain, main_domain and url. The site is the registrable
+    domain of the url (main_domain when the url has none). Rows for excluded
+    sites are dropped. A page without a time is skipped, because it cannot be
+    dated. Files are read in name order, so the stream is deterministic.
+    """
+    folder = Path(directory)
+    files = sorted(folder.glob("*.json.gz"))
+    if not files:
+        raise FileNotFoundError(f"no *.json.gz files in {folder}")
+    wanted = set(locales) if locales is not None else None
+    for path in files:
+        locale = path.name[: -len(".json.gz")]
+        if wanted is not None and locale not in wanted:
+            continue
+        with gzip.open(path, "rt", encoding="utf-8") as handle:
+            for line in handle:
+                if not line.strip():
+                    continue
+                record = json.loads(line)
+                keyword = str(record.get("keyword") or "")
+                for page in record.get("serp_info_history") or []:
+                    stamp = page.get("time_update")
+                    if not keyword or not stamp:
+                        continue
+                    organic: list[tuple[int, str, str]] = []
+                    for item in page.get("serp") or []:
+                        if not isinstance(item, dict) or item.get("type") != "organic":
+                            continue
+                        try:
+                            rank = int(item.get("rank_group"))
+                        except (TypeError, ValueError):
+                            continue
+                        url = str(item.get("url") or "")
+                        site = site_key(url) if url else ""
+                        site = site or str(item.get("main_domain") or item.get("domain") or "").lower()
+                        if rank < 1 or not site or site in EXCLUDED_SITES:
+                            continue
+                        organic.append((rank, site, url))
+                    organic.sort(key=lambda entry: (entry[0], entry[2]))
+                    yield HistoryPage(locale=locale, keyword=keyword, time_update=utc_iso(parse_utc(str(stamp))),
+                                      organic=tuple(organic))
+
+
+def history_page_pull(page: HistoryPage, *, depth: int = TOP_DEPTH) -> Pull:
+    """A clean-era page as a `Pull`, cut to `depth`, so the reader's own functions judge it."""
+    spec = PullSpec(search=page.keyword, location_code=0, language_code=page.locale.split("_")[-1], device="desktop",
+                    depth=int(depth))
+    hits = tuple(
+        OrganicHit(rank=rank, url=url, domain=site, site=site) for rank, site, url in page.organic if rank <= depth
+    )
+    pull_id = "history-" + sha256_text(canonical_json([page.locale, page.keyword, page.time_update, depth]))[:24]
+    return Pull(pull_id=pull_id, provider=HISTORY_PROVIDER, endpoint="dataforseo history sample", spec=spec,
+                requested_at=page.time_update, completed_at=page.time_update, ok=True, hits=hits)
+
+
+def _rate(count: int, total: int) -> dict[str, Any]:
+    return {"count": count, "total": total, "rate": count / total if total else None}
+
+
+def calibrate_on_dataforseo_history(
+    directory: str | Path = DATAFORSEO_HISTORY_DIR,
+    *,
+    locales: Sequence[str] | None = None,
+    concentration_slots: Sequence[int] = CALIBRATION_CONCENTRATION_SLOTS,
+    ubiquity_slots_grid: Sequence[int] = CALIBRATION_UBIQUITY_SLOTS,
+    link_shares_grid: Sequence[float] = CALIBRATION_LINK_SHARES,
+    max_gap_hours: float = CALIBRATION_MAX_GAP_HOURS,
+) -> dict[str, Any]:
+    """False-alarm rates of the version 2 reader on clean-era pages (May 2025 to April 2026). REAL data.
+
+    - Signal (b) alone: the share of pages where one off-brand site holds at
+      least k of the top 10 slots, for each k, for English locales (`*_en`)
+      and for all locales.
+    - Splits: for re-pulls of one keyword in one locale less than
+      `max_gap_hours` apart (consecutive pages), the share that would land in
+      different clusters at each link share, at depth 50 (top 20 slots against
+      the top 50) and at depth 10 (top 10 against top 10, like the Serper pulls).
+    - Signal (c) alone: pages grouped into stand-in rounds of one locale and one
+      calendar month (the samples have no real pull rounds; a month holds more
+      searches than a round, so this overstates the suspects). The share of
+      pages with at least k top-10 slots held by unrelated round suspects.
+
+    Each locale is read and dropped before the next, so memory stays small.
+    """
+    concentration = {"en": Counter(), "all": Counter()}
+    pages_total = {"en": 0, "all": 0}
+    ubiquity = {"en": Counter(), "all": Counter()}
+    split_counts: dict[int, Counter[float]] = {depth: Counter() for depth in CALIBRATION_DEPTHS}
+    pair_total = {"en": 0, "all": 0}
+    split_en: dict[int, Counter[float]] = {depth: Counter() for depth in CALIBRATION_DEPTHS}
+    gaps: list[float] = []
+    locales_read: list[str] = []
+    first_time: str | None = None
+    last_time: str | None = None
+
+    current: str | None = None
+    bucket: list[HistoryPage] = []
+
+    def flush(pages: list[HistoryPage]) -> None:
+        nonlocal first_time, last_time
+        if not pages:
+            return
+        locale = pages[0].locale
+        locales_read.append(locale)
+        groups = ("all", "en") if locale.endswith("_en") else ("all",)
+        top = [history_page_pull(page) for page in pages]
+        for page, pull in zip(pages, top):
+            first_time = page.time_update if first_time is None or page.time_update < first_time else first_time
+            last_time = page.time_update if last_time is None or page.time_update > last_time else last_time
+            if not pull.hits:
+                continue
+            slots = off_brand_concentration(pull)[1]
+            for group in groups:
+                pages_total[group] += 1
+                for k in concentration_slots:
+                    concentration[group][k] += int(slots >= k)
+        by_month: dict[str, list[Pull]] = defaultdict(list)
+        for page, pull in zip(pages, top):
+            if pull.hits:
+                by_month[page.time_update[:7]].append(pull)
+        for month_pulls in by_month.values():
+            suspects = round_suspects(month_pulls)
+            for pull in month_pulls:
+                held = ubiquity_slots(pull, suspects)
+                for group in groups:
+                    for k in ubiquity_slots_grid:
+                        ubiquity[group][k] += int(held >= k)
+        by_keyword: dict[str, list[HistoryPage]] = defaultdict(list)
+        for page in pages:
+            if page.organic:
+                by_keyword[page.keyword].append(page)
+        for keyword_pages in by_keyword.values():
+            keyword_pages.sort(key=lambda page: page.time_update)
+            for older, newer in zip(keyword_pages, keyword_pages[1:]):
+                hours = (parse_utc(newer.time_update) - parse_utc(older.time_update)).total_seconds() / 3600.0
+                if hours >= max_gap_hours:
+                    continue
+                gaps.append(hours)
+                for group in groups:
+                    pair_total[group] += 1
+                for depth in CALIBRATION_DEPTHS:
+                    a, b = history_page_pull(older, depth=depth), history_page_pull(newer, depth=depth)
+                    share_a, share_b = link_shares(a, b)
+                    low = min(share_a or 0.0, share_b or 0.0)
+                    for threshold in link_shares_grid:
+                        split = low < threshold
+                        split_counts[depth][threshold] += int(split)
+                        if "en" in groups:
+                            split_en[depth][threshold] += int(split)
+
+    for page in iter_dataforseo_history_pages(directory, locales=locales):
+        if page.locale != current:
+            flush(bucket)
+            bucket = []
+            current = page.locale
+        bucket.append(page)
+    flush(bucket)
+
+    gaps.sort()
+    return {
+        "label": REAL,
+        "what": "False-alarm rates of reader version 2 on clean-era result pages. Not accuracy.",
+        "directory": str(directory),
+        "locales_read": len(locales_read),
+        "pages_dated_from": first_time,
+        "pages_dated_to": last_time,
+        "pages_with_organic_results": dict(pages_total),
+        "off_brand_concentration_flag": {
+            group: {str(k): _rate(concentration[group][k], pages_total[group]) for k in concentration_slots}
+            for group in ("en", "all")
+        },
+        "round_ubiquity_flag_month_rounds": {
+            group: {str(k): _rate(ubiquity[group][k], pages_total[group]) for k in ubiquity_slots_grid}
+            for group in ("en", "all")
+        },
+        "repulls_under_max_gap": {
+            "max_gap_hours": max_gap_hours,
+            "pairs": dict(pair_total),
+            "median_gap_hours": gaps[len(gaps) // 2] if gaps else None,
+            "split_rate_by_link_share": {
+                f"depth_{depth}": {
+                    "all": {str(t): _rate(split_counts[depth][t], pair_total["all"]) for t in link_shares_grid},
+                    "en": {str(t): _rate(split_en[depth][t], pair_total["en"]) for t in link_shares_grid},
+                }
+                for depth in CALIBRATION_DEPTHS
+            },
+        },
+        "chosen": {
+            "link_min_share": LINK_MIN_SHARE,
+            "concentration_min_slots": CONCENTRATION_MIN_SLOTS,
+            "ubiquity_min_slots": UBIQUITY_MIN_SLOTS,
+        },
+    }
+
+
+def _print_json(result: Any) -> None:
+    print(json.dumps(result, indent=2, sort_keys=True, ensure_ascii=False))
+
+
+def main(argv: Sequence[str]) -> int:
+    """`noise [root]` prints the dry run. `noise compare [root]` puts reader versions side by side.
+    `noise calibrate [directory] [locale ...]` measures the false-alarm rates on the clean-era samples.
+    """
+    args = list(argv)
+    if args and args[0] == "compare":
+        _print_json(compare_versions_on_committed_pulls(args[1] if len(args) > 1 else "."))
+    elif args and args[0] == "calibrate":
+        directory = args[1] if len(args) > 1 else DATAFORSEO_HISTORY_DIR
+        _print_json(calibrate_on_dataforseo_history(directory, locales=args[2:] or None))
+    else:
+        _print_json(dry_run_on_committed_pulls(args[0] if args else "."))
+    return 0
 
 
 if __name__ == "__main__":
-    _print_dry_run(sys.argv[1] if len(sys.argv) > 1 else ".")
+    raise SystemExit(main(sys.argv[1:]))

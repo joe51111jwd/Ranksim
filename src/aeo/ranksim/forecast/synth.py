@@ -60,6 +60,25 @@ Observation noise on top of the truth (all knobs in `SynthKnobs`):
   40106), failed pulls (status 50000, no hits), spell-corrected pulls (the list
   of a different search). Status codes copy DataForSEO's documented codes.
 
+Correlated poisoning (off by default, `poison_spell_minutes` 0). The REAL
+Serper pulls of 19 Nov 2026 show altered pages that are correlated inside one
+session: two pulls about 35 to 40 minutes apart got the same altered page, and
+the same directory sites (slashdot.org, itqlick.com, gitnux.org) were injected
+into many searches. With `poison_spell_minutes` above 0 the world models that:
+
+- time is cut, per search, into spells of `poison_spell_minutes` with a
+  per-search phase. A spell is altered with chance `poison_rate`;
+- inside an altered spell a pull gets the altered page with chance
+  `poison_spell_share`, so pulls minutes apart mostly share it and pulls hours
+  apart mostly do not. The per-pull rate is `poison_rate * poison_spell_share`;
+- the altered page is the same for every pull of the spell: one of
+  `poison_directories` injected directory sites (`bigdirectoryNN.example`,
+  shared by every search) fills `poison_run_low` to `poison_run_high` of the
+  top slots, a second directory takes one or two more, and the rest follows the
+  usual poisoned layout (fewer than half of the true sites in the top 20).
+
+These are SYNTHETIC modelling choices shaped after the REAL pulls, not fitted.
+
 Figures the noise is roughly calibrated to (from the maps, none re-measured here):
 
 - pull-to-pull disagreement on pairs: 7.0% same session, 10.1% 25 hours apart,
@@ -151,6 +170,8 @@ _SALT_NRD = 5
 _SALT_GSC = 6
 _SALT_LIST = 7
 _SALT_FORM = 8
+_SALT_SPELL = 9
+DIRECTORY_STEM = "bigdirectory"
 
 TERCILES = ("easy", "medium", "hard")
 
@@ -203,6 +224,12 @@ class SynthKnobs:
     partial_rate: float = 0.03
     fail_rate: float = 0.03
     spell_rate: float = 0.01
+    # Correlated poisoning (off when poison_spell_minutes is 0; see the module docstring).
+    poison_spell_minutes: float = 0.0
+    poison_spell_share: float = 0.9
+    poison_directories: int = 6
+    poison_run_low: int = 4
+    poison_run_high: int = 8
     # Dated lists (SYNTHETIC modelling choices).
     strength_publish_day: int = 10
     strength_data_lag_months: int = 1
@@ -762,6 +789,7 @@ class World:
 
     def _hits(self, sites: Sequence[str], search: str, repaired: bool) -> tuple[OrganicHit, ...]:
         hits: list[OrganicHit] = []
+        seen: dict[str, int] = {}
         for rank, site in enumerate(sites, start=1):
             if site in self._site_by_name:
                 url = self.url_of(site, search)
@@ -769,6 +797,9 @@ class World:
             else:
                 url = f"https://www.{site}/{'-'.join(search.split())}-deals"
                 title = f"{search.title()} deals and more"
+            seen[site] = seen.get(site, 0) + 1
+            if seen[site] > 1:  # a site holding several slots shows several pages, as injected directories do
+                url = f"{url}-{seen[site]}"
             hits.append(OrganicHit(rank=rank, url=url, domain=f"www.{site}", site=site, title=title,
                                    rank_absolute=rank, repaired=repaired))
         return tuple(hits)
@@ -789,6 +820,41 @@ class World:
         for slot in replace_slot:
             out.append(self._unrelated[strangers.pop()] if slot else next(kept))
         return out
+
+    def directory_sites(self) -> tuple[str, ...]:
+        """The injected directory sites of correlated poisoning. SYNTHETIC. Never a site of the world."""
+        return tuple(f"{DIRECTORY_STEM}{j:02d}.{TLD}" for j in range(max(0, int(self.knobs.poison_directories))))
+
+    def poison_spell(self, q: int, epoch: int) -> int | None:
+        """The altered spell a pull of search `q` at UTC second `epoch` falls in, or None. SYNTHETIC.
+
+        None when correlated poisoning is off or the spell is not altered.
+        """
+        k = self.knobs
+        if k.poison_spell_minutes <= 0:
+            return None
+        length = float(k.poison_spell_minutes) * 60.0
+        phase = float(self._rng(_SALT_SPELL, 0, q).uniform(0.0, length))
+        bucket = int(math.floor((int(epoch) + phase) / length))
+        altered = bool(self._rng(_SALT_SPELL, 1, q, bucket).random() < k.poison_rate)
+        return bucket if altered else None
+
+    def altered_page(self, q: int, t: int, bucket: int, length: int) -> list[str]:
+        """The altered page of one spell: the same list for every pull of the spell. SYNTHETIC."""
+        k = self.knobs
+        rng = self._rng(_SALT_SPELL, 2, q, bucket)
+        base = [self.sites[i].site for i in self.observed_order(q, t, None)[:length]]
+        directories = self.directory_sites()
+        head: list[str] = []
+        if directories:
+            order = list(rng.permutation(len(directories)))
+            low = max(0, int(k.poison_run_low))
+            high = max(low, int(k.poison_run_high))
+            head = [directories[order[0]]] * int(rng.integers(low, high + 1))
+            if len(order) > 1:
+                head += [directories[order[1]]] * int(rng.integers(1, 3))
+        rest = self._poison(base, rng)
+        return (head + rest)[:length]
 
     def monthly_snapshots(self, month: date | str) -> list[Pull]:
         """One country-level historical page per search for the month, up to 100 deep. SYNTHETIC.
@@ -1040,7 +1106,11 @@ class SyntheticSource:
         k = world.knobs
         failed = bool(u_fail < k.fail_rate)
         spell = (not failed) and bool(u_spell < k.spell_rate)
-        poisoned = (not failed) and bool(u_poison < k.poison_rate)
+        spell_bucket = world.poison_spell(q, epoch) if k.poison_spell_minutes > 0 else None
+        if k.poison_spell_minutes > 0:
+            poisoned = (not failed) and spell_bucket is not None and bool(u_poison < k.poison_spell_share)
+        else:
+            poisoned = (not failed) and bool(u_poison < k.poison_rate)
         repaired = (not failed) and (not poisoned) and bool(u_repair < k.repaired_rate)
         partial = (not failed) and bool(u_partial < k.partial_rate)
         served = q
@@ -1054,7 +1124,9 @@ class SyntheticSource:
         order = world.observed_order(served, t, rng)
         length = min(spec.depth, len(order))
         sites = [world.sites[i].site for i in order[:length]]
-        if poisoned:
+        if poisoned and spell_bucket is not None:
+            sites = world.altered_page(served, t, spell_bucket, length)
+        elif poisoned:
             sites = world._poison(sites, rng)
         if partial:
             sites = sites[: int(rng.integers(min(5, length), max(min(5, length) + 1, int(0.8 * length))))]

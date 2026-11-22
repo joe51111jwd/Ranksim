@@ -1,0 +1,9 @@
+# Newly Registered Domains (Last 10 days)
+# https://github.com/cenk/nrd
+# This file was generated from WhoisDS.com free NRD database
+# Last update: 26 Oct 2025 07:19:43 UTC
+# Domains: 4
+alreadylisted.com
+olderlist.net
+smartcrewhq.com
+zzzold.com

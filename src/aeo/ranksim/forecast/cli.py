@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import importlib
 import json
 import sys
 from dataclasses import dataclass, field, replace
@@ -1267,11 +1268,31 @@ REGISTRARS: tuple[Callable[[Any, argparse.ArgumentParser], None], ...] = (
 )
 
 
+# Command groups that live in their own modules. Each module exports REGISTRARS, a tuple of
+# functions with the same signature as the ones above, and imports this module for Context and
+# the shared helpers. They are loaded here, when the parser is built, so the import is one way.
+PLUGIN_MODULES: tuple[str, ...] = ("cli_forecasting", "cli_data")
+
+
+def _plugin_registrars() -> tuple[Callable[[Any, argparse.ArgumentParser], None], ...]:
+    found: list[Callable[[Any, argparse.ArgumentParser], None]] = []
+    for name in PLUGIN_MODULES:
+        full = f"{__package__}.{name}"
+        try:
+            module = importlib.import_module(full)
+        except ModuleNotFoundError as error:
+            if error.name != full:  # the module exists and one of its own imports is missing: say so
+                raise
+            continue
+        found.extend(module.REGISTRARS)
+    return tuple(found)
+
+
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog=PROG, description="Ranksim forecast: the measuring commands of the build plan.")
+    parser = argparse.ArgumentParser(prog=PROG, description="Ranksim forecast: the commands of the build plan.")
     sub = parser.add_subparsers(dest="command", required=True)
     common = _common()
-    for register in REGISTRARS:
+    for register in (*REGISTRARS, *_plugin_registrars()):
         register(sub, common)
     return parser
 

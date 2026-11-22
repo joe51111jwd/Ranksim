@@ -35,6 +35,22 @@ choice.
 
 Search Console positions are never outcomes. A reading dated after the forecast
 date is refused (asof.LeakError).
+
+Version 2 additions (both chosen on training-side rows only, never on held-out rows):
+
+- Time-aware calibration. Given each row's outcome date and the end of the
+  training period, the model's temperature and the updater's range level are
+  set on the most recent slice of their rows (placement.recent_slice: the last
+  90 days, at least 2,000 rows, else every row).
+- A rule for one segment: sites new to the search at the reading
+  (`choose_segment`). The idea of a separate rule comes from a version 1
+  held-out result (on those sites the updater scored 0.820 against 0.867 for
+  always NOT IN TOP 50). Which rule is used is decided on validation rows only,
+  by a frozen rule: the version in use stays unless a candidate (always NT50,
+  the table, the model) beats it on the segment's validation rows with a cluster
+  interval over searches whose lower bound is above zero; among those the
+  largest gain wins. `Updater.segment_rules` records the winner and
+  `Updater.segment_comparison` the validation numbers.
 """
 
 from __future__ import annotations
@@ -55,8 +71,9 @@ from .features import check_model_features
 from .grading import FINE_BANDS, RULE_V1, GradedCell, compare_to_baseline, fine_band_of
 from .placement import (
     BAND_RANGES,
+    CALIBRATION_RECENT_DAYS,
+    CALIBRATION_RECENT_MIN_ROWS,
     OUTCOMES,
-    PlacementError,
     apply_temperature,
     band_index,
     band_mass,
@@ -70,6 +87,7 @@ from .placement import (
     log_loss,
     matrix,
     normal_shapes,
+    recent_slice,
     reliability,
 )
 from .types import PREDICTED, REAL, SYNTHETIC, Forecast
@@ -87,6 +105,15 @@ CV_FOLDS = 3
 SD_FLOOR = 0.5
 MIN_ROWS_FOR_MODEL = 200
 VALIDATION_MARGIN = 0.0  # the model must beat the table with a lower interval bound above this
+# Segments with their own rule, and the column that marks a row as inside the segment (value 1).
+SEGMENT_COLUMNS: dict[str, str] = {"new_to_search": "new_to_search"}
+SEGMENT_CANDIDATES: tuple[str, ...] = ("always_nt50", "table", "model")
+SEGMENT_RULE = ("on the segment's validation rows, the version in use stays unless a candidate (always NT50, the table, "
+                "the model) beats it with a cluster interval over searches whose lower bound is above zero; among those "
+                "the largest gain wins")
+SEGMENT_ORIGIN = ("The idea of a separate rule for sites new to the search comes from the version 1 held-out result: on "
+                  "those sites the updater scored 0.820 against 0.867 for always NOT IN TOP 50. The rule itself is chosen "
+                  "on validation rows only.")
 
 # Columns of the version 2 model. Missing columns are NaN. GSC columns are NaN on the panel.
 READING_FEATURES: tuple[str, ...] = ("reading_position", "reading_in_top50", "reading_move", "readings_count")
@@ -385,8 +412,13 @@ class UpdaterModel:
 
 def fit_model(frame: pd.DataFrame, *, outcome_col: str = "position_out", group_col: str = "search_group",
               training_label: str, features: Sequence[str] = MODEL_FEATURES, seed: int = SEED,
-              calibration_share: float = 0.2) -> UpdaterModel:
-    """Fit version 2 on training rows (settings by grouped CV inside them; one temperature on a group-held calibration fold)."""
+              calibration_share: float = 0.2, calibration_date_col: str | None = None,
+              calibration_end: date | None = None, recent_days: float | None = CALIBRATION_RECENT_DAYS,
+              recent_min_rows: int = CALIBRATION_RECENT_MIN_ROWS) -> UpdaterModel:
+    """Fit version 2 on training rows (settings by grouped CV inside them; one temperature on a group-held calibration fold).
+
+    With `calibration_date_col` and `calibration_end` the temperature is set on the recent slice of the calibration
+    fold (placement.recent_slice); the trees are fitted on the same rows either way."""
     from .features import stable_share
 
     feats = check_model_features(features)
@@ -404,15 +436,30 @@ def fit_model(frame: pd.DataFrame, *, outcome_col: str = "position_out", group_c
     model = UpdaterModel(list(feats), text, rounds, params, 1.0, fit_spreads(reading[~is_cal], pos[~is_cal].astype(float)),
                          int((~is_cal).sum()), training_label, cv=cv)
     if is_cal.any():
-        raw = model.band_probabilities(frame[is_cal])
-        model.temperature = fit_temperature(raw, y[is_cal])
-        model.calibration = {"temperature": model.temperature,
-                             "after_temperature": reliability(apply_temperature(raw, model.temperature), y[is_cal])}
+        dates = frame[calibration_date_col].tolist() if calibration_date_col and calibration_date_col in frame else None
+        use, slice_record = recent_slice(dates, calibration_end, days=recent_days, min_rows=recent_min_rows, base=is_cal)
+        raw = model.band_probabilities(frame[use])  # temperature is still 1.0 here, so these are the raw probabilities
+        model.temperature = fit_temperature(raw, y[use])
+        model.calibration = {"temperature": model.temperature, "slice": slice_record,
+                             "after_temperature": reliability(apply_temperature(raw, model.temperature), y[use])}
     return model
 
 
 # ---------------------------------------------------------------------------
 # the updater in use
+
+
+def segment_mask(frame: pd.DataFrame, segment: str) -> np.ndarray:
+    """True per row inside the segment (its column equals 1). A missing value is outside: unknown is not new."""
+    col = SEGMENT_COLUMNS.get(segment, segment)
+    if col not in frame:
+        return np.zeros(len(frame), dtype=bool)
+    return (pd.to_numeric(frame[col], errors="coerce").to_numpy(dtype=float) == 1.0)
+
+
+def segment_flags(frame: pd.DataFrame) -> dict[str, np.ndarray]:
+    """segment_mask for every known segment."""
+    return {name: segment_mask(frame, name) for name in SEGMENT_COLUMNS}
 
 
 def prior_columns(prior_dists: np.ndarray) -> pd.DataFrame:
@@ -435,6 +482,9 @@ class Updater:
     reason: str
     range_level: float = RANGE_COVERAGE
     comparison: dict[str, Any] = field(default_factory=dict)
+    segment_rules: dict[str, str] = field(default_factory=dict)  # segment -> always_nt50, table or model
+    segment_comparison: dict[str, Any] = field(default_factory=dict)
+    range_calibration: dict[str, Any] = field(default_factory=dict)
 
     def version(self) -> str:
         chosen = self.table.version if self.in_use == "table" else self.model.version  # type: ignore[union-attr]
@@ -461,30 +511,87 @@ class Updater:
         rb, pb, lb, nv = _table_keys(work)
         return np.array([self.table.update_bands(prior_bands[i], rb[i], pb[i], lb[i], nv[i]) for i in range(len(work))])
 
-    def distributions(self, frame: pd.DataFrame, prior_dists: np.ndarray, which: str | None = None) -> np.ndarray:
-        """Updated 51-outcome distributions. PREDICTED."""
-        use = which or self.in_use
+    def _version_distributions(self, frame: pd.DataFrame, prior_dists: np.ndarray, use: str) -> np.ndarray:
         probs = self.band_probabilities(frame, prior_dists, use)
         spreads = self.table.spreads if use == "table" else self.model.spreads  # type: ignore[union-attr]
         reading = pd.to_numeric(frame["reading_position"], errors="coerce").to_numpy(dtype=float)
         return shape_with_reading(probs, prior_dists, reading, spreads)
 
+    def distributions(self, frame: pd.DataFrame, prior_dists: np.ndarray, which: str | None = None) -> np.ndarray:
+        """Updated 51-outcome distributions. PREDICTED.
+
+        `which` ("table" or "model") gives that version alone. Without it the version in use is applied, and on rows
+        inside a segment whose rule names the other version (`segment_rules`) that version is used there instead.
+        """
+        if which is not None:
+            return self._version_distributions(frame, prior_dists, which)
+        out = self._version_distributions(frame, prior_dists, self.in_use)
+        for segment, winner in self.segment_rules.items():
+            if winner in ("table", "model") and winner != self.in_use:
+                mask = segment_mask(frame, segment)
+                if mask.any():
+                    out[mask] = self._version_distributions(frame[mask].reset_index(drop=True), prior_dists[mask], winner)
+        return out
+
+    def point_rule(self, segments: Mapping[str, bool] | None = None) -> str | None:
+        """The fixed point a segment rule imposes ("always_nt50"), or None when the distribution's median is the point."""
+        for segment, inside in (segments or {}).items():
+            if inside and self.segment_rules.get(segment) == "always_nt50":
+                return "always_nt50"
+        return None
+
     def forecast(self, dist: np.ndarray, *, site: str, search: str, stage: str, as_of: date,
-                 notes: Mapping[str, Any] | None = None) -> Forecast:
+                 notes: Mapping[str, Any] | None = None, segments: Mapping[str, bool] | None = None) -> Forecast:
+        """A types.Forecast from one updated distribution. PREDICTED.
+
+        `segments` says which segments the row is in (for example {"new_to_search": True}). When the rule for one of
+        them is always NT50, the point is NT50; the range is the distribution's central interval widened to hold the
+        point, and the label still comes from the distribution.
+        """
         tail = (1.0 - self.range_level) / 2.0
         point = dist_median(dist)
+        rule = self.point_rule(segments)
+        if rule == "always_nt50":
+            point = NT50
         bands = band_mass(dist)
         extra = {"updater_in_use": self.in_use, "updater_reason": self.reason}
+        if rule:
+            extra["segment_rule"] = rule
         extra.update(dict(notes or {}))
         return Forecast(site=site, search=search, stage=stage, as_of=as_of, point=int(point),
                         range_low=int(min(dist_quantile(dist, tail), point)),
                         range_high=int(max(dist_quantile(dist, 1 - tail), point)), label=label_for(bands),
                         model_version=self.version(), probs={b: float(v) for b, v in zip(FINE_BANDS, bands)}, notes=extra)
 
+    def points(self, frame: pd.DataFrame, prior_dists: np.ndarray) -> list[int]:
+        """The points of the updater in use, segment rules included, one per row."""
+        dists = self.distributions(frame, prior_dists)
+        flags = segment_flags(frame)
+        out = []
+        for i, dist in enumerate(dists):
+            rule = self.point_rule({k: bool(v[i]) for k, v in flags.items()})
+            out.append(NT50 if rule == "always_nt50" else dist_median(dist))
+        return out
+
     def payload(self) -> dict[str, Any]:
         return {"table": self.table.payload(), "model": self.model.payload() if self.model else None,
                 "in_use": self.in_use, "reason": self.reason, "range_level": self.range_level,
-                "comparison": self.comparison}
+                "comparison": self.comparison, "segment_rules": dict(self.segment_rules),
+                "segment_comparison": self.segment_comparison, "range_calibration": self.range_calibration}
+
+    @classmethod
+    def from_payload(cls, data: Mapping[str, Any]) -> "Updater":
+        """The inverse of `payload`. Files written before version 2 have no segment rules and load without them."""
+        table = dict(data["table"])
+        model = dict(data["model"]) if data.get("model") else None
+        for item in (table, model):
+            if item is not None:
+                item.pop("_cached", None)
+        return cls(table=TransitionTable(**table), model=UpdaterModel(**model) if model else None,
+                   in_use=str(data["in_use"]), reason=str(data["reason"]), range_level=float(data["range_level"]),
+                   comparison=dict(data.get("comparison") or {}), segment_rules=dict(data.get("segment_rules") or {}),
+                   segment_comparison=dict(data.get("segment_comparison") or {}),
+                   range_calibration=dict(data.get("range_calibration") or {}))
 
     def sha256(self) -> str:
         text = json.dumps(_json_safe(self.payload()), sort_keys=True)
@@ -507,24 +614,30 @@ def _json_safe(value: Any) -> Any:
 
 def choose_version(table: TransitionTable, model: UpdaterModel | None, validation: pd.DataFrame,
                    prior_dists: np.ndarray, *, outcome_col: str = "position_out", search_col: str = "keyword_id",
-                   site_col: str = "site", margin: float = VALIDATION_MARGIN) -> Updater:
+                   site_col: str = "site", margin: float = VALIDATION_MARGIN, date_col: str | None = None,
+                   end: date | None = None, recent_days: float | None = CALIBRATION_RECENT_DAYS,
+                   recent_min_rows: int = CALIBRATION_RECENT_MIN_ROWS) -> Updater:
     """Decide which version is used, on validation rows held out of both fits, before any test row is scored.
 
     The model is used only when its hit rate under grading rule v1 minus the
     table's, on the same validation rows, has a cluster interval (over searches)
-    whose lower bound is above `margin`. The range level is set on the same
-    validation rows for the version chosen. The comparison is kept on the updater.
+    whose lower bound is above `margin`. The range level is set on validation rows
+    for the version chosen: all of them, or with `date_col` and `end` the recent
+    slice only (placement.recent_slice, dates only). The comparison is kept on the updater.
     """
     updater = Updater(table, model, "table", "")
     if len(validation) == 0:
         updater.reason = "no validation rows: the table is used"
         return updater
     actual, _ = _outcome_bands(validation, outcome_col)
+    dates = validation[date_col].tolist() if date_col and date_col in validation else None
+    recent, slice_record = recent_slice(dates, end, days=recent_days, min_rows=recent_min_rows, rows=len(validation))
+    updater.range_calibration = {"slice": slice_record}
     table_dists = updater.distributions(validation, prior_dists, "table")
     table_points = [dist_median(d) for d in table_dists]
     if model is None:
         updater.reason = "no version 2 model could be fitted: the table is used"
-        updater.range_level = choose_range_level(table_dists, actual)
+        updater.range_level = choose_range_level(table_dists[recent], actual[recent])
         return updater
     model_dists = updater.distributions(validation, prior_dists, "model")
     model_points = [dist_median(d) for d in model_dists]
@@ -541,17 +654,67 @@ def choose_version(table: TransitionTable, model: UpdaterModel | None, validatio
         updater.in_use = "model"
         updater.reason = (f"version 2 beat the table on {len(validation)} validation rows: "
                           f"{comparison['difference']:+.4f}, interval lower bound {low:+.4f}")
-        updater.range_level = choose_range_level(model_dists, actual)
+        updater.range_level = choose_range_level(model_dists[recent], actual[recent])
     else:
         updater.reason = ("version 2 did not beat the table on validation rows by a margin whose interval is above "
                           f"zero (difference {comparison['difference']}, lower bound {low}): the table is used")
-        updater.range_level = choose_range_level(table_dists, actual)
+        updater.range_level = choose_range_level(table_dists[recent], actual[recent])
     return updater
+
+
+def choose_segment(updater: Updater, validation: pd.DataFrame, prior_dists: np.ndarray, *, segment: str = "new_to_search",
+                   outcome_col: str = "position_out", search_col: str = "keyword_id", site_col: str = "site",
+                   margin: float = VALIDATION_MARGIN) -> dict[str, Any]:
+    """Choose the rule for one segment on VALIDATION rows only (SEGMENT_RULE), and record it on the updater.
+
+    Candidates: always NT50, the table and the model (when fitted). The default is the version in use. A candidate
+    replaces it on the segment only when its hit rate under grading rule v1 minus the default's, on the segment's
+    validation rows, has a cluster interval over searches whose lower bound is above `margin`; among those the
+    largest gain wins. Returns the record, which is also stored in `updater.segment_comparison[segment]`.
+    """
+    default = updater.in_use
+    mask = segment_mask(validation, segment)
+    record: dict[str, Any] = {"segment": segment, "rule": SEGMENT_RULE, "origin": SEGMENT_ORIGIN, "default": default,
+                              "validation_rows": int(mask.sum()), "validation_hit": {}, "gain_over_default": {}}
+    winner = default
+    if mask.any():
+        rows = validation[mask].reset_index(drop=True)
+        prior = np.asarray(prior_dists)[mask]
+        actual, _ = _outcome_bands(rows, outcome_col)
+        points: dict[str, list[int]] = {"always_nt50": [NT50] * len(rows)}
+        for version in ("table", "model"):
+            if version == "model" and updater.model is None:
+                continue
+            points[version] = [dist_median(d) for d in updater.distributions(rows, prior, version)]
+        sites = rows[site_col].astype(str).tolist() if site_col in rows else [""] * len(rows)
+        searches = rows[search_col].astype(str).tolist()
+        for name, pts in points.items():
+            record["validation_hit"][name] = float(np.mean([RULE_V1.is_hit(int(p), int(a)) for p, a in zip(pts, actual)]))
+        best_gain = None
+        for name in SEGMENT_CANDIDATES:
+            if name == default or name not in points:
+                continue
+            cells = [GradedCell(site=s, search=k, point=int(p), actual=int(a))
+                     for s, k, p, a in zip(sites, searches, points[name], actual)]
+            comp = compare_to_baseline(cells, points[default], RULE_V1, cluster_by="search")
+            record["gain_over_default"][name] = comp
+            low = comp["difference_interval"][0]
+            if low is not None and low > margin and (best_gain is None or comp["difference"] > best_gain):
+                winner, best_gain = name, comp["difference"]
+        record["why"] = (f"{winner} beat the version in use ({default}) on {len(rows)} validation rows of the segment "
+                         f"with a lower bound above {margin}" if winner != default else
+                         f"no candidate beat the version in use ({default}) with a lower bound above {margin}")
+    else:
+        record["why"] = "no validation rows in the segment: the version in use stays"
+    record["winner"] = winner
+    updater.segment_rules[segment] = winner
+    updater.segment_comparison[segment] = record
+    return record
 
 
 __all__ = [
     "LEAD_BUCKETS", "MODEL_FEATURES", "NO_READING", "Reading", "TransitionTable", "UPDATER_MODEL_VERSION",
-    "UPDATER_TABLE_VERSION", "Updater", "UpdaterError", "UpdaterModel", "choose_version", "fit_model", "fit_spreads",
-    "fit_table", "lead_bucket", "prior_columns", "reading_band", "reading_columns", "shape_with_reading",
-    "usable_readings",
+    "UPDATER_TABLE_VERSION", "Updater", "UpdaterError", "UpdaterModel", "choose_segment", "choose_version", "fit_model",
+    "fit_spreads", "fit_table", "lead_bucket", "prior_columns", "reading_band", "reading_columns", "segment_flags",
+    "segment_mask", "shape_with_reading", "usable_readings", "SEGMENT_COLUMNS", "SEGMENT_RULE", "SEGMENT_ORIGIN",
 ]

@@ -496,3 +496,15 @@ def test_snippet_report_strength_line_uses_exactly_the_pairs_of_its_content_scor
             assert content["pairs"] == strength["pairs"] and strength["unscored_pairs"] == 0, (score, subset)
     assert by[(10, "lex_snippet", "cross-site, domain rank known")]["pairs"] == 36
     assert by[(10, "ce_snippet", "cross-site, domain rank known")]["pairs"] == 60
+
+
+def test_snippet_sample_drops_an_excluded_site_however_it_is_spelled(tmp_path: Path):
+    base = _panel(tmp_path)
+    for locale in ("US_en", "GB_en", "FR_fr"):
+        part = base / f"locale={locale}" / f"part-{locale}.parquet"
+        frame = pd.read_parquet(part)
+        frame.loc[frame["rank"] == 2, "site"] = "WWW.SmartCrewHQ.com "
+        frame.to_parquet(part, index=False)
+    rows = E.sample_dfs_searches(base, ["US_en", "GB_en"], 6, seed=7)
+    assert len(rows) and not rows["site"].str.lower().str.contains("smartcrewhq").any()
+    assert 2 not in set(rows["rank"])

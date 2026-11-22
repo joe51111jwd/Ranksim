@@ -393,7 +393,7 @@ def test_backtest_refuses_to_run_without_the_preregistered_trust_model(tmp_path,
     from aeo.ranksim.forecast import trust as T
 
     monkeypatch.setenv("RANKSIM_FORECAST_DIR", str(tmp_path / "data"))
-    files = S.model_files(1)
+    files = S.model_files(B.STRENGTH_MODEL_VERSION)
     files["score"].parent.mkdir(parents=True)
     stub = S.StrengthScore(tuple(S.MODEL_MEASURES), {m: 0.0 for m in S.MODEL_MEASURES}, {m: 1.0 for m in S.MODEL_MEASURES},
                            {n: 0.0 for m in S.MODEL_MEASURES for n in (m, f"{m}__missing")}, 1.0)
@@ -456,3 +456,206 @@ def test_version_1_panel_designs_still_hash_to_their_frozen_sha_and_version_2_si
     sha2 = B.freeze_spec(v2["A"], tmp_path, design_version=2, code=True)
     assert (tmp_path / v2["A"].name / "prereg.json").is_file() and (tmp_path / v2["A"].name / "prereg-v2.json").is_file()
     assert B.require_spec(specs["A"], tmp_path) == sha and B.require_spec(v2["A"], tmp_path, design_version=2) == sha2
+
+
+# ---------------------------------------------------------------------------
+# version 2: out-of-fold model inputs, stand-in reports, reports written at the end, v2 wiring
+
+
+class _ConstScore:
+    def __init__(self, value: float):
+        self.value = value
+
+    def score(self, frame):
+        return np.full(len(frame), self.value, dtype=float)
+
+
+class _ConstTrust(_ConstScore):
+    def predict(self, frame):
+        return np.full(len(frame), self.value, dtype=float)
+
+
+def _oof_inputs(sp, pages, cells, *, leak_site: str | None = None) -> B.ModelInputs:
+    from aeo.ranksim.forecast.trust import FoldTrust
+
+    groups = set(pages["search_group"].astype(str))
+    sites = set(sp["site"].astype(str))
+    folds = {}
+    for a in range(3):
+        for b in range(3):
+            fit_groups = frozenset(g for g in groups if B.oof_search_fold(g) != a)
+            fit_sites = frozenset(s for s in sites if B.oof_site_fold(s) != b)
+            if leak_site is not None:
+                fit_sites = fit_sites | {leak_site}
+            folds[(a, b)] = FoldTrust(_ConstTrust(100 * a + 10 * b + 1), a, b, fit_groups, fit_sites, 10, date(2025, 12, 31))
+    score_groups = {k: frozenset(g for g in groups if B.oof_search_fold(g) != k) for k in range(3)}
+    return B.ModelInputs(main_score=_ConstScore(-5.0), main_trust=_ConstTrust(-1.0),
+                         main_excludes_search=lambda kw: kw == "roofer", main_excludes_site=lambda s: True,
+                         fold_scores={k: _ConstScore(float(k)) for k in range(3)}, fold_score_groups=score_groups,
+                         fold_trust=folds)
+
+
+def _stub_strength(monkeypatch):
+    from aeo.ranksim.forecast.features import MEASURES, RAW_STRENGTH_KEYS
+
+    def lookup(site_dates, log=None):
+        out = site_dates[["site", "as_of"]].drop_duplicates().copy()
+        out["as_of"] = [B.as_date(d) for d in out["as_of"]]
+        for col in (*RAW_STRENGTH_KEYS, *MEASURES):
+            out[col] = np.nan
+        return out
+
+    monkeypatch.setattr(B, "strength_lookup", lookup)
+
+
+def test_training_rows_take_trust_and_strength_out_of_fold_and_test_rows_the_main_models(monkeypatch):
+    _stub_strength(monkeypatch)
+    sp, pages = _toy_panel()
+    cells, _ = B.reading_cells(sp, pages, 28, 130)
+    cells[B.INPUT_MODE_COL] = np.where(cells["keyword"] == "roofer", "main", "fold")
+    inputs = _oof_inputs(sp, pages, cells)
+    out = B.add_site_features(cells, sp, pages, score=None, trust_model=None, evidence=None, cuts=[], inputs=inputs)
+    fold = out[out[B.INPUT_MODE_COL] == "fold"]
+    main = out[out[B.INPUT_MODE_COL] == "main"]
+    assert len(fold) and len(main)
+    for _, row in fold.iterrows():
+        a, b = B.oof_search_fold(row["search_group"]), B.oof_site_fold(row["site"])
+        assert row["trust_pred"] == 100 * a + 10 * b + 1 and row["own_score"] == float(a)
+        assert row[B.INPUTS_MODEL_COL] == f"fold-a{a}-b{b}"
+    assert (main["trust_pred"] == -1.0).all() and (main["own_score"] == -5.0).all()
+    assert B.in_sample_model_inputs(fold)["rows"] == 0 and B.in_sample_model_inputs(main)["rows"] == 0
+    # The check reads what each model was fitted on: a fold model that saw a row's own site is caught.
+    leaky = _oof_inputs(sp, pages, cells, leak_site="a.com")
+    out2 = B.add_site_features(cells, sp, pages, score=None, trust_model=None, evidence=None, cuts=[], inputs=leaky)
+    caught = B.in_sample_model_inputs(out2[out2[B.INPUT_MODE_COL] == "fold"])
+    assert caught["own_site_in_fit"] == int((out2.loc[out2[B.INPUT_MODE_COL] == "fold", "site"] == "a.com").sum()) > 0
+
+
+def test_a_page_with_both_held_out_and_training_rows_is_refused(monkeypatch):
+    _stub_strength(monkeypatch)
+    sp, pages = _toy_panel()
+    cells, _ = B.reading_cells(sp, pages, 28, 130)
+    cells[B.INPUT_MODE_COL] = ["main"] + ["fold"] * (len(cells) - 1)
+    with pytest.raises(B.BacktestRefusal, match="both held-out and training"):
+        B.add_site_features(cells, sp, pages, score=None, trust_model=None, evidence=None, cuts=[],
+                            inputs=_oof_inputs(sp, pages, cells))
+
+
+def test_panel_reports_are_stand_ins_so_markers_never_pass_or_fail_on_them():
+    cells = _cells(stage="upload")
+    train = [GradedCell(site=f"t{i}", search=f"tq{i}", point=NT50, actual=NT50) for i in range(40)]
+    args = dict(stage="upload", as_of=date(2026, 5, 1), model_version="m", outcome_dates=[date(2026, 4, 1)] * 120,
+                as_ofs=[date(2026, 2, 1)] * 120, band_prior_training=train, held_out=[True] * 120)
+    base = {"persistence": [NT50] * 120, "site_strength": [NT50] * 120}
+    report = B.backtest_report(cells, base, stand_in_reason=B.STAND_IN_REASON, **args)
+    assert report["stand_in"] is True and report["stand_in_reason"] == B.STAND_IN_REASON
+    verdict = evaluate_marker(3, report)
+    assert verdict["passed"] is None and verdict["stand_in"] is True and "stand_in_passed" in verdict
+    d30 = B.backtest_report(_cells(), base, stand_in_reason=B.STAND_IN_REASON, **{**args, "stage": "d30"})
+    verdict4 = evaluate_marker(4, d30)
+    assert verdict4["passed"] is None and verdict4["stand_in"] is True
+    plain = B.backtest_report(cells, base, **args)
+    assert "stand_in" not in plain and evaluate_marker(3, plain)["passed"] in (True, False)
+
+
+def test_backtest_report_is_built_by_the_shared_report_code_and_keeps_the_version_1_keys():
+    from pathlib import Path
+
+    from aeo.ranksim.forecast.grading import headline
+
+    v1 = json.loads((Path(__file__).resolve().parents[1] / "evals" / "forecast" / "backtest" / "panel_a_reading_to_outcome"
+                     / "report-v1.json").read_text())["windows"]["lead_28_74"]["all"]
+    cells = _cells()
+    base = {"persistence": [c.point for c in cells], "site_strength": [NT50] * len(cells)}
+    train = [GradedCell(site=f"t{i}", search=f"tq{i}", point=NT50, actual=NT50 if i % 2 else 30) for i in range(60)]
+    report = B.backtest_report(cells, base, stage="d30", as_of=date(2026, 5, 1), model_version="m",
+                               outcome_dates=[date(2026, 4, 1)] * 120, as_ofs=[date(2026, 2, 1)] * 120,
+                               band_prior_training=train, held_out=[True] * 120, stand_in_reason=B.STAND_IN_REASON)
+    extras = {"by_difficulty_all_forecasters", "by_reading_band", "cell_counts", "counts", "design", "marker_4_on_stand_in",
+              "page_one_counts", "point_diagnostics", "prereg_sha256", "prior_model", "train_rows", "updater",
+              "updater_versions_on_test", "validation_rows", "window_days"}  # written by the panel run, not the report
+    assert set(v1) - extras <= set(report)
+    assert report["excluded_not_held_out"] == 0 and report["chain"]["ok"] is None
+    assert report["headline"]["summary"]["cluster_by"] == "site"
+    same = headline(cells, {**base, "band_prior": B.band_prior_points(report["band_prior"], cells)}, cluster_by="site")
+    assert same["summary"]["hit"] == report["headline"]["summary"]["hit"]
+    assert same["baselines"]["band_prior"] == report["headline"]["baselines"]["band_prior"]
+    assert report["by_lead_days"] and set(report["by_lead_days"]) <= {b[0] for b in B.LEAD_BINS} | {"unknown"}
+
+
+def test_a_run_that_crashes_part_way_writes_no_report(tmp_path, monkeypatch):
+    from aeo.ranksim.forecast import features as F
+
+    monkeypatch.setenv("RANKSIM_FORECAST_DIR", str(tmp_path / "data"))
+    forecaster = type("F", (), {"points": lambda self, frame: np.full(len(frame), NT50)})()
+    monkeypatch.setattr(B, "_load_models", lambda log, **kw: (_ConstScore(0.0), forecaster, None))
+    monkeypatch.setattr(F.StartEvidence, "load", classmethod(lambda cls, sites, root=None, live=False: cls({})))
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("crash in test A")
+
+    monkeypatch.setattr(B, "reading_cells", boom)
+    sp, pages = _toy_panel()
+    specs = B.panel_specs(B.PanelDesign(), gaps={}, cuts=[])
+    shas = {key: "sha-" + key for key in specs}
+    with pytest.raises(RuntimeError, match="crash in test A"):
+        B._run_panel_body(sp, pages, B.PanelDesign(), specs, shas, [], tmp_path / "evals", None, rehearsal=True)
+    assert not list((tmp_path / "evals").rglob("report-v*.json")) and not list((tmp_path / "evals").rglob("manifest-v*.json"))
+
+
+def test_version_2_designs_load_the_version_2_models_and_record_the_new_rules():
+    assert B.models_for_design(1) == {"strength_version": 1, "trust_name": "trust-v1-free-lexical-all"}
+    assert B.models_for_design(2) == {"strength_version": 2, "trust_name": "trust-v2-free-lexical-all"}
+    paths = B.model_paths(**B.models_for_design(2))
+    assert paths["strength_score"].name == "strength-v2-score.json" and paths["trust"].name == "trust-v2-free-lexical-all.json"
+    v2, _ = _frozen_panel_specs(version=2, reason="second look")
+    rules = v2["A"].thresholds["version_2_rules"]
+    assert rules["models"] == {"strength": "strength-v2", "trust": "trust-v2-free-lexical-all", "missing_model": "refused"}
+    assert rules["out_of_fold_inputs"]["folds"] == B.OOF_FOLDS
+    assert "0.820 against 0.867" in rules["new_to_search_rule"]["origin"]
+    assert "90" in rules["calibration"]["rule"] and "stand_in" in rules["report_code"]
+
+
+def test_rehearsal_sides_leave_out_the_real_splits_held_out_sites():
+    from aeo.ranksim.forecast.strength import DEFAULT_SPLIT, REHEARSAL_SPLIT
+
+    sites = [f"site{i}.com" for i in range(200)]
+    test_kw = next(k for k in (f"search {i}" for i in range(400)) if REHEARSAL_SPLIT.search_is_test(k))
+    train_kw = next(k for k in (f"search {i}" for i in range(400)) if not REHEARSAL_SPLIT.search_is_test(k))
+    cells = pd.DataFrame({"site": sites * 2, "keyword": [test_kw] * 200 + [train_kw] * 200,
+                          "test_search": [True] * 200 + [False] * 200, "search_group": ["g1"] * 200 + ["g2"] * 200,
+                          "as_of": [date(2025, 11, 1)] * 200 + [date(2025, 6, 1)] * 200,
+                          "outcome_date": [date(2025, 12, 20)] * 200 + [date(2025, 8, 1)] * 200})
+    B._ACTIVE_SPLIT.append(REHEARSAL_SPLIT)
+    try:
+        train, val, test = B._sides(cells, B.PanelDesign(validation_share=0.0))
+    finally:
+        B._ACTIVE_SPLIT.pop()
+    used = cells.loc[train | val | test, "site"]
+    assert len(used) and not any(DEFAULT_SPLIT.site_is_test(s) for s in used)
+    assert test.any() and all(REHEARSAL_SPLIT.site_is_test(s) for s in cells.loc[test, "site"])
+
+
+def test_the_forecast_core_applies_the_new_site_rule_of_the_updater():
+    from aeo.ranksim.forecast.updater import choose_segment, choose_version, fit_table
+
+    rng = np.random.default_rng(3)
+    n = 900
+    read = rng.integers(1, 51, n).astype(float)
+    frame = pd.DataFrame({"x": rng.normal(size=n), "reading_position": read, "lead_days": 60.0,
+                          "new_to_search": np.where(np.arange(n) % 2 == 0, 1.0, 0.0), "site": [f"s{i}" for i in range(n)],
+                          "search": [f"q{i % 90}" for i in range(n)], "keyword_id": [f"q{i % 90}" for i in range(n)],
+                          "search_group": [f"q{i % 90}" for i in range(n)], "as_of": date(2025, 6, 1)})
+    frame["position_out"] = np.where(frame["new_to_search"] == 1.0, NT50, read.astype(int))
+    placement = fit_placement(frame.assign(position_out=NT50 - 1), ["x"], training_label=REAL)
+    prior = placement.distributions(frame)
+    from aeo.ranksim.forecast.updater import prior_columns
+
+    work = pd.concat([frame, prior_columns(prior)], axis=1)
+    table = fit_table(work.assign(new_to_search=0.0, position_out=read.astype(int)), training_label=REAL)
+    updater = choose_version(table, None, work, prior)
+    assert choose_segment(updater, work, prior)["winner"] == "always_nt50"
+    _, forecasts = B.forecast_frame(frame, B.ForecastModels(placement=placement, updater=updater), stage="d30")
+    points = np.array([f.point for f in forecasts])
+    assert (points[frame["new_to_search"].to_numpy() == 1.0] == NT50).all()
+    assert (points[frame["new_to_search"].to_numpy() == 0.0] != NT50).any()

@@ -56,7 +56,7 @@ import numpy as np
 import pandas as pd
 
 from .asof import as_date
-from .config import BOOTSTRAP_DRAWS, BOOTSTRAP_SEED, NT50, TOP_DEPTH, forecast_paths
+from .config import BOOTSTRAP_DRAWS, BOOTSTRAP_SEED, NT50, forecast_paths
 from .features import (
     LINK_COUNT_MEASURE,
     MEASURE_LABELS,
@@ -389,6 +389,35 @@ def fit_strength_score(
     coef = dict(zip(proto.names(), [float(v) for v in model.coef_[0]]))
     return StrengthScore(tuple(measures), means, scales, coef, float(best_c),
                          cv={"pair_accuracy_by_C": cv, "pairs": int(len(d)), "folds": CV_FOLDS})
+
+
+def training_page_rows(rows: pd.DataFrame) -> pd.DataFrame:
+    """The page rows the strength score is fitted on, as `run` picks them: side "train", page depth at least
+    MIN_DEPTH_TOP, rank 1 to 100, sorted by page code then rank."""
+    sub = rows[(rows["side"] == "train") & (rows["snapshot_depth"] >= MIN_DEPTH_TOP) & (rows["rank100"] <= 100)]
+    return sub.sort_values(["page_code", "rank100"], kind="mergesort").reset_index(drop=True)
+
+
+def fit_fold_scores(rows: pd.DataFrame, folds: np.ndarray, count: int, *, seed: int = SEED) -> dict[int, StrengthScore]:
+    """One strength score per search fold, each fitted by `fit_strength_score` without the rows of its fold.
+
+    `rows` are training page rows (`training_page_rows`), `folds` one fold number per row from its search group.
+    A backtest training row in fold k takes its strength score from model k, which never saw its own search's
+    pages, as a held-out row's search is never in the scored strength model. Returns {k: score}; the score records
+    the search groups it was fitted on in `cv["search_groups_sha256"]` and `cv["search_groups"]`.
+    """
+    out: dict[int, StrengthScore] = {}
+    fold_arr = np.asarray(folds)
+    for k in range(count):
+        sub = rows[fold_arr != k].reset_index(drop=True)
+        score = fit_strength_score(sub, seed=seed)
+        groups = sorted(set(sub["search_group"].astype(str)))
+        score.version = f"{STRENGTH_VERSION}-oof-fold{k}"
+        score.cv["fold"] = k
+        score.cv["search_groups"] = len(groups)
+        score.cv["search_groups_sha256"] = hashlib.sha256("\n".join(groups).encode("utf-8")).hexdigest()
+        out[k] = score
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -1045,6 +1074,8 @@ def run(split: SplitRule = DEFAULT_SPLIT, *, out_dir: str | Path | None = None, 
     if rehearsal:  # rehearsals stay rerunnable and write only under the cache
         folder.mkdir(parents=True, exist_ok=True)
         (folder / "report.json").write_text(json.dumps(report, indent=2, sort_keys=True, default=_json_default), encoding="utf-8")
+        score.version = f"strength-v{int(version)}"
+        write_rehearsal_models(folder, version, score, model)
         return report
     assert context is not None
     files = model_files(version, models_dir)
@@ -1059,6 +1090,29 @@ def run(split: SplitRule = DEFAULT_SPLIT, *, out_dir: str | Path | None = None, 
     finish_scored_run(context, report, default=_json_default,
                       extra={"name": REPORT_NAME, "model_files": {k: str(files[k]) for k in shas}, "model_sha256": shas})
     return report
+
+
+def rehearsal_models_dir(folder: str | Path) -> Path:
+    """Where a rehearsal writes its strength model files: under the rehearsal folder in the cache."""
+    return Path(folder) / "models"
+
+
+def write_rehearsal_models(folder: str | Path, version: int, score: StrengthScore,
+                           forecaster: StrengthOnlyForecaster) -> dict[str, Path]:
+    """Write a rehearsal's score and forecaster in the scored file layout (with the sha256 manifest), replacing the
+    previous rehearsal's files. Only under the cache: the scored files are written once by `run` and never replaced."""
+    files = model_files(version, rehearsal_models_dir(folder))
+    files["score"].parent.mkdir(parents=True, exist_ok=True)
+    shas = {}
+    for kind, data in (("score", score.to_dict()), ("forecaster", forecaster.to_dict())):
+        text = json.dumps(data, indent=2, sort_keys=True, default=_json_default)
+        files[kind].write_text(text, encoding="utf-8")
+        shas[kind] = hashlib.sha256(text.encode("utf-8")).hexdigest()
+    files["manifest"].write_text(json.dumps({"design_version": int(version), "rehearsal": True, "label": PREDICTED,
+                                             "files": {k: files[k].name for k in shas}, "sha256": shas,
+                                             "fitted_on": "rehearsal training pages (inside the training side)"},
+                                            indent=2, sort_keys=True), encoding="utf-8")
+    return files
 
 
 def _checked_text(target: Path, kind: str) -> str:

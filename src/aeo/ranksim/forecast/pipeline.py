@@ -7,10 +7,10 @@ and no real sleeping.
 What is REAL here: pulls and clean readings from a paid provider (DataForSEO
 or Serper), the marker 1 agreement numbers computed from them, and grades of
 stored forecasts against later clean readings. What is PREDICTED here:
-forecasts. The only forecasts this module makes are the persistence
-placeholders of `demo` (model version "persistence-v0"): each one copies the
-latest clean reading, and they exist only so the scoreboard path runs before
-the real models exist. What is SYNTHETIC: everything `demo` produces, and
+forecasts. `demo` makes them through forecasting.py, the same live path the
+upload and update commands use; `persistence_forecast` (model version
+"persistence-v0") is kept as a placeholder helper and is no model. What is
+SYNTHETIC: everything `demo` produces, and
 every reading taken with the synthetic source. The reader labels a reading
 built from synthetic pulls SYNTHETIC, and such readings are never accuracy.
 
@@ -1718,10 +1718,13 @@ def stage_calendar(scoreboard: Scoreboard, today: date, *, window_days: int = ST
 
     A stage's forecast is dated on or before its stage day (launch + config.STAGE_DAYS), and the
     scoreboard refuses one dated later or written more than a day after its date. So the stage job
-    must run on or before the stage day. A stage whose day is before `today` with no forecast on the
-    scoreboard is MISSED: it is reported, and it is never backfilled (a later forecast would be a
-    shorter lead, never that stage).
+    must run on or before the stage day, or at the latest FORECAST_FROZEN_GAP_DAYS after it with the
+    forecast dated on the stage day: such a stage is still listed as due, with `last_day_to_record`.
+    A stage with no forecast on the scoreboard whose last day to record has passed is MISSED: it is
+    reported, and it is never backfilled (a later forecast would be a shorter lead, never that stage).
     """
+    from .config import FORECAST_FROZEN_GAP_DAYS
+
     with Session(scoreboard.engine) as session:
         sites = session.scalars(select(SiteRow).where(SiteRow.source.in_(("seed", "pilot"))).order_by(SiteRow.site)).all()
         made = {(row.site, row.stage) for row in session.scalars(select(ForecastRow)).all()}
@@ -1731,11 +1734,12 @@ def stage_calendar(scoreboard: Scoreboard, today: date, *, window_days: int = ST
     for site, source, launch in site_rows:
         for stage, offset in STAGE_DAYS.items():
             day = launch + timedelta(days=offset)
+            last = day + timedelta(days=FORECAST_FROZEN_GAP_DAYS)
             entry = {"site": site, "source": source, "stage": stage, "stage_date": day.isoformat(),
-                     "recorded": (site, stage) in made}
+                     "last_day_to_record": last.isoformat(), "recorded": (site, stage) in made}
             if entry["recorded"]:
                 continue
-            if day < today:
+            if last < today:
                 missed.append(entry)
             elif day <= today + timedelta(days=window_days):
                 due.append(entry)

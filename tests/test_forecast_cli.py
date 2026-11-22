@@ -260,12 +260,15 @@ def test_forwarder_only_takes_forecast_in_the_command_position():
 # Exit codes
 
 
-def test_exit_codes(tmp_path):
+def test_exit_codes(tmp_path, monkeypatch):
+    from aeo.ranksim.forecast import forecasting
+
     data = tmp_path / "data"
     assert run(["no-such-command"], data)[0] == 2
     assert run(["budget"], data)[0] == 2
     assert run(["status"], data)[0] == 0
-    assert run(["marker", "--number", "2", "--source", "seed"], data)[0] == 2
+    monkeypatch.setattr(forecasting, "newest_trust_report", lambda root=None: None)
+    assert run(["marker", "--number", "2"], data)[0] == 1  # no scored trust report: marker 2 cannot be judged
     assert run(["marker", "--number", "5", "--source", "seed", "--as-of", "2027-03-19"], data)[0] == 1
     assert run(["seeds", "validate", "--manifest", str(tmp_path / "missing.json")], data)[0] == 2
     out = io.StringIO()
@@ -749,3 +752,15 @@ def test_assemble_run_early_then_late_keeps_one_reading_and_says_pulls_were_left
     same_day = [r for r in pipeline.stored_readings(board, "plumber 0", location_code=1026201) if r.taken_at.startswith(day)]
     board.close()
     assert len(same_day) == 1
+
+
+def test_read_round_says_the_paid_pulls_of_a_round_that_failed_part_way_are_stored(tmp_path, monkeypatch):
+    summary = pipeline.RoundRunSummary(provider="dataforseo", label="REAL", searches=2, pulls_returned=2, pulls_ok=1,
+                                       failed="the budget guard refused the second task_post.", freeze_name="read_round.x",
+                                       spent_usd=None, started_at="2026-11-23T09:00:00Z", finished_at="2026-11-23T09:01:00Z")
+    monkeypatch.setattr(cli, "_dry_run_or_refuse", lambda *args, **kwargs: None)
+    monkeypatch.setattr(cli.Context, "source", lambda self, *args, **kwargs: object())
+    monkeypatch.setattr(pipeline, "read_round", lambda *args, **kwargs: summary)
+    code, out, _ = run(["read-round", "--search", "plumber 0", "--location-code", "1026201", "--execute"], tmp_path / "d")
+    assert code == 1
+    assert "failed part way" in out and "were paid for and are stored" in out and "stored nothing" not in out

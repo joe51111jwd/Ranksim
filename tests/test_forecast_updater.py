@@ -140,3 +140,94 @@ def test_prior_columns_follow_the_median():
     assert list(cols["prior_band"]) == ["NT50", "1-3"]
     assert cols["prior_point"].tolist() == [float(dist_median(prior[0])), float(dist_median(prior[1]))]
     assert np.allclose(band_mass(prior)[:, -1], cols["prior_p_NT50"])
+
+
+# ---------------------------------------------------------------------------
+# version 2: the rule for sites new to the search, time-aware calibration
+
+
+def _persistence_rows(n: int, seed: int, *, new: float, outcome_nt50: bool = False, prefix: str = "q") -> pd.DataFrame:
+    rng = np.random.default_rng(seed)
+    read = rng.integers(1, 51, n).astype(float)
+    out = np.full(n, NT50) if outcome_nt50 else read.astype(int)
+    return pd.DataFrame({"reading_position": read, "prior_band": "NT50", "lead_days": 60, "new_to_search": new,
+                         "position_out": out, "search_group": [f"{prefix}{i % 80}" for i in range(n)],
+                         "keyword_id": [f"{prefix}{i % 80}" for i in range(n)], "site": [f"{prefix}s{i}" for i in range(n)]})
+
+
+def _flat_prior(n: int) -> np.ndarray:
+    return np.tile(_prior([0.2, 0.2, 0.2, 0.2, 0.2]), (n, 1))
+
+
+def test_new_site_rule_switches_to_always_nt50_only_when_it_beats_the_version_in_use_on_validation():
+    train = pd.concat([_persistence_rows(800, 1, new=0.0), _persistence_rows(800, 2, new=1.0, prefix="r")], ignore_index=True)
+    table = U.fit_table(train, training_label=REAL)
+    val = pd.concat([_persistence_rows(400, 3, new=0.0, prefix="v"),
+                     _persistence_rows(400, 4, new=1.0, outcome_nt50=True, prefix="w")], ignore_index=True)
+    updater = U.choose_version(table, None, val, _flat_prior(len(val)))
+    record = U.choose_segment(updater, val, _flat_prior(len(val)))
+    assert record["winner"] == "always_nt50" and updater.segment_rules == {"new_to_search": "always_nt50"}
+    assert record["validation_rows"] == 400 and record["validation_hit"]["always_nt50"] == 1.0
+    assert record["gain_over_default"]["always_nt50"]["difference_interval"][0] > 0
+    assert "0.820 against 0.867" in record["origin"]
+    dist = updater.distributions(val.iloc[:1], _flat_prior(1))[0]
+    new = updater.forecast(dist, site="a", search="q", stage="d30", as_of=date(2025, 9, 1), segments={"new_to_search": True})
+    old = updater.forecast(dist, site="a", search="q", stage="d30", as_of=date(2025, 9, 1), segments={"new_to_search": False})
+    assert new.point == NT50 and new.range_high == NT50 and new.notes["segment_rule"] == "always_nt50"
+    assert old.point == dist_median(dist) and "segment_rule" not in old.notes
+    points = updater.points(val, _flat_prior(len(val)))
+    assert all(p == NT50 for p in points[400:]) and points[:400] != [NT50] * 400
+
+
+def test_new_site_rule_keeps_the_version_in_use_when_no_candidate_beats_it():
+    train = _persistence_rows(1200, 5, new=1.0)
+    table = U.fit_table(train, training_label=REAL)
+    val = _persistence_rows(400, 6, new=1.0, prefix="v")
+    updater = U.choose_version(table, None, val, _flat_prior(len(val)))
+    record = U.choose_segment(updater, val, _flat_prior(len(val)))
+    assert record["winner"] == "table" == record["default"]
+    assert updater.points(val, _flat_prior(len(val))) == [dist_median(d) for d in updater.distributions(val, _flat_prior(len(val)), "table")]
+    empty = U.choose_segment(updater, val.assign(new_to_search=np.nan), _flat_prior(len(val)))
+    assert empty["winner"] == "table" and empty["validation_rows"] == 0  # unknown newness is not new
+
+
+def test_updater_range_level_is_set_on_recent_validation_rows():
+    train = _persistence_rows(1200, 7, new=0.0)
+    table = U.fit_table(train, training_label=REAL)
+    old = _persistence_rows(600, 8, new=0.0, prefix="o")
+    noisy = _persistence_rows(600, 9, new=0.0, prefix="n")
+    noisy["position_out"] = np.random.default_rng(9).integers(1, 52, len(noisy))
+    val = pd.concat([old.assign(outcome_date=date(2025, 6, 1)), noisy.assign(outcome_date=date(2025, 12, 1))], ignore_index=True)
+    plain = U.choose_version(table, None, val, _flat_prior(len(val)))
+    recent = U.choose_version(table, None, val, _flat_prior(len(val)), date_col="outcome_date", end=date(2026, 1, 1),
+                              recent_days=90, recent_min_rows=100)
+    assert recent.range_calibration["slice"]["used"] == "recent" and recent.range_calibration["slice"]["rows_used"] == 600
+    assert plain.range_calibration["slice"]["used"] == "all" and plain.range_calibration["slice"]["rows_used"] == 1200
+    from aeo.ranksim.forecast.placement import choose_range_level
+
+    dists = plain.distributions(val, _flat_prior(len(val)), "table")
+    actual = val["position_out"].to_numpy()
+    assert recent.range_level == choose_range_level(dists[600:], actual[600:])
+    assert plain.range_level == choose_range_level(dists, actual)
+
+
+def test_updater_model_temperature_uses_the_recent_calibration_slice():
+    rows = _rows(1500, seed=11)
+    rows["prior_p_NT50"] = 0.5
+    rows["outcome_date"] = [date(2025, 6, 1) if i % 2 else date(2025, 12, 1) for i in range(len(rows))]
+    model = U.fit_model(rows, training_label=REAL, calibration_date_col="outcome_date", calibration_end=date(2026, 1, 1),
+                        recent_days=90, recent_min_rows=20)
+    assert model.calibration["slice"]["used"] == "recent"
+    assert model.calibration["slice"]["rows_used"] < model.calibration["slice"]["candidate_rows"]
+
+
+def test_updater_payload_round_trips_with_its_segment_rules():
+    train = _persistence_rows(800, 12, new=1.0)
+    table = U.fit_table(train, training_label=REAL)
+    val = _persistence_rows(300, 13, new=1.0, outcome_nt50=True, prefix="v")
+    updater = U.choose_version(table, None, val, _flat_prior(len(val)))
+    U.choose_segment(updater, val, _flat_prior(len(val)))
+    again = U.Updater.from_payload(updater.payload())
+    assert again.segment_rules == updater.segment_rules and again.sha256() == updater.sha256()
+    legacy = {k: v for k, v in updater.payload().items() if k not in ("segment_rules", "segment_comparison", "range_calibration")}
+    assert U.Updater.from_payload(legacy).segment_rules == {}

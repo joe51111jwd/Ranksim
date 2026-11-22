@@ -25,6 +25,13 @@ The model (docs/plan/IMPLEMENTATION_SPEC.md section 6, part 6):
 - One temperature on the band probabilities is fitted on the calibration fold.
   Reliability (expected calibration error and a table) is reported before and
   after it.
+- Time-aware calibration (version 2, optional). When the caller passes each
+  row's outcome date and the end of the training period, the temperature and
+  the range level are set on the most recent slice of the calibration fold
+  only: rows whose outcome date is in the last CALIBRATION_RECENT_DAYS before
+  the end. When that slice has fewer than CALIBRATION_RECENT_MIN_ROWS rows the
+  whole calibration fold is used and the model says so. The rule reads dates
+  only, never an outcome. Without dates the model behaves as version 1 did.
 - The label is `locked` when one band other than NT50 holds at least
   config.LOCKED_MIN_PROB, `out_of_reach` when NT50 holds at least
   config.OUT_OF_REACH_MIN_PROB, else `contested`. The thresholds are copied
@@ -41,7 +48,7 @@ import hashlib
 import json
 import math
 from dataclasses import asdict, dataclass, field
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
@@ -61,6 +68,11 @@ OUTCOMES: tuple[int, ...] = tuple(range(1, TOP_DEPTH + 1)) + (NT50,)
 BAND_RANGES: dict[str, tuple[int, int]] = {"1-3": (1, 3), "4-10": (4, 10), "11-20": (11, 20), "21-50": (21, 50),
                                            "NT50": (NT50, NT50)}
 CALIBRATION_SHARE = 0.20
+# Time-aware calibration (frozen rule, dates only): the temperature and the range level are set on calibration
+# rows whose outcome date falls in the last CALIBRATION_RECENT_DAYS before the end of the training period. A slice
+# smaller than CALIBRATION_RECENT_MIN_ROWS falls back to every calibration row.
+CALIBRATION_RECENT_DAYS = 90
+CALIBRATION_RECENT_MIN_ROWS = 2000
 CV_FOLDS = 3
 MIN_ROWS_FOR_TREES = 60  # below this the band model is the smoothed training share of each band
 MIN_ROWS_WITHIN_TREES = 200  # per band, below this the within-band model is the training mean
@@ -543,6 +555,48 @@ def load_model(path: str | Path) -> PlacementModel:
     return PlacementModel.from_payload(json.loads(text))
 
 
+def recent_slice(dates: Sequence[Any] | None, end: date | None, *, days: float | None = CALIBRATION_RECENT_DAYS,
+                 min_rows: int = CALIBRATION_RECENT_MIN_ROWS, base: np.ndarray | None = None,
+                 rows: int | None = None) -> tuple[np.ndarray, dict[str, Any]]:
+    """The rows a calibration is set on, by the frozen time-aware rule. Reads dates only.
+
+    `base` marks the candidate rows (a calibration fold or the validation rows; all rows when None). The slice is
+    the candidates whose date is on or after `end` minus `days` and before `end`. When the slice holds fewer than
+    `min_rows` rows, or no dates or no end are given, or `days` is None, every candidate is used and the record
+    says why. The row count comes from `dates`, else `base`, else `rows` (one of them is required). Returns (mask, record).
+    """
+    from .asof import as_date
+
+    if dates is not None:
+        n = len(dates)
+    elif base is not None:
+        n = len(base)
+    elif rows is not None:
+        n = int(rows)
+    else:
+        raise ValueError("recent_slice needs dates, a base mask or a row count")
+    cand = np.ones(n, dtype=bool) if base is None else np.asarray(base, dtype=bool).copy()
+    record: dict[str, Any] = {"rule": (f"rows whose outcome date is in the last {days} days before the end of the "
+                                       f"training period; fewer than {min_rows} rows falls back to every row"),
+                              "candidate_rows": int(cand.sum())}
+    if dates is None or end is None or days is None:
+        record.update({"used": "all", "why": "no dates or no end given: version 1 calibration on every row",
+                       "rows_used": int(cand.sum())})
+        return cand, record
+    stop = as_date(end)
+    start = stop - timedelta(days=float(days))
+    when = [as_date(d) if d is not None and not (isinstance(d, float) and math.isnan(d)) and not pd.isna(d) else None
+            for d in dates]
+    recent = np.array([w is not None and start <= w < stop for w in when], dtype=bool) & cand
+    record.update({"window": [start.isoformat(), stop.isoformat()], "recent_rows": int(recent.sum())})
+    if int(recent.sum()) < int(min_rows):
+        record.update({"used": "all", "why": f"only {int(recent.sum())} recent rows, under {min_rows}: every row is used",
+                       "rows_used": int(cand.sum())})
+        return cand, record
+    record.update({"used": "recent", "rows_used": int(recent.sum())})
+    return recent, record
+
+
 def _outcomes(frame: pd.DataFrame, outcome_col: str) -> np.ndarray:
     values = pd.to_numeric(frame[outcome_col], errors="coerce")
     if values.isna().any():
@@ -565,6 +619,10 @@ def fit_placement(
     seed: int = SEED,
     grid: Sequence[Mapping[str, Any]] = BAND_GRID,
     name: str = "placement",
+    calibration_date_col: str | None = None,
+    calibration_end: date | None = None,
+    recent_days: float | None = CALIBRATION_RECENT_DAYS,
+    recent_min_rows: int = CALIBRATION_RECENT_MIN_ROWS,
 ) -> PlacementModel:
     """Fit on a training table: band trees and within-band models on the fit fold, temperature and range on the calibration fold.
 
@@ -573,6 +631,10 @@ def fit_placement(
     on both sides. Settings are chosen by grouped cross-validation inside the
     fit fold. `training_label` is REAL or SYNTHETIC and is carried on the model.
     Raises PlacementError on an outcome that is missing (unknown is not NT50).
+
+    With `calibration_date_col` (each row's outcome date) and `calibration_end` (the end of the training period),
+    the temperature and the range level are set on the recent slice of the calibration fold (`recent_slice`). The
+    band trees and the within-band models are fitted on the same rows either way.
     """
     feats = check_model_features(features)
     if outcome_col in feats:
@@ -601,16 +663,18 @@ def fit_placement(
                            training_label=training_label, training_rows=int(fit_rows.sum()),
                            calibration_rows=int(is_cal.sum()), cv=cv, name=name)
     if is_cal.any():
-        cal = frame[is_cal]
+        dates = frame[calibration_date_col].tolist() if calibration_date_col and calibration_date_col in frame else None
+        use, slice_record = recent_slice(dates, calibration_end, days=recent_days, min_rows=recent_min_rows, base=is_cal)
+        cal = frame[use]
         raw = model.raw_band_probabilities(cal)
-        model.temperature = fit_temperature(raw, y[is_cal])
-        model.calibration = {"before_temperature": reliability(raw, y[is_cal]),
-                             "after_temperature": reliability(apply_temperature(raw, model.temperature), y[is_cal]),
-                             "temperature": model.temperature}
+        model.temperature = fit_temperature(raw, y[use])
+        model.calibration = {"before_temperature": reliability(raw, y[use]),
+                             "after_temperature": reliability(apply_temperature(raw, model.temperature), y[use]),
+                             "temperature": model.temperature, "slice": slice_record}
         dists = model.distributions(cal)
-        model.range_level = choose_range_level(dists, y_pos[is_cal])
+        model.range_level = choose_range_level(dists, y_pos[use])
         model.calibration["range_level"] = model.range_level
-        model.calibration["range_coverage_on_calibration"] = range_coverage(dists, y_pos[is_cal], model.range_level)
+        model.calibration["range_coverage_on_calibration"] = range_coverage(dists, y_pos[use], model.range_level)
     else:
         model.calibration = {"note": "no calibration fold: temperature 1 and the nominal range level are used"}
     return model
@@ -677,5 +741,6 @@ __all__ = [
     "BAND_RANGES", "OUTCOMES", "PLACEMENT_VERSION", "POINT_RULE", "PlacementError", "PlacementModel", "WithinBand",
     "apply_temperature", "band_mass", "best_point", "calibration_report", "central_interval", "choose_range_level",
     "combine", "dist_median", "normal_shapes", "dist_quantile", "expected_hit", "fit_placement", "fit_temperature", "label_for",
-    "load_model", "normal_shape", "point_diagnostics", "range_coverage", "reliability", "save_model",
+    "load_model", "normal_shape", "point_diagnostics", "range_coverage", "recent_slice", "reliability", "save_model",
+    "CALIBRATION_RECENT_DAYS", "CALIBRATION_RECENT_MIN_ROWS",
 ]

@@ -279,3 +279,30 @@ def test_the_version_1_strength_design_still_hashes_to_its_frozen_sha():
 
     payload = json.loads(json.dumps(S.prereg_payload(), default=str))
     assert sha256_text(canonical_json(payload)) == frozen["sha256"]
+
+
+def test_fold_scores_are_fitted_without_their_own_search_fold():
+    rows = _toy_pages(n_pages=45)
+    folds = np.array([int(k[1:]) % 3 for k in rows["keyword_id"]])
+    scores = S.fit_fold_scores(rows, folds, 3)
+    import hashlib
+
+    for k, score in scores.items():
+        kept = sorted(set(rows.loc[folds != k, "search_group"].astype(str)))
+        assert score.cv["search_groups"] == len(kept)
+        assert score.cv["search_groups_sha256"] == hashlib.sha256("\n".join(kept).encode("utf-8")).hexdigest()
+        alone = S.fit_strength_score(rows[folds != k].reset_index(drop=True))
+        assert score.coef == alone.coef and score.version.endswith(f"oof-fold{k}")
+
+
+def test_strength_rehearsal_models_are_written_under_the_cache_in_the_scored_layout(tmp_path: Path):
+    score = S.fit_strength_score(_toy_pages(n_pages=20), max_pairs=5_000)
+    forecaster = S.StrengthOnlyForecaster(("own_score",), [0.0], [1.0], [[0.0]], [0.0], ["NT50"], {"NT50": {"51": 1.0}}, 1.0)
+    files = S.write_rehearsal_models(tmp_path / "rehearsal", 2, score, forecaster)
+    assert files["score"] == tmp_path / "rehearsal" / "models" / "strength-v2-score.json"
+    assert S.load_strength_score(files["score"]).coef == score.coef
+    assert S.load_strength_forecaster(files["forecaster"]).classes == ["NT50"]
+    S.write_rehearsal_models(tmp_path / "rehearsal", 2, score, forecaster)  # a rehearsal may be rerun
+    files["score"].write_text(files["score"].read_text().replace('"c_value"', '"c_value" ', 1))
+    with pytest.raises(ValueError, match="sha256"):
+        S.load_strength_score(files["score"])

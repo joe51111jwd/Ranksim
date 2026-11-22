@@ -29,9 +29,12 @@ site land, given that it appears". A brand-new site on launch day has appeared n
 placement model is used directly for a REAL site only when its bundle manifest says it was
 trained on REAL upload cells that include searches a site never ranked for. Otherwise every
 forecast goes through `GatedPlacement`: P(in top 50 on day 90) times the landing distribution
-inside the top 50, with the rest of the mass on NOT IN TOP 50. `live_models` is the only way
-this module builds the models a forecast uses, and it always wraps a conditional placement
-model, so the live path cannot skip the gate.
+inside the top 50, with the rest of the mass on NOT IN TOP 50. The updater of such a bundle
+learned from the same appeared-only cells, so for a stage forecast it goes through
+`GatedUpdater`: on a search where no clean reading on or before the date has the site inside
+the top 50, P(in top 50) stays at or under the gate. `live_models` is the only way this module
+builds the models a forecast uses, and it always wraps a conditional bundle's placement model
+and updater, so the live path cannot skip the gate.
 
 Money: nothing here spends. Training and forecasting are free.
 """
@@ -245,6 +248,62 @@ class GatedPlacement:
         return replace(made, model_version=self.model_version(), notes={**made.notes, "gate": self.gate.to_dict()})
 
 
+def cap_at_gate(dists: np.ndarray, gate: float) -> np.ndarray:
+    """Rows whose top 50 mass is above `gate` are scaled down to it (apply_gate); rows at or below it are unchanged."""
+    arr = np.atleast_2d(np.asarray(dists, dtype=float)).copy()
+    over = arr[:, :TOP_DEPTH].sum(axis=1) > float(gate) + 1e-12
+    if over.any():
+        arr[over] = apply_gate(arr[over], float(gate))
+    return arr
+
+
+@dataclass
+class GatedUpdater:
+    """The updater of a conditional bundle, capped by the appearance gate while the site has not appeared.
+
+    A conditional bundle's updater learned from cells of sites that appeared on the search (on the
+    input page or the outcome page), so a reading where the site is NOT IN TOP 50 comes, in training,
+    from a site that was on the outcome page. Applied to a site that has appeared nowhere, that
+    evidence of absence would push the forecast INTO the top 50, past the gate. So for a cell where
+    no clean reading on or before the date has the site inside the top 50 (`appeared` False or not
+    known), P(in top 50) is capped at the gate value. Once a real reading shows the site inside the
+    top 50, the updater's answer is used as it is. Duck-types updater.Updater for backtest.forecast_frame.
+    """
+
+    base: Updater
+    gate: GateSpec
+    appeared: dict[str, bool] = field(default_factory=dict)  # search -> a clean reading has the site in the top 50
+
+    @property
+    def in_use(self) -> str:
+        return self.base.in_use
+
+    def version(self) -> str:
+        return f"{self.base.version()}|stage-cap-{self.gate.tag()}"
+
+    def _capped_rows(self, frame: pd.DataFrame) -> np.ndarray:
+        searches = frame["search"].astype(str).tolist() if "search" in frame else [""] * len(frame)
+        return np.array([not self.appeared.get(s, False) for s in searches], dtype=bool)
+
+    def distributions(self, frame: pd.DataFrame, prior_dists: np.ndarray, which: str | None = None) -> np.ndarray:
+        out = np.asarray(self.base.distributions(frame, prior_dists, which), dtype=float).copy()
+        if not self.gate.applied:
+            return out
+        capped = self._capped_rows(frame.reset_index(drop=True))
+        if capped.any():
+            out[capped] = cap_at_gate(out[capped], float(self.gate.value))
+        return out
+
+    def forecast(self, dist: np.ndarray, *, site: str, search: str, stage: str, as_of: date,
+                 notes: Mapping[str, Any] | None = None, segments: Mapping[str, bool] | None = None) -> Forecast:
+        made = self.base.forecast(dist, site=site, search=search, stage=stage, as_of=as_of, notes=notes, segments=segments)
+        appeared = bool(self.appeared.get(search, False))
+        cap = {"applied": self.gate.applied and not appeared, "site_appeared_in_a_reading": appeared,
+               "gate": self.gate.tag(),
+               "rule": "P(top 50) capped at the gate until a clean reading shows the site inside the top 50"}
+        return replace(made, model_version=self.version(), notes={**made.notes, "stage_gate_cap": cap})
+
+
 # ---------------------------------------------------------------------------
 # bundles on disk
 
@@ -409,11 +468,13 @@ def list_bundles(paths: ForecastPaths) -> list[str]:
     return sorted(p.name for p in root.iterdir() if (p / BUNDLE_MANIFEST).is_file())
 
 
-def newest_bundle(paths: ForecastPaths) -> str | None:
-    """The bundle written last (by its manifest's created_at), or None."""
+def newest_bundle(paths: ForecastPaths, *, label: str | None = None) -> str | None:
+    """The bundle written last (by its manifest's created_at), or None. `label` keeps REAL or SYNTHETIC bundles only."""
     best: tuple[str, str] | None = None
     for name in list_bundles(paths):
         data = json.loads((models_root(paths) / name / BUNDLE_MANIFEST).read_text(encoding="utf-8"))
+        if label is not None and data.get("training_label") != label:
+            continue
         key = (str(data.get("created_at") or ""), name)
         if best is None or key > best:
             best = key
@@ -958,10 +1019,12 @@ def form_for(inputs: LiveInputs, site: str, day: date) -> tuple[dict[str, Any] |
 def gsc_columns(inputs: LiveInputs, site: str, search: str, launch: date, day: date) -> tuple[dict[str, float], str]:
     """updater.GSC_FEATURES for one cell from the frozen Search Console exports (rows fetched after `day` ignored)."""
     from . import gsc
+    from .pipeline import _file_digest
 
     empty = {name: math.nan for name in GSC_FEATURES}
     rows: list[Any] = []
     used = 0
+    changed = 0
     for row in inputs.scoreboard.freezes():
         payload = row["payload"] or {}
         if not str(row["name"]).startswith(f"gsc.{site_key(site)}.") or payload.get("kind") not in ("ui", "daily"):
@@ -970,15 +1033,22 @@ def gsc_columns(inputs: LiveInputs, site: str, search: str, launch: date, day: d
         if fetched.date() > day:
             continue
         path = inputs.paths.root / str(payload["stored_path"])
-        if not path.exists() or (path.is_file() and _file_sha(path) != payload.get("sha256")):
+        if not path.exists():
+            continue
+        # A file, zip or folder export is read only when its stored copy still has the digest frozen at import
+        # (pipeline._file_digest, the same hash import_gsc froze): a copy changed since could hold later rows.
+        if _file_digest(path) != payload.get("sha256"):
+            changed += 1
             continue
         if payload["kind"] == "ui":
             rows.extend(gsc.parse_ui_export(path, fetched_at=fetched).all_rows())
         else:
             rows.extend(gsc.parse_daily_table(path, fetched_at=fetched).rows)
         used += 1
+    skipped = (f"; {changed} export{'s' if changed != 1 else ''} skipped: stored copy changed since its freeze"
+               if changed else "")
     if not rows:
-        return empty, "no Search Console export frozen on or before the date"
+        return empty, f"no Search Console export frozen on or before the date{skipped}"
     signals = gsc.early_signals(rows, launch_date=launch, as_of=day, target_searches=[search])
 
     def num(value: Any) -> float:
@@ -990,7 +1060,7 @@ def gsc_columns(inputs: LiveInputs, site: str, search: str, launch: date, day: d
         "sc_query_present_target": num(signals.get(gsc.signal_key("sc_query_present", search))),
         "sc_avg_position_target": num(signals.get(gsc.signal_key("sc_avg_position", search))),
         "sc_impressions_slope": num(signals.get("sc_impressions_weekly_slope")),
-    }, f"{used} Search Console exports"
+    }, f"{used} Search Console exports{skipped}"
 
 
 def content_match(inputs: LiveInputs, site: str, search: str, day: date) -> dict[str, Any]:
@@ -1035,8 +1105,9 @@ def feature_row(inputs: LiveInputs, *, site: str, search: str, day: date, page: 
         page_rows[m] = page_rows["site"].map(st_page[m] if m in st_page else {}).astype(float)
     own = st_own.iloc[0].to_dict() if len(st_own) else {}
     metric_ok = bool(meta) and difficulty_metric is not None and meta.get("difficulty_source") == difficulty_metric
+    # Difficulty and volume feed the model only when the manifest names the metric the bundle was trained on.
     page_meta = {"kd": float(meta["difficulty_value"]) if metric_ok and meta.get("difficulty_value") is not None else None,
-                 "search_volume": float(meta["volume"]) if meta and meta.get("volume") is not None else None}
+                 "search_volume": float(meta["volume"]) if metric_ok and meta.get("volume") is not None else None}
     row: dict[str, Any] = {}
     if len(page_rows):
         row.update({k: v for k, v in page_features(page_rows, meta=page_meta).items() if str(k).startswith("pg_")})
@@ -1141,8 +1212,13 @@ def _already(scoreboard: Scoreboard, site: str, stage: str) -> dict[str, str]:
     return {key: version for key, version in rows}
 
 
-def live_models(bundle: ModelBundle, gate: GateSpec):
-    """The models a live forecast uses. A conditional placement model is ALWAYS wrapped in the gate."""
+def live_models(bundle: ModelBundle, gate: GateSpec, appeared: Mapping[str, bool] | None = None):
+    """The models a live forecast uses. A conditional bundle's placement model AND updater are ALWAYS gated.
+
+    `appeared` maps each search to whether a clean reading on or before the date has the site inside
+    the top 50. The updater of a conditional bundle caps P(top 50) at the gate on every search not
+    marked True (GatedUpdater).
+    """
     from .backtest import ForecastModels
 
     if bundle.conditional and not gate.applied:
@@ -1150,7 +1226,24 @@ def live_models(bundle: ModelBundle, gate: GateSpec):
                                  "gate. A forecast without it is refused.")
     placement = GatedPlacement(bundle.placement, gate if bundle.conditional else NO_GATE, bundle.version)
     strength_only = GatedPlacement(bundle.strength_only, gate if bundle.conditional else NO_GATE, bundle.version)
-    return ForecastModels(placement=placement, updater=bundle.updater), strength_only
+    updater: Any = bundle.updater
+    if bundle.conditional and updater is not None:
+        updater = GatedUpdater(updater, gate, dict(appeared or {}))
+    return ForecastModels(placement=placement, updater=updater), strength_only
+
+
+def site_appeared(inputs: "LiveInputs", site: str, search: str, location_code: int, device: str,
+                  day: date) -> str | None:
+    """The newest clean, non-degraded reading of the search on or before `day` with the site inside the top 50
+    (its reading id), or None when no such reading exists: the site has not appeared on the search."""
+    moment = parse_utc(utc_iso(inputs.now))
+    for reading in inputs.scoreboard.readings_for(search, location_code, device, on_or_before=day, label=inputs.label,
+                                                  non_degraded_only=True):
+        if parse_utc(reading.taken_at) > moment:
+            continue
+        if int(reading.position_of(site)) <= TOP_DEPTH:
+            return reading.reading_id
+    return None
 
 
 def plan_forecasts(
@@ -1187,6 +1280,10 @@ def plan_forecasts(
     if bundle.training_label == SYNTHETIC and source in ("seed", "pilot"):
         raise ForecastingRefusal(f"Bundle {bundle.name} was trained on SYNTHETIC rows. A synthetic model never forecasts "
                                  f"a seed or pilot site like {name}. Train on REAL data: forecast train --data panel.")
+    if stage != "upload" and bundle.updater is None:
+        raise ForecastingRefusal(f"Bundle {bundle.name} has no early-reading updater, so a {stage} forecast would be the "
+                                 "upload model's answer with the site's readings ignored. Train a bundle with an updater "
+                                 "(forecast train) and pass it with --bundle.")
     label = SYNTHETIC if source == "synthetic" else REAL
     stage_day = launch + timedelta(days=STAGE_DAYS[stage])
     today = now.astimezone(timezone.utc).date()
@@ -1196,9 +1293,10 @@ def plan_forecasts(
     if bundle.training_cutoff > as_of:
         raise LeakError(f"bundle {bundle.name} learned outcomes up to {bundle.training_cutoff}, after the forecast date "
                         f"{as_of}. A forecast may only use what was knowable on its date.")
-    if stage != "upload" and today > stage_day:
-        run.missed = (f"MISSED: the {stage} stage day of {name} was {stage_day}. A missed stage is never backfilled. "
-                      "A forecast made now would be a shorter lead, never this stage.")
+    if (today - stage_day).days > FORECAST_FROZEN_GAP_DAYS:
+        run.missed = (f"MISSED: the {stage} stage day of {name} was {stage_day}, and a forecast dated then may be written "
+                      f"at most {FORECAST_FROZEN_GAP_DAYS} day later. A missed stage is never backfilled. A forecast made "
+                      "now would be a shorter lead, never this stage.")
         return run
     if as_of > today:
         run.blocked = f"The forecast date {as_of} is later than today, {today}."
@@ -1228,6 +1326,7 @@ def plan_forecasts(
     form, filled_on, form_name = form_for(inputs, name, as_of)
     already = _already(scoreboard, name, stage)
     models, strength_only = live_models(bundle, gate)
+    appeared: dict[str, bool] = {}
     rows: dict[str, dict[str, Any]] = {}
     dates: dict[str, dict[str, date | None]] = {}
     readings: dict[str, list[Reading]] = {}
@@ -1249,6 +1348,10 @@ def plan_forecasts(
         if stage != "upload":
             got, stage_ids = stage_readings(inputs, name, search, location, device, as_of)
             ids.extend(i for i in stage_ids if i not in ids)
+            seen_in = site_appeared(inputs, name, search, location, device, as_of)
+            appeared[search] = seen_in is not None
+            if seen_in is not None and seen_in not in ids:
+                ids.append(seen_in)  # the reading that lifted the gate cap is an input of the forecast
             sc, sc_note = gsc_columns(inputs, name, search, launch, as_of)
             values.update(sc)
             extras.setdefault(search, {})["search_console"] = sc_note
@@ -1271,6 +1374,8 @@ def plan_forecasts(
         return dict(rows[search_]), dict(dates[search_])
 
     models.features = provider
+    if isinstance(models.updater, GatedUpdater):
+        models.updater.appeared = appeared
     searches = list(rows)
     made = forecast_cells(name, searches, as_of, stage, readings, None, models,
                           outcome_date=launch + timedelta(days=OUTCOME_DAY))
@@ -1284,6 +1389,7 @@ def plan_forecasts(
             version = f"{bundle.version}|{forecast.model_version}|prior {models.placement.model_version()}"
         notes = {**forecast.notes, "bundle": bundle.name, "bundle_sha256": bundle.sha256, "bundle_version": bundle.version,
                  "training_label": bundle.training_label, "gate": gate.to_dict(), "features_missing": missing,
+                 "features_used": len(features_used),
                  "baselines": {"site_strength": int(base_point)}, "forecast_label": label, **extras.get(search, {})}
         target = extras.get(search, {}).get("target_url")
         run.forecasts.append(replace(forecast, model_version=version, notes=_json_safe(notes), target_url=target))
@@ -1302,9 +1408,11 @@ def record_run(scoreboard: Scoreboard, run: ForecastRun, bundle: ModelBundle) ->
     if run.blocked or run.missed:
         return run
     for forecast in run.forecasts:
+        # The description depends on the version string's parts only, never on counts that grow over time:
+        # the scoreboard refuses a known version frozen again with another description.
         description = (f"{FORECASTING_VERSION} bundle {bundle.name} (sha256 {bundle.sha256}), trained on "
-                       f"{bundle.training_label} {bundle.manifest.get('training_source')} data. "
-                       f"{GateSpec(**{k: run.gate[k] for k in ('source', 'value', 'cells', 'sites')}).sentence()}")
+                       f"{bundle.training_label} {bundle.manifest.get('training_source')} data. Appearance gate "
+                       f"{run.gate['tag']}.")
         try:
             scoreboard.register_model_version(forecast.model_version, description=description, artefact_sha256=bundle.sha256)
             record = scoreboard.record_forecast(forecast, input_reading_ids=run.inputs.get(forecast.search, ()))
@@ -1348,6 +1456,10 @@ def run_lines(run: ForecastRun, *, record: bool) -> list[str]:
         low = "NT50" if f.range_low >= NT50 else str(f.range_low)
         high = "NT50" if f.range_high >= NT50 else str(f.range_high)
         lines.append(f"  {f.search}: point {point}, range {low} to {high}, {f.label} (PREDICTED, model {f.model_version}).")
+        missing = f.notes.get("features_missing") or []
+        if missing:
+            lines.append(f"    {len(missing)} of {f.notes.get('features_used', '?')} model features are missing (NaN, never "
+                         "zero) for this search. The list is in the forecast's notes.")
     if run.forecasts and run.all_nt50 and run.gate.get("source") == "prior":
         lines.append("Every point is NOT IN TOP 50 because the gate is a low prior: that is the honest answer until the paid "
                      "training data exists.")
@@ -1383,12 +1495,20 @@ def due_lines(result: Mapping[str, Any]) -> list[str]:
     lines = [f"As of {result['today']}, stage forecasts due in the next {result['window_days']} days:"]
     if not result["due"]:
         lines.append("  none.")
+    today = date.fromisoformat(str(result["today"]))
     for item in result["due"]:
         command = "upload" if item["stage"] == "upload" else f"update --stage {item['stage']}"
+        if item["stage"] != "upload" and date.fromisoformat(item["stage_date"]) > today:
+            # A stage forecast is made on its stage day, from that day's reading. One recorded earlier is never replaced.
+            lines.append(f"  {item['site']} ({item['source']}) {item['stage']} on {item['stage_date']}. Run it on "
+                         f"{item['stage_date']}, after that day's clean reading: python -m aeo.ranksim forecast {command} "
+                         f"--site {item['site']} --record")
+            continue
         lines.append(f"  {item['site']} ({item['source']}) {item['stage']} on {item['stage_date']}. "
                      f"Run: python -m aeo.ranksim forecast {command} --site {item['site']} --record")
     if result["missed"]:
-        lines.append("Stages MISSED (no forecast on or before the stage day). A missed stage is never backfilled:")
+        lines.append("Stages MISSED (no forecast, and the last day to record one dated the stage day has passed). "
+                     "A missed stage is never backfilled:")
         lines.extend(f"  {item['site']} ({item['source']}) {item['stage']} was due on {item['stage_date']}."
                      for item in result["missed"])
     else:
@@ -1503,8 +1623,8 @@ def backtest_rerun_version(root: str | Path | None = None) -> tuple[int, bool]:
 
 
 __all__ = [
-    "FORECASTING_VERSION", "GATE_MIN_CELLS", "GATE_MIN_SITES", "GATE_PRIOR", "GateSpec", "GatedPlacement",
+    "FORECASTING_VERSION", "GATE_MIN_CELLS", "GATE_MIN_SITES", "GATE_PRIOR", "GateSpec", "GatedPlacement", "GatedUpdater",
     "ForecastRun", "ForecastingRefusal", "ModelBundle", "PLACEMENT_FEATURES", "TrainResult", "appearance_gate",
-    "apply_gate", "due", "list_backtests", "live_models", "load_bundle", "marker2_from_trust_report", "plan_forecasts",
-    "record_run", "save_bundle", "train", "upload_or_update",
+    "apply_gate", "cap_at_gate", "due", "list_backtests", "live_models", "load_bundle", "marker2_from_trust_report",
+    "plan_forecasts", "record_run", "save_bundle", "train", "upload_or_update",
 ]

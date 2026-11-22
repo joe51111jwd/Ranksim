@@ -261,3 +261,93 @@ def test_a_saved_trust_model_is_never_replaced(tmp_path: Path):
     with pytest.raises(AlreadyScored):
         T.save_trust_model(model, {"language": "en", "train_rows": 1}, tmp_path)
     assert path.read_text() == before
+
+
+# ---------------------------------------------------------------------------
+# version 2: marker 2 keys, stand-in, features, out-of-fold models for the backtest
+
+
+def test_marker2_report_decides_on_the_link_count_gain_and_prints_the_best_single_gain_beside_it():
+    frame = _eval_frame()
+    result = T.evaluate_pairs(frame, {"model": frame["true"].to_numpy()}, single_measures=["st_s_cc_hosts", "st_s_cc_hc"])
+    entry = result["models"]["model"]
+    report = T.marker2_report(result, "model")
+    assert report["gain_over_link_count"]["difference"] == entry["gain_over_link_count"]["difference"]
+    assert report["gain_over_link_count"]["baseline"] == "st_s_cc_hosts"
+    assert report["gain_over_best_single_measure"]["difference"] == entry["gain_over_best_single_measure"]["difference"]
+    assert report["gain_over_best_single_measure"]["baseline"] == entry["best_single_measure"]
+    assert report["stand_in"] is True and "20,000 new sites" in report["stand_in_reason"]
+    verdict = evaluate_marker(2, report)
+    assert verdict["passed"] is None and verdict["stand_in"] is True
+    assert verdict["gain_over_link_count"]["difference"] == report["gain_over_link_count"]["difference"]
+    assert verdict["gain_over_best_single_measure"]["difference"] == report["gain_over_best_single_measure"]["difference"]
+    plain = T.marker2_report(result, "model", stand_in=False)
+    assert "stand_in" not in plain and evaluate_marker(2, plain)["passed"] in (True, False)
+
+
+def test_trust_version_2_drops_registration_known_and_version_1_keeps_its_features():
+    assert "sd_registration_known" in T.feature_sets(1)["free"]
+    assert "sd_registration_known" not in T.feature_sets(2)["free"]
+    assert "sd_registration_known" not in T.feature_sets(2)["free_plus_mdr"]
+    assert T.feature_sets(2)["free_plus_mdr"][-1] == "mdr_before"
+    payload = T.prereg_payload(version=2, reason="v2")
+    assert "sd_registration_known" not in payload["feature_sets"]["free"] and "stand_in" in payload
+
+
+def _label_rows(n_pages: int = 90, seed: int = 4) -> pd.DataFrame:
+    rng = np.random.default_rng(seed)
+    rows = []
+    for p in range(n_pages):
+        for i in range(12):
+            x = rng.normal()
+            site = (p * 7 + i) % 150
+            rows.append({"keyword_id": f"k{p}", "snapshot_time": pd.Timestamp("2025-07-01", tz="UTC"),
+                         "snapshot_date": date(2025, 7, 1), "site": f"site{site}.com",
+                         "search_group": f"g{p}", "site_test": bool(site % 10 == 0), "residual": 4 * x + rng.normal(),
+                         "st_s_cc_hc": x, "st_s_tranco": rng.normal(), "content_backend": "lexical", "content_model": "bm25f"})
+    return pd.DataFrame(rows)
+
+
+def test_trust_fold_models_never_fit_on_their_own_search_fold_or_site_fold():
+    labels = _label_rows()
+    search_fold = np.array([int(g[1:]) % 3 for g in labels["search_group"]])
+    site_fold = np.array([int(s[4:].split(".")[0]) % 3 for s in labels["site"]])
+    folds = T.fit_trust_folds(labels, search_fold, site_fold, 3, version=2,
+                              grid=({"num_leaves": 4, "min_child_samples": 10},))
+    assert set(folds) == {(a, b) for a in range(3) for b in range(3)}
+    for (a, b), fold in folds.items():
+        fitted = labels[labels["search_group"].isin(fold.search_groups) & labels["site"].isin(fold.sites)]
+        assert fold.rows > 0 and not any(int(g[1:]) % 3 == a for g in fold.search_groups)
+        assert not any(int(s[4:].split(".")[0]) % 3 == b for s in fold.sites)
+        assert not labels.loc[labels["site"].isin(fold.sites), "site_test"].any()  # a held-out site never trains
+        assert fold.model.version == f"trust-v2-oof-a{a}-b{b}" and "sd_registration_known" not in fold.model.features
+        assert len(fitted) >= fold.rows
+    same = T.trust_fit_rows(labels, (search_fold != 1) & (site_fold != 2))
+    assert len(same) == folds[(1, 2)].rows
+
+
+def test_training_labels_read_training_pages_only_and_are_cached(tmp_path: Path, monkeypatch):
+    from aeo.ranksim.forecast.strength import DEFAULT_SPLIT
+
+    monkeypatch.setenv("RANKSIM_FORECAST_DIR", str(tmp_path / "data"))
+    seen: dict[str, int] = {"loads": 0}
+    pages = pd.DataFrame({"keyword_id": ["k1", "k1", "k2", "k2"], "keyword": ["a b", "a b", "c d", "c d"],
+                          "snapshot_time": [pd.Timestamp("2025-07-01", tz="UTC")] * 2 + [pd.Timestamp("2026-02-01", tz="UTC")] * 2,
+                          "snapshot_date": [date(2025, 7, 1)] * 2 + [date(2026, 2, 1)] * 2, "site": ["x.com", "y.com"] * 2,
+                          "rank100": [1, 2, 1, 2], "title": ["a b page", "other"] * 2, "side": ["train", "train", "test", "test"],
+                          "site_test": [False, True, False, False], "search_group": ["g1", "g1", "g2", "g2"],
+                          "language": ["en"] * 4})
+
+    def load(split, *, sites_split=None, log=None, restrict=None):
+        seen["loads"] += 1
+        out = restrict(pages) if restrict is not None else pages
+        assert set(out["side"]) == {"train"}
+        return out.reset_index(drop=True), None
+
+    monkeypatch.setattr(T, "load_label_rows", load)
+    labels, meta = T.training_labels(DEFAULT_SPLIT, tag="t")
+    assert set(labels["keyword_id"]) == {"k1"} and meta["latest_page_date"] == "2025-07-01"
+    assert {"residual", "site_test", "content_backend"} <= set(labels.columns)
+    again, meta2 = T.training_labels(DEFAULT_SPLIT, tag="t")
+    assert seen["loads"] == 1 and meta2["sha256"] == meta["sha256"] and len(again) == len(labels)
+    assert str(tmp_path / "data" / "cache" / "oof") in str(T.label_cache_dir())

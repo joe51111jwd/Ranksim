@@ -63,7 +63,7 @@ from typing import Any, Callable, Iterable, Mapping, Sequence
 import numpy as np
 import pandas as pd
 
-from .asof import AsOfGuard, Dated, add_months, as_date, month_start
+from .asof import AsOfGuard, Dated, add_months, as_date
 from .chain import canonical_json, sha256_text
 from .config import EXCLUDED_SITES, NT50, TOP_DEPTH, forecast_paths
 from .types import REAL, SYNTHETIC
@@ -282,6 +282,15 @@ def source_files(base: Path | None = None) -> list[Path]:
 def source_hashes(base: Path | None = None) -> dict[str, str]:
     folder = base or forecast_source_dir()
     return {p.relative_to(folder).as_posix(): hashlib.sha256(p.read_bytes()).hexdigest() for p in source_files(folder)}
+
+
+def panel_fingerprint(panel_dir: str | Path | None = None) -> str:
+    """sha256 over (relative path, size, mtime) of every parquet part of the panel. A rebuilt panel gets a new one,
+    so caches keyed on it are never reused across panel versions."""
+    folder = Path(panel_dir) if panel_dir else forecast_paths().cache / "panel"
+    parts = sorted(folder.rglob("*.parquet")) if folder.is_dir() else []
+    listing = [[p.relative_to(folder).as_posix(), p.stat().st_size, p.stat().st_mtime_ns] for p in parts]
+    return sha256_text(canonical_json({"panel": str(folder.name), "parts": listing}))
 
 
 def source_tree_sha256(base: Path | None = None) -> str:

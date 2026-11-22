@@ -168,3 +168,43 @@ def test_point_diagnostics_reports_median_against_gaming_point(fitted):
     diag = P.point_diagnostics(model, dists, frame["position_out"].head(100).tolist())
     assert diag["expected_hit_of_rule_gaming_point"] >= diag["expected_hit_of_median"]
     assert 0 <= diag["real_hit_of_median"] <= 1
+
+
+# ---------------------------------------------------------------------------
+# time-aware calibration (version 2)
+
+
+def test_recent_slice_reads_only_dates_and_falls_back_below_the_minimum():
+    end = date(2026, 1, 1)
+    dates = [date(2025, 6, 1), date(2025, 10, 3), date(2025, 12, 31), None, date(2026, 1, 1)]
+    mask, record = P.recent_slice(dates, end, days=90, min_rows=2)
+    assert mask.tolist() == [False, True, True, False, False]  # the end day itself is not before the end
+    assert record["used"] == "recent" and record["rows_used"] == 2
+    mask, record = P.recent_slice(dates, end, days=90, min_rows=3)
+    assert mask.all() and record["used"] == "all" and "under 3" in record["why"]
+    mask, record = P.recent_slice(dates, None)
+    assert mask.all() and record["used"] == "all"
+    base = np.array([True, False, True, True, True])
+    mask, _ = P.recent_slice(dates, end, days=90, min_rows=1, base=base)
+    assert mask.tolist() == [False, False, True, False, False]
+
+
+def test_time_aware_calibration_sets_temperature_and_range_on_the_recent_slice_only():
+    from aeo.ranksim.forecast.features import stable_share
+
+    frame = _table(3000, seed=3)
+    frame["outcome_date"] = [date(2025, 5, 1) + pd.Timedelta(days=int(i % 240)).to_pytimedelta() for i in range(len(frame))]
+    end = date(2026, 1, 1)
+    model = P.fit_placement(frame, ["x", "noise"], training_label=SYNTHETIC, calibration_date_col="outcome_date",
+                            calibration_end=end, recent_days=90, recent_min_rows=50)
+    is_cal = np.array([stable_share(g, P.SEED + 11) < P.CALIBRATION_SHARE for g in frame["search_group"]])
+    recent = is_cal & np.array([d >= date(2025, 10, 3) for d in frame["outcome_date"]])
+    record = model.calibration["slice"]
+    assert record["used"] == "recent" and record["rows_used"] == int(recent.sum()) < int(is_cal.sum())
+    y = np.array([P.band_index(p) for p in frame.loc[recent, "position_out"]])
+    assert model.temperature == P.fit_temperature(model.raw_band_probabilities(frame[recent]), y)
+    old = P.fit_placement(frame, ["x", "noise"], training_label=SYNTHETIC)
+    assert old.calibration["slice"]["used"] == "all" and old.band_booster_text == model.band_booster_text
+    fallback = P.fit_placement(frame, ["x", "noise"], training_label=SYNTHETIC, calibration_date_col="outcome_date",
+                               calibration_end=end, recent_days=90, recent_min_rows=10_000)
+    assert fallback.calibration["slice"]["used"] == "all" and fallback.temperature == old.temperature

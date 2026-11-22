@@ -30,7 +30,7 @@ To see the whole flow work before spending anything, run the demo. It uses a sim
 python -m aeo.ranksim forecast demo
 ```
 
-It prints the seed manifest hash, the reading runs, the marker 1 numbers, the grading summary, three refusals (a late forecast, a replaced forecast and an edit), the stage reports and the marker verdicts. Synthetic results can never pass a marker, so every verdict says NOT A MARKER RESULT, with the result of the synthetic code check beside it. That is correct.
+It trains a synthetic model bundle on other new sites of the same world (all of their day 90 outcomes come before the first demo launch), imports the agency forms, registers the demo sites, reads them on days 0, 7, 14, 30, 60 and 90, makes the upload forecast on launch day and one update on each stage day through the same live path `upload` and `update` use, grades at day 90, and shows three refusals (a late forecast, a replaced forecast and an edit). Then it prints the stage reports with all four baselines and the marker verdicts. It takes under a minute. Synthetic results can never pass a marker, so every verdict says NOT A MARKER RESULT, with the result of the synthetic code check beside it. That is correct.
 
 ## Step 1. Day 1, 23 November. Set up
 
@@ -172,7 +172,17 @@ python -m aeo.ranksim forecast seeds register --manifest seeds/seed_manifest.jso
 
 Only for a pilot site that was already live when the agency joined: `seeds freeze --manifest <file> --after-launch-reason "<why>"` writes the reason into the manifest and its hash, and then freeze and register accept it.
 
-Stage forecasts. Each site has an upload forecast on launch day and d7, d14, d30 and d60 forecasts on days 7, 14, 30 and 60. The scoreboard refuses a stage forecast dated after its stage day, and a seed or pilot forecast written more than one day after its date. So each stage job must run on or before its stage day. `status` lists the stages due in the next 3 days and the stages that were missed. A missed stage is reported as missed and is never backfilled: a later forecast is a shorter lead, never that stage. The forecasting commands that make these forecasts come in the next step.
+Stage forecasts. Each site has an upload forecast on launch day and d7, d14, d30 and d60 forecasts on days 7, 14, 30 and 60. The scoreboard refuses a stage forecast dated after its stage day, and a seed or pilot forecast written more than one day after its date. So each stage job must run on or before its stage day. `status` lists the stages due in the next 3 days and the stages that were missed. A missed stage is reported as missed and is never backfilled: a later forecast is a shorter lead, never that stage. The commands that make these forecasts are `upload` and `update`, in steps 6 and 7. Each morning run:
+
+```
+python -m aeo.ranksim forecast due
+```
+
+It lists every seed and pilot stage due today or in the next 3 days, with the command to run for each, and every stage that was missed. Free. Exit code 1 when a stage was missed.
+
+### What a missed stage day means
+
+A stage forecast must be dated on or before its stage day and written within one day of its date. On the day after the stage day `due` still lists it, and `upload` or `update` dates it on the stage day. Once that day has passed with no forecast, the stage is missed for that site. `due`, `status`, `upload` and `update` say MISSED and nothing is recorded. It is never backfilled, because a forecast made later has seen later readings and is a shorter lead. Report it as missing. The next stage still counts.
 
 Every week until day 90, and on days 30, 60 and 90, take five rounds across the day and then assemble, as in step 2:
 
@@ -250,24 +260,81 @@ python -m aeo.ranksim forecast pull positions --cohort data/forecast/cache/newsi
 
 ## Step 5. Weeks 2 and 3. Trust model, marker 2
 
-Coming in the next step: the `train` command and the marker 2 report. `forecast marker --number 2` says so and exits with code 2 until then.
+Train a model bundle and judge marker 2. All free. None of these scores a held-out row.
+
+```
+python -m aeo.ranksim forecast train --data panel --name panel-v1
+python -m aeo.ranksim forecast train --data synthetic --name synthetic-v1
+python -m aeo.ranksim forecast train --data paid --name paid-v1
+python -m aeo.ranksim forecast marker --number 2
+```
+
+1. `train` fits the trust, placement and updater models on one source and writes a bundle to `data/forecast/models/<name>/` with a manifest: what it was trained on, the label (REAL or SYNTHETIC), whether its cells include searches a site never ranked for, the training cutoff, the features and a sha256 over every file. Loading a bundle checks the hash. A bundle is never replaced: a second run with the same `--name` is refused with exit code 2.
+2. `--data panel` reads the panel frame under `data/forecast/cache/features/` (build it first with `python -m aeo.ranksim.forecast.features build-panel`), keeps the training side of the frozen split only, and uses the frozen trust model. The panel only holds sites that appeared on a search, so this bundle is conditional and every upload forecast made with it passes the appearance gate (step 6). It prints the marker 2 verdict read from the scored trust report.
+3. `--data synthetic` trains on the simulated world in about 30 seconds. Its bundle is SYNTHETIC and is refused for any seed or pilot site. It prints a SYNTHETIC marker 2 check that can never pass.
+4. `--data paid` needs the three paid pulls of step 4 on disk. Without them it names the missing pulls and the command for each, trains nothing and exits with code 1. With them it still exits with code 1 today: the step that joins the pulls into upload cells is not built yet.
+5. `marker --number 2` reads the newest scored report under `evals/forecast/trust` and judges it. Nothing is rescored. It prints the pair accuracy, the gain over link count alone (the plan's measure, which decides the verdict) and the gain over the best single measure (stricter, printed beside it). The free panel version is a stand-in for the plan's 20,000 new sites, so it prints NOT A MARKER RESULT (STAND-IN) with what the bars would give, and exits with code 1. On 22 November that was 61.0% of pairs against the 70% bar. When no scored report exists it says so and exits with code 1.
 
 ## Step 6. Weeks 3 and 4. Scoring parts and the backtest, marker 3
 
-Coming in the next step: the `backtest` and `upload` commands. Once backtest forecasts are on the scoreboard, judge marker 3 with:
+See what the frozen backtests found. Free. It scores nothing:
+
+```
+python -m aeo.ranksim forecast backtest
+```
+
+It lists each frozen design under `evals/forecast/backtest/`, its design versions and every scored report with its headline number and label. The panel designs are marked STAND-IN: their cells are sites already seen on a search, read on one country-level page, not new launches. On 22 November design C (where a site lands the first time it appears) had a hit rate of 48.1% on 11,228 cells, and its best baseline was always saying not in top 50.
+
+A second look at the same held-out rows is possible, and is reported as a second look:
+
+```
+python -m aeo.ranksim forecast backtest run --reason "<why the designs are looked at again>"
+```
+
+It first prints that this is another look at the same held-out rows. The first run freezes the next design version (prereg-v2.json beside the old files, with the reason inside), scores nothing and exits with code 1. Commit and push those files, then run the same command with the same reason: it scores the designs once and writes report-v2.json beside report-v1.json. It refuses a dirty source tree, a design that is not committed and pushed, and a design already scored. Free, but ask the lead before running it.
+
+The upload forecast. Run it on or before each site's launch day, after a clean reading of its searches:
+
+```
+python -m aeo.ranksim forecast upload --site one.com
+python -m aeo.ranksim forecast upload --site one.com --record
+python -m aeo.ranksim forecast upload --all-due --record
+```
+
+1. Without `--record` it is a dry run. It prints each forecast (point, range, label and model version, all PREDICTED), the appearance gate, the searches it skipped and why, and how many forecasts it would record. It records nothing. With `--record` the forecasts are frozen on the scoreboard. Free.
+2. The appearance gate. The REAL bundles trained so far only know sites that appeared on a search. A new site has appeared nowhere, so each forecast is the chance the site is in the top 50 on day 90 times where it would land if it did, with the rest on NOT IN TOP 50. That chance comes from at least 100 graded seed and pilot outcomes from at least 10 sites once they exist. Until then it is a prior that was not fitted, 0.16, worked out from published numbers in `forecasting.py`. With that prior nearly every point is NOT IN TOP 50, and the command says so in one sentence. That is the honest answer until the paid training data exists.
+3. The bundle is the newest one under `data/forecast/models/` unless you pass `--bundle <name>`. A SYNTHETIC bundle is refused for a seed or pilot site. A bundle trained on outcomes later than the forecast date is refused.
+4. A search with no clean reading on or before the date that is not degraded is skipped and named. It is never called NOT IN TOP 50. Each forecast line also says how many model features are missing. A brand-new site is usually absent from the stored strength lists, so most of its strength features are missing (NaN, never zero). A cell that already has a forecast at that stage is listed and left alone: a forecast is never replaced.
+5. What it refuses and what to do: an upload dated after launch (too late, it cannot be made), a seed or pilot forecast more than one day after its date (run it on the day), an unregistered site (run `seeds register`), no bundle (run `train`). Exit code 1 when any search was skipped, refused or blocked, 2 when the command was used wrong.
+
+Then judge marker 3:
 
 ```
 python -m aeo.ranksim forecast report --source backtest --stage upload --as-of 2026-12-21
 python -m aeo.ranksim forecast marker --number 3 --source backtest --as-of 2026-12-21
 ```
 
-`report` prints the hit rate, the baselines, page one precision and recall, and every rate under 30 forecasts as NOT MEASURABLE. `marker` prints the verdict. Exit code 0 only when the marker passed. Free.
+`report` prints the hit rate, the baselines, page one precision and recall, and every rate under 30 forecasts as NOT MEASURABLE. `marker` prints the verdict. Exit code 0 only when the marker passed. Free. The frozen backtests write their reports to `evals/forecast/backtest/`, not to the scoreboard, so `report --source backtest` finds no graded forecast until backtest forecasts are recorded on the scoreboard, and says so.
 
-The spec requires four baselines on the same forecasts: always NT50, persistence, the band prior by difficulty and site strength only. The band prior is fitted on graded backtest forecasts of the training split, on sites not graded in the report; when there are none, the report says the band prior is missing and why. The site strength only baseline is missing until `strength.py` is finished, and the report says so. Markers 3 to 5 cannot pass while a baseline is missing.
+The spec requires four baselines on the same forecasts: always NT50, persistence, the band prior by difficulty and site strength only. The band prior is fitted on graded backtest forecasts of the training split, on sites not graded in the report; when there are none, the report says the band prior is missing and why. The site strength only point is stored with every forecast `upload` and `update` make, from the bundle's strength-only model on the same date and through the same gate. Forecasts made another way have none, and the report says how many lack it. Markers 3 to 5 cannot pass while a baseline is missing.
 
 ## Step 7. Weeks 5 to 8. Early reading updater, marker 4
 
-Coming in the next step: the `update` command. The seed readings for it are already being taken in step 3. Judge marker 4 on 22 January:
+The stage forecasts. Run each on its stage day (day 7, 14, 30 and 60 after launch), after that day's clean reading is assembled:
+
+```
+python -m aeo.ranksim forecast update --site one.com --stage d7
+python -m aeo.ranksim forecast update --site one.com --stage d7 --record
+python -m aeo.ranksim forecast update --all-due --stage d30 --record
+```
+
+It works like `upload`: a dry run without `--record`, the same gate, the same skips and refusals. It also uses the site's own position in the latest clean reading on or before the date and the one before it, and Search Console signals from the UI and daily exports imported on or before the date (API and range exports are not read yet). An export whose stored copy no longer has the sha256 frozen at import is skipped, and the forecast's notes say so. Free. When the stage day has passed it prints MISSED, records nothing and exits with code 1 (see "What a missed stage day means" in step 3).
+
+The gate also holds after the update. The updater of a conditional bundle learned from sites that appeared, so on a search where no clean reading on or before the date has shown the site inside the top 50, the updated chance of the top 50 is capped at the gate value. Once a reading shows the site inside the top 50, the updater's answer is used as it is. The model version says so (`stage-cap-gate-...`). A bundle with no updater is refused for a stage forecast, because the forecast would ignore the readings.
+
+`--all-due` takes only sites whose stage day is today, or was yesterday (the grace day, dated on the stage day), so every stage forecast it records is dated on its stage day and uses that day's reading. A site whose stage day is still to come is listed as "Not yet" and nothing is built for it, because a forecast recorded early could never be replaced. A site whose stage was missed is listed as MISSED and the command exits with code 1. It is safe to run the `--all-due` line every day from a scheduler. `due` prints the command to run now only for stages due today or in grace, and "Run it on <date>" for later ones.
+
+Judge marker 4 on 22 January:
 
 ```
 python -m aeo.ranksim forecast marker --number 4 --source backtest --as-of 2027-01-22
@@ -287,7 +354,7 @@ python -m aeo.ranksim forecast form import --file forms/filled.json
 python -m aeo.ranksim forecast seeds register --manifest pilots/pilot_manifest.json --source pilot
 ```
 
-`form template` writes the blank form with one plain question per answer. `form validate` checks a filled form and prints the brand terms it implies. Exit code 1 when it is not valid. `form import` copies it under `data/forecast/imports/forms/`, freezes its sha256 and its brand terms, and prints the terms. A pilot's sites and searches go on the scoreboard with the same manifest steps as the seed sites, frozen first, with `--source pilot`. Import the form BEFORE `seeds register`: register takes the brand terms from the form so that searches naming the brand are flagged and kept out of the headline, and it refuses a pilot whose form is not imported. A site on the scoreboard is never changed, so a form imported after registering that would change the brand flags is refused. All free. The upload forecasts are coming in the next step.
+`form template` writes the blank form with one plain question per answer. `form validate` checks a filled form and prints the brand terms it implies. Exit code 1 when it is not valid. `form import` copies it under `data/forecast/imports/forms/`, freezes its sha256 and its brand terms, and prints the terms. A pilot's sites and searches go on the scoreboard with the same manifest steps as the seed sites, frozen first, with `--source pilot`. Import the form BEFORE `seeds register`: register takes the brand terms from the form so that searches naming the brand are flagged and kept out of the headline, and it refuses a pilot whose form is not imported. A site on the scoreboard is never changed, so a form imported after registering that would change the brand flags is refused. All free. Then make each pilot's forecasts with `upload` and `update`, as in steps 6 and 7. They read the newest form filled in on or before the forecast date.
 
 ## Step 9. Weeks 9 to 17. Grade the real outcomes, marker 5
 

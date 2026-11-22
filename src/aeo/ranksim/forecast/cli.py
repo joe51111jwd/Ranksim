@@ -334,7 +334,8 @@ def cmd_status(ctx: Context, args: argparse.Namespace) -> int:
     else:
         lines.append(f"No stage forecast is due in the next {pipeline.STAGE_DUE_WINDOW_DAYS} days.")
     if calendar["missed"]:
-        lines.append("Stages MISSED (no forecast on or before the stage day). A missed stage is never backfilled:")
+        lines.append("Stages MISSED (no forecast, and the last day to record one dated the stage day has passed). "
+                     "A missed stage is never backfilled:")
         lines.extend(f"  {item['site']} ({item['source']}) {item['stage']} was due on {item['stage_date']}." for item in calendar["missed"])
     ctx.emit(payload, lines)
     return EXIT_OK if chain.ok and state.ok else EXIT_CHECK_FAILED

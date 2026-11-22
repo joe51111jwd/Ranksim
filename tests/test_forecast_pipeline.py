@@ -65,7 +65,7 @@ def test_demo_report_dicts_have_the_expected_shape(demo_result):
     for stage, report in reports.items():
         assert report["kind"] == "stage_report" and report["stage"] == stage
         assert report["source"] == "synthetic" and report["label"] == SYNTHETIC
-        assert report["model_version"] == pipeline.PERSISTENCE_MODEL
+        assert report["model_version"].startswith(f"forecasting-v1:{pipeline.DEMO_BUNDLE}:")
         assert report["headline"]["forecasts"] > 0
         assert report["chain"]["ok"] is True
     evaluations = demo_result.marker_evaluations
@@ -950,13 +950,27 @@ def test_stage_calendar_lists_stages_due_soon_and_stages_missed(tmp_path):
 # Baselines of markers 3 to 5
 
 
-def test_stage_marker_says_which_baselines_are_missing_and_why(demo_result):
-    report = demo_result.stage_reports["d30"]
-    assert "band_prior" in report["baselines_missing"] and "site_strength" in report["baselines_missing"]
-    notes = " ".join(report["baseline_notes"])
-    assert "no graded synthetic d30 forecast of the training split" in notes
-    assert "strength.py" in notes
-    assert any("strength.py" in note for note in demo_result.marker_evaluations["4"]["notes"])
+def test_demo_stage_reports_carry_all_four_spec_baselines_and_say_where_they_came_from(demo_result):
+    for stage, report in demo_result.stage_reports.items():
+        assert report["baselines_missing"] == [], stage
+        assert set(report["headline"]["baselines"]) >= {"always_nt50", "persistence", "band_prior", "site_strength"}
+        notes = " ".join(report["baseline_notes"])
+        assert "bundle's" in notes and "training cells" in notes and "site strength only baseline is the point" in notes
+    evaluation = demo_result.marker_evaluations["4"]
+    assert evaluation["passed"] is None and evaluation["label"] == SYNTHETIC  # synthetic never passes or fails
+    assert not any("strength.py" in note for note in evaluation["notes"])
+
+
+def test_demo_forecasts_come_from_the_live_path_and_the_bundle_knows_nothing_later(demo_result):
+    training = demo_result.training
+    assert training["label"] == SYNTHETIC and training["bundle"]["manifest"]["training_label"] == SYNTHETIC
+    cutoff = date.fromisoformat(training["bundle"]["manifest"]["training_cutoff"])
+    first_upload = min(date.fromisoformat(run["as_of"]) for run in demo_result.forecast_runs if run["stage"] == "upload")
+    assert cutoff < first_upload
+    assert {run["stage"] for run in demo_result.forecast_runs} == set(STAGE_DAYS)
+    assert demo_result.forecasts_recorded + demo_result.forecasts_skipped == len(STAGE_DAYS) * 2 * pipeline.DEMO_TARGETS_PER_SITE
+    assert not any(pipeline.PERSISTENCE_MODEL in line for line in demo_result.lines)
+    assert any("through the live path" in line for line in demo_result.lines)
 
 
 def test_band_prior_training_uses_training_cells_on_other_sites_only(tmp_path):
@@ -989,7 +1003,91 @@ def test_band_prior_training_uses_training_cells_on_other_sites_only(tmp_path):
     assert result["report"]["band_prior"] is not None
     assert "band_prior" not in result["report"]["baselines_missing"]
     assert result["report"]["baselines_missing"] == ["site_strength"]
-    assert any("strength.py" in note for note in result["baseline_notes"])
+    assert any("1 of 1 graded seed d30 forecasts carry no site strength only point" in note
+               for note in result["baseline_notes"])
+    board.close()
+
+
+def _graded_board(tmp_path: Path, rows: list[tuple[str, str, str | None, dict]]) -> tuple[Scoreboard, date]:
+    """A board with one d30 forecast per (site, source, split, notes) row, all graded at day 90."""
+    launch = date(2026, 1, 6)
+    clock = pipeline.VirtualClock(datetime(2026, 1, 5, 9, 0, tzinfo=timezone.utc))
+    board = _board(tmp_path, clock)
+    spec = PullSpec("plumber prices", 1026201)
+    for site, source, _split, _notes in rows:
+        board.add_site(site, source=source, launch_date=launch, launch_date_source="test", built_by="test", niche="plumber")
+        board.add_search(site, spec.search, location_code=1026201, difficulty="easy")
+    board.register_model_version("m1", description="test", frozen_at=clock.now())
+    clock.set(datetime(2026, 2, 5, 9, 0, tzinfo=timezone.utc))
+    for site, _source, split, notes in rows:
+        board.record_forecast(Forecast(site=site, search=spec.search, stage="d30", as_of=date(2026, 2, 5), point=3,
+                                       range_low=1, range_high=5, label="contested", model_version="m1",
+                                       notes={**({"split": split} if split else {}), **notes}))
+    day90 = datetime(2026, 4, 6, 12, 0, tzinfo=timezone.utc)
+    clock.set(day90)
+    pipeline.take_readings(board, ReplaySource(_replay(spec, day90, [r[0] for r in rows] + SITES)), [spec], clock=clock)
+    clock.set(datetime(2026, 4, 7, 9, 0, tzinfo=timezone.utc))
+    assert pipeline.grade(board, date(2026, 4, 7))["counts"]["graded"] == len(rows)
+    return board, date(2026, 4, 7)
+
+
+def test_band_prior_of_a_backtest_report_keeps_training_cells_and_drops_only_held_out_sites(tmp_path):
+    board, as_of = _graded_board(tmp_path, [("trainone.example", "backtest", "train", {}),
+                                            ("heldout.example", "backtest", "test", {})])
+    cells, why = pipeline.band_prior_training(board, source="backtest", stage="d30", as_of=as_of)
+    assert [cell.site for cell in cells] == ["trainone.example"], why  # a training site is never taken as graded
+    board.close()
+
+
+def test_stage_marker_takes_the_site_strength_baseline_each_forecast_stored(tmp_path):
+    board, as_of = _graded_board(tmp_path, [("seedone.example", "seed", None, {"baselines": {"site_strength": 51}}),
+                                            ("seedtwo.example", "seed", None, {"baselines": {"site_strength": 2}})])
+    result = pipeline.stage_marker(board, source="seed", stage="d30", as_of=as_of)
+    assert "site_strength" not in result["report"]["baselines_missing"]
+    assert "site_strength" in result["report"]["headline"]["baselines"]
+    assert any("on all 2 graded forecasts" in note for note in result["baseline_notes"])
+    board.close()
+
+
+def test_a_site_strength_point_missing_on_one_forecast_leaves_the_baseline_missing_with_the_count(tmp_path):
+    board, as_of = _graded_board(tmp_path, [("seedone.example", "seed", None, {"baselines": {"site_strength": 51}}),
+                                            ("seedtwo.example", "seed", None, {})])
+    points, why = pipeline.site_strength_points(board, source="seed", stage="d30", as_of=as_of)
+    assert points is None and "1 of 2 graded seed d30 forecasts carry no site strength only point" in why
+    board.close()
+
+
+def test_a_dataforseo_sandbox_source_in_any_mode_is_labelled_synthetic():
+    class Named:
+        def __init__(self, name: str) -> None:
+            self.name = name
+
+    assert pipeline.source_label(Named("dataforseo-sandbox")) == SYNTHETIC
+    assert pipeline.source_label(Named("dataforseo-sandbox-live")) == SYNTHETIC
+    assert pipeline.source_label(Named("synthetic")) == SYNTHETIC
+    assert pipeline.source_label(Named("dataforseo")) == "REAL"
+    assert pipeline.source_label(Named("dataforseo-live")) == "REAL"
+
+
+def test_read_round_stores_the_paid_pulls_of_a_round_that_failed_part_way(tmp_path, monkeypatch):
+    from aeo.ranksim.forecast.reader import RoundFailed
+
+    clock = pipeline.VirtualClock(START)
+    board = _board(tmp_path, clock)
+    spec_a, spec_b = PullSpec("plumber prices", 1026201), PullSpec("emergency plumber", 1026201)
+    paid = _pull(spec_a, START, SITES)
+    unsent = _pull(spec_b, START, SITES, ok=False)
+
+    def failing(source, specs, now):
+        raise RoundFailed(0, "the budget guard refused the second task_post.", "2026-01-05T09:00:00Z", pulls=[paid, unsent])
+
+    monkeypatch.setattr(pipeline, "fetch_round", failing)
+    summary = pipeline.read_round(board, ReplaySource([]), [spec_a, spec_b], clock=clock)
+    assert summary.failed and summary.pulls_returned == 2 and summary.pulls_ok == 1
+    assert board.pull(paid.pull_id).ok and not board.pull(unsent.pull_id).ok
+    record = next(row for row in board.freezes() if row["name"] == summary.freeze_name)
+    assert record["payload"]["failed"].startswith("the budget guard") and sorted(record["payload"]["pull_ids"]) == sorted(
+        [paid.pull_id, unsent.pull_id])
     board.close()
 
 

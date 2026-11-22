@@ -51,7 +51,7 @@ import numpy as np
 import pandas as pd
 
 from ..site_history import site_key
-from .config import BOOTSTRAP_DRAWS, BOOTSTRAP_SEED, EXCLUDED_SITES, forecast_paths
+from .config import BOOTSTRAP_DRAWS, BOOTSTRAP_SEED, forecast_paths
 from .content import (
     MODE_CROSS,
     MODE_LEXICAL,
@@ -59,6 +59,7 @@ from .content import (
     PageText,
     page_text_from_fields,
 )
+from .features import excluded_site_mask
 
 LABEL = "DIAGNOSTIC of part 4 on public data. Not a marker number."
 
@@ -328,7 +329,7 @@ def load_flights(path: Path | None = None) -> pd.DataFrame:
         }
     )
     out["site"] = out["url"].map(lambda u: site_key(u) if u else "")
-    out = out[~out["site"].isin(EXCLUDED_SITES)].reset_index(drop=True)
+    out = out[~excluded_site_mask(out["site"]).to_numpy()].reset_index(drop=True)
     out["search_id"] = out["gl"] + "|" + out["search"]
     has_text = (out["title"].str.strip() != "") | (out["h1"].str.strip() != "") | (out["meta"].str.strip() != "") | (out["body"].str.strip() != "")
     out["usable"] = (out["scrape_status"] == MIN_USABLE_BODY_STATUS) & has_text
@@ -487,7 +488,7 @@ def sample_dfs_searches(panel_dir: Path, locales: Sequence[str], n: int, *, seed
         chosen.setdefault(locale, set()).add(kid)
     frames = [_read_locale(panel_dir, locale, DFS_COLUMNS, ids) for locale, ids in sorted(chosen.items())]
     rows = pd.concat(frames, ignore_index=True)
-    rows = rows[(rows["rank"] <= max(TOP_KS)) & (~rows["poison_risk"].fillna(False).astype(bool)) & (~rows["site"].isin(EXCLUDED_SITES))]
+    rows = rows[(rows["rank"] <= max(TOP_KS)) & (~rows["poison_risk"].fillna(False).astype(bool)) & (~excluded_site_mask(rows["site"]).to_numpy())]
     rows = rows.sort_values(["locale", "keyword_id", "rank", "url"]).drop_duplicates(["locale", "keyword_id", "rank"]).reset_index(drop=True)
     rows["search_id"] = rows["locale"] + "|" + rows["keyword_id"]
     return rows

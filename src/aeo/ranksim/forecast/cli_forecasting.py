@@ -16,13 +16,15 @@ from __future__ import annotations
 
 import argparse
 import json
+from dataclasses import dataclass, field
+from datetime import date
 from pathlib import Path
 from typing import Any, Callable
 
 from . import forecasting
 from .cli import EXIT_CHECK_FAILED, EXIT_OK, PROG, Context, _iso_date, _today
 from .config import STAGE_DAYS
-from .types import SYNTHETIC
+from .types import REAL, SYNTHETIC
 
 UPDATE_STAGES: tuple[str, ...] = tuple(stage for stage in STAGE_DAYS if stage != "upload")
 
@@ -114,39 +116,79 @@ def cmd_backtest_run(ctx: Context, args: argparse.Namespace) -> int:
 
 
 def _bundle(ctx: Context, name: str | None) -> forecasting.ModelBundle:
-    chosen = name or forecasting.newest_bundle(ctx.paths)
+    """--bundle, else the newest REAL bundle: these commands forecast seed and pilot sites, which a SYNTHETIC bundle never does."""
+    chosen = name or forecasting.newest_bundle(ctx.paths, label=REAL)
     if chosen is None:
-        raise forecasting.ForecastingRefusal(f"No model bundle is trained yet under {ctx.paths.models}. Train one with: "
-                                             f"{PROG} train --data panel")
+        raise forecasting.ForecastingRefusal(f"No bundle trained on REAL data exists yet under {ctx.paths.models}. Train one "
+                                             f"with: {PROG} train --data panel")
     return forecasting.load_bundle(ctx.paths, chosen)
 
 
-def _sites_for(ctx: Context, args: argparse.Namespace, stage: str) -> list[str]:
+@dataclass
+class _Chosen:
+    """The sites a forecast command runs for, and (with --all-due) the stage entries it does not run."""
+
+    sites: list[str]
+    later: list[dict[str, Any]] = field(default_factory=list)  # stage day still to come: never recorded early
+    missed: list[dict[str, Any]] = field(default_factory=list)  # last day to record has passed: never backfilled
+
+
+def _sites_for(ctx: Context, args: argparse.Namespace, stage: str) -> _Chosen:
+    """--site, or with --all-due every site whose `stage` forecast should be made today.
+
+    An upload forecast is due from three days before launch (it must be dated on or before launch). A
+    stage forecast (d7 to d60) is taken only on its stage day or its grace day, so it is dated on the
+    stage day and uses that day's reading: one whose day is still to come is listed, never recorded
+    early (a forecast is never replaced, so an early one would stand for that stage for good). A stage
+    whose last day to record has passed is listed as MISSED.
+    """
     if args.site:
-        return [args.site]
+        return _Chosen([args.site])
     if not args.all_due:
         raise ValueError("Give --site SITE, or --all-due for every site whose stage is due.")
-    calendar = forecasting.due(ctx.scoreboard(), _today(ctx, args.date))
-    return sorted({item["site"] for item in calendar["due"] if item["stage"] == stage})
+    today = _today(ctx, args.date)
+    calendar = forecasting.due(ctx.scoreboard(), today)
+    chosen = _Chosen([])
+    names: set[str] = set()
+    for item in calendar["due"]:
+        if item["stage"] != stage:
+            continue
+        if stage != "upload" and date.fromisoformat(item["stage_date"]) > today:
+            chosen.later.append(item)
+        else:
+            names.add(item["site"])
+    chosen.sites = sorted(names)
+    chosen.missed = [item for item in calendar["missed"] if item["stage"] == stage]
+    return chosen
 
 
 def _forecast(ctx: Context, args: argparse.Namespace, stage: str) -> int:
     bundle = _bundle(ctx, args.bundle)
     board = ctx.scoreboard()
-    sites = _sites_for(ctx, args, stage)
+    chosen = _sites_for(ctx, args, stage)
     runs = []
     lines: list[str] = []
-    if not sites:
-        lines.append(f"No site has a {stage} forecast due.")
-    for site in sites:
+    for item in chosen.missed:
+        lines.append(f"MISSED: {item['site']} ({item['source']}) {stage} was due on {item['stage_date']}, and the last day "
+                     f"to record a forecast dated then was {item['last_day_to_record']}. Nothing is recorded. A missed "
+                     "stage is never backfilled.")
+    for item in chosen.later:
+        lines.append(f"Not yet: {item['site']} ({item['source']}) {stage} is on {item['stage_date']}. Run it on that day, "
+                     "after that day's clean reading is assembled. Nothing was built for it now.")
+    if not chosen.sites and not chosen.missed and not chosen.later:
+        lines.append(f"No {stage} forecast is due for any site in the next 3 days.")
+    elif not chosen.sites and args.all_due:
+        lines.append(f"No {stage} forecast is due today.")
+    for site in chosen.sites:
         run = forecasting.upload_or_update(board, ctx.paths, bundle=bundle, site=site, stage=stage, day=args.date,
                                            now=ctx.clock.now(), record=bool(args.record))
         runs.append(run)
         lines.extend(forecasting.run_lines(run, record=bool(args.record)))
     payload = {"stage": stage, "record": bool(args.record), "bundle": bundle.version,
-               "training_label": bundle.training_label, "runs": [run.to_dict() for run in runs]}
+               "training_label": bundle.training_label, "runs": [run.to_dict() for run in runs],
+               "missed": chosen.missed, "not_yet_due": chosen.later}
     ctx.emit(payload, lines)
-    trouble = any(run.blocked or run.missed or run.skipped or run.refused for run in runs)
+    trouble = bool(chosen.missed) or any(run.blocked or run.missed or run.skipped or run.refused for run in runs)
     return EXIT_CHECK_FAILED if trouble else EXIT_OK
 
 
@@ -220,7 +262,9 @@ def _register_backtest(sub: Any, common: argparse.ArgumentParser) -> None:
 
 def _add_forecast_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--site", default=None, help="a registered seed or pilot site")
-    parser.add_argument("--all-due", action="store_true", help="every site whose stage is due in the next 3 days")
+    parser.add_argument("--all-due", action="store_true",
+                        help="every site whose forecast at this stage is due today (an upload forecast from 3 days "
+                             "before launch; a stage forecast on its stage day or grace day)")
     parser.add_argument("--date", type=_iso_date, default=None,
                         help="the forecast date (default: the stage day, or today when that is earlier)")
     parser.add_argument("--bundle", default=None, help="the model bundle (default: the newest)")

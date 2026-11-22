@@ -69,7 +69,6 @@ from .features import (
     LINK_COUNT_MEASURE,
     MEASURES,
     MODEL_MEASURES,
-    START_COLUMNS,
     SYNTHETIC_FOOTPRINT_COLUMNS,
     _loo_quantile_and_gap,
     check_model_features,
@@ -117,7 +116,17 @@ FREE_FEATURES: tuple[str, ...] = (
     "sd_registration_known", "sd_possibly_reregistered", "tld_code", *SYNTHETIC_FOOTPRINT_COLUMNS,
 )
 MDR_FEATURES: tuple[str, ...] = (*FREE_FEATURES, "mdr_before")
-FEATURE_SETS: dict[str, tuple[str, ...]] = {"free": FREE_FEATURES, "free_plus_mdr": MDR_FEATURES}
+FEATURE_SETS: dict[str, tuple[str, ...]] = {"free": FREE_FEATURES, "free_plus_mdr": MDR_FEATURES}  # trust-v1, frozen
+# Version 2 drops sd_registration_known: RDAP is left out of every backtest and training frame, so it is always 0.
+FREE_FEATURES_V2: tuple[str, ...] = tuple(f for f in FREE_FEATURES if f != "sd_registration_known")
+FEATURE_SETS_V2: dict[str, tuple[str, ...]] = {"free": FREE_FEATURES_V2, "free_plus_mdr": (*FREE_FEATURES_V2, "mdr_before")}
+STAND_IN_REASON = ("its pairs are sites that already rank in the free public panel, with result titles standing in for "
+                   "page content, not the plan's 20,000 new sites with traffic curves")
+
+
+def feature_sets(version: int = 1) -> dict[str, tuple[str, ...]]:
+    """The frozen feature sets of a design version: trust-v1 keeps its own; version 2 and later drop sd_registration_known."""
+    return dict(FEATURE_SETS) if int(version) < 2 else dict(FEATURE_SETS_V2)
 CATEGORICAL: tuple[str, ...] = ("tld_code",)
 SINGLE_MEASURES: tuple[str, ...] = tuple(f"st_{m}" for m in MEASURES)
 
@@ -612,19 +621,36 @@ def evaluate_pairs(
     return out
 
 
-def marker2_report(evaluation: Mapping[str, Any], model_name: str, *, label: str = REAL) -> dict[str, Any]:
-    """The dict shape markers.evaluate_marker(2, report) reads, for one model."""
+def marker2_report(evaluation: Mapping[str, Any], model_name: str, *, label: str = REAL,
+                   stand_in: bool = True, stand_in_reason: str = STAND_IN_REASON) -> dict[str, Any]:
+    """The dict shape markers.evaluate_marker(2, report) reads, for one model.
+
+    `gain_over_link_count` is the gain over the plain link count (Common Crawl linked hosts) on the same pairs: the
+    plan's measure, which decides the verdict. `gain_over_best_single_measure` is the gain over the best free single
+    strength measure on the same pairs (chosen on these pairs, so stricter), printed beside it with no bar.
+    The free panel's pairs are a stand-in for the plan's new sites (`stand_in`), so markers never pass or fail on it.
+    """
     entry = evaluation["models"][model_name]
     pairs = entry["pairs"]
-    gain = entry.get("gain_over_best_single_measure") or {}
-    return {
+    link = entry.get("gain_over_link_count") or {}
+    best = entry.get("gain_over_best_single_measure") or {}
+    report = {
         "label": label,
         "pairs": {"count": pairs["count"], "rate": pairs["rate"], "two_way_interval": pairs["two_way_interval"]},
-        "gain_over_link_count": {"difference": gain.get("difference"), "difference_interval": gain.get("difference_interval"),
-                                 "baseline": entry.get("best_single_measure"),
-                                 "note": "the best single strength measure on the same pairs, at least as strict as link count"},
+        "gain_over_link_count": {"difference": link.get("difference"), "difference_interval": link.get("difference_interval"),
+                                 "baseline": f"st_{LINK_COUNT_MEASURE}",
+                                 "note": "the plain link count (Common Crawl linked hosts) on the same pairs; decides the verdict"},
+        "gain_over_best_single_measure": {"difference": best.get("difference"),
+                                          "difference_interval": best.get("difference_interval"),
+                                          "baseline": entry.get("best_single_measure"),
+                                          "note": ("the best free single strength measure, chosen on these pairs, so "
+                                                   "stricter; printed beside the verdict with no bar")},
         "counts": {"right": pairs["right"], "wrong": pairs["wrong"], "tied": pairs["tied"], "missing": 0},
     }
+    if stand_in:
+        report["stand_in"] = True
+        report["stand_in_reason"] = stand_in_reason
+    return report
 
 
 # ---------------------------------------------------------------------------
@@ -640,6 +666,14 @@ def prereg_payload(split: SplitRule = DEFAULT_SPLIT, *, version: int = 1, reason
         payload["pair_comparison"] = "labels differ by more than the threshold (>)"
         payload["start_evidence"] = ("Common Crawl first release only; RDAP is left out (today-only, no dated history, "
                                      "its presence encodes survival to the fetch day)")
+        payload["feature_sets"] = {k: list(v) for k, v in feature_sets(version).items()}
+        payload["feature_set_change"] = "sd_registration_known is dropped: with RDAP left out it is always 0"
+        payload["marker_gain"] = ("gain_over_link_count: model minus the plain link count (st_s_cc_hosts) on the same "
+                                  "pairs, decides the verdict; gain_over_best_single_measure: model minus the best free "
+                                  "single measure chosen on the test pairs, stricter, printed beside it")
+        payload["stand_in"] = ("the report is marked stand_in: " + STAND_IN_REASON
+                               + "; markers.evaluate_marker never passes or fails marker 2 on it")
+        payload["panel"] = "data/forecast/cache/panel rebuilt with the fixed parsers (see PANEL_VERSIONS.md)"
     return payload
 
 
@@ -763,9 +797,156 @@ def _scorer(backend: str) -> Any:
     return ContentScorer(backend)
 
 
+# ---------------------------------------------------------------------------
+# training-side labels and out-of-fold models, for the backtest's training rows
+
+# The source files whose code decides a label row or a fitted trust model. A cached label table or fold model is
+# reused only while all of them hash the same.
+LABEL_CODE_FILES: tuple[str, ...] = ("trust.py", "features.py", "content.py", "strength.py", "sources/panel.py",
+                                     "sources/strength_lists.py", "sources/domain_age.py")
+
+
+def label_cache_dir() -> Path:
+    """data/forecast/cache/oof/ (never a tracked folder)."""
+    return forecast_paths().cache / "oof"
+
+
+def label_code_sha256() -> str:
+    from .features import source_hashes
+
+    hashes = source_hashes()
+    return sha256_text(canonical_json({name: hashes.get(name) for name in LABEL_CODE_FILES}))
+
+
+def training_labels(split: SplitRule, *, backend: str = "lexical", language: str | None = None,
+                    sites_split: SplitRule | None = None, restrict: Callable[[pd.DataFrame], pd.DataFrame] | None = None,
+                    tag: str = "scored", cache_dir: str | Path | None = None,
+                    log: Callable[[str], None] | None = None) -> tuple[pd.DataFrame, dict[str, Any]]:
+    """The trust label table of the TRAINING pages only (train searches dated before the cutoff), cached as parquet.
+
+    Every site on a page counts for the places (the label is built among the page's top 50), so test sites stay on
+    the pages; `site_test` marks them and no fit uses them as label rows. No test page is read: `restrict` first
+    keeps side == "train" (and may cut further, for a rehearsal). The content model is frozen, so a label does not
+    depend on which rows a later fit uses. The cache key covers the split, the restriction tag, the backend and
+    language, the panel files and the code that builds labels (LABEL_CODE_FILES).
+    """
+    from .features import panel_fingerprint
+
+    folder = Path(cache_dir) if cache_dir else label_cache_dir()
+    key_body = {"version": "trust-training-labels-v2", "split": asdict(split),
+                "sites_split": asdict(sites_split) if sites_split else None, "tag": tag, "backend": backend,
+                "language": language, "top": LABEL_TOP, "min_depth": LABEL_MIN_DEPTH, "panel": panel_fingerprint(),
+                "code": label_code_sha256()}
+    key = sha256_text(canonical_json(key_body))[:16]
+    path = folder / f"labels-{tag}-{key}.parquet"
+    meta_path = path.with_suffix(".json")
+    if path.is_file() and meta_path.is_file():
+        meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        if meta.get("sha256") == hashlib.sha256(path.read_bytes()).hexdigest():
+            if log:
+                log(f"trust labels: cached {path.name}")
+            return pd.read_parquet(path), meta
+
+    def keep_train(frame: pd.DataFrame) -> pd.DataFrame:
+        frame = frame[frame["side"] == "train"]
+        if restrict is not None:
+            frame = restrict(frame)
+        return frame[frame["side"] == "train"]
+
+    best, _ = load_label_rows(split, sites_split=sites_split, log=log, restrict=keep_train)
+    rows = best if language is None else best[best["language"] == language]
+    labels = label_table(rows, _scorer(backend)).reset_index(drop=True)
+    for col in ("snapshot_date", "as_of"):
+        if col in labels:
+            labels[col] = [as_date(d) for d in labels[col]]
+    folder.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".tmp")
+    labels.to_parquet(tmp, index=False)
+    tmp.replace(path)
+    meta = {**key_body, "key": key, "rows": int(len(labels)), "pages": int(labels.groupby(["keyword_id", "snapshot_time"]).ngroups),
+            "latest_page_date": max(labels["snapshot_date"]).isoformat() if len(labels) else None,
+            "sha256": hashlib.sha256(path.read_bytes()).hexdigest(), "label": "REAL places, PREDICTED content scores"}
+    meta_path.write_text(json.dumps(meta, indent=2, sort_keys=True, default=str), encoding="utf-8")
+    return labels, meta
+
+
+def trust_fit_rows(labels: pd.DataFrame, keep: np.ndarray | None = None, seed: int = SEED) -> pd.DataFrame:
+    """The rows a trust model is fitted on, exactly as `run_one` picks them: training sites only (not `site_test`),
+    optionally cut by `keep`, whole pages sampled to TRAIN_ROWS_MAX, and a label present."""
+    mask = ~labels["site_test"].astype(bool).to_numpy()
+    if keep is not None:
+        mask &= np.asarray(keep, dtype=bool)
+    rows = sample_pages(labels[mask], TRAIN_ROWS_MAX, seed)
+    return rows[np.isfinite(pd.to_numeric(rows["residual"], errors="coerce"))].reset_index(drop=True)
+
+
+@dataclass
+class FoldTrust:
+    """One out-of-fold trust model and exactly what it was fitted on (search groups and sites), for the in-sample check."""
+
+    model: TrustModel
+    search_fold: int
+    site_fold: int
+    search_groups: frozenset
+    sites: frozenset
+    rows: int
+    latest_label_date: date | None
+
+
+def fit_trust_folds(labels: pd.DataFrame, search_fold: np.ndarray, site_fold: np.ndarray, folds: int, *,
+                    version: int = 2, feature_set: str = "free", seed: int = SEED,
+                    log: Callable[[str], None] | None = None,
+                    grid: Sequence[Mapping[str, Any]] = GBT_GRID) -> dict[tuple[int, int], FoldTrust]:
+    """One trust model per (search fold a, site fold b), fitted without any label row whose search group is in fold a
+    or whose site is in fold b, by the same procedure as the scored model (`trust_fit_rows`, `fit_trust_model`).
+
+    A training row of the backtest in search fold a and site fold b takes its trust input from model (a, b), which
+    never saw its own search (so not its own outcome page) nor its own site, as a held-out test row never is.
+    """
+    feats = feature_sets(version)[feature_set]
+    backend = str(labels["content_backend"].iloc[0]) if len(labels) else ""
+    model_name = str(labels["content_model"].iloc[0]) if len(labels) else ""
+    out: dict[tuple[int, int], FoldTrust] = {}
+    for a in range(folds):
+        for b in range(folds):
+            keep = (np.asarray(search_fold) != a) & (np.asarray(site_fold) != b)
+            rows = trust_fit_rows(labels, keep, seed)
+            model = fit_trust_model(rows, feature_set=feature_set, features=feats, label_backend=backend,
+                                    label_model=model_name, seed=seed, grid=grid)
+            model.version = f"trust-v{int(version)}-oof-a{a}-b{b}"
+            dates = [as_date(d) for d in rows["snapshot_date"]] if len(rows) else []
+            out[(a, b)] = FoldTrust(model, a, b, frozenset(rows["search_group"].astype(str)),
+                                    frozenset(rows["site"].astype(str)), int(len(rows)), max(dates) if dates else None)
+            if log:
+                log(f"trust fold a{a} b{b}: {len(rows)} rows")
+    return out
+
+
+def rehearsal_models_dir(folder: str | Path) -> Path:
+    """Where a rehearsal writes its trust models: under the rehearsal folder in the cache, never under data/forecast/models."""
+    return Path(folder) / "models"
+
+
+def rehearsal_restrict(outer: SplitRule) -> Callable[[pd.DataFrame], pd.DataFrame]:
+    """The rehearsal's cut: only the outer split's TRAINING pages and training sites, re-sided by REHEARSAL_SPLIT."""
+    from .strength import REHEARSAL_SPLIT
+
+    def restrict(frame: pd.DataFrame) -> pd.DataFrame:
+        keep = frame[(frame["side"] == "train") & ~frame["site"].map(outer.site_is_test).astype(bool)].copy()
+        sides = {(k, d): REHEARSAL_SPLIT.page_side(k, d)
+                 for k, d in keep[["keyword", "snapshot_date"]].drop_duplicates().itertuples(index=False)}
+        keep["side"] = [sides[(k, d)] for k, d in zip(keep["keyword"], keep["snapshot_date"])]
+        return keep[keep["side"] != "excluded"]
+
+    return restrict
+
+
 def run_one(best: pd.DataFrame, config: Mapping[str, Any], *, models_dir: Path | None, manifest_base: Mapping[str, Any],
-            log: Callable[[str], None] | None = None, save: bool = True, version: int = 1) -> dict[str, Any]:
-    """One label backend and language: labels, two feature sets, trees and ridge, pairs on held-out sites and searches."""
+            log: Callable[[str], None] | None = None, save: bool = True, version: int = 1,
+            overwrite: bool = False) -> dict[str, Any]:
+    """One label backend and language: labels, two feature sets, trees and ridge, pairs on held-out sites and searches.
+
+    `overwrite` is for rehearsals only, whose models live under the cache and are refitted on every rehearsal."""
     language = config.get("language")
     rows = best if language is None else best[best["language"] == language]
     train_pages = rows[(rows["side"] == "train")]
@@ -796,8 +977,9 @@ def run_one(best: pd.DataFrame, config: Mapping[str, Any], *, models_dir: Path |
         "feature_sets": {},
     }
     model_values: dict[str, np.ndarray] = {}
-    for name in FEATURE_SETS:
-        model = fit_trust_model(train_ok, feature_set=name, label_backend=scorer.mode, label_model=scorer.model_name)
+    for name, feats in feature_sets(version).items():
+        model = fit_trust_model(train_ok, feature_set=name, features=feats, label_backend=scorer.mode,
+                                label_model=scorer.model_name)
         model.version = f"trust-v{int(version)}"
         model_values[f"{name}_gbt"] = model.predict(test)
         model_values[f"{name}_ridge"] = model.predict_ridge(test)
@@ -806,7 +988,7 @@ def run_one(best: pd.DataFrame, config: Mapping[str, Any], *, models_dir: Path |
             manifest = {**manifest_base, "feature_set": name, "language": language, "content_backend": scorer.mode,
                         "content_model": scorer.model_name, "train_rows": int(len(train_ok)), "features": model.features,
                         "label_table_version": result["label_table_version"]}
-            path, digest = save_trust_model(model, manifest, models_dir)
+            path, digest = save_trust_model(model, manifest, models_dir, overwrite=overwrite)
             info["model_file"] = str(path)
             info["model_sha256"] = digest
         result["feature_sets"][name] = info
@@ -840,16 +1022,9 @@ def run(split: SplitRule = DEFAULT_SPLIT, *, out_dir: str | Path | None = None, 
     if rehearsal:
         folder = Path(out_dir) if out_dir else forecast_paths().cache / "rehearsal" / REPORT_NAME
         digest = "rehearsal"
-        outer = split
-
-        def restrict(frame: pd.DataFrame) -> pd.DataFrame:
-            keep = frame[(frame["side"] == "train") & ~frame["site"].map(outer.site_is_test).astype(bool)].copy()
-            sides = {(k, d): REHEARSAL_SPLIT.page_side(k, d) for k, d in keep[["keyword", "snapshot_date"]].drop_duplicates().itertuples(index=False)}
-            keep["side"] = [sides[(k, d)] for k, d in zip(keep["keyword"], keep["snapshot_date"])]
-            return keep[keep["side"] != "excluded"]
-
+        restrict = rehearsal_restrict(split)
         sites_split = REHEARSAL_SPLIT
-        models_dir = None
+        models_dir = rehearsal_models_dir(folder)
     context: dict[str, Any] | None = None
     if not rehearsal:
         folder = Path(out_dir) if out_dir else evals_dir(REPORT_NAME)
@@ -872,8 +1047,8 @@ def run(split: SplitRule = DEFAULT_SPLIT, *, out_dir: str | Path | None = None, 
     runs = {}
     for config in (PRIMARY, *SECONDARY):
         key = f"{config['backend']}_{config.get('language') or 'all'}"
-        runs[key] = run_one(best, config, models_dir=models_dir, manifest_base=manifest_base, log=log, save=not rehearsal,
-                            version=version)
+        runs[key] = run_one(best, config, models_dir=models_dir, manifest_base=manifest_base, log=log, save=True,
+                            version=version, overwrite=rehearsal)
     primary_key = f"{PRIMARY['backend']}_{PRIMARY['language']}"
     primary_eval = runs[primary_key]["evaluation"]
     marker_input = marker2_report(primary_eval, "free_gbt")

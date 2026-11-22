@@ -100,6 +100,9 @@ Refusals (each has a test):
 - A grade from a degraded reading.
 - Any report when the hash chain does not verify.
 
+- A REAL reading that is not degraded and names a kept pull which is not stored in the same database. Import runs the same check.
+- A stage forecast dated after launch day plus its stage day plus `FORECAST_FROZEN_GAP_DAYS` (1). A missed stage day loses that forecast for that stage. A later forecast is a shorter lead, never that stage.
+
 A regrade is a new row with `kind = regrade`, a reason, and the grading rule version. Reports print the original grade beside it. Core updates come from Google's status dashboard and carry the time we recorded them. Seed, pilot and backtest results are reported apart and are never pooled into one headline.
 
 `export` writes the chains and the head hashes as JSONL under `evals/scoreboard/` so they can be committed (git is the outside timestamp). `import` rebuilds the database from that export and verifies it.
@@ -121,6 +124,19 @@ Common rule: every feature value is a `Dated` value (`asof.py`) with its source 
 - **Part 7, early readings (`updater.py`).** Takes the earlier forecast as the prior and the readings up to the stage (clean positions, whether the site has entered the top 50, the trend, Search Console counts when present) and returns the updated distribution. Version 1 is a shrunk transition table (band at the stage to band at day 90, by prior band), which works on small samples. A tree model replaces it only when it beats the table on held-out data. Search Console positions are never used as outcomes.
 - **Backtest (`backtest.py`).** For past new sites: `as_of` is the launch month, target searches are picked by a frozen rule that does not look at later rankings, the forecast is graded against the month-3 snapshot, and month 1 feeds the updater. Only held-out sites are graded. Each graded cell stores the real days since launch. Backtest labels are single snapshots and are labeled as such.
 
+Rules added after the bug hunts (each has a test):
+
+- **Scored runs.** A run that reads held-out rows (`strength run`, the trust run, `backtest run`) is refused unless its design file is committed and pushed, the source tree under `src/aeo/ranksim/forecast` is clean and matches the freeze, and that version has not been scored. Reports, manifests and model files carry a version number (`prereg-v2.json`, `report-v2.json`) and are never overwritten. A new version needs a written reason. The manifest records the commit, the sha256 of every source file and of every model file it loaded.
+- **Held out means site and search.** A graded backtest cell is a held-out site on a held-out search with a forecast date on or after the cutoff. Training rows use training sites only. A report that was not given held-out flags certifies nothing.
+- **Brand searches in the backtest** follow the scoreboard rule: a registered brand term, or the site's first label, inside the search text. They are left out of the headline and shown apart. **OUR READING:** a label shorter than 3 characters must match a whole word.
+- **Headline intervals resample sites.** The search-resampled interval is printed beside it.
+- **Registration records fetched today are undated.** They are left out of every backtest feature, for the same survivorship reason as Open PageRank start dates. A live forecast may use them.
+- **Marker 2 pairs** use labels that differ by more than the threshold, not by the threshold exactly.
+- **Band prior (OUR READING).** For each difficulty tercile, the one constant point (1 to 50 or NT50) that is a hit most often on the training cells of that tercile under the grading rule. Ties go to the smaller point. Brand searches are left out. It is a constant point, not a distribution.
+- **Excluded sites** are matched after normalising the site (`types.is_excluded_site`), so `www` and subdomain spellings are excluded too.
+- **The DataForSEO sandbox is SYNTHETIC** (`types.SYNTHETIC_PROVIDERS`). `read_clean` holds the 60 second gap floor for real providers.
+- **Cluster bootstrap draws** are made in chunks of 200. The intervals are bit for bit those of one block of draws with the same seed.
+
 ## 7. Markers (frozen in `markers.py`)
 
 | Marker | Passes when | Also printed, no bar |
@@ -130,6 +146,8 @@ Common rule: every feature value is a `Dated` value (`asof.py`) with its source 
 | 3 | upload hit rate 0.75 or more on held-out backtest launches, and above the best baseline with a lower bound above 0 | per band, per difficulty, skill |
 | 4 | day-30 hit rate 0.85 or more and page-one precision 0.80 or more | recall, seed readings as interim only |
 | 5 | Confirmed hit rate 0.90 or more, precision 0.85 or more, recall 0.80 or more, on real day-90 outcomes | site-cluster interval, backtest apart |
+
+**Stand-in rule (OUR READING).** A report whose cells are not what the marker is about (for example the free panel's sites that already rank, instead of new site launches) is marked `stand_in` with a reason. Its verdict is never passed or failed. What the bars would give is kept under `stand_in_passed`, and the text says in one sentence why it does not count. SYNTHETIC reports follow the same rule. Marker 2's verdict uses the gain over link count, the plan's wording. The gain over the best single strength measure is stricter and is printed beside it.
 
 A marker report always shows how many forecasts were eligible by source and says so when a source has none (pilots cannot reach day 90 by 19 March unless they launch by 19 December; seed sites reach day 90 on 28 February when they launch on 30 November).
 
@@ -148,6 +166,14 @@ Public and paid data land in the same shapes, so a model trained on the free sam
 **Site start dates** (`sources/domain_age.py`): first-seen month from Common Crawl, the first month in OpenPageRank, and RDAP registration dates for small sets. Each value says which source it came from. A registration date is not a launch date, and a re-registered expired domain looks new: both are flagged, not hidden.
 
 **Google updates** (`sources/updates.py`): the dated list of ranking updates from Google's Search Status Dashboard, for the scoreboard's `core_updates` table.
+
+**Paid pulls** (`trainingset.py`, `forecast pull ...`): traffic curves and past result pages use one window, N calendar months ending in the month of the pull day. Past result pages bought from DataForSEO are written to `data/forecast/cache/panel_labs/`, apart from the free sample panel. A paid pull checks the cost of its unpaid calls against the budget guard before its first call and refuses the whole batch when the approval or the $1 sample gate says no. A resumed job never pays twice.
+
+**Values dated by their record, not by the page.** Search volume counts as known 45 days after its month ends. Intent and `etv` are null on pages older than their record date. `etv` from the paid Historical SERPs endpoint is held back the same way until a real response shows it follows the page month (`dfs_samples.LABS_ETV_IS_PAGE_DATED`). No model feature reads `etv`.
+
+**New-site cohort filter (OUR READING)** (`newsites.SpamRule` v1): parking name servers read within 14 days of launch, a spam-shaped domain name, or template phrases on the launch page. It reads only facts knowable at registration or launch. Rows are never deleted. Each gets its rule and a kept flag, and the command prints how many sites each rule removed and how many it could not judge.
+
+`start_estimates.jsonl` is a reporting file. Each row carries the date its evidence was collected, and the loader refuses an earlier `as_of` unless asked for reporting only.
 
 Downloads go under `data/forecast/public/` (ignored by git). Every loader records the URL, the fetch time and the sha256 of what it read in a `SOURCES.json` beside the cache, and is resumable. Nothing that is personal data about individuals is loaded.
 

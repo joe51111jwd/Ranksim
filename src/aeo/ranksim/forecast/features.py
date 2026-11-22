@@ -315,22 +315,7 @@ START_COLUMNS: tuple[str, ...] = (
 )
 
 
-def start_features(site: str, as_of: date, evidence: Sequence[Dated]) -> dict[str, float]:
-    """Start-date features for one site as of a date. The estimate is PREDICTED from REAL evidence.
-
-    Evidence published after `as_of` is dropped (domain_age.best_start_date does
-    that). `sd_age_days` is NaN when the estimate is left censored or missing; the
-    lower bound on age (as_of minus the earliest first-seen date) is apart.
-    `sd_young` is 1 when the estimate exists and the age is under YOUNG_AGE_DAYS,
-    0 when it exists and is older or when the site is left censored before that
-    many days, NaN when unknown.
-    """
-    from .sources.domain_age import best_start_date
-
-    if any(item.source in START_SOURCES_EXCLUDED for item in evidence):
-        raise ValueError("Open PageRank evidence is survivorship limited and is not used for start dates here")
-    day = as_date(as_of)
-    est = best_start_date(site, list(evidence), as_of=day)
+def _start_row(est: Any, day: date) -> dict[str, float]:
     age = float((day - est.estimate).days) if est.estimate is not None else math.nan
     lower = float((day - est.upper).days) if est.upper is not None else math.nan
     censored = 1.0 if "left_censored" in est.flags else 0.0
@@ -352,19 +337,43 @@ def start_features(site: str, as_of: date, evidence: Sequence[Dated]) -> dict[st
     }
 
 
+def _check_start_evidence(evidence: Sequence[Dated]) -> None:
+    if any(item.source in START_SOURCES_EXCLUDED for item in evidence):
+        raise ValueError("Open PageRank evidence is survivorship limited and is not used for start dates here")
+
+
+def start_features(site: str, as_of: date, evidence: Sequence[Dated]) -> dict[str, float]:
+    """Start-date features for one site as of a date. The estimate is PREDICTED from REAL evidence.
+
+    Evidence published after `as_of` is dropped (domain_age.best_start_date does
+    that). `sd_age_days` is NaN when the estimate is left censored or missing; the
+    lower bound on age (as_of minus the earliest first-seen date) is apart.
+    `sd_young` is 1 when the estimate exists and the age is under YOUNG_AGE_DAYS,
+    0 when it exists and is older or when the site is left censored before that
+    many days, NaN when unknown.
+    """
+    from .sources.domain_age import best_start_date
+
+    _check_start_evidence(evidence)
+    day = as_date(as_of)
+    return _start_row(best_start_date(site, list(evidence), as_of=day), day)
+
+
 def start_features_frame(site_dates: pd.DataFrame, evidence: StartEvidence) -> pd.DataFrame:
-    """`start_features` for every (site, as_of) row. Cached per (site, evidence visible on the date)."""
-    cache: dict[tuple[str, tuple[date, ...], date], dict[str, float]] = {}
+    """`start_features` for every (site, as_of) row. The estimate is cached per (site, evidence visible on the date)."""
+    from .sources.domain_age import best_start_date
+
+    cache: dict[tuple[str, tuple[date, ...]], Any] = {}
     rows = []
     for site, day in zip(site_dates["site"], site_dates["as_of"]):
         when = as_date(day)
         items = evidence.by_site.get(site, [])
+        _check_start_evidence(items)
         visible = tuple(sorted(i.snapshot_date for i in items if i.snapshot_date is not None and i.snapshot_date <= when))
-        # age moves with the date, so the cache key keeps the date but only within the site's visible evidence
-        key = (site, visible, when)
+        key = (site, visible)
         if key not in cache:
-            cache[key] = start_features(site, when, items)
-        rows.append(cache[key])
+            cache[key] = best_start_date(site, list(items), as_of=max(visible) if visible else date(1970, 1, 1))
+        rows.append(_start_row(cache[key], when))
     return pd.DataFrame.from_records(rows, columns=list(START_COLUMNS), index=site_dates.index)
 
 
@@ -1116,11 +1125,12 @@ def synthetic_upload_cells(world: Any, site_rows: pd.DataFrame, meta: pd.DataFra
             times = page_times.get(kid)
             if times is None:
                 continue
-            launch_moment = pd.Timestamp(datetime.combine(info.launch_date, datetime.max.time()), tz="UTC")
-            before = [t for t in times if pd.Timestamp(t) <= launch_moment]
+            launch_moment = pd.Timestamp(datetime.combine(info.launch_date, datetime.max.time()))
+            before = [t for t in times if pd.Timestamp(t).tz_localize(None) <= launch_moment]
             if not before:
                 continue
             input_time = pd.Timestamp(before[-1])
+            input_time = input_time.tz_localize("UTC") if input_time.tzinfo is None else input_time
             rank_in = rank_lookup.get((kid, input_time, site))
             pos = world.true_position(site, search, outcome_day)
             records.append({

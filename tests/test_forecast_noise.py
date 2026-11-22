@@ -366,3 +366,76 @@ def test_command_line_dispatch(tmp_path, capsys):
     assert main(["calibrate", str(tmp_path), "US_en"]) == 0
     printed = json.loads(capsys.readouterr().out)
     assert printed["locales_read"] == 1
+
+
+# ---------------------------------------------------------------------------
+# Marker 1 is measured on the frozen list, once per search, with round suspects read per round
+
+from datetime import datetime, timedelta, timezone  # noqa: E402
+
+from aeo.ranksim.forecast import markers  # noqa: E402
+from aeo.ranksim.forecast.noise import MARKER1_MIN_MEASURED_SHARE  # noqa: E402
+from aeo.ranksim.forecast.reader import build_clean_reading  # noqa: E402
+
+
+def stamp(moment: datetime) -> str:
+    return moment.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def test_marker1_does_not_pass_when_the_filter_degrades_most_of_the_frozen_searches():
+    """296 of 300 searches show two pages, two pulls each: version 2 calls each a tie and degrades it. The 4 searches
+    whose pulls agree must not carry marker 1 at 100%: the headline is NOT MEASURABLE, with the measured share."""
+    a_day = datetime(2026, 11, 23, 8, 0, tzinfo=timezone.utc)
+    pairs = []
+    for n in range(300):
+        search = f"query {n}"
+        page, other = [f"s{n}x{k}.com" for k in range(30)], [f"o{n}x{k}.com" for k in range(30)]
+        lists = [page] * 5 if n < 4 else [page, page, other, other]
+        pairs.append(tuple(
+            [pull(f"{tag}-{n}-{i}", search, sites, completed=stamp(start + timedelta(hours=i))) for i, sites in enumerate(lists)]
+            for tag, start in (("a", a_day), ("b", a_day + timedelta(hours=24)))
+        ))
+    report = marker1_report_from_pulls(pairs)
+    assert report["pairs_used"] == 4 and report["searches_measured"] == 4 and report["searches_requested_for_share"] == 300
+    assert report["headline"]["rate"] is None and report["headline"]["rate_on_measured_searches_only"] == 1.0
+    assert "NOT MEASURABLE" in report["headline"]["not_measurable"] and report["measured_line"] == "measured 4 of 300 searches"
+    assert markers.evaluate_marker(1, report)["passed"] is not True
+    # When enough of the frozen list is measured, the headline counts as before.
+    healthy = marker1_report_from_pulls(pairs[:4])
+    assert healthy["measured_share"] == 1.0 >= MARKER1_MIN_MEASURED_SHARE and healthy["headline"]["rate"] == 1.0
+    # Searches of the frozen list with no pair at all count as not measured when the caller says how many there were.
+    assert marker1_report_from_pulls(pairs[:4], searches_requested=300)["headline"]["rate"] is None
+
+
+def test_the_same_search_is_counted_once():
+    """Spec s3: a unit is one (search, site). Passing one search's pair three times must not make 10 units into 30."""
+    sites = [f"s{k}.com" for k in range(10)]
+    a_day = datetime(2026, 11, 23, 8, 0, tzinfo=timezone.utc)
+    a, b = (build_clean_reading([pull(f"{tag}{i}", "gutter guards", sites, completed=stamp(start + timedelta(hours=i)))
+                                 for i in range(5)]) for tag, start in (("a", a_day), ("b", a_day + timedelta(hours=24))))
+    assert agreement_report([(a, b)])["headline"]["count"] == 10
+    with pytest.raises(ValueError, match="counted once"):
+        agreement_report([(a, b), (a, b), (a, b)])
+
+
+def test_marker1_from_pulls_reads_round_suspects_per_round():
+    """With no suspects given, a reading's k-th pull of every search is round k, and each pull is judged against its
+    own round. zfiller1/2 fill 3 slots of "alpha tools" in round 0 only and of "beta tools" in round 1 only: in no
+    single round are they suspects, so "gamma widgets" keeps its larger cluster."""
+    a_day = datetime(2026, 11, 23, 6, 0, tzinfo=timezone.utc)
+
+    def side(start: datetime, tag: str) -> dict[str, list[Pull]]:
+        out: dict[str, list[Pull]] = {"alpha tools": [], "beta tools": [], "gamma widgets": []}
+        for r in range(5):
+            when = stamp(start + timedelta(hours=3 * r))
+            filled = lambda p: ["zfiller1.com"] * 3 + ["zfiller2.com"] * 3 + [f"{p}{i}.com" for i in range(4)]  # noqa: E731
+            clean = lambda p: [f"{p}{i}.com" for i in range(10)]  # noqa: E731
+            out["alpha tools"].append(pull(f"{tag}-alpha-{r}", "alpha tools", filled("alph") if r == 0 else clean("alph"), completed=when))
+            out["beta tools"].append(pull(f"{tag}-beta-{r}", "beta tools", filled("bet") if r == 1 else clean("bet"), completed=when))
+            gamma = ["zfiller1.com"] * 2 + ["zfiller2.com"] * 2 + [f"gama{i}.com" for i in range(6)] if r < 3 else clean("gamb")
+            out["gamma widgets"].append(pull(f"{tag}-gamma-{r}", "gamma widgets", gamma, completed=when))
+        return out
+
+    first, second = side(a_day, "a"), side(a_day + timedelta(hours=24), "b")
+    report = marker1_report_from_pulls([(first[s], second[s]) for s in first])
+    assert report["pairs_used"] == 3 and report["pairs_skipped"] == []

@@ -1112,3 +1112,150 @@ def test_a_reading_from_synthetic_pulls_is_labeled_synthetic_and_history_must_ma
     real_history = build_clean_reading([make_pull(f"h{i}", good_sites(), completed="2026-11-20T10:00:00Z") for i in range(3)])
     with pytest.raises(ValueError, match="never judge each other"):
         build_clean_reading(synthetic, history=real_history)
+
+
+# ---------------------------------------------------------------------------
+# Review fixes: depth, round ubiquity per round, reading ids, reading time, paid rounds, sandbox label
+
+from aeo.ranksim.forecast.reader import DEGRADED_SHALLOW, provider_is_real  # noqa: E402
+from aeo.ranksim.forecast.scoreboard import Scoreboard  # noqa: E402
+
+
+def depth10_pull(name: str, sites: list[str], completed: str) -> Pull:
+    return slots_pull(name, sites, spec=replace(top10("roof repair austin"), depth=10), completed=completed)
+
+
+def test_a_reading_of_shallow_pulls_is_degraded_and_does_not_claim_nt50():
+    """Spec s3: readings are at depth 50, and NT50 means "not in the top 50". A depth-10 reading cannot say that."""
+    page = [f"top{i}.com" for i in range(10)]
+    pulls = [depth10_pull(f"p{i}", page, f"2026-11-22T0{i}:00:00Z") for i in range(5)]
+    reading = build_clean_reading(pulls)
+    assert reading.degraded and reading.degraded_reason.startswith(DEGRADED_SHALLOW)
+    # A report that knowingly reads the top 10 asks for it by name; depth 50 readings are unchanged.
+    assert not build_clean_reading(pulls, min_depth=10).degraded
+    deep = [slots_pull(f"d{i}", page, spec=top10("roof repair austin"), completed=f"2026-11-22T0{i}:00:00Z") for i in range(5)]
+    deep_reading = build_clean_reading(deep)
+    assert not deep_reading.degraded and deep_reading.position_of("myroofer.com") == NT50
+
+
+def test_round_ubiquity_uses_the_suspects_of_one_round_not_all_rounds_joined():
+    """Spec s3 step 4: "no sites that also fill slots on unrelated searches of the same round".
+
+    zfiller1.com and zfiller2.com fill 3 slots of "alpha tools" in round 0 only and of "beta tools" in round 1
+    only, so in no single round are they suspects. For "gamma widgets" they hold 4 slots in 3 pulls; signal (c)
+    must not fire, so the larger cluster is kept and the reading is not degraded.
+    """
+    t0 = datetime(2026, 11, 22, 6, 0, 0, tzinfo=timezone.utc)
+
+    def make(search: str, sites: list[str], r: int) -> Pull:
+        stamp = (t0 + timedelta(hours=3 * r)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        return slots_pull(f"{search.replace(' ', '-')}-{r}", sites, spec=top10(search), completed=stamp)
+
+    def clean(prefix: str) -> list[str]:
+        return [f"{prefix}{i}.com" for i in range(10)]
+
+    filled = lambda prefix: ["zfiller1.com"] * 3 + ["zfiller2.com"] * 3 + [f"{prefix}{i}.com" for i in range(4)]  # noqa: E731
+    pulls: list[Pull] = []
+    for r in range(5):
+        pulls.append(make("alpha tools", filled("alph") if r == 0 else clean("alph"), r))
+        pulls.append(make("beta tools", filled("bet") if r == 1 else clean("bet"), r))
+        gamma = ["zfiller1.com"] * 2 + ["zfiller2.com"] * 2 + [f"gama{i}.com" for i in range(6)] if r < 3 else clean("gamb")
+        pulls.append(make("gamma widgets", gamma, r))
+    for r in range(5):
+        alone = round_suspects([p for p in pulls if p.pull_id.endswith(f"-{r}")])
+        assert not alone.is_suspect("zfiller1.com", "gamma widgets")
+
+    specs = [top10(s) for s in ("alpha tools", "beta tools", "gamma widgets")]
+    result = read_clean(ReplaySource(pulls), specs, pulls=5, gap_seconds=0, sleep=lambda s: None, now=lambda: t0)
+    gamma = next(r for r in result.readings if r.search == "gamma widgets")
+    assert not gamma.degraded and gamma.pulls_kept == 3, gamma.dropped
+    # assemble_readings with one RoundSuspects per round judges the same way.
+    rounds = [round_suspects([p for p in pulls if p.pull_id.endswith(f"-{r}")]) for r in range(5)]
+    (again,) = [r for r in assemble_readings(pulls, suspects=rounds, window_hours=None) if r.search == "gamma widgets"]
+    assert again.pulls_kept == 3 and not again.degraded
+
+
+def test_readings_made_by_different_reader_settings_have_different_ids():
+    clean = [f"c{i}.com" for i in range(10)]
+    altered = ["slashdot.org"] * 7 + ["x1.com", "x2.com", "x3.com"]
+    stamps = [f"2026-11-22T{h:02d}:00:00Z" for h in (6, 9, 12, 15, 18)]
+    pulls = [slots_pull(f"p{i}", clean if i < 3 else altered, spec=ASSIGNAR, completed=stamps[i]) for i in range(5)]
+    on = build_clean_reading(pulls)
+    off = build_clean_reading(pulls, overlap_rule=False)
+    assert on.reader_version != off.reader_version and on.positions != off.positions
+    assert on.reading_id != off.reading_id
+    # A plain reading keeps the id it always had (filter on, no history, no suspect slots).
+    assert on.reading_id == new_reading_id(ASSIGNAR, [p.pull_id for p in pulls])
+    assert build_clean_reading(list(reversed(pulls))).reading_id == on.reading_id  # order of pulls does not matter
+    history = history_reading(CLEAN_ASSIGNAR, ASSIGNAR, taken_at="2026-11-21T06:00:00Z")
+    assert build_clean_reading(pulls, history=history).reading_id not in (on.reading_id, off.reading_id)
+
+
+def test_reading_time_covers_every_pull_that_decided_which_cluster_was_kept():
+    """No leakage: three pulls of page A on 23 Nov, two of page B on 24 Nov. The 24 Nov pulls decide the outcome
+    (a third one would make a tie), so the reading is dated by them, not by the kept pulls alone."""
+    search = top10("roof repair")
+    page_a, page_b = [f"a{k}.com" for k in range(10)], [f"b{k}.com" for k in range(10)]
+
+    def pulls(late: int) -> list[Pull]:
+        early = [slots_pull(f"a{i}", page_a, spec=search, completed=f"2026-11-23T{20 + i}:00:00Z") for i in range(3)]
+        return early + [slots_pull(f"b{i}", page_b, spec=search, completed=f"2026-11-24T0{1 + i}:00:00Z") for i in range(late)]
+
+    two_late, three_late = build_clean_reading(pulls(2)), build_clean_reading(pulls(3))
+    assert three_late.degraded and not two_late.degraded and two_late.pull_ids == ("pull-a0", "pull-a1", "pull-a2")
+    assert two_late.taken_at == "2026-11-24T02:00:00Z"
+
+
+def test_two_failed_days_make_two_storable_readings(tmp_path):
+    class Broken:
+        name = "dataforseo"
+
+        def fetch(self, specs):
+            raise RuntimeError("provider down")
+
+        def estimate_cost(self, count, depth=50):
+            return 0.0
+
+    spec = PullSpec(search="fence install", location_code=1026201)
+    day1 = read_clean(Broken(), [spec], pulls=1, sleep=lambda s: None,
+                      now=lambda: datetime(2026, 11, 23, 9, 0, tzinfo=timezone.utc)).readings[0]
+    day2 = read_clean(Broken(), [spec], pulls=1, sleep=lambda s: None,
+                      now=lambda: datetime(2026, 11, 24, 9, 0, tzinfo=timezone.utc)).readings[0]
+    assert day1.reading_id != day2.reading_id
+    board = Scoreboard(f"sqlite:///{tmp_path / 'sb.db'}")
+    board.add_reading(day1)
+    board.add_reading(day2)
+    board.add_reading(day1)  # the same reading again is still a no-op
+
+
+def test_a_round_that_stopped_after_paying_keeps_its_pulls():
+    """A source that raises after paying for part of a round hands one Pull per spec back on the error."""
+    other = top10("second search")
+    paid = make_pull("paid", good_sites())
+    unsent = make_pull("unsent", [], ok=False, status_message="Not sent: refused")
+    unsent = replace(unsent, spec=other)
+
+    class StopsPartWay:
+        name = "dataforseo"
+
+        def fetch(self, specs):
+            error = RuntimeError("refused part way")
+            error.pulls = (paid, unsent)
+            raise error
+
+        def estimate_cost(self, count, depth=50):
+            return 0.0
+
+    with pytest.raises(RoundFailed) as caught:
+        fetch_round(StopsPartWay(), [SPEC, other], now=FakeClock().now)
+    assert caught.value.pulls == (paid, unsent)
+    result = read_clean(StopsPartWay(), [SPEC, other], pulls=1, sleep=lambda s: None, now=FakeClock().now)
+    assert result.pulls == (paid, unsent) and len(result.failed_rounds) == 1
+    first = next(r for r in result.readings if r.search == SPEC.search)
+    assert first.pulls_total == 1 and first.pull_ids == ("pull-paid",)
+
+
+def test_sandbox_pulls_are_never_real():
+    sandbox = [replace(make_pull(str(i), good_sites()), provider="dataforseo-sandbox") for i in range(3)]
+    assert build_clean_reading(sandbox).label == SYNTHETIC
+    assert not provider_is_real("dataforseo-sandbox-live") and provider_is_real("dataforseo") and provider_is_real("serper")

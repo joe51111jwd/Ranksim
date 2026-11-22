@@ -75,6 +75,7 @@ from .budget import (
 )
 from .chain import canonical_json, sha256_text
 from .config import EXCLUDED_SITES, forecast_paths
+from .dataforseo import PATH_HISTORICAL_SERPS, PATH_HISTORICAL_TRAFFIC, PATH_RANKED_KEYWORDS
 from .sources import dfs_samples as dfs
 from .sources import panel as panel_mod
 from .sources.universe import SearchRow, normalise
@@ -489,7 +490,14 @@ def run_samples(
 
 @dataclass
 class PullReport:
-    """What a pull did. A dry run has planned_usd and nothing else. Spent comes from the ledger."""
+    """What a pull did. A dry run has planned_usd and nothing else. Spent comes from the ledger.
+
+    `planned_usd` is the cost of every call of the job. `calls_planned` is how many
+    calls the job makes, `calls_saved` how many of them already have a saved raw
+    answer on disk (they are read back and never paid again), and `unpaid_usd`
+    the cost of the rest: the amount the budget guard must still allow. Both are
+    None when no raw folder was given to look in.
+    """
 
     kind: str
     job: str
@@ -504,10 +512,18 @@ class PullReport:
     outputs: dict[str, str] = field(default_factory=dict)
     rows: int = 0
     manifest: dict[str, Any] = field(default_factory=dict)
+    calls_planned: int = 0
+    calls_saved: int | None = None
+    unpaid_usd: Decimal | None = None
 
     def lines(self) -> list[str]:
         if self.dry_run:
-            return [f"Dry run of {self.kind}: {self.units} item(s), planned {usd_text(self.planned_usd)}. Nothing was sent."]
+            out = [f"Dry run of {self.kind}: {self.units} item(s) in {self.calls_planned} call(s), planned {usd_text(self.planned_usd)}. "
+                   "Nothing was sent."]
+            if self.calls_saved is not None and self.unpaid_usd is not None:
+                out.append(f"{self.calls_saved} of {self.calls_planned} call(s) already have a saved answer and cost nothing again. "
+                           f"Still to pay: {usd_text(self.unpaid_usd)}.")
+            return out
         return [
             f"{self.kind}: {self.calls} call(s), {self.calls_from_cache} read back from saved raw answers, "
             f"{usd_text(self.spent_usd)} spent, {len(self.failures)} failure(s), {self.rows} row(s) normalised."
@@ -516,6 +532,62 @@ class PullReport:
 
 def _job_name(kind: str, payload: Mapping[str, Any]) -> str:
     return f"{kind}-{sha256_text(canonical_json(payload))[:12]}"
+
+
+# The request layouts below copy what DataForSeoClient sends (historical_serps, historical_bulk_traffic_estimation,
+# ranked_keywords) so a run can tell, before it pays, which calls already have a saved raw answer. The client
+# names a raw answer by dataforseo.request_key(path, task). A test checks these layouts against the client's own
+# requests, so a change in the client cannot make this count wrong without a failing test. If they ever disagree,
+# the count only shows more calls to pay than there are: the guard refuses more, it never allows a spend it should not.
+
+
+def _serps_task(keyword: str, location_code: int, language_code: str, date_from: date, date_to: date) -> dict[str, Any]:
+    return {"keyword": keyword, "location_code": int(location_code), "language_code": language_code,
+            "date_from": date_from.isoformat(), "date_to": date_to.isoformat()}
+
+
+def _traffic_task(chunk: Sequence[str], location_code: int, language_code: str, date_from: date, date_to: date) -> dict[str, Any]:
+    return {"targets": list(dict.fromkeys(chunk)), "item_types": ["organic"], "location_code": int(location_code),
+            "language_code": language_code, "date_from": date_from.isoformat(), "date_to": date_to.isoformat()}
+
+
+def _ranked_task(site: str, limit: int, location_code: int, language_code: str) -> dict[str, Any]:
+    return {"target": site, "limit": int(limit), "offset": 0, "load_rank_absolute": False, "historical_serp_mode": "live",
+            "location_code": int(location_code), "language_code": language_code}
+
+
+def _raw_dir_of(client: Any | None, raw_dir: Path | None) -> tuple[Path, str] | None:
+    """Where the client keeps its saved raw answers: (raw folder, provider name). None when unknown."""
+    if client is not None and getattr(client, "raw_dir", None) is not None:
+        return Path(client.raw_dir), str(getattr(client, "provider", "dataforseo"))
+    if raw_dir is not None:
+        return Path(raw_dir), "dataforseo"
+    return None
+
+
+def _saved_calls(where: tuple[Path, str] | None, calls: Sequence[tuple[str, dict[str, Any], Decimal]]) -> tuple[int | None, Decimal | None]:
+    """(calls with a saved raw answer, cost of the calls without one). (None, None) when the raw folder is unknown."""
+    if where is None:
+        return None, None
+    from .dataforseo import request_key
+
+    base, provider = where
+    saved = 0
+    unpaid = Decimal(0)
+    for path, task, cost in calls:
+        function = path.split("/")[-2]
+        if (base / provider / "labs" / function / f"{request_key(path, task)}.json.gz").exists():
+            saved += 1
+        else:
+            unpaid += cost
+    return saved, unpaid
+
+
+def _check_batch(ledger: SpendLedger, kind: str, unpaid: Decimal | None, planned: Decimal, item: str) -> None:
+    """Refuse the whole batch before the first paid call when the guard cannot allow what is still to pay."""
+    amount = planned if unpaid is None else unpaid
+    if amount > 0:
+        ledger.check(item, kind, amount)
 
 
 def _manifest(root: Path, job: str, kind: str, params: Mapping[str, Any]) -> dict[str, Any]:
@@ -560,6 +632,7 @@ def pull_past_result_pages(
     root: Path | None = None,
     panel_dir: Path | None = None,
     today: date | None = None,
+    raw_dir: Path | None = None,
 ) -> PullReport:
     """Past result pages (Historical SERPs) for each search, then into the panel through the existing parser.
 
@@ -572,8 +645,13 @@ def pull_past_result_pages(
     the request sends, so the dry run equals what the client reserves. The
     keywords are de-duplicated and sorted before the job is named, so the same
     searches in another order resume the same job and pay nothing again. A job
-    whose manifest already exists keeps its frozen dates, and its cost is
-    priced from them.
+    whose manifest already exists keeps its frozen dates and its keywords, and
+    its cost is priced from them.
+
+    With a client or `raw_dir` the report also counts the calls that already
+    have a saved raw answer (calls_saved) and the cost of the rest (unpaid_usd).
+    An executed run checks that unpaid cost with the budget guard before its
+    first call, so a batch the approval cannot cover sends nothing.
     """
     keywords = sorted({str(k) for k in (_get(s, "keyword") if not isinstance(s, str) else s for s in searches) if k})
     name = job or _job_name("historical_serps", {"keywords": keywords, "months": months, "location": location_code, "language": language_code})
@@ -584,18 +662,26 @@ def pull_past_result_pages(
     if stored_path.is_file():  # read only: a dry run never writes, but it prices the frozen dates a resumed run will ask
         stored = json.loads(stored_path.read_text(encoding="utf-8"))
         if stored.get("kind") == KIND_HISTORICAL_SERPS and stored.get("date_from") and stored.get("date_to"):
-            frozen_from, frozen_to = date.fromisoformat(stored["date_from"]), date.fromisoformat(stored["date_to"])
-            covered = max(1, (frozen_to.year - frozen_from.year) * 12 + (frozen_to.month - frozen_from.month) + 1)
+            date_from, date_to = date.fromisoformat(stored["date_from"]), date.fromisoformat(stored["date_to"])
+            covered = max(1, (date_to.year - date_from.year) * 12 + (date_to.month - date_from.month) + 1)
             keywords = list(stored.get("keywords", keywords))
-    planned = historical_serps_estimate(covered, len(keywords)) if keywords else Decimal(0)
+            location_code = int(stored.get("location_code", location_code))
+            language_code = str(stored.get("language_code", language_code))
+    per_call = historical_serps_estimate(covered)
+    planned = per_call * len(keywords) if keywords else Decimal(0)
+    calls = [(PATH_HISTORICAL_SERPS, _serps_task(k, location_code, language_code, date_from, date_to), per_call) for k in keywords]
+    saved, unpaid = _saved_calls(_raw_dir_of(client, raw_dir), calls)
     if not execute:
-        return PullReport(KIND_HISTORICAL_SERPS, name, True, len(keywords), planned)
+        return PullReport(KIND_HISTORICAL_SERPS, name, True, len(keywords), planned, calls_planned=len(calls), calls_saved=saved,
+                          unpaid_usd=unpaid)
     ledger = _require_client(client)
+    _check_batch(ledger, KIND_HISTORICAL_SERPS, unpaid, planned, f"past result pages for {len(keywords)} searches over {covered} months")
     manifest = _manifest(base, name, KIND_HISTORICAL_SERPS, {
         "keywords": keywords, "location_code": location_code, "language_code": language_code, "locale": locale,
         "date_from": date_from.isoformat(), "date_to": date_to.isoformat(), "months": months,
     })
-    report = PullReport(KIND_HISTORICAL_SERPS, name, False, len(manifest["keywords"]), planned, manifest=manifest)
+    report = PullReport(KIND_HISTORICAL_SERPS, name, False, len(manifest["keywords"]), planned, manifest=manifest,
+                        calls_planned=len(calls), calls_saved=saved, unpaid_usd=unpaid)
     spent_before = ledger.spent_for_kind(KIND_HISTORICAL_SERPS)
     json_paths: list[Path] = []
     for keyword in manifest["keywords"]:
@@ -702,23 +788,49 @@ def pull_traffic_curves(
     job: str | None = None,
     root: Path | None = None,
     today: date | None = None,
+    raw_dir: Path | None = None,
 ) -> PullReport:
-    """Monthly traffic curves (Historical Bulk Traffic Estimation) in chunks of up to 1,000 sites, then two parquet tables."""
+    """Monthly traffic curves (Historical Bulk Traffic Estimation) in chunks of up to 1,000 sites, then two parquet tables.
+
+    `months` is the number of calendar months asked for, the month of today
+    included: the same window as past result pages (_history_window), so 30
+    months asked on 2026-11-22 run from 2024-06-01 to 2026-11-22. The window
+    never starts before TRAFFIC_MIN_DATE, the earliest month the endpoint
+    accepts. The price is per site and per task of up to 1,000 sites, so it
+    does not depend on the dates. A job whose manifest exists keeps its frozen
+    sites, chunks and dates, and both the dry run and a resumed run use them.
+    """
     names = sorted(_wanted_sites(sites))
-    chunks = [names[i : i + chunk_size] for i in range(0, len(names), chunk_size)]
-    planned = sum((historical_traffic_cost(len(chunk)) for chunk in chunks), Decimal(0))
     name = job or _job_name("traffic", {"sites": names, "months": months, "location": location_code, "chunk": chunk_size})
-    if not execute:
-        return PullReport(KIND_HISTORICAL_TRAFFIC, name, True, len(names), planned)
-    ledger = _require_client(client)
     base = Path(root) if root else default_root()
     day = today or _utcnow().date()
-    start = max(TRAFFIC_MIN_DATE, add_months(day, -months))
+    window_start, date_to, _covered = _history_window(day, months)
+    date_from = max(TRAFFIC_MIN_DATE, window_start)
+    stored_path = base / "jobs" / f"{name}.json"
+    if stored_path.is_file():  # read only: the dry run prices exactly what a resumed run asks
+        stored = json.loads(stored_path.read_text(encoding="utf-8"))
+        if stored.get("kind") == KIND_HISTORICAL_TRAFFIC and stored.get("date_from") and stored.get("date_to"):
+            names = list(stored.get("sites", names))
+            chunk_size = int(stored.get("chunk_size", chunk_size))
+            location_code = int(stored.get("location_code", location_code))
+            language_code = str(stored.get("language_code", language_code))
+            date_from, date_to = date.fromisoformat(stored["date_from"]), date.fromisoformat(stored["date_to"])
+    chunks = [names[i : i + chunk_size] for i in range(0, len(names), chunk_size)]
+    planned = sum((historical_traffic_cost(len(chunk)) for chunk in chunks), Decimal(0))
+    calls = [(PATH_HISTORICAL_TRAFFIC, _traffic_task(chunk, location_code, language_code, date_from, date_to),
+              historical_traffic_cost(len(chunk))) for chunk in chunks]
+    saved, unpaid = _saved_calls(_raw_dir_of(client, raw_dir), calls)
+    if not execute:
+        return PullReport(KIND_HISTORICAL_TRAFFIC, name, True, len(names), planned, calls_planned=len(calls), calls_saved=saved,
+                          unpaid_usd=unpaid)
+    ledger = _require_client(client)
+    _check_batch(ledger, KIND_HISTORICAL_TRAFFIC, unpaid, planned, f"traffic curves for {len(names)} sites")
     manifest = _manifest(base, name, KIND_HISTORICAL_TRAFFIC, {
         "sites": names, "chunk_size": chunk_size, "location_code": location_code, "language_code": language_code,
-        "date_from": start.isoformat(), "date_to": day.isoformat(), "months": months,
+        "date_from": date_from.isoformat(), "date_to": date_to.isoformat(), "months": months,
     })
-    report = PullReport(KIND_HISTORICAL_TRAFFIC, name, False, len(manifest["sites"]), planned, manifest=manifest)
+    report = PullReport(KIND_HISTORICAL_TRAFFIC, name, False, len(manifest["sites"]), planned, manifest=manifest,
+                        calls_planned=len(calls), calls_saved=saved, unpaid_usd=unpaid)
     spent_before = ledger.spent_for_kind(KIND_HISTORICAL_TRAFFIC)
     month_rows: list[dict[str, Any]] = []
     asked: dict[str, dict[str, Any]] = {}
@@ -817,19 +929,38 @@ def pull_exact_positions(
     execute: bool = False,
     job: str | None = None,
     root: Path | None = None,
+    raw_dir: Path | None = None,
 ) -> PullReport:
-    """Exact positions (ranked keywords, standard Labs rate) for each site, then two parquet tables."""
+    """Exact positions (ranked keywords, standard Labs rate) for each site, then two parquet tables.
+
+    A job whose manifest exists keeps its frozen sites and settings. Calls with a
+    saved raw answer are read back and never paid again.
+    """
     names = sorted(_wanted_sites(sites))
-    planned = ranked_keywords_cost(len(names), rows_per_site)
     name = job or _job_name("positions", {"sites": names, "rows": rows_per_site, "location": location_code})
-    if not execute:
-        return PullReport(KIND_RANKED_KEYWORDS, name, True, len(names), planned)
-    ledger = _require_client(client)
     base = Path(root) if root else default_root()
+    stored_path = base / "jobs" / f"{name}.json"
+    if stored_path.is_file():
+        stored = json.loads(stored_path.read_text(encoding="utf-8"))
+        if stored.get("kind") == KIND_RANKED_KEYWORDS:
+            names = list(stored.get("sites", names))
+            rows_per_site = int(stored.get("rows_per_site", rows_per_site))
+            location_code = int(stored.get("location_code", location_code))
+            language_code = str(stored.get("language_code", language_code))
+    planned = ranked_keywords_cost(len(names), rows_per_site)
+    calls = [(PATH_RANKED_KEYWORDS, _ranked_task(site, rows_per_site, location_code, language_code), ranked_keywords_cost(1, rows_per_site))
+             for site in names]
+    saved, unpaid = _saved_calls(_raw_dir_of(client, raw_dir), calls)
+    if not execute:
+        return PullReport(KIND_RANKED_KEYWORDS, name, True, len(names), planned, calls_planned=len(calls), calls_saved=saved,
+                          unpaid_usd=unpaid)
+    ledger = _require_client(client)
+    _check_batch(ledger, KIND_RANKED_KEYWORDS, unpaid, planned, f"exact positions for {len(names)} sites")
     manifest = _manifest(base, name, KIND_RANKED_KEYWORDS, {
         "sites": names, "rows_per_site": rows_per_site, "location_code": location_code, "language_code": language_code, "locale": locale,
     })
-    report = PullReport(KIND_RANKED_KEYWORDS, name, False, len(manifest["sites"]), planned, manifest=manifest)
+    report = PullReport(KIND_RANKED_KEYWORDS, name, False, len(manifest["sites"]), planned, manifest=manifest,
+                        calls_planned=len(calls), calls_saved=saved, unpaid_usd=unpaid)
     spent_before = ledger.spent_for_kind(KIND_RANKED_KEYWORDS)
     rows: list[dict[str, Any]] = []
     targets: list[dict[str, Any]] = []

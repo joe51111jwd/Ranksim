@@ -77,7 +77,20 @@ from .config import (
     forecast_paths,
 )
 from .grading import RULE_V1, GradedCell, GradingRule
-from .types import PREDICTED, REAL, SYNTHETIC, SYNTHETIC_PROVIDERS, CleanReading, Forecast, OrganicHit, Pull, PullSpec, SitePosition
+from .types import (
+    PREDICTED,
+    REAL,
+    SYNTHETIC,
+    SYNTHETIC_PROVIDERS,
+    CleanReading,
+    Forecast,
+    OrganicHit,
+    Pull,
+    PullSpec,
+    SitePosition,
+    is_excluded_site,
+    provider_is_synthetic,
+)
 
 GRADE_KINDS = ("original", "regrade")
 RECORD_KINDS = ("original", "regrade", "latest")
@@ -953,6 +966,38 @@ class Scoreboard:
         for item in position_values:
             session.add(ReadingPositionRow(reading_id=reading_id, **item))
 
+    @classmethod
+    def _check_imported_reading(cls, session: Session, item: dict[str, Any], positions: Sequence[Any]) -> None:
+        """The checks of `_reading_values` and `_check_reading_pulls`, on a reading row read from an export."""
+        reading_id = item.get("reading_id")
+        try:
+            taken = utc_iso(parse_utc(str(item.get("taken_at"))))
+        except ValueError as error:
+            raise ScoreboardRefusal(f"Reading {reading_id} in the export has a time that is not ISO text.") from error
+        if taken != item.get("taken_at"):
+            raise ScoreboardRefusal(f"Reading {reading_id} in the export has a time that is not UTC ISO text.")
+        if item.get("label") not in (REAL, SYNTHETIC):
+            raise ScoreboardRefusal(f"A reading is labeled REAL or SYNTHETIC. Reading {reading_id} says {item.get('label')!r}.")
+        if item.get("search_key") != search_key(str(item.get("search") or "")):
+            raise ScoreboardRefusal(f"Reading {reading_id} in the export has a search key that does not match its search.")
+        if not item.get("degraded") and int(item.get("pulls_kept") or 0) < MIN_KEPT_PULLS:
+            raise ScoreboardRefusal(
+                f"Reading {reading_id} kept {item.get('pulls_kept')} pulls but is not marked degraded. "
+                f"Fewer than {MIN_KEPT_PULLS} kept pulls is degraded."
+            )
+        sites: list[str] = []
+        for entry in positions:
+            if not isinstance(entry, dict):
+                raise ScoreboardRefusal(f"Reading {reading_id} in the export has a position that is not a record.")
+            site = str(entry.get("site") or "")
+            if is_excluded_site(site):
+                raise ScoreboardRefusal(f"Reading {reading_id} in the export holds an excluded site. It is never stored.")
+            _check_position(entry.get("position"), f"position of {site}")
+            sites.append(site)
+        if len(set(sites)) != len(sites):
+            raise ScoreboardRefusal(f"Reading {reading_id} lists a site twice.")
+        cls._check_reading_pulls(session, item)
+
     @staticmethod
     def _check_reading_pulls(session: Session, values: dict[str, Any]) -> None:
         """Check a new reading against the stored pulls it names. Refuses with a plain sentence.
@@ -961,12 +1006,11 @@ class Scoreboard:
           than the pulls behind it, so a backdated reading cannot pass the as_of check.
         - A REAL reading names no pull from a synthetic provider (types.SYNTHETIC_PROVIDERS).
         - A REAL reading that is not degraded must name its kept pulls: pull_ids minus the dropped
-          ids is exactly pulls_kept pulls, and each of them that is stored here is ok and of the
-          reading's search, location and device. A SYNTHETIC or a degraded reading is never an
-          outcome of a real forecast and may name fewer.
-        Pulls stored earlier in the same batch are visible here. A named pull that is not stored in
-        this database is not refused yet (a reading copied from another scoreboard names pulls kept
-        there); the target URL position of such a reading stays None.
+          ids is exactly pulls_kept pulls, each of them is stored in this database, ok, and of the
+          reading's search, location and device. A kept pull that is not stored here is refused, so
+          a reading copied from another scoreboard must bring its pulls with it. A SYNTHETIC or a
+          degraded reading is never an outcome of a real forecast and may name fewer.
+        Pulls stored earlier in the same batch are visible here. import_export runs this check too.
         """
         reading_id = values["reading_id"]
         taken = parse_utc(values["taken_at"])
@@ -979,7 +1023,7 @@ class Scoreboard:
             pull = stored[pid]
             if pull is None:
                 continue
-            if real and pull.provider in SYNTHETIC_PROVIDERS:
+            if real and provider_is_synthetic(pull.provider):
                 raise ScoreboardRefusal(
                     f"Reading {reading_id} is labeled REAL but pull {pid} comes from the synthetic provider "
                     f"{pull.provider!r}. A reading built from any synthetic pull is SYNTHETIC."
@@ -999,7 +1043,10 @@ class Scoreboard:
         for pid in kept:
             pull = stored[pid]
             if pull is None:
-                continue
+                raise ScoreboardRefusal(
+                    f"Reading {reading_id} keeps pull {pid}, which is not stored in this scoreboard. "
+                    "A REAL reading is stored with the pulls it was built from."
+                )
             if not pull.ok:
                 raise ScoreboardRefusal(f"Reading {reading_id} keeps pull {pid}, which failed. A failed pull is never kept.")
             if (pull.search_key, pull.location_code, pull.device) != (
@@ -1972,6 +2019,8 @@ class Scoreboard:
                         session.flush()
                     for item in rows["readings.jsonl"]:
                         positions = item.pop("positions", [])
+                        # The checks add_reading makes, so a bad export from a faulty producer is refused.
+                        self._check_imported_reading(session, item, positions)
                         session.add(ReadingRow(**item))
                         session.flush()
                         for position in positions:

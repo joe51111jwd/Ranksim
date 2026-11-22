@@ -129,7 +129,8 @@ def test_labs_response_gives_the_same_rows_as_the_sample():
     for name in ("locale", "keyword", "keyword_id", "rank", "rank_absolute", "domain", "site", "url", "title", "is_new", "main_domain_rank", "page_rank"):
         assert alpha[name] == sample[name], name
     # The sample's etv is computed from its 2026-04 headline volume, so it is null on this 2025-06 page.
-    assert sample["etv"] is None and alpha["etv"] == 1.5
+    # The Labs etv fails closed the same way until a real response proves it is page dated.
+    assert sample["etv"] is None and alpha["etv"] is None
     assert set(alpha) == set(sample)
 
 

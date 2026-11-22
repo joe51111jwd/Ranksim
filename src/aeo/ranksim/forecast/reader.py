@@ -151,6 +151,7 @@ of the same pulls (`new_reading_id`).
 from __future__ import annotations
 
 import gzip
+import inspect
 import json
 import math
 import re
@@ -169,7 +170,6 @@ from .asof import parse_utc, utc_iso
 from .chain import canonical_json, sha256_text
 from .config import (
     DEFAULT_PULLS,
-    EXCLUDED_SITES,
     MIN_KEPT_PULLS,
     MIN_PULL_GAP_SECONDS,
     NT50,
@@ -178,7 +178,19 @@ from .config import (
     POISON_TOP_N,
     TOP_DEPTH,
 )
-from .types import REAL, SYNTHETIC, SYNTHETIC_PROVIDERS, CleanReading, OrganicHit, Pull, PullSpec, SerpSource, SitePosition
+from .types import (
+    REAL,
+    SYNTHETIC,
+    SYNTHETIC_PROVIDERS,
+    CleanReading,
+    OrganicHit,
+    Pull,
+    PullSpec,
+    SerpSource,
+    SitePosition,
+    is_excluded_site,
+    provider_is_synthetic,
+)
 
 READER_VERSION_V1 = "reader-v1"
 READER_VERSION_V2 = "reader-v2"
@@ -234,6 +246,8 @@ DEGRADED_REASONS = (
 # Providers whose pulls are never REAL: the simulated world and the DataForSEO sandbox, whose answers
 # are dummy data ("All the results you receive within Sandbox contain dummy data", provider map s7).
 # A name that starts with one of these and a dash (e.g. "dataforseo-sandbox-live") counts too.
+# The one list lives in types.SYNTHETIC_PROVIDERS (it names the sandbox too), so pipeline, scoreboard
+# and reader cannot disagree. These names stay for code that imports them.
 SANDBOX_PROVIDERS: frozenset[str] = frozenset({"dataforseo-sandbox"})
 NOT_REAL_PROVIDERS: frozenset[str] = frozenset(SYNTHETIC_PROVIDERS) | SANDBOX_PROVIDERS
 
@@ -291,10 +305,7 @@ def reader_version_name(version: int = DEFAULT_RULE_VERSION, *, overlap_rule: bo
 def provider_is_real(provider: str | None) -> bool:
     """False for a provider whose answers are not observations of Google: the simulated world
     (types.SYNTHETIC_PROVIDERS) and the DataForSEO sandbox, which answers with dummy data."""
-    name = str(provider or "")
-    if name in NOT_REAL_PROVIDERS:
-        return False
-    return not any(name.startswith(prefix + "-") for prefix in NOT_REAL_PROVIDERS)
+    return not provider_is_synthetic(provider)
 
 
 def reading_label(pulls: Iterable[Pull]) -> str:
@@ -381,7 +392,7 @@ class ReplaySource:
             )
         return out
 
-    def estimate_cost(self, count: int, depth: int = TOP_DEPTH) -> float:
+    def estimate_cost(self, count: int, depth: int = TOP_DEPTH, *, keywords: Sequence[str] | None = None) -> float:
         return 0.0
 
 
@@ -452,7 +463,7 @@ def _serper_item_pull(item: dict, *, path: Path, index: int, label: str, did_you
             continue  # an organic row without a usable position is not given one
         link = str(entry["link"])
         site = site_key(link)
-        if rank < 1 or rank > depth or not site or site in EXCLUDED_SITES:
+        if rank < 1 or rank > depth or not site or is_excluded_site(site):
             continue  # the provider's rank is kept, so a dropped row leaves a gap and moves nobody
         hits.append(OrganicHit(rank=rank, url=link, domain=domain_of(link), site=site, title=entry.get("title")))
     info = payload.get("searchInformation") or {}
@@ -514,7 +525,7 @@ def partial_min_organic(depth: int) -> int:
 def pull_site_positions(pull: Pull) -> dict[str, int]:
     """Best organic rank per site, inside the requested depth and the top 50, excluded sites removed."""
     limit = min(int(pull.spec.depth), TOP_DEPTH)
-    return {site: rank for site, rank in pull.site_positions().items() if rank <= limit and site not in EXCLUDED_SITES}
+    return {site: rank for site, rank in pull.site_positions().items() if rank <= limit and not is_excluded_site(site)}
 
 
 def _top_sites(pull: Pull, top_n: int) -> set[str]:
@@ -625,7 +636,7 @@ def slot_sites(pull: Pull, top_n: int = CONCENTRATION_TOP_N) -> list[str]:
     """
     limit = min(int(top_n), int(pull.spec.depth), TOP_DEPTH)
     hits = sorted((hit for hit in pull.hits if 1 <= hit.rank <= limit), key=lambda hit: (hit.rank, hit.url))
-    return [hit.site for hit in hits if hit.site and hit.site not in EXCLUDED_SITES]
+    return [hit.site for hit in hits if hit.site and not is_excluded_site(hit.site)]
 
 
 def off_brand_concentration(pull: Pull, search: str | None = None) -> tuple[str | None, int]:
@@ -1450,7 +1461,9 @@ def read_clean(
     """Read every spec `pulls` times and build one clean reading per spec.
 
     One `fetch_round` per round. Round k+1 starts at least `gap_seconds` after
-    round k started (the wait goes through `sleep`, the time through `now`). A
+    round k started (the wait goes through `sleep`, the time through `now`).
+    For a real provider a gap under config.MIN_PULL_GAP_SECONDS raises ValueError
+    when there is more than one round; tests pass a fake clock instead. A
     round that fails is recorded in `failed_rounds`, and the readings are built
     from the rounds that worked. A round that failed after the source had paid
     for part of it is recorded in `failed_rounds` too, and the pulls the source
@@ -1467,6 +1480,13 @@ def read_clean(
         raise ValueError("pulls must be at least 1")
     if gap_seconds < 0:
         raise ValueError("gap_seconds cannot be negative")
+    if pulls > 1 and gap_seconds < MIN_PULL_GAP_SECONDS and provider_is_real(getattr(source, "name", None)):
+        # The same floor pipeline.take_readings and the read command hold. Only a source whose answers
+        # are not observations of Google (the synthetic world, the sandbox) may read faster.
+        raise ValueError(
+            f"The pulls of one reading must be at least {MIN_PULL_GAP_SECONDS} seconds apart. Got {gap_seconds:g}. "
+            "Pulls taken seconds apart share one spell of altered pages."
+        )
     if not specs:
         raise ValueError("no specs to read")
     if len(set(specs)) != len(specs):
@@ -1547,11 +1567,25 @@ class CostPreview:
 
 
 def cost_of_reading(source: SerpSource, searches: int | Sequence[object], pulls: int = DEFAULT_PULLS, depth: int = TOP_DEPTH) -> CostPreview:
-    """The cost of reading `searches` searches `pulls` times at `depth`: one fetch per round."""
+    """The cost of reading `searches` searches `pulls` times at `depth`: one fetch per round.
+
+    When `searches` is a list of search texts or PullSpecs, the texts go to the source as
+    `keywords`, so a source that charges more for a search operator prices them as its own
+    reservation will. A count, or a list of anything else, is priced without the texts and the
+    notes say so.
+    """
     count = searches if isinstance(searches, int) else len(searches)
     if count < 0 or pulls < 1 or depth < 1:
         raise ValueError("searches must be 0 or more, pulls and depth at least 1")
-    per_round = float(source.estimate_cost(count, depth)) if count else 0.0
+    keywords = _keywords_of(searches)
+    notes = [f"{pulls} rounds of {count} searches at depth {depth}"]
+    if not count:
+        per_round = 0.0
+    elif keywords is not None and _takes_keywords(source):
+        per_round = float(source.estimate_cost(count, depth, keywords=keywords))
+    else:
+        per_round = float(source.estimate_cost(count, depth))
+        notes.append("Priced without the search texts. A charge that depends on the text is not in this preview.")
     if per_round < 0 or math.isnan(per_round):
         raise ValueError(f"{source.name} gave a cost of {per_round}, which is not a price")
     return CostPreview(
@@ -1561,8 +1595,32 @@ def cost_of_reading(source: SerpSource, searches: int | Sequence[object], pulls:
         depth=depth,
         usd_per_round=per_round,
         usd_total=per_round * pulls,
-        notes=(f"{pulls} rounds of {count} searches at depth {depth}",),
+        notes=tuple(notes),
     )
+
+
+def _keywords_of(searches: int | Sequence[object]) -> list[str] | None:
+    """The search texts of a list of strings or PullSpecs. None for a count or any other item."""
+    if isinstance(searches, int):
+        return None
+    out: list[str] = []
+    for item in searches:
+        if isinstance(item, PullSpec):
+            out.append(item.search)
+        elif isinstance(item, str):
+            out.append(item)
+        else:
+            return None
+    return out
+
+
+def _takes_keywords(source: SerpSource) -> bool:
+    """True when the source's estimate_cost accepts the keyword-only `keywords` argument."""
+    try:
+        params = inspect.signature(source.estimate_cost).parameters
+    except (TypeError, ValueError):
+        return False
+    return "keywords" in params or any(p.kind is inspect.Parameter.VAR_KEYWORD for p in params.values())
 
 
 def gap_between(first: CleanReading, second: CleanReading) -> timedelta:

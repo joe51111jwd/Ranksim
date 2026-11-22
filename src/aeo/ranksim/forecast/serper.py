@@ -158,8 +158,9 @@ class SerperSerpSource:
         if self._owns:
             self._http.close()
 
-    def estimate_cost(self, count: int, depth: int = TOP_DEPTH) -> float:
-        """USD for `count` pulls at `depth`, at one credit per page."""
+    def estimate_cost(self, count: int, depth: int = TOP_DEPTH, *, keywords: Sequence[str] | None = None) -> float:
+        """USD for `count` pulls at `depth`, at one credit per page. The price does not depend on the text,
+        so `keywords` is accepted and ignored."""
         return float(serper_cost(count * serper_pages(depth) * CREDITS_PER_PAGE_ESTIMATE))
 
     def fetch(self, specs: Sequence[PullSpec]) -> list[Pull]:

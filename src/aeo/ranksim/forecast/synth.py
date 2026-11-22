@@ -1067,7 +1067,8 @@ class SyntheticSource:
     events: list[PullEvent] = field(default_factory=list, init=False)
     _counts: dict[str, int] = field(default_factory=dict, init=False, repr=False)
 
-    def estimate_cost(self, count: int, depth: int = TOP_DEPTH) -> float:
+    def estimate_cost(self, count: int, depth: int = TOP_DEPTH, *, keywords: Sequence[str] | None = None) -> float:
+        """Free. `keywords` is accepted and ignored."""
         return 0.0
 
     def fetch(self, specs: Sequence[PullSpec]) -> list[Pull]:

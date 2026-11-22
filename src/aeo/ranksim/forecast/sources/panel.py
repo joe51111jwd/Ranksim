@@ -45,9 +45,41 @@ import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
 
+from ...site_history import site_key
 from ..asof import utc_iso
 from ..config import EXCLUDED_SITES, NT50, TOP_DEPTH, forecast_paths
 from . import dfs_samples as dfs
+
+
+def _excluded_values(values: Iterable[Any]) -> set[str]:
+    """The values that name an excluded site once normalised (lower case, site_key), however they are spelled."""
+    out: set[str] = set()
+    for value in values:
+        if value is None or (isinstance(value, float) and np.isnan(value)):
+            continue
+        text = str(value).strip().lower()
+        if text and site_key(text) in EXCLUDED_SITES:
+            out.add(value)
+    return out
+
+
+def _drop_excluded_table(table: pa.Table) -> pa.Table:
+    """Rows whose `site` names an excluded site are dropped. The check normalises each distinct value first."""
+    import pyarrow.compute as pc
+
+    if "site" not in table.column_names or not EXCLUDED_SITES or table.num_rows == 0:
+        return table
+    bad = _excluded_values(pc.unique(table["site"]).to_pylist())
+    if not bad:
+        return table
+    mask = pc.invert(pc.is_in(table["site"], value_set=pa.array(sorted(bad), type=table.schema.field("site").type)))
+    return table.filter(pc.fill_null(mask, True))
+
+
+def excluded_mask(sites: pd.Series) -> pd.Series:
+    """True where a site value names an excluded site after normalising (lower case, site_key)."""
+    bad = _excluded_values(sites.dropna().unique())
+    return sites.isin(bad) if bad else pd.Series(False, index=sites.index)
 
 # ---------------------------------------------------------------------------
 # schema
@@ -400,12 +432,7 @@ def _load(folder: Path, schema: pa.Schema, columns: Sequence[str] | None, datase
     tables = [pq.read_table(part, columns=read) for part in _parts(folder, datasets, locales)]
     if not tables:
         return schema.empty_table().select(wanted).to_pandas()
-    table = pa.concat_tables(tables)
-    if "site" in table.column_names and EXCLUDED_SITES:
-        import pyarrow.compute as pc
-
-        mask = pc.invert(pc.is_in(table["site"], value_set=pa.array(sorted(EXCLUDED_SITES))))
-        table = table.filter(pc.fill_null(mask, True))
+    table = _drop_excluded_table(pa.concat_tables(tables))
     frame = table.select(wanted).to_pandas()
     return frame
 
@@ -474,12 +501,7 @@ def load_panel(
     if not tables:
         frame = PANEL_SCHEMA.empty_table().select(wanted).to_pandas()
     else:
-        table = pa.concat_tables(tables)
-        if EXCLUDED_SITES:
-            import pyarrow.compute as pc
-
-            mask = pc.invert(pc.is_in(table["site"], value_set=pa.array(sorted(EXCLUDED_SITES))))
-            table = table.filter(pc.fill_null(mask, True))
+        table = _drop_excluded_table(pa.concat_tables(tables))
         frame = table.select(wanted).to_pandas()
     if LEGACY_POISON_COLUMN in asked:
         frame[LEGACY_POISON_COLUMN] = frame[POISON_RISK_COLUMN]
@@ -503,7 +525,7 @@ def load_whois(columns: Sequence[str] | None = None, *, whois_dir: str | Path | 
         return pd.DataFrame({name: [] for name in names})
     frame = pq.read_table(target, columns=list(columns) if columns else None).to_pandas()
     if "site" in frame.columns:
-        frame = frame[~frame["site"].isin(EXCLUDED_SITES)].reset_index(drop=True)
+        frame = frame[~excluded_mask(frame["site"])].reset_index(drop=True)
     return frame
 
 
@@ -596,7 +618,7 @@ def site_positions(
                 stacklevel=2,
             )
         frame = frame[~risky.to_numpy()]
-    frame = frame[~frame["site"].isin(EXCLUDED_SITES)]
+    frame = frame[~excluded_mask(frame["site"])]
     depth = frame.groupby(["keyword_id", "snapshot_time"], sort=False)["rank"].transform("max")
     keep = [
         name for name in ("dataset", "locale", "keyword", "snapshot_date", "url", POISON_RISK_COLUMN, LEGACY_POISON_COLUMN)
@@ -875,6 +897,103 @@ def new_site_report(panel: pd.DataFrame, *, positions: pd.DataFrame | None = Non
             table[_landing_band(entry_rank)][_landing_band(later_rank)] += 1
         result[name] = {"entries_followed": int(len(moves)), "entry_band_by_later_band": table}
     return result
+
+
+# ---------------------------------------------------------------------------
+# A whole panel build into one folder, and its summary
+
+
+class PanelExistsError(FileExistsError):
+    """The target panel folder already holds files and overwriting was not asked for."""
+
+
+def _folder_has_files(folder: Path) -> bool:
+    return folder.exists() and any(folder.iterdir())
+
+
+def select_sample_files(files: SampleFiles, kinds: Iterable[str], locales: Iterable[str] | None = None) -> list[Path]:
+    """The result-page sample files of the asked kinds (history, snapshot) and locales (all when None)."""
+    wanted_kinds = {kind.strip() for kind in kinds if kind.strip()}
+    unknown = wanted_kinds - {"history", "snapshot"}
+    if unknown:
+        raise ValueError(f"unknown kinds {sorted(unknown)}. Use history, snapshot, or both.")
+    chosen: list[Path] = []
+    if "history" in wanted_kinds:
+        chosen += list(files.history)
+    if "snapshot" in wanted_kinds:
+        chosen += list(files.snapshot)
+    if locales is not None:
+        wanted = {item.strip() for item in locales if item.strip()}
+        chosen = [path for path in chosen if dfs.locale_from_path(path) in wanted]
+    return chosen
+
+
+def build_panel_into(
+    source_files: Sequence[str | Path],
+    out_dir: str | Path,
+    *,
+    overwrite: bool = False,
+    root: str | Path | None = None,
+    log: Callable[[str], None] | None = None,
+    stamp: str | None = None,
+) -> dict[str, Any]:
+    """Build a whole panel into `out_dir`, safely.
+
+    A missing or empty folder is filled. A folder that already holds files is
+    refused (PanelExistsError) unless `overwrite` is True. With `overwrite` the
+    new panel is first built in a sibling folder; only when that build has
+    finished is the old folder moved aside and the new one put in its place,
+    and then the old one is deleted. A failed build leaves the old panel as it
+    was. No source file means nothing to build, and that is refused too.
+    """
+    import shutil
+
+    target = Path(out_dir)
+    files = [Path(item) for item in source_files]
+    if not files:
+        raise ValueError("no result-page sample files were found to build a panel from")
+    if _folder_has_files(target) and not overwrite:
+        raise PanelExistsError(f"{target} already holds a panel. Pass --overwrite to replace it, or choose a new folder with --out.")
+    tag = stamp or datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+    building = target.with_name(f".{target.name}.building-{tag}")
+    if building.exists():
+        shutil.rmtree(building)
+    try:
+        report = build_panel(files, building, root=root, log=log)
+    except BaseException:
+        shutil.rmtree(building, ignore_errors=True)
+        raise
+    old: Path | None = None
+    if target.exists():
+        old = target.with_name(f".{target.name}.old-{tag}")
+        os.replace(target, old)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    os.replace(building, target)
+    if old is not None:
+        shutil.rmtree(old, ignore_errors=True)
+    report["out_dir"] = str(target)
+    report["replaced_existing"] = old is not None
+    return report
+
+
+SUMMARY_COLUMNS: tuple[str, ...] = ("dataset", "locale", "keyword_id", "snapshot_time", "snapshot_date", "rank", "site", POISON_RISK_COLUMN)
+
+
+def panel_datasets(folder: str | Path) -> list[str]:
+    return sorted({part.parent.parent.name.split("=", 1)[1] for part in _parts(Path(folder), None, None)})
+
+
+def panel_summary(folder: str | Path, *, new_sites: bool = True) -> dict[str, Any]:
+    """The summary of the panel in `folder`, one dataset at a time (memory stays small). REAL observations."""
+    path = Path(folder)
+    payload: dict[str, Any] = {"label": "REAL DataForSEO result pages, country level, single pulls", "panel_dir": str(path), "datasets": {}}
+    for name in panel_datasets(path):
+        panel = load_panel(list(SUMMARY_COLUMNS), datasets=[name], panel_dir=path)
+        payload["datasets"].update(summary(panel)["datasets"])
+        if new_sites and name == dfs.DATASET_HISTORY:
+            payload["new_sites_history"] = new_site_report(panel)
+        del panel
+    return payload
 
 
 # ---------------------------------------------------------------------------

@@ -107,6 +107,61 @@ def forecast(stage: str = "d60", day: int = 60, point: int = 5, *, site: str = "
     )
 
 
+STUB_PULLS = {"on": True}
+
+
+def stub_pulls_for(board: Scoreboard, readings, given) -> list[Pull]:
+    """Ok pulls with no hits for every kept pull a REAL, non-degraded reading names that is not stored.
+
+    The scoreboard refuses a REAL reading whose kept pulls are not stored. Most tests here build
+    readings by hand and do not care about the pulls, so the store is given matching pulls, taken a
+    minute before the reading. Tests of that refusal use the `strict_pulls` fixture.
+    """
+    have = {pull.pull_id for pull in given}
+    out: list[Pull] = []
+    for item in readings:
+        if item.label != "REAL" or item.degraded:
+            continue
+        dropped = {entry[0] for entry in item.dropped if entry}
+        stamp = (datetime.fromisoformat(item.taken_at.replace("Z", "+00:00")) - timedelta(minutes=1)).strftime(
+            "%Y-%m-%dT%H:%M:%SZ")
+        for pid in item.pull_ids:
+            if pid in dropped or pid in have:
+                continue
+            try:
+                board.pull(pid)
+                continue
+            except ScoreboardRefusal:
+                pass
+            have.add(pid)
+            out.append(Pull(pull_id=pid, provider="dataforseo", endpoint="test",
+                            spec=PullSpec(search=item.search, location_code=item.location_code, device=item.device),
+                            requested_at=stamp, completed_at=stamp, ok=True))
+    return out
+
+
+@pytest.fixture(autouse=True)
+def stub_named_pulls(monkeypatch: pytest.MonkeyPatch):
+    original = Scoreboard.store_batch
+
+    def store_batch(self, pulls=(), readings=()):
+        pulls = tuple(pulls)
+        readings = tuple(readings)
+        if STUB_PULLS["on"]:
+            pulls = pulls + tuple(stub_pulls_for(self, readings, pulls))
+        return original(self, pulls=pulls, readings=readings)
+
+    monkeypatch.setattr(Scoreboard, "store_batch", store_batch)
+    yield
+
+
+@pytest.fixture()
+def strict_pulls():
+    STUB_PULLS["on"] = False
+    yield
+    STUB_PULLS["on"] = True
+
+
 @pytest.fixture()
 def clock() -> Clock:
     return Clock(datetime(2026, 11, 20, 9, tzinfo=timezone.utc))

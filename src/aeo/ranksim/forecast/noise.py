@@ -90,7 +90,7 @@ from .reader import (
     ubiquity_slots,
 )
 from .stats import cluster_bootstrap_ratio, wilson
-from .types import REAL, SYNTHETIC, CleanReading, OrganicHit, Pull, PullSpec
+from .types import REAL, SYNTHETIC, CleanReading, OrganicHit, Pull, PullSpec, is_excluded_site
 
 AGREE_WITHIN = 2
 HEADLINE_DEPTH = 10
@@ -145,14 +145,14 @@ def _reading_positions(reading: CleanReading) -> dict[str, int]:
     return {
         entry.site: entry.position
         for entry in reading.positions
-        if entry.position <= TOP_DEPTH and entry.site not in EXCLUDED_SITES
+        if entry.position <= TOP_DEPTH and not is_excluded_site(entry.site)
     }
 
 
 def _rows(search: str, first: Mapping[str, int], second: Mapping[str, int]) -> list[AgreementRow]:
     rows: list[AgreementRow] = []
     for site in sorted(set(first) | set(second)):
-        if site in EXCLUDED_SITES:
+        if is_excluded_site(site):
             continue
         a = int(first.get(site, NT50))
         b = int(second.get(site, NT50))
@@ -917,7 +917,7 @@ def iter_dataforseo_history_pages(
                         url = str(item.get("url") or "")
                         site = site_key(url) if url else ""
                         site = site or str(item.get("main_domain") or item.get("domain") or "").lower()
-                        if rank < 1 or not site or site in EXCLUDED_SITES:
+                        if rank < 1 or not site or is_excluded_site(site):
                             continue
                         organic.append((rank, site, url))
                     organic.sort(key=lambda entry: (entry[0], entry[2]))

@@ -11,17 +11,51 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
 from datetime import date
+from functools import lru_cache
 from typing import Any, Protocol, Sequence, runtime_checkable
 
-from .config import NT50, TOP_DEPTH
+from aeo.ranksim.site_history import site_key
+
+from .config import EXCLUDED_SITES, NT50, TOP_DEPTH
 
 REAL = "REAL"
 PREDICTED = "PREDICTED"
 SYNTHETIC = "SYNTHETIC"
 
-# Provider names whose pulls come from the simulated world (synth.PROVIDER).
-# A reading built from any such pull is SYNTHETIC, never REAL.
-SYNTHETIC_PROVIDERS: frozenset[str] = frozenset({"synthetic"})
+# Provider names whose pulls are not observations of Google: the simulated world (synth.PROVIDER)
+# and the DataForSEO sandbox, which answers with dummy data (dataforseo.PROVIDER_SANDBOX).
+# A reading built from any such pull is SYNTHETIC, never REAL. This is the one list; use
+# `provider_is_synthetic` to test a name, since a mode suffix ("dataforseo-sandbox-live") counts too.
+SYNTHETIC_PROVIDERS: frozenset[str] = frozenset({"synthetic", "dataforseo-sandbox"})
+
+
+def provider_is_synthetic(provider: str | None) -> bool:
+    """True for a provider whose answers are not observations of Google.
+
+    A name in SYNTHETIC_PROVIDERS counts, and so does one of them followed by a dash and a
+    mode (the DataForSEO source names itself "<provider>-<mode>" outside the standard queue).
+    """
+    name = str(provider or "")
+    if name in SYNTHETIC_PROVIDERS:
+        return True
+    return any(name.startswith(prefix + "-") for prefix in SYNTHETIC_PROVIDERS)
+
+
+@lru_cache(maxsize=65536)
+def _site_of(value: str) -> str:
+    return site_key(value)
+
+
+def is_excluded_site(value: str | None) -> bool:
+    """True when a site, domain or URL belongs to config.EXCLUDED_SITES once normalised.
+
+    "www.SmartCrewHQ.com" and "https://blog.smartcrewhq.com/x" are excluded like "smartcrewhq.com".
+    A raw string is never compared as it comes.
+    """
+    if not value:
+        return False
+    text = str(value)
+    return text in EXCLUDED_SITES or _site_of(text) in EXCLUDED_SITES
 
 
 def clamp_position(value: int | float | None) -> int:
@@ -98,14 +132,17 @@ class SerpSource(Protocol):
     `fetch` returns one `Pull` per spec, in the same order. A failed request is a
     `Pull` with ok False. It is never an empty result and never an exception for
     a single bad task. `estimate_cost` is the price in USD of one `fetch` of
-    `count` specs at `depth`, before anything is sent.
+    `count` specs at `depth`, before anything is sent. When `keywords` (the
+    `count` search texts) are given, a source whose price depends on the text
+    (DataForSEO charges five times for a search operator) prices them exactly;
+    other sources accept and ignore them.
     """
 
     name: str
 
     def fetch(self, specs: Sequence[PullSpec]) -> list[Pull]: ...
 
-    def estimate_cost(self, count: int, depth: int = TOP_DEPTH) -> float: ...
+    def estimate_cost(self, count: int, depth: int = TOP_DEPTH, *, keywords: Sequence[str] | None = None) -> float: ...
 
 
 @dataclass(frozen=True)

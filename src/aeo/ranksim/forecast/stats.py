@@ -17,6 +17,9 @@ import numpy as np
 from .config import BOOTSTRAP_DRAWS, BOOTSTRAP_SEED
 
 Z95 = 1.959963984540054
+# Bootstrap draws made at once. Memory is about chunk x clusters x 8 bytes per index block,
+# so 200 draws over 43,000 site clusters is about 70 MB instead of 700 MB for 2,000 draws.
+BOOTSTRAP_CHUNK_DRAWS = 200
 
 
 def wilson(successes: float, total: float, z: float = Z95) -> tuple[float | None, float | None]:
@@ -42,6 +45,28 @@ def _cluster_sums(numer: Sequence[float], denom: Sequence[float], clusters: Sequ
     return np.array([sums[k][0] for k in keys]), np.array([sums[k][1] for k in keys])
 
 
+def _resampled_sums(
+    tops: np.ndarray, bottoms: np.ndarray, draws: int, seed: int, chunk_draws: int
+) -> tuple[np.ndarray, np.ndarray]:
+    """Per draw, the summed numerator and denominator of `count` clusters picked with replacement.
+
+    Equal to drawing `rng.integers(0, count, size=(draws, count))` in one block: each chunk asks the
+    same generator for the next rows, in order, and each row is summed on its own.
+    """
+    if chunk_draws < 1:
+        raise ValueError("chunk_draws must be at least 1")
+    count = len(tops)
+    rng = np.random.default_rng(seed)
+    top = np.empty(draws, dtype=float)
+    bottom = np.empty(draws, dtype=float)
+    for start in range(0, draws, chunk_draws):
+        size = min(chunk_draws, draws - start)
+        picks = rng.integers(0, count, size=(size, count))
+        top[start : start + size] = tops[picks].sum(axis=1)
+        bottom[start : start + size] = bottoms[picks].sum(axis=1)
+    return top, bottom
+
+
 def cluster_bootstrap_ratio(
     numer: Sequence[float],
     denom: Sequence[float],
@@ -49,21 +74,21 @@ def cluster_bootstrap_ratio(
     *,
     draws: int = BOOTSTRAP_DRAWS,
     seed: int = BOOTSTRAP_SEED,
+    chunk_draws: int = BOOTSTRAP_CHUNK_DRAWS,
 ) -> tuple[float | None, float | None]:
     """95% interval of sum(numer)/sum(denom), resampling whole clusters.
 
     For a hit rate pass numer = 1 or 0 per forecast and denom = 1. For precision
     pass denom = 1 only on page-one calls. Draws with an empty denominator are
     skipped. Fewer than 2 clusters gives (None, None): one cluster has no spread to resample.
+    The draws are made `chunk_draws` at a time so memory stays bounded with many clusters. The
+    generator gives the same stream in chunks as in one block, so the interval is the same.
     """
     tops, bottoms = _cluster_sums(numer, denom, clusters)
     count = len(tops)
     if count < 2 or bottoms.sum() <= 0:
         return None, None
-    rng = np.random.default_rng(seed)
-    picks = rng.integers(0, count, size=(draws, count))
-    top = tops[picks].sum(axis=1)
-    bottom = bottoms[picks].sum(axis=1)
+    top, bottom = _resampled_sums(tops, bottoms, draws, seed, chunk_draws)
     keep = bottom > 0
     if not keep.any():
         return None, None
@@ -79,6 +104,7 @@ def cluster_bootstrap_diff(
     *,
     draws: int = BOOTSTRAP_DRAWS,
     seed: int = BOOTSTRAP_SEED,
+    chunk_draws: int = BOOTSTRAP_CHUNK_DRAWS,
 ) -> tuple[float | None, float | None, float | None]:
     """Mean of (first - second) on the same forecasts, with a 95% cluster interval.
 
@@ -90,7 +116,7 @@ def cluster_bootstrap_diff(
         return None, None, None
     gaps = [float(a) - float(b) for a, b in zip(first, second)]
     point = sum(gaps) / len(gaps)
-    low, high = cluster_bootstrap_ratio(gaps, [1.0] * len(gaps), clusters, draws=draws, seed=seed)
+    low, high = cluster_bootstrap_ratio(gaps, [1.0] * len(gaps), clusters, draws=draws, seed=seed, chunk_draws=chunk_draws)
     return point, low, high
 
 

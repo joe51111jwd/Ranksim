@@ -1694,14 +1694,27 @@ class DataForSeoSerpSource:
             specs, mode=self.mode, resolve_poisoned_results=self.resolve_poisoned_results, max_resubmits=self.max_resubmits
         )
 
-    def estimate_cost(self, count: int, depth: int = TOP_DEPTH) -> float:
+    def estimate_cost(self, count: int, depth: int = TOP_DEPTH, *, keywords: Sequence[str] | None = None) -> float:
         """USD for `count` pulls at `depth`, before any resubmission. Exact to the micro-dollar.
 
-        Without the keywords the x5 operator charge cannot be known here; the client's own reservation adds it.
-        The sandbox is free.
+        With `keywords` (one search text per pull) the estimate is what the client reserves for those
+        pulls, the x5 charge for a search operator included. Without them that charge cannot be
+        known here and is not added; the client's own reservation still adds it. The sandbox is free.
         """
+        if keywords is not None:
+            keywords = list(keywords)
+            if len(keywords) != int(count):
+                raise ValueError(f"estimate_cost got {len(keywords)} keywords for {count} pulls. Give one per pull.")
         if getattr(self.client, "sandbox", False):
             return 0.0
+        if keywords is not None:
+            # The very formula serp_fetch reserves with, one task per keyword.
+            total = sum(
+                (DataForSeoClient._serp_estimate(PullSpec(search=str(kw), location_code=0, depth=int(depth)), self.mode,
+                                                 self.resolve_poisoned_results) for kw in keywords),
+                Decimal(0),
+            )
+            return float(total)
         return float(serp_cost(depth, mode=self.mode, resolve_poisoned_results=self.resolve_poisoned_results, pulls=count))
 
 

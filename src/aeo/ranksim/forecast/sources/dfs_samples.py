@@ -26,7 +26,8 @@ real files on 2026-11-22):
 The paid endpoint `dataforseo_labs/google/historical_serps/live` returns the same
 organic item fields, with the rank change fields nested under `rank_changes` and
 the page date in `datetime`. `iter_labs_historical_serps` yields the same rows,
-so the paid pull needs no new code.
+so the paid pull needs no new code. Its `etv` is held back (None) on older
+pages until a real response proves it is page dated (LABS_ETV_IS_PAGE_DATED).
 
 Conventions: `rank` is `rank_group` (organic rank). `previous_rank_absolute` of 0
 is not a rank (ranks start at 1), so it is stored as None. A missing value stays
@@ -71,6 +72,16 @@ POISON_WINDOW_START = POISON_RISK_START
 POISON_WINDOW_END: date | None = None
 
 LABS_OK_STATUS = 20000
+
+# Is the item `etv` of a paid Labs historical_serps page dated by that page? In the free sample files etv is
+# computed from the record's CURRENT headline volume, so on an older page it is a later fact. Until the first real
+# Labs response proves otherwise, the Labs parser fails closed: etv is None on every page dated before the
+# response's record date (and on every page when that date is not known). Turn this on ONLY after this check on a
+# real paid response: take one keyword whose monthly volume changed a lot over the window, and confirm that the
+# etv of each item moves with the volume of ITS page's month (and with its rank), not with today's volume. If etv
+# tracks the page month, set this to True in a reviewed change. The raw value is never stored anywhere else and
+# no model feature reads the panel's etv column.
+LABS_ETV_IS_PAGE_DATED = False
 
 # How long after a month ends its monthly search volume counts as known. DataForSEO's own
 # keyword history (google_history/keywords, all 383,642 dated month rows of the free samples,
@@ -573,6 +584,7 @@ def iter_labs_historical_serps(
     *,
     locale: str | None = None,
     locales: Mapping[str, LocaleInfo] | None = None,
+    record_date: date | None = None,
 ) -> Iterator[dict[str, Any]]:
     """Panel rows from a saved `dataforseo_labs/google/historical_serps/live` response.
 
@@ -583,6 +595,12 @@ def iter_labs_historical_serps(
     when given, else looked up in `locales`; with neither the call is refused.
     The Labs response has no keyword difficulty and no monthly volume, so `kd`
     and `search_volume` are None.
+
+    `etv` follows the same rule as the sample parser: it is None on a page dated
+    before the record date (the day the response was fetched, `record_date`),
+    and None on every page when that date is not given. LABS_ETV_IS_PAGE_DATED
+    is the one switch that keeps it on every page, after the check described
+    beside that constant.
     """
     stats = stats if stats is not None else ParseStats()
     if isinstance(payload, (str, Path)):
@@ -643,6 +661,8 @@ def iter_labs_historical_serps(
                     )
                     if row is None:
                         continue
+                    if not LABS_ETV_IS_PAGE_DATED and (record_date is None or moment.date() < record_date):
+                        row["etv"] = None
                     key = (row["rank"], row["rank_absolute"], row["url"])
                     if key in seen:
                         stats.rows -= 1

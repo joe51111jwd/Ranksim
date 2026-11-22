@@ -5,7 +5,11 @@ Two sources are read:
 
 - DataForSEO's free keyword samples (`google/keywords/<CC>_<lang>.json.gz`,
   1,000 searches per locale): search volume, competition, CPC, keyword
-  difficulty (0 to 100) and intent, dated by the file's `time_update`.
+  difficulty (0 to 100) and intent, dated by the file's `time_update`. When a
+  keyword has several month rows (a keyword-history file), the universe uses
+  the NEWEST month's search volume, competition and CPC. A metric the newest
+  month leaves empty is taken from the next newest month that has it. Keyword
+  difficulty is on the newest month row only (dfs_samples.iter_keyword_rows).
 - The public Kaggle keyword dataset `caiquedourado/google-keywords-dataset`
   (CC BY 4.0): one parquet shard per download, columns palavra (the search),
   mercado (market), fonte (source), volume, concorrencia (Google Ads
@@ -329,6 +333,22 @@ def _read_dfs(paths: Sequence[Path], locale: str, pattern: str) -> tuple[list[di
     return rows, stats
 
 
+def _newest_first_key(row: Mapping[str, Any]) -> tuple[int, str]:
+    """Sort key that puts a keyword's newest month first. A row with no month (a plain keyword file is dated by
+    its time_update instead) uses that date's month; a row with neither comes last."""
+    month = row.get("snapshot_month")
+    if not month and row.get("time_update") is not None:
+        try:
+            month = row["time_update"].strftime("%Y-%m")
+        except AttributeError:
+            month = str(row["time_update"])[:7]
+    if not month:
+        return (1, "")
+    year, number = str(month)[:4], str(month)[5:7]
+    inverted = f"{9999 - int(year):04d}-{99 - int(number):02d}" if year.isdigit() and number.isdigit() else str(month)
+    return (0, inverted)
+
+
 def _terciles(rows: list[dict[str, Any]]) -> None:
     """Cut thirds inside each proxy source by rank. Equal values always share a third.
 
@@ -371,6 +391,9 @@ def build_universe(
     and the same sha256. Picking inside a third uses sha256(seed | keyword_id)
     order, not a random generator. A third with too few searches is reported as
     a shortfall and is not filled from the others.
+
+    DataForSEO metrics come from the newest month row of each keyword (see the
+    module docstring); Kaggle values only fill what DataForSEO left empty.
     """
     country = country.upper()
     if country not in COUNTRY_LOCALE:
@@ -390,6 +413,9 @@ def build_universe(
     dfs_rows, dfs_stats = _read_dfs([Path(p) for p in dfs_keyword_files], locale, pattern)
 
     merged: dict[str, dict[str, Any]] = {}
+    # Newest month first: the first row of a keyword supplies its metrics and older rows only fill a None.
+    # A keyword-history file lists the oldest month first, so without this sort the oldest month would win.
+    dfs_rows = sorted(dfs_rows, key=_newest_first_key)
     for row in dfs_rows:
         key = normalise(row["keyword"])
         if not key:

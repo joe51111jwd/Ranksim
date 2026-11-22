@@ -124,6 +124,24 @@ Common rule: every feature value is a `Dated` value (`asof.py`) with its source 
 
 A marker report always shows how many forecasts were eligible by source and says so when a source has none (pilots cannot reach day 90 by 19 March unless they launch by 19 December; seed sites reach day 90 on 28 February when they launch on 30 November).
 
-## 8. Findings about the plan itself
+## 8. Data layer contracts (`sources/`)
+
+Public and paid data land in the same shapes, so a model trained on the free samples runs unchanged on the paid pulls.
+
+**The panel** (`sources/panel.py`): one row per organic result per dated result page, stored as parquet under `data/forecast/cache/panel/`. Columns:
+
+`dataset, locale, location_code, language, keyword, keyword_id, snapshot_time, snapshot_date, rank, rank_absolute, domain, site, url, title, description, is_new, previous_rank_absolute, main_domain_rank, page_rank, etv, kd, search_volume, intent, items_count, se_results_count`
+
+`rank` is the organic rank (`rank_group`). `site` is the registrable domain. `keyword_id` is the first 16 hex characters of sha256 of `locale|keyword`. A value the source does not give is null. The DataForSEO history samples and the paid Historical SERPs endpoint return the same item fields, so one parser serves both. Rows for excluded sites are dropped at load. Result pages dated 2026-09-20 to 2026-10-15 are flagged `poison_window` (Google served altered pages to scrapers then) and are left out of training.
+
+**Strength as of a date** (`sources/strength_lists.py`): `lookup(sites, as_of) -> dict[site, Dated]`, where the value is the newest snapshot *published* on or before `as_of`. Sources: Common Crawl domain ranks (per release, with its publication date), OpenPageRank history, Chrome popularity buckets, Tranco. Today's Majestic file is undated. Materialised values are cached as parquet under `data/forecast/cache/strength/`.
+
+**Site start dates** (`sources/domain_age.py`): first-seen month from Common Crawl, the first month in OpenPageRank, and RDAP registration dates for small sets. Each value says which source it came from. A registration date is not a launch date, and a re-registered expired domain looks new: both are flagged, not hidden.
+
+**Google updates** (`sources/updates.py`): the dated list of ranking updates from Google's Search Status Dashboard, for the scoreboard's `core_updates` table.
+
+Downloads go under `data/forecast/public/` (ignored by git). Every loader records the URL, the fetch time and the sha256 of what it read in a `SOURCES.json` beside the cache, and is resumable. Nothing that is personal data about individuals is loaded.
+
+## 9. Findings about the plan itself
 
 The audit of the plan is in `docs/plan/PLAN_AUDIT.md`. The code is built so that each finding is either fixed by a refusal or printed in the reports.

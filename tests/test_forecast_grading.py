@@ -128,6 +128,15 @@ def test_baseline_needs_one_point_per_cell():
         compare_to_baseline(_cells(), always_nt50(_cells())[:-1])
 
 
+def test_the_empty_tool_name_is_reserved_and_ties_are_stable():
+    cells = _cells()
+    with pytest.raises(ValueError):
+        headline(cells, {"always_nt50": [NT50] * len(cells)})
+    # A baseline identical to the empty tool ties with it. The name that sorts first wins.
+    report = headline(cells, {"zz_same_as_empty": [NT50] * len(cells)})
+    assert report["best_baseline"] == "always_nt50"
+
+
 def test_wilson_matches_the_plan_example():
     low, high = wilson(180, 200)
     assert low == pytest.approx(0.851, abs=0.002) and high == pytest.approx(0.934, abs=0.002)

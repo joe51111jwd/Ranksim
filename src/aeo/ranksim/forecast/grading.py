@@ -271,12 +271,15 @@ def headline(
     brand = [c for c in cells if c.is_brand]
     table: dict[str, Any] = {}
     named = dict(baselines or {})
+    if "always_nt50" in named:
+        raise ValueError("the baseline name 'always_nt50' is reserved: it is always computed here")
     named["always_nt50"] = always_nt50(cells)
     for name, points in named.items():
         if len(points) != len(cells):
             raise ValueError(f"baseline {name!r} must have one point per cell")
         table[name] = compare_to_baseline(main, [points[i] for i in keep], rule, cluster_by=cluster_by)
-    best = max(table, key=lambda name: (table[name]["baseline_rate"] or 0.0)) if main else None
+    # Ties go to the name that sorts first, so the choice does not depend on argument order.
+    best = min(table, key=lambda name: (-(table[name]["baseline_rate"] or 0.0), name)) if main else None
     return {
         "forecasts": len(main),
         "brand_forecasts_shown_apart": len(brand),

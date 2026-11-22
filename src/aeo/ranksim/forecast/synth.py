@@ -49,9 +49,12 @@ Observation noise on top of the truth (all knobs in `SynthKnobs`):
 - per-pull jitter: one score shock per (site, search, pull). Score noise of a
   fixed size moves deep pages more places than top pages because scores are
   packed tighter deeper in the list, so jitter grows with depth.
-- jumps: each page lands at a uniform random place with probability
-  `jump_rate` per pull (the jump-mixture model of r4-statistical-design.md
-  sim 5, which fitted q = 0.10 on top-10 lists).
+- jumps: with probability `jump_rate` per pull a page at place p moves a
+  uniform random distance of up to max(`jump_span_min`, `jump_span_share` * p)
+  places either way, so top pages jump less than deep ones (after the jump-mixture model of
+  r4-statistical-design.md sim 5, which fitted q = 0.10 with a uniform place
+  inside top-10 lists; uniform over a 100-deep list moved top pages far more
+  than the SEOmonitor daily moves allow, so the jump is local here).
 - poisoned pulls (most organic results replaced by unrelated sites), repaired
   pulls (clean list marked repaired), partial pulls (fewer results, status
   40106), failed pulls (status 50000, no hits), spell-corrected pulls (the list
@@ -151,7 +154,7 @@ class SynthKnobs:
     page_walk_sd_per_month: float = 0.07
     strength_drift_sd_per_month: float = 0.04
     difficulty_coupling: float = 0.8  # how much strong sites' content tracks a search's value
-    value_content_shift: float = 2.0  # every incumbent's content rises with a search's value
+    value_content_shift: float = 1.5  # every incumbent's content rises with a search's value
     participation: float = 0.9  # chance a niche site has a page on a search of its niche
     generalist_share: float = 0.08  # directories that compete on every niche
     generalist_boost: float = 0.6
@@ -164,7 +167,7 @@ class SynthKnobs:
     target_content_sd: float = 0.8
     nontarget_page_share: float = 0.5
     nontarget_content_mean: float = -0.3
-    trust_mean: float = 1.45
+    trust_mean: float = 2.0
     trust_noise_sd: float = 0.45
     trust_tau_median_days: float = 40.0
     trust_tau_log_sd: float = 0.5
@@ -176,7 +179,9 @@ class SynthKnobs:
     # Observation noise.
     day_sd: float = 0.06
     pull_sd: float = 0.05
-    jump_rate: float = 0.03
+    jump_rate: float = 0.10
+    jump_span_share: float = 0.5  # a jumped page at place p moves uniformly up to this share of p either way
+    jump_span_min: float = 1.0
     country_sd: float = 0.08
     poison_rate: float = 0.05
     poison_replace_low: float = 0.6
@@ -563,7 +568,8 @@ class World:
         self._candidates = [np.flatnonzero(np.isfinite(page_day[:, q])) for q in range(n_searches)]
         established_strength = s_knots[~is_new, 0]
         self._list_threshold = float(np.quantile(established_strength, k.strength_list_quantile))
-        self._unrelated = tuple(f"offtopic-{j:03d}.{TLD}" for j in range(3 * SNAPSHOT_DEPTH))
+        widest = max(len(c) for c in self._candidates)
+        self._unrelated = tuple(f"offtopic-{j:04d}.{TLD}" for j in range(max(3 * SNAPSHOT_DEPTH, widest)))
 
     def _site_names(self, kinds: Sequence[str], homes: Sequence[int], rng: np.random.Generator) -> list[str]:
         names: list[str] = []
@@ -735,7 +741,8 @@ class World:
         n = len(first)
         keys = np.arange(n, dtype=float)
         jumps = rng.random(n) < self.knobs.jump_rate
-        keys[jumps] = rng.random(int(jumps.sum())) * n
+        span = np.maximum(self.knobs.jump_span_min, self.knobs.jump_span_share * (keys[jumps] + 1))
+        keys[jumps] = keys[jumps] + rng.uniform(-1.0, 1.0, size=int(jumps.sum())) * span
         return first[np.lexsort((np.arange(n), keys))]
 
     def _hits(self, sites: Sequence[str], search: str, repaired: bool) -> tuple[OrganicHit, ...]:
@@ -970,8 +977,8 @@ class SyntheticSource:
     world: World
     clock: Callable[[], datetime]
     name: str = PROVIDER
-    events: list[PullEvent] = field(default_factory=list)
-    _counts: dict[str, int] = field(default_factory=dict, repr=False)
+    events: list[PullEvent] = field(default_factory=list, init=False)
+    _counts: dict[str, int] = field(default_factory=dict, init=False, repr=False)
 
     def estimate_cost(self, count: int, depth: int = TOP_DEPTH) -> float:
         return 0.0

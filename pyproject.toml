@@ -16,10 +16,12 @@ dependencies = [
   "lxml>=5.3",
   "psycopg[binary]>=3.2",
   "lightgbm>=4.0",
+  "numpy>=1.26",
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8.3", "pandas>=2.2"]
+# scikit-learn is imported by scripts/claude and by the tests that load them.
+dev = ["pytest>=8.3", "pandas>=2.2", "scikit-learn>=1.4", "pyarrow>=15"]
 # Round 3 semantic features (scripts/claude/r3_semantic.py). CPU only, no torch.
 semantic = ["onnxruntime>=1.18", "tokenizers>=0.15", "huggingface_hub>=0.23"]
 

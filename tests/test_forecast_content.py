@@ -476,5 +476,23 @@ def test_eval_snippets_offline_is_seeded(tmp_path: Path, capsys: pytest.CaptureF
     assert "flatters the scorer" in printed and "Not a marker number" in printed
     keys = {(r["locales"], r["top_k"], r["scorer"], r["subset"]) for r in out["results"]}
     assert ("US English", 10, "ce_snippet", "cross-site, domain rank diff < 25") in keys
-    assert ("other English (1 locales)", 20, "domain_rank", "cross-site, domain rank known") in keys
+    assert ("other English (1 locales)", 20, "domain_rank", "cross-site, domain rank known, pairs scored by ce_snippet") in keys
     assert all(r["top_k"] in (10, 20, 50) for r in out["results"])
+
+
+def test_snippet_report_strength_line_uses_exactly_the_pairs_of_its_content_score():
+    rows = []
+    for s in range(6):
+        for r in range(1, 6):
+            rows.append({"search_id": f"US_en|k{s}", "rank": r, "site": f"s{s}-{r}.com", "main_domain_rank": 500 + r,
+                         "lex_snippet": np.nan if r == 3 else float(10 - r + s * 0.01),  # one result per page unscored
+                         "ce_snippet": float(r)})
+    _, out = E._snippet_report(pd.DataFrame(rows), ["lex_snippet", "ce_snippet"], "test")
+    by = {(o["top_k"], o["scorer"], o["subset"]): o for o in out}
+    for score in ("lex_snippet", "ce_snippet"):
+        for subset in ["cross-site, domain rank known"] + [f"cross-site, domain rank diff < {t}" for t in E.DOMAIN_RANK_THRESHOLDS]:
+            content = by[(10, score, subset)]
+            strength = by[(10, "domain_rank", f"{subset}, pairs scored by {score}")]
+            assert content["pairs"] == strength["pairs"] and strength["unscored_pairs"] == 0, (score, subset)
+    assert by[(10, "lex_snippet", "cross-site, domain rank known")]["pairs"] == 36
+    assert by[(10, "ce_snippet", "cross-site, domain rank known")]["pairs"] == 60

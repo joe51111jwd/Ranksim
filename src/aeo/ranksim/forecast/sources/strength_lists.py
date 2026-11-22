@@ -882,18 +882,26 @@ class OpenPageRankHistory:
     def lookup(self, sites: Iterable[str], as_of: date | str) -> dict[str, Dated]:
         """Per searched site, the score in the newest month column published on or before `as_of`.
 
-        A searched site with no score in that month gets `present` 0.0 and opr None. Note the survivorship limit.
+        A searched site that is in the file but has no score in that month gets
+        `present` 0.0 and opr None: a real reading of that month's column. A
+        searched site with no row anywhere in the file gets `present` None and
+        opr None: the file only holds the 2026-10 top 10 million (survivorship),
+        so it cannot say whether that site was listed in an earlier month, and a
+        0 would be made up from a 2026 fact.
         """
         snap = pick_snapshot(self.snapshots(), as_of)
         if snap is None:
             return {}
         month = snap.snapshot_id.removeprefix("opr-")
         searched = _read_searched(self.searched_path)
+        asked = wanted_sites(sites) & searched
         scores = self.month_scores(month)
+        in_file = set(self.first_months(asked)) if asked else set()
         out: dict[str, Dated] = {}
-        for site in wanted_sites(sites) & searched:
+        for site in asked:
             value = scores.get(site)
-            out[site] = Dated(value={"snapshot_id": snap.snapshot_id, "present": 1.0 if value is not None else 0.0,
+            present = None if site not in in_file else (1.0 if value is not None else 0.0)
+            out[site] = Dated(value={"snapshot_id": snap.snapshot_id, "present": present,
                                      "opr": value, "survivorship_limited": 1.0}, source=self.name, snapshot_date=snap.published)
         return out
 

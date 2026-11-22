@@ -14,7 +14,11 @@ Rules this module enforces (audit finding F24):
 - The difficulty metric is one named metric for the whole pool. Mixed metrics are refused.
 - Terciles come from the whole candidate pool, so easy means the same thing for every site.
 - The pick is seeded and deterministic. The same pool and seed give the same searches.
-- No search goes to two sites of the same niche unless `allow_shared=True` is passed.
+- No search goes to two sites of the same niche unless `allow_shared=True` is passed and
+  recorded in the manifest. `validate` makes a shared search an error otherwise.
+- A list is frozen before launch: `freeze` refuses a manifest with a site that launches on or
+  before the day the manifest was created or frozen, unless `after_launch_reason` is recorded
+  (a backfilled pilot).
 - A frozen manifest has its hash written beside it. `load_frozen` refuses a manifest
   whose content no longer matches that hash.
 
@@ -223,30 +227,37 @@ def pick_niche_searches(
     per_site: int = DEFAULT_SEARCHES_PER_SITE,
     seed: int,
     allow_shared: bool = False,
+    exclude: Iterable[str] = (),
 ) -> dict[str, list[SeedSearch]]:
     """Target searches for every site of one niche, with no search on two sites unless `allow_shared`.
 
     Sites are handled in sorted domain order so the result does not depend on the
     order the domains were given in. Each site gets its own seed derived from `seed`
-    and its domain.
+    and its domain. `exclude` holds searches already given to other sites of the niche
+    (for example in the manifest being added to); none of them is picked again unless
+    `allow_shared`.
     """
+    blocked = set() if allow_shared else {normalize_search(text) for text in exclude}
     keys = [site_key(domain) for domain in domains]
     if len(set(keys)) != len(keys):
         raise ValueError("a domain is listed twice")
     if not allow_shared:
         sizes = {name: 0 for name in TERCILES}
-        for name in assign_terciles(candidates).values():
-            sizes[name] += 1
+        for search, name in assign_terciles(candidates).items():
+            if search not in blocked:
+                sizes[name] += 1
         quota = tercile_quota(per_site)
         for name in TERCILES:
             needed = quota[name] * len(keys)
             if sizes[name] < needed:
                 raise ValueError(
                     f"{len(keys)} sites need {needed} {name} searches with none shared, "
-                    f"and the pool has {sizes[name]}. Add candidates or pass allow_shared=True."
+                    f"and the pool has {sizes[name]}"
+                    + (" not already used by the niche" if blocked else "")
+                    + ". Add candidates or pass allow_shared=True."
                 )
     result: dict[str, list[SeedSearch]] = {}
-    used: set[str] = set()
+    used: set[str] = set(blocked)
     for domain in sorted(keys):
         picked = pick_target_searches(
             candidates, per_site=per_site, seed=_site_seed(seed, domain), exclude=() if allow_shared else used
@@ -307,6 +318,9 @@ class SeedManifest:
     language: str = DEFAULT_LANGUAGE
     difficulty_metric: str = ""
     created_at: str = field(default_factory=lambda: utc_iso(datetime.now(UTC)))
+    # Recorded only when set, so manifests that do not use them keep their hash.
+    allow_shared: bool = False  # two sites of one niche may share a search (seeds pick --allow-shared)
+    after_launch_reason: str | None = None  # why this list is frozen on or after a launch date (a backfilled pilot)
 
     def validate(self) -> ManifestCheck:
         errors: list[str] = []
@@ -377,12 +391,18 @@ class SeedManifest:
             for norm in sorted(by_niche[niche]):
                 owners = sorted(set(by_niche[niche][norm]))
                 if len(owners) > 1:
-                    warnings.append(f"the search {norm!r} is on {len(owners)} sites of niche {niche!r}: {owners}")
+                    message = f"the search {norm!r} is on {len(owners)} sites of niche {niche!r}: {owners}"
+                    if self.allow_shared:
+                        warnings.append(message + " (allow_shared is recorded)")
+                    else:
+                        errors.append(message + ". No search goes to two sites of one niche unless allow_shared is recorded.")
+        if self.after_launch_reason is not None and not str(self.after_launch_reason).strip():
+            errors.append("after_launch_reason is empty. Say why the list is frozen after launch, or leave it out.")
         return ManifestCheck(errors=tuple(errors), warnings=tuple(warnings))
 
     def to_payload(self) -> dict[str, Any]:
         sites = sorted(self.sites, key=lambda site: site_key(site.domain))
-        return {
+        payload: dict[str, Any] = {
             "manifest_version": MANIFEST_VERSION,
             "location_code": self.location_code,
             "device": self.device,
@@ -391,6 +411,11 @@ class SeedManifest:
             "created_at": self.created_at,
             "sites": [site.to_payload() for site in sites],
         }
+        if self.allow_shared:
+            payload["allow_shared"] = True
+        if self.after_launch_reason is not None:
+            payload["after_launch_reason"] = self.after_launch_reason
+        return payload
 
     def manifest_hash(self) -> str:
         """sha256 of the canonical JSON of the manifest. Site and search order do not change it."""
@@ -439,6 +464,8 @@ class SeedManifest:
                 language=str(payload["language"]),
                 difficulty_metric=str(payload["difficulty_metric"]),
                 created_at=str(payload["created_at"]),
+                allow_shared=bool(payload.get("allow_shared", False)),
+                after_launch_reason=None if payload.get("after_launch_reason") is None else str(payload["after_launch_reason"]),
             )
         except ManifestError:
             raise
@@ -455,15 +482,38 @@ class SeedManifest:
             raise ManifestError(f"{path} does not hold a JSON object")
         return cls.from_payload(payload)
 
-    def freeze(self, path: str | Path) -> str:
+    def launched_by(self, day: date) -> list[SeedSite]:
+        """The sites whose launch date is on or before `day`."""
+        return [site for site in self.sites if site.launch_date is not None and site.launch_date <= day]
+
+    def freeze(self, path: str | Path, *, today: date | None = None) -> str:
         """Validate, save, and write the hash beside the manifest. Returns the hash.
 
         Refuses an invalid manifest. Refuses to replace a frozen manifest with a
         different one: a frozen list is a pre-registration and is never rewritten.
+
+        Refuses a manifest with a site whose launch date is on or before the date it was
+        created (created_at) or on or before `today` (the UTC date of the freeze, from the
+        caller's clock): a list picked after launch can be chosen from early rankings, so
+        it is no pre-registration. The only way past is `after_launch_reason`, recorded in
+        the manifest and its hash, for a backfilled pilot.
         """
         check = self.validate()
         if not check.ok:
             raise ManifestError("the manifest has errors and cannot be frozen: " + "; ".join(check.errors))
+        if self.after_launch_reason is None:
+            created = parse_utc(self.created_at).date()
+            for label, day in (("it was created", created), ("it is frozen", today)):
+                if day is None:
+                    continue
+                late = self.launched_by(day)
+                if late:
+                    first = sorted(late, key=lambda item: (item.launch_date, site_key(item.domain)))[0]
+                    raise ManifestError(
+                        f"{first.domain} launches on {first.launch_date.isoformat()}, on or before the day {label} "
+                        f"({day.isoformat()}). Searches are frozen before launch, or they could be chosen from early "
+                        "rankings. For a backfilled pilot, record after_launch_reason in the manifest."
+                    )
         target = Path(path)
         sidecar = hash_path(target)
         digest = self.manifest_hash()

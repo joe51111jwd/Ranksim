@@ -15,13 +15,14 @@ python -m aeo.ranksim forecast --help
 
 Rules that hold for every command:
 
-1. A command that can cost money is a dry run unless you add `--execute`. The dry run prints the provider, the number of calls, the exact cost and what is left of your approved budget. It sends nothing and spends nothing.
+1. A command that can cost money is a dry run unless you add `--execute`. The dry run prints the provider, the number of calls, the exact cost and what is left of your approved budget. It sends nothing and spends nothing. The cost is the same amount `--execute` checks and reserves: a search holding a Google operator (`site:`, `intitle:` and the like) costs five times the pages on DataForSEO, and the dry run counts that.
 2. With `--execute` the command still stops when the budget guard refuses. The message says how to approve more.
 3. Money always comes from the price table in `budget.py`. No amount is typed into the commands.
 4. Add `--json` to any command to get machine output.
 5. Exit code 0 means it worked. Exit code 1 means a check failed, for example a marker not passed or a broken chain. Exit code 2 means the command was used wrong or something is not set up.
 6. No command prints a key. Keys are also scrubbed from anything a command writes.
 7. Data lives in `data/forecast/` unless you pass `--dir` or set `RANKSIM_FORECAST_DIR`. That folder is not committed. If `RANKSIM_SCOREBOARD_URL` is set, the scoreboard lives there instead. `status` prints where it is.
+8. The committed export lives in `evals/scoreboard/` (or where `RANKSIM_EXPORT_DIR` points). Once it exists, `status`, `report`, `marker`, `grade`, `export` and `verify` check that the database still holds every forecast and grade the export names. On a database whose newest rows were cut off they stop or report it, with exit code 1. Until the first export, `status` says there is none yet.
 
 To see the whole flow work before spending anything, run the demo. It uses a simulated world and costs nothing. Every line it prints starts with SYNTHETIC.
 
@@ -54,7 +55,7 @@ python -m aeo.ranksim forecast budget show
 
 What they print and cost:
 
-1. `status` prints how many sites, searches, readings, forecasts and grades the scoreboard holds, whether the hash chains verify, the budget, whether each login is set (yes or no), and how many problems the plan's own schedule has. Free.
+1. `status` prints how many sites, searches, readings, forecasts and grades the scoreboard holds, whether the hash chains verify, whether a committed export exists to check against, the budget, whether each login is set (yes or no), how many problems the plan's own schedule has, the stage forecasts due in the next 3 days, and the stages that were missed. Free.
 2. `budget prices` prints every unit price with its source page, and what the plan's items cost. For example one clean reading (5 pulls, 50 deep, Standard queue, repair option on) costs 0.018000 USD. Free.
 3. `locations --name <city>` searches DataForSEO's free list of places and prints only cities with their codes. Austin, Texas is 1026201. Free. It needs the login. Without a login, download DataForSEO's public locations CSV and add `--csv <file>`.
 4. `budget approve` records that you approved spending up to that amount. It moves no money. Until you run it, every paid call is refused, because the approved amount starts at 0.
@@ -71,7 +72,7 @@ python -m aeo.ranksim forecast sample serp --searches searches.txt --location-co
 python -m aeo.ranksim forecast sample serp --searches searches.txt --location-code 1026201 --execute
 ```
 
-The dry run prints the calls and the cost. With 300 searches it picks the first 277 single pulls, which cost 0.997200 USD. With `--execute` it sends them and records what came back: how many pulls worked, how many were partial or repaired, and the fewest and most results.
+The dry run prints the calls and the cost. With 300 searches it picks the first 277 single pulls, which cost 0.997200 USD. With `--execute` it sends them and records what came back: how many pulls worked, how many were partial or repaired, and the fewest and most results. If the sample learned nothing (for example no pull came back with results), it prints that the sample was NOT recorded and why, exits with code 1, and the gate for big pulls stays closed. The money spent is still shown.
 
 Then freeze the marker 1 sample. Put every candidate search in a text file, one per line.
 
@@ -111,9 +112,11 @@ python -m aeo.ranksim forecast assemble --date 2026-11-28
 
 `assemble` takes the pulls that completed on that UTC date, builds one clean reading per search, and stores it. Each reading gets the latest earlier clean reading of the same search as history (at most 21 days old), and the suspect sites of every round it came from. It prints how many readings it built, how many are degraded and why, and how many searches had a history. Free. Running it twice changes nothing.
 
+Run `assemble` only after the last round of the day. A search keeps one reading per UTC date: if `assemble` already stored one for that date, a later run leaves it as it is, says how many searches have pulls that were not used, and exits with code 1. Pulls of one search taken less than 60 seconds apart (a cron line pasted twice, a retry loop) count as one pull, so they never make a clean reading on their own.
+
 Reading B is the same five rounds and the same `assemble` on the next day, so the two readings are about 24 hours apart. Both readings cost 10.800000 USD in all.
 
-`read` still works and takes all five rounds in one process, one minute apart. Use it only when a day of rounds is not possible: its pulls share one spell of altered pages more often.
+`read` still works and takes all five rounds in one process, one minute apart. Use it only when a day of rounds is not possible: its pulls share one spell of altered pages more often. `--gap-seconds` cannot go below 60.
 
 Then judge marker 1:
 
@@ -123,6 +126,8 @@ python -m aeo.ranksim forecast marker1 report --location-code 1026201
 
 It pairs reading A and reading B of each search, prints the share of top 10 units that agree within 2 places, the interval over searches, the same number with the poisoned page filter switched off, and the same number for single raw pulls on the same searches. It names the reader version and its settings. Add `--reader-version 1` to rebuild the readings with the older rule (the default is 2). It ends with the verdict. Free. Exit code 0 only when marker 1 passed.
 
+Every search of the frozen list counts. A search with no usable pair (degraded readings, or no reading B 20 to 28 hours after A) is not dropped: when fewer than 92% of the frozen searches give a pair, the headline is NOT MEASURABLE and marker 1 cannot pass. Marker 1 is judged only on the frozen sample. `--searches <file>` is for looking at a subset: unless the file holds exactly the frozen list, the output starts with NOT A MARKER RESULT and the exit code is 1.
+
 Keep a copy the outside world can date:
 
 ```
@@ -130,7 +135,7 @@ python -m aeo.ranksim forecast export
 python -m aeo.ranksim forecast verify
 ```
 
-`export` writes the scoreboard to `evals/scoreboard/` with the head hashes. Ask for it to be committed. `verify` checks both hash chains, the spend ledger, and that the committed export is still the start of the database. That last check catches recent rows that were cut off, which the chain alone cannot see. Free.
+`export` writes the scoreboard to `evals/scoreboard/` with the head hashes. Ask for it to be committed. If the folder already holds an export that the database no longer starts with, `export` refuses to overwrite it, prints what is missing and exits with code 1. `verify` checks both hash chains, the spend ledger, and that the committed export is still the start of the database. That last check catches recent rows that were cut off, which the chain alone cannot see. Once the export exists, every report and grade makes the same check. Free.
 
 ## Step 3. Week 1. Launch the 10 seed sites
 
@@ -154,7 +159,7 @@ python -m aeo.ranksim forecast seeds validate --manifest seeds/seed_manifest.jso
 python -m aeo.ranksim forecast seeds schedule --manifest seeds/seed_manifest.json
 ```
 
-`seeds pick` gives each site 20 searches, as close to a third easy, a third medium and a third hard as 20 allows, with no search on two sites of one niche. Free. `seeds validate` prints errors and warnings. Exit code 1 when there are errors. `seeds schedule` prints each site's reading dates and stage dates, which marker each date falls after, the reading cost, and the plan's own schedule problems. For 200 searches the weekly grid is 13 readings for 46.800000 USD, and with days 30, 60 and 90 added it is 16 readings for 57.600000 USD.
+`seeds pick` gives each site 20 searches, as close to a third easy, a third medium and a third hard as 20 allows, with no search on two sites of one niche. Picking more sites of a niche into the same manifest later never reuses a search the niche already has. `--allow-shared` lets sites of a niche share searches and records that in the manifest; without it `seeds validate` treats a shared search as an error. Free. `seeds validate` prints errors and warnings. Exit code 1 when there are errors. `seeds schedule` prints each site's reading dates and stage dates, which marker each date falls after, the reading cost, and the plan's own schedule problems. For 200 searches the weekly grid is 13 readings for 46.800000 USD, and with days 30, 60 and 90 added it is 16 readings for 57.600000 USD.
 
 Freeze before launch, then put the sites on the scoreboard:
 
@@ -163,7 +168,11 @@ python -m aeo.ranksim forecast seeds freeze --manifest seeds/seed_manifest.json
 python -m aeo.ranksim forecast seeds register --manifest seeds/seed_manifest.json
 ```
 
-`seeds freeze` writes the hash beside the manifest. A frozen manifest is never rewritten. Commit both files. `seeds register` adds the sites with their launch dates and the searches with their difficulty, and freezes the manifest hash in the scoreboard. Free.
+`seeds freeze` writes the hash beside the manifest. A frozen manifest is never rewritten. Commit both files. It refuses a manifest when any site launches on or before the day the manifest was created or the day it is frozen: searches picked after launch could be chosen from early rankings. `seeds register` adds the sites with their launch dates and the searches with their difficulty, and freezes the manifest hash in the scoreboard. It refuses to add a site on or after its launch date. Registering the same manifest again later is fine and adds nothing. Free.
+
+Only for a pilot site that was already live when the agency joined: `seeds freeze --manifest <file> --after-launch-reason "<why>"` writes the reason into the manifest and its hash, and then freeze and register accept it.
+
+Stage forecasts. Each site has an upload forecast on launch day and d7, d14, d30 and d60 forecasts on days 7, 14, 30 and 60. The scoreboard refuses a stage forecast dated after its stage day, and a seed or pilot forecast written more than one day after its date. So each stage job must run on or before its stage day. `status` lists the stages due in the next 3 days and the stages that were missed. A missed stage is reported as missed and is never backfilled: a later forecast is a shorter lead, never that stage. The forecasting commands that make these forecasts come in the next step.
 
 Every week until day 90, and on days 30, 60 and 90, take five rounds across the day and then assemble, as in step 2:
 
@@ -181,7 +190,7 @@ Each week, save the Search Console exports for each site:
 python -m aeo.ranksim forecast gsc import --site one.com --file exports/one-com.zip --kind ui
 ```
 
-It checks the file, copies it under `data/forecast/imports/gsc/`, and freezes its sha256 in the scoreboard. The kinds are ui (the export zip or folder), daily, range, api (JSON, with `--dimensions date,query`) and index. Search Console numbers feed the early reading updater. They are never graded outcomes. Free. SmartCrew files are refused.
+It checks the file, copies it under `data/forecast/imports/gsc/`, and freezes its sha256 in the scoreboard. The kinds are ui (the export zip or folder), daily, range, api (JSON, with `--dimensions date,query`) and index. Search Console numbers feed the early reading updater. They are never graded outcomes. The updater uses only exports fetched on or before its as_of date, and the newest two days of an export, still preliminary, count as unknown, never as zero. Free. SmartCrew files are refused: anything under a smartcrew folder, any file or zip entry whose name mentions SmartCrew, and any export with a query or page naming it, whatever `--site` says. A UI export named after another property than `--site` (Search Console names it `<property>-Performance-on-Search-<date>.zip`) is refused too.
 
 ## Step 4. Week 2. Build the training set
 
@@ -216,6 +225,8 @@ python -m aeo.ranksim forecast marker --number 3 --source backtest --as-of 2026-
 
 `report` prints the hit rate, the baselines, page one precision and recall, and every rate under 30 forecasts as NOT MEASURABLE. `marker` prints the verdict. Exit code 0 only when the marker passed. Free.
 
+The spec requires four baselines on the same forecasts: always NT50, persistence, the band prior by difficulty and site strength only. The band prior is fitted on graded backtest forecasts of the training split, on sites not graded in the report; when there are none, the report says the band prior is missing and why. The site strength only baseline is missing until `strength.py` is finished, and the report says so. Markers 3 to 5 cannot pass while a baseline is missing.
+
 ## Step 7. Weeks 5 to 8. Early reading updater, marker 4
 
 Coming in the next step: the `update` command. The seed readings for it are already being taken in step 3. Judge marker 4 on 22 January:
@@ -238,7 +249,7 @@ python -m aeo.ranksim forecast form import --file forms/filled.json
 python -m aeo.ranksim forecast seeds register --manifest pilots/pilot_manifest.json --source pilot
 ```
 
-`form template` writes the blank form with one plain question per answer. `form validate` checks a filled form and prints the brand terms it implies. Exit code 1 when it is not valid. `form import` copies it under `data/forecast/imports/forms/` and freezes its sha256. A pilot's sites and searches go on the scoreboard with the same manifest steps as the seed sites, frozen first, with `--source pilot`. All free. The upload forecasts are coming in the next step.
+`form template` writes the blank form with one plain question per answer. `form validate` checks a filled form and prints the brand terms it implies. Exit code 1 when it is not valid. `form import` copies it under `data/forecast/imports/forms/`, freezes its sha256 and its brand terms, and prints the terms. A pilot's sites and searches go on the scoreboard with the same manifest steps as the seed sites, frozen first, with `--source pilot`. Import the form BEFORE `seeds register`: register takes the brand terms from the form so that searches naming the brand are flagged and kept out of the headline, and it refuses a pilot whose form is not imported. A site on the scoreboard is never changed, so a form imported after registering that would change the brand flags is refused. All free. The upload forecasts are coming in the next step.
 
 ## Step 9. Weeks 9 to 17. Grade the real outcomes, marker 5
 

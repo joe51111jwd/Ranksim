@@ -22,7 +22,9 @@ from aeo.ranksim.cli import main as ranksim_main
 from aeo.ranksim.forecast import cli, pipeline
 from aeo.ranksim.forecast.budget import SpendLedger, serp_cost, serper_cost, usd_text
 from aeo.ranksim.forecast.config import forecast_paths
+from aeo.ranksim.forecast.seeds import SeedManifest
 from aeo.ranksim.forecast.synth import World
+from aeo.ranksim.forecast.types import Forecast, PullSpec
 
 START = datetime(2026, 11, 23, 9, 0, tzinfo=timezone.utc)
 FAKE_LOGIN = "fake-dfs-login-7781"
@@ -43,9 +45,11 @@ class ForbiddenTransport(httpx.BaseTransport):
 
 
 @pytest.fixture(autouse=True)
-def _no_scoreboard_override(monkeypatch):
+def _no_scoreboard_override(monkeypatch, tmp_path):
     monkeypatch.delenv("RANKSIM_SCOREBOARD_URL", raising=False)
     monkeypatch.delenv("RANKSIM_FORECAST_DIR", raising=False)
+    # The committed export of the repo (evals/scoreboard) must never anchor a test scoreboard.
+    monkeypatch.setenv("RANKSIM_EXPORT_DIR", str(tmp_path / "committed_export"))
 
 
 @pytest.fixture
@@ -533,3 +537,215 @@ def test_budget_prices_show_the_plan_rate_and_the_sample_rate_for_past_pages(tmp
     assert Decimal(plan) == Decimal("14.40") and Decimal("5") < Decimal(seen) < Decimal("6")
     code, out, _ = run(["sample", "historical-serps", "--searches", str(searches_file(tmp_path, 2))], tmp_path / "data")
     assert code == 0 and "plan rate, 1 page per search per month" in out and "sample rate, 0.38 pages" in out
+
+
+# ---------------------------------------------------------------------------------------------
+# Review fixes: dry run cost, seeds, export, samples, marker 1, round mode, status
+
+
+def test_read_dry_run_prints_what_execute_reserves_for_a_search_with_an_operator(tmp_path):
+    from aeo.ranksim.forecast.dataforseo import DataForSeoClient
+
+    code, out, _ = run(["read", "--search", "plumber site:example.com", "--location-code", "1026201", "--json"], tmp_path / "d")
+    assert code == 0
+    spec = pipeline.search_specs(["plumber site:example.com"], 1026201)[0]
+    assert Decimal(json.loads(out)["plan"]["usd"]) == DataForSeoClient._serp_estimate(spec, "standard_normal", True) * 5
+    code, out, _ = run(["read-round", "--search", "plumber site:example.com", "--location-code", "1026201", "--json"],
+                       tmp_path / "d")
+    assert Decimal(json.loads(out)["plan"]["usd"]) == DataForSeoClient._serp_estimate(spec, "standard_normal", True)
+
+
+def test_read_refuses_a_gap_below_the_floor(tmp_path):
+    code, _, err = run(["read", "--search", "plumber", "--location-code", "1026201", "--gap-seconds", "0"], tmp_path / "d")
+    assert code == 2 and "at least 60" in err
+
+
+def test_seeds_pick_into_an_existing_manifest_never_gives_a_niche_search_to_two_sites(tmp_path):
+    data = tmp_path / "data"
+    manifest = tmp_path / "seed_manifest.json"
+    base = ["seeds", "pick", "--candidates", str(candidates_csv(tmp_path, 90)), "--niche", "plumber",
+            "--launch-date", "2026-11-30", "--location-code", "1026201", "--out", str(manifest)]
+    assert run(base + ["--domain", "one.com", "--domain", "two.com"], data)[0] == 0
+    code, _, err = run(base + ["--domain", "three.com"], data)
+    assert code == 0, err
+    owners: dict[str, list[str]] = {}
+    for site in SeedManifest.load(manifest).sites:
+        for item in site.searches:
+            owners.setdefault(item.search, []).append(site.domain)
+    assert all(len(sites) == 1 for sites in owners.values())
+    assert run(["seeds", "validate", "--manifest", str(manifest)], data)[0] == 0
+
+
+def test_seeds_freeze_and_register_refuse_a_list_picked_after_launch(tmp_path):
+    data = tmp_path / "data"
+    late = pipeline.VirtualClock(datetime(2027, 1, 10, 9, 0, tzinfo=timezone.utc))
+    manifest = tmp_path / "seed_manifest.json"
+    code, _, err = run(["seeds", "pick", "--candidates", str(candidates_csv(tmp_path)), "--niche", "plumber",
+                        "--domain", "one.com", "--launch-date", "2026-11-30", "--location-code", "1026201",
+                        "--per-site", "6", "--out", str(manifest)], data, clock=late)
+    assert code == 0, err
+    code, _, err = run(["seeds", "freeze", "--manifest", str(manifest)], data, clock=late)
+    assert code == 2 and "before launch" in err and not (tmp_path / "seed_manifest.json.sha256").exists()
+    # Picked in time but frozen after launch: refused by the freeze-time clock.
+    early = tmp_path / "early.json"
+    run(["seeds", "pick", "--candidates", str(candidates_csv(tmp_path)), "--niche", "plumber", "--domain", "one.com",
+         "--launch-date", "2026-11-30", "--location-code", "1026201", "--per-site", "6", "--out", str(early)], data)
+    code, _, err = run(["seeds", "freeze", "--manifest", str(early)], data, clock=late)
+    assert code == 2 and "frozen" in err
+    # A backfilled pilot records why, and the reason is part of the frozen manifest.
+    code, out, err = run(["seeds", "freeze", "--manifest", str(early), "--after-launch-reason", "agency site already live",
+                          "--json"], data, clock=late)
+    assert code == 0, err
+    assert SeedManifest.load(early).after_launch_reason == "agency site already live"
+
+
+def test_export_refuses_to_overwrite_an_export_the_database_no_longer_holds(tmp_path):
+    data = tmp_path / "data"
+    committed = tmp_path / "committed_export"  # the default export folder of these tests
+    clock = pipeline.VirtualClock(START)
+    board = pipeline.open_scoreboard(forecast_paths(data), clock=clock)
+    board.add_site("seedone.com", source="seed", launch_date="2026-12-01", launch_date_source="test", built_by="test")
+    for search in ("plumber prices", "boiler repair"):
+        board.add_search("seedone.com", search, location_code=1026201)
+    board.register_model_version("m1", description="test", frozen_at=clock.now())
+    for search in ("plumber prices", "boiler repair"):
+        board.record_forecast(Forecast(site="seedone.com", search=search, stage="upload", as_of=date(2026, 11, 23),
+                                       point=12, range_low=8, range_high=20, label="contested", model_version="m1"))
+    board.close()
+    other = tmp_path / "elsewhere"
+    assert run(["export"], data)[0] == 0 and (committed / "HEADS.json").exists()
+    assert run(["export", "--out", str(other)], data)[0] == 0
+    board = pipeline.open_scoreboard(forecast_paths(data), clock=clock, export_dir=None)
+    with board.engine.begin() as connection:
+        connection.execute(text("DROP TRIGGER forecasts_no_delete"))
+        connection.execute(text("DELETE FROM forecasts WHERE seq = 2"))
+    board.install_triggers()
+    board.close()
+    before = (other / "HEADS.json").read_text()
+    code, _, err = run(["export", "--out", str(other)], data)
+    assert code == 1 and "NOT a prefix" in err and (other / "HEADS.json").read_text() == before
+    code, out, err = run(["verify"], data)
+    assert code == 1
+    code, out, err = run(["report", "--source", "seed", "--stage", "upload", "--as-of", "2026-11-23"], data)
+    assert code == 1 and "Rows were deleted" in err  # every report checks the committed export
+
+
+def test_status_says_when_there_is_no_committed_export_and_lists_due_and_missed_stages(tmp_path):
+    data = tmp_path / "data"
+    board = pipeline.open_scoreboard(forecast_paths(data), clock=pipeline.VirtualClock(START))
+    board.add_site("seedone.com", source="seed", launch_date="2026-11-14", launch_date_source="test", built_by="test")
+    board.close()
+    code, out, _ = run(["status"], data)
+    assert code == 0 and "No committed export exists yet" in out
+    assert "seedone.com (seed) d14 on 2026-11-28" not in out
+    assert "seedone.com (seed) upload was due on 2026-11-14" in out and "d7 was due on 2026-11-21" in out
+    code, out, _ = run(["status", "--json"], data)
+    payload = json.loads(out)
+    assert payload["committed_export"]["exists"] is False
+    assert [item["stage"] for item in payload["stages_missed"]] == ["upload", "d7"]
+    assert payload["stages_due"] == []
+    clock = pipeline.VirtualClock(datetime(2026, 11, 26, 9, 0, tzinfo=timezone.utc))
+    code, out, _ = run(["status", "--json"], data, clock=clock)
+    assert [item["stage"] for item in json.loads(out)["stages_due"]] == ["d14"]
+
+
+def test_a_sample_that_was_not_recorded_exits_1_and_says_the_gate_stays_closed(tmp_path, fake_credentials):
+    from aeo.ranksim.forecast.budget import KIND_SERPER_SEARCH, SpendLedger
+
+    data = tmp_path / "data"
+    run(["budget", "approve", "--amount", "2", "--by", "James", "--note", "sample"], data)
+
+    def empty(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        return httpx.Response(200, json={"searchParameters": {"q": body["q"]}, "organic": [], "credits": 1})
+
+    code, out, err = run(["sample", "serp", "--searches", str(searches_file(tmp_path)), "--location-code", "1026201",
+                          "--provider", "serper", "--serper-location", "Austin,Texas,United States", "--execute"], data,
+                         client=httpx.Client(transport=httpx.MockTransport(empty)))
+    assert not SpendLedger(data / "spend.jsonl").sample_recorded(KIND_SERPER_SEARCH)
+    assert code == 1 and "Sample recorded" not in out and "NOT recorded" in out and "stays closed" in out
+
+
+def test_marker1_report_on_a_hand_picked_list_is_not_a_marker_result(tmp_path):
+    from aeo.ranksim.forecast.reader import ReplaySource
+    from aeo.ranksim.forecast.types import OrganicHit, Pull
+
+    data = tmp_path / "data"
+    day_a = datetime(2026, 11, 28, 9, 0, tzinfo=timezone.utc)
+    day_b = day_a + timedelta(hours=24)
+    sites = [f"site{i:02d}.com" for i in range(1, 51)]
+
+    def pulls(spec: PullSpec, moment: datetime, order: list[str]) -> list[Pull]:
+        out = []
+        for index in range(5):
+            stamp = (moment + timedelta(minutes=index)).strftime("%Y-%m-%dT%H:%M:%SZ")
+            hits = tuple(OrganicHit(rank=i, url=f"https://{s}/p", domain=s, site=s) for i, s in enumerate(order, start=1))
+            out.append(Pull(pull_id=f"p-{spec.search.replace(' ', '')}-{stamp}-{index}", provider="replay", endpoint="replay",
+                            spec=spec, requested_at=stamp, completed_at=stamp, ok=True, status_code=20000, hits=hits))
+        return out
+
+    clock = pipeline.VirtualClock(day_a)
+    board = pipeline.open_scoreboard(forecast_paths(data), clock=clock)
+    searches = [f"plumber search {i:02d}" for i in range(40)]
+    pipeline.freeze_marker1_sample(board, searches, n=40)
+    specs = [PullSpec(s, 1026201) for s in searches]
+    calm = set(searches[:4])
+    recorded: list[Pull] = []
+    for spec in specs:
+        recorded += pulls(spec, day_a, sites[:30])
+        recorded += pulls(spec, day_b, sites[:30] if spec.search in calm else sites[20:30] + sites[10:20] + sites[:10])
+    source = ReplaySource(recorded)
+    pipeline.take_readings(board, source, specs, clock=clock)
+    clock.set(day_b)
+    pipeline.take_readings(board, source, specs, clock=clock)
+    board.close()
+    later = pipeline.VirtualClock(day_b + timedelta(hours=2))
+    assert run(["marker1", "report", "--location-code", "1026201"], data, clock=later)[0] == 1
+    picked = _write(tmp_path, sorted(calm))
+    code, out, _ = run(["marker1", "report", "--searches", str(picked), "--location-code", "1026201"], data, clock=later)
+    assert code == 1 and out.startswith("NOT A MARKER RESULT") and "PASSED (REAL)" not in out
+    # The frozen list written to a file is still the frozen sample.
+    same = _write(tmp_path, list(reversed(searches)))
+    code, out, _ = run(["marker1", "report", "--searches", str(same), "--location-code", "1026201"], data, clock=later)
+    assert "NOT A MARKER RESULT" not in out
+
+
+def test_assemble_never_stores_a_clean_reading_from_pulls_seconds_apart(tmp_path, fake_credentials):
+    data = tmp_path / "data"
+    clock = pipeline.VirtualClock(START)
+    run(["budget", "approve", "--amount", "1", "--by", "James", "--note", "rounds"], data, clock=clock)
+    client = httpx.Client(transport=httpx.MockTransport(_serper_handler([])))
+    argv = ["read-round", "--searches", str(searches_file(tmp_path, 1)), "--location-code", "1026201", "--provider", "serper",
+            "--serper-location", "Austin,Texas,United States", "--execute"]
+    for second in range(5):
+        clock.set(START + timedelta(seconds=second))
+        assert run(argv, data, client=client, clock=clock)[0] == 0
+    clock.set(START.replace(hour=23))
+    code, out, _ = run(["assemble", "--date", START.date().isoformat(), "--json"], data, clock=clock)
+    built = json.loads(out)
+    assert built["pulls_too_close"] == 4 and built["readings_built"] - built["degraded"] == 0
+
+
+def test_assemble_run_early_then_late_keeps_one_reading_and_says_pulls_were_left_out(tmp_path, fake_credentials):
+    data = tmp_path / "data"
+    clock = pipeline.VirtualClock(START.replace(hour=1))
+    run(["budget", "approve", "--amount", "1", "--by", "James", "--note", "rounds"], data, clock=clock)
+    client = httpx.Client(transport=httpx.MockTransport(_serper_handler([])))
+    argv = ["read-round", "--searches", str(searches_file(tmp_path, 1)), "--location-code", "1026201", "--provider", "serper",
+            "--serper-location", "Austin,Texas,United States", "--execute"]
+    day = START.date().isoformat()
+    for hour in (1, 5, 10):
+        clock.set(START.replace(hour=hour))
+        assert run(argv, data, client=client, clock=clock)[0] == 0
+    clock.set(START.replace(hour=12))
+    assert run(["assemble", "--date", day], data, clock=clock)[0] == 0
+    for hour in (14, 19):
+        clock.set(START.replace(hour=hour))
+        assert run(argv, data, client=client, clock=clock)[0] == 0
+    clock.set(START.replace(hour=23, minute=30))
+    code, out, _ = run(["assemble", "--date", day], data, clock=clock)
+    assert code == 1 and "were NOT used" in out
+    board = pipeline.open_scoreboard(forecast_paths(data), clock=clock)
+    same_day = [r for r in pipeline.stored_readings(board, "plumber 0", location_code=1026201) if r.taken_at.startswith(day)]
+    board.close()
+    assert len(same_day) == 1

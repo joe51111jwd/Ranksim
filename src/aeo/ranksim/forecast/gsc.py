@@ -840,6 +840,8 @@ EARLY_SIGNAL_NAMES: tuple[str, ...] = (
     "sc_rows_ignored_range",  # rows that cover a date range, not one day
     "sc_rows_ignored_before_launch",  # rows dated before launch
     "sc_rows_ignored_excluded",  # rows for excluded sites (config.EXCLUDED_SITES)
+    "sc_rows_ignored_fetched_late",  # rows fetched after the as_of day (ignored when strict is False)
+    "sc_days_unknown",  # days up to the cutoff whose final numbers were not known on as_of
 )
 
 
@@ -853,12 +855,23 @@ def early_signals(
 ) -> dict[str, float | None]:
     """Search Console signals for the early-reading updater, knowable on `as_of`.
 
+    Only data fetched on or before the as_of day is used: a row whose `fetched_at`
+    (UTC) falls after `as_of` raises asof.LeakError when `strict` is True, and is
+    ignored and counted otherwise. A row with no `fetched_at` is refused when
+    `strict`. Among the rows left, the latest fetch of a day wins.
+
     The cutoff is `as_of - PRELIMINARY_DAYS`. Rows dated after it raise
     asof.LeakError when `strict` is True, and are ignored and counted otherwise.
     Rows marked preliminary are ignored and counted. Only daily rows dated from
-    launch to the cutoff are used. The rows are taken to be complete for that
-    span, so a day with no row had no impressions. Pass rows only for a site whose
-    Search Console is connected.
+    launch to the cutoff are used.
+
+    A day whose only rows are preliminary, and that comes after the newest day
+    with a final row, was not known on as_of: its final numbers were not out yet.
+    Such days, and every later day up to the cutoff, are missing, never zero. The
+    signals then run from launch to the last known day (`sc_days_observed` counts
+    those days, `sc_days_unknown` the rest). Inside that span the rows are taken to
+    be complete, so a day with no row had no impressions. Pass rows only for a site
+    whose Search Console is connected.
 
     Totals come from the most complete kind of row present: date totals first
     (no query, no page), then page rows, then query rows. Query rows lose
@@ -877,11 +890,25 @@ def early_signals(
     launch = as_date(launch_date)
     asof_day = as_date(as_of)
     cutoff = asof_day - timedelta(days=PRELIMINARY_DAYS)
-    late = preliminary = ranged = before = excluded = 0
+    late = preliminary = ranged = before = excluded = fetched_late = 0
     usable: list[GscRow] = []
+    preliminary_days: set[date] = set()
     for row in rows:
         if _excluded(row.page):
             excluded += 1
+            continue
+        if row.fetched_at is None:
+            if strict:
+                raise LeakError(
+                    f"a Search Console row dated {row.data_date} has no fetched_at, so it cannot be shown to be "
+                    f"known on as_of {asof_day}"
+                )
+        elif parse_utc(row.fetched_at).date() > asof_day:
+            if strict:
+                raise LeakError(
+                    f"a Search Console row dated {row.data_date} was fetched at {row.fetched_at}, after as_of {asof_day}"
+                )
+            fetched_late += 1
             continue
         if row.data_date > cutoff:
             if strict:
@@ -896,6 +923,8 @@ def early_signals(
             continue
         if row.is_preliminary:
             preliminary += 1
+            if row.data_date >= launch:
+                preliminary_days.add(row.data_date)
             continue
         if row.data_date < launch:
             before += 1
@@ -903,7 +932,16 @@ def early_signals(
         usable.append(row)
     usable = _dedupe(usable)
 
-    days_observed = (cutoff - launch).days + 1
+    # Days known only as preliminary, after the newest final day, were not known on as_of.
+    newest_final = max((row.data_date for row in usable), default=None)
+    unknown_from = min((day for day in preliminary_days
+                        if day not in {row.data_date for row in usable} and (newest_final is None or day > newest_final)),
+                       default=None)
+    known_through = cutoff if unknown_from is None else min(cutoff, unknown_from - timedelta(days=1))
+    days_unknown = (cutoff - known_through).days if cutoff >= launch else 0
+    usable = [row for row in usable if row.data_date <= known_through]
+
+    days_observed = (known_through - launch).days + 1
     complete_weeks = days_observed // DAYS_PER_WEEK if days_observed > 0 else 0
     targets = sorted({_norm_query(search) for search in target_searches if _norm_query(search)})
     result: dict[str, float | None] = {name: None for name in EARLY_SIGNAL_NAMES}
@@ -912,6 +950,8 @@ def early_signals(
     result["sc_rows_ignored_range"] = float(ranged)
     result["sc_rows_ignored_before_launch"] = float(before)
     result["sc_rows_ignored_excluded"] = float(excluded)
+    result["sc_rows_ignored_fetched_late"] = float(fetched_late)
+    result["sc_days_unknown"] = float(max(days_unknown, 0))
     for search in targets:
         result[signal_key("sc_query_present", search)] = None
         result[signal_key("sc_avg_position", search)] = None

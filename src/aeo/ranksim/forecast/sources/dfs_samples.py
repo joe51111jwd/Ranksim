@@ -41,7 +41,7 @@ import hashlib
 import json
 import math
 from dataclasses import asdict, dataclass, field
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any, Iterable, Iterator, Mapping
 
@@ -71,6 +71,14 @@ POISON_WINDOW_START = POISON_RISK_START
 POISON_WINDOW_END: date | None = None
 
 LABS_OK_STATUS = 20000
+
+# How long after a month ends its monthly search volume counts as known. DataForSEO's own
+# keyword history (google_history/keywords, all 383,642 dated month rows of the free samples,
+# measured 2026-11-22) records a month's volume by `time_update` 4 to 97 days after the month
+# ends: median 13, 99th percentile 35, and 99.9% within 45. That is the vendor's recording
+# time, the only date the files give, so it is a frozen, conservative stand-in for when the
+# value was knowable. Frozen: changing it changes every panel's search_volume column.
+VOLUME_PUBLICATION_LAG_DAYS = 45
 
 PANEL_ROW_FIELDS: tuple[str, ...] = (
     "dataset",
@@ -302,25 +310,45 @@ def _month_key(day: date) -> str:
     return f"{day.year:04d}{day.month:02d}"
 
 
+def _month_known_from(key: str) -> date:
+    """The first day the monthly volume of month `key` (YYYYMM) counts as known:
+    VOLUME_PUBLICATION_LAG_DAYS after the first day of the next month."""
+    year, month = int(key[:4]), int(key[4:])
+    following = date(year + (month == 12), month % 12 + 1, 1)
+    return following + timedelta(days=VOLUME_PUBLICATION_LAG_DAYS)
+
+
 def volume_known_at(keyword_info: Mapping[str, Any] | None, day: date) -> int | None:
-    """The monthly volume of the last full month before `day`'s month, from `keyword_info.history`.
+    """The monthly volume of the latest month already known on `day`, from `keyword_info.history`.
 
     The headline `search_volume` of a sample file is dated by its `time_update`
     (2026-04 in the samples) and would leak into older pages, so the panel takes
-    the dated monthly value instead. Google publishes a month's volume some days
-    after the month ends, so for a page taken early in a month this value may
-    have been published a few days after the page. A missing month stays None.
+    the dated monthly value instead. A month's volume is recorded some time after
+    the month ends, so it counts as known only from VOLUME_PUBLICATION_LAG_DAYS
+    after the month ends (_month_known_from); a page taken before that gets an
+    earlier month. When the latest known month is missing in the history, or no
+    month is known yet, the result is None (never an older or a later month).
     """
+    month = volume_month_known_at(keyword_info, day)
+    if month is None:
+        return None
+    return _int(keyword_info["history"].get(month))  # type: ignore[index]
+
+
+def volume_month_known_at(keyword_info: Mapping[str, Any] | None, day: date) -> str | None:
+    """The month key (YYYYMM) volume_known_at reads for `day`: the latest month of `keyword_info.history`
+    before `day`'s month whose volume counts as known on `day`. None when there is none."""
     if not keyword_info:
         return None
     history = keyword_info.get("history")
     if not isinstance(history, Mapping):
         return None
     target = _month_key(day)
-    earlier = sorted(key for key in history if str(key).isdigit() and len(str(key)) == 6 and str(key) < target)
-    if not earlier:
-        return None
-    return _int(history.get(earlier[-1]))
+    known = [
+        key for key in history
+        if isinstance(key, str) and key.isdigit() and len(key) == 6 and key < target and _month_known_from(key) <= day
+    ]
+    return max(known) if known else None
 
 
 def site_of_item(item: Mapping[str, Any]) -> tuple[str | None, str | None]:
@@ -413,7 +441,17 @@ def _page_rows(
     locale: str,
     stats: ParseStats,
 ) -> Iterator[dict[str, Any]]:
-    """Rows of one dated result page of a sample record (history or single snapshot)."""
+    """Rows of one dated result page of a sample record (history or single snapshot).
+
+    Only values knowable on the page's date are stored with it (no leakage):
+
+    - `kd` is the difficulty recorded with this page.
+    - `search_volume` is the monthly value already known on the page date (volume_known_at).
+    - `intent` is the record's single label, dated by search_intent_info.last_updated_time.
+      On a page dated before that label (or when the label has no date) it is None.
+    - `etv` is DataForSEO's estimate from the record's headline volume, which is dated by
+      keyword_info.time_update. On a page dated before that (or when it has no date) it is None.
+    """
     moment = _time(page.get("time_update"))
     if moment is None:
         stats.snapshots_without_time += 1
@@ -423,6 +461,10 @@ def _page_rows(
     keyword_info = record.get("keyword_info") if isinstance(record.get("keyword_info"), Mapping) else None
     intent_info = record.get("search_intent_info") if isinstance(record.get("search_intent_info"), Mapping) else {}
     volume = volume_known_at(keyword_info, moment.date())
+    intent_dated = _time(intent_info.get("last_updated_time"))
+    intent = _str(intent_info.get("main_intent")) if intent_dated is not None and intent_dated <= moment else None
+    etv_dated = _time((keyword_info or {}).get("time_update"))
+    etv_known = etv_dated is not None and etv_dated <= moment
     seen: set[tuple[int, int | None, str | None]] = set()
     for item in page.get("serp") or []:
         if not isinstance(item, Mapping) or item.get("type") != "organic":
@@ -438,13 +480,15 @@ def _page_rows(
             snapshot_time=moment,
             kd=page.get("keyword_difficulty"),
             search_volume=volume,
-            intent=_str(intent_info.get("main_intent")),
+            intent=intent,
             items_count=_int(page.get("items_count")),
             se_results_count=_int(page.get("se_results_count")),
             stats=stats,
         )
         if row is None:
             continue
+        if not etv_known:
+            row["etv"] = None
         key = (row["rank"], row["rank_absolute"], row["url"])
         if key in seen:  # the same item listed twice on one page
             stats.rows -= 1
@@ -668,7 +712,10 @@ def iter_keyword_rows(path: str | Path, dataset: str, stats: ParseStats | None =
     `keyword_info_history` (google_history/keywords) gives one row per month key.
     A plain `keyword_info` (google/keywords and the SERP files) gives one row,
     dated by its `time_update`. `kd` is the record's `extra.keyword_difficulty`,
-    which the file does not date: treat it as known at `time_update`.
+    which the file does not date: treat it as known at `time_update`. In a
+    history record it is the current value, so it is put only on the newest
+    month row; the older month rows get kd None (their own month's difficulty
+    is not in the file). `intent` comes with its own date in `intent_updated`.
     """
     stats = stats if stats is not None else ParseStats()
     stats.path = str(path)
@@ -676,13 +723,18 @@ def iter_keyword_rows(path: str | Path, dataset: str, stats: ParseStats | None =
     for record in iter_jsonl(path, stats):
         history = record.get("keyword_info_history")
         if isinstance(history, Mapping) and history:
+            months = [str(key) for key in history if str(key).isdigit() and len(str(key)) == 6]
+            newest = max(months) if months else max(str(key) for key in history)
             for key in sorted(history):
                 info = history[key]
                 text = str(key)
                 if isinstance(info, Mapping):
                     month = f"{text[:4]}-{text[4:]}" if len(text) == 6 and text.isdigit() else None
                     stats.rows += 1
-                    yield _keyword_row(info, record, dataset=dataset, locale=loc, snapshot_month=month)
+                    row = _keyword_row(info, record, dataset=dataset, locale=loc, snapshot_month=month)
+                    if text != newest:
+                        row["kd"] = None
+                    yield row
             continue
         info = record.get("keyword_info")
         if isinstance(info, Mapping):
@@ -785,4 +837,5 @@ __all__ = [
     "locale_from_path",
     "sample_url",
     "volume_known_at",
+    "volume_month_known_at",
 ]

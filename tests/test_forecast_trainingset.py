@@ -534,7 +534,9 @@ def test_past_result_pages_saved_raw_resumed_without_paying_twice_and_in_the_pan
     first = ts.pull_past_result_pages(client, ["plumber near me", "emergency plumber"], months=24, execute=True, root=tmp_path,
                                       panel_dir=tmp_path / "panel", today=date(2026, 11, 22), job="serps-test")
     assert first.calls == 2 and first.calls_from_cache == 0 and len(log) == 2
-    assert log[0]["task"]["date_from"] == "2024-11-01" and log[0]["task"]["date_to"] == "2026-11-22"
+    # 24 calendar months, the month of today included: 2024-12 .. 2026-11 (priced as 24 pages per search).
+    assert log[0]["task"]["date_from"] == "2024-12-01" and log[0]["task"]["date_to"] == "2026-11-22"
+    assert first.planned_usd == budget.historical_serps_estimate(24, 2)
     assert all(Path(p).is_file() for p in first.raw_paths)
     assert first.spent_usd == Decimal("0.001000")  # the provider's own cost field, twice
     spent = client.ledger.spent_total
@@ -546,7 +548,7 @@ def test_past_result_pages_saved_raw_resumed_without_paying_twice_and_in_the_pan
     again = ts.pull_past_result_pages(client, ["plumber near me", "emergency plumber"], months=24, execute=True, root=tmp_path,
                                       panel_dir=tmp_path / "panel", today=date(2026, 12, 5), job="serps-test")
     assert again.calls_from_cache == 2 and len(log) == 2 and client.ledger.spent_total == spent and again.spent_usd == 0
-    assert again.manifest["date_from"] == "2024-11-01"
+    assert again.manifest["date_from"] == "2024-12-01"
 
 
 def test_traffic_curves_keep_missing_sites_missing(tmp_path):
@@ -771,3 +773,92 @@ def test_tied_difficulty_values_share_one_third():
     for row in rows:
         by_value.setdefault(row["difficulty_proxy"], set()).add(row["stratum"])
     assert by_value[1.0] == {"medium"} and all(len(v) == 1 for v in by_value.values())
+
+
+# ----------------------------------------------------------------------------------------------
+# Review fixes: SmartCrew however spelled, dry run = reservation, order-free resume, the 80/20 share.
+# ----------------------------------------------------------------------------------------------
+
+
+def test_training_set_pulls_samples_targets_and_cells_drop_smartcrew_however_it_is_spelled():
+    spellings = ["www.smartcrewhq.com", "SmartCrewHQ.com", "https://smartcrewhq.com/", " smartcrewhq.com "]
+    assert ts.pull_traffic_curves(None, spellings).units == 0
+    assert ts.pull_exact_positions(None, spellings).units == 0
+    assert all(answer.planned_units == 0 for answer in ts.run_samples(None, small_sites=spellings, keywords=[]).answers)
+    ranked = ts.run_samples(None, small_sites=["a.com"], keywords=["plumber"], ranked_targets=spellings).answers[2]
+    assert ranked.planned_units == 0
+    picked = ts.select_targets([{"site": s, "launch_date": date(2025, 12, 1), "niche": "plumbing"} for s in spellings],
+                               universe_rows(["emergency plumber"]),
+                               {s: [Dated("emergency plumber", "cc", date(2025, 12, 2))] for s in spellings}, ts.token_overlap_score)
+    assert picked.rows == []
+    cells = [{"site": s, "keyword": "emergency plumber", "launch_date": date(2025, 12, 1)} for s in spellings]
+    assert ts.assign_split(cells + [{"site": "a.com", "keyword": "k", "launch_date": date(2025, 1, 1)}])[:4] == ["excluded"] * 4
+
+
+def test_one_site_spelled_several_ways_is_one_paid_target_and_normalised_input_keeps_its_job():
+    mixed = ts.pull_traffic_curves(None, ["https://www.B.com/x", "b.com", "A.com", "www.a.com"])
+    plain = ts.pull_traffic_curves(None, ["a.com", "b.com"])
+    assert mixed.units == 2 and mixed.planned_usd == budget.historical_traffic_cost(2) and mixed.job == plain.job
+    assert ts.pull_exact_positions(None, ["www.a.com", "a.com"]).units == 1
+    assert ts.run_samples(None, small_sites=["www.a.com", "a.com", "b.com"], keywords=["k"]).answers[0].planned_units == 2
+    picked = ts.select_targets([{"site": "www.newplumb.com", "launch_date": date(2025, 12, 10), "niche": "plumbing"},
+                                {"site": "newplumb.com", "launch_date": date(2025, 12, 10), "niche": "plumbing"}],
+                               universe_rows(["emergency plumber", "roof repair"]),
+                               {"newplumb.com": [Dated("Emergency plumber", "cc", date(2025, 12, 31))]}, ts.token_overlap_score)
+    assert {row.site for row in picked.rows} == {"newplumb.com"} and len(picked.rows) == 2
+
+
+def test_past_pages_dry_run_price_equals_what_the_executed_pull_reserves(tmp_path):
+    log: list[dict[str, Any]] = []
+    client = make_client(tmp_path, labs(log, {"historical_serps": serps_answer}), approve="5.00")
+    dry = ts.pull_past_result_pages(client, ["plumber near me"], months=24, root=tmp_path, today=date(2026, 11, 22))
+    assert dry.planned_usd == budget.historical_serps_estimate(24) and not (tmp_path / "jobs").exists()
+    ts.pull_past_result_pages(client, ["plumber near me"], months=24, execute=True, root=tmp_path, panel_dir=tmp_path / "panel",
+                              today=date(2026, 11, 22))
+    rows = [json.loads(line)["row"] for line in client.ledger.path.read_text(encoding="utf-8").splitlines()]
+    reserved = [Decimal(r["estimate_micros"]) / 1_000_000 for r in rows if r.get("event") == "reserve"]
+    assert reserved == [dry.planned_usd]
+    assert (log[0]["task"]["date_from"], log[0]["task"]["date_to"]) == ("2024-12-01", "2026-11-22")
+
+
+def test_an_approval_of_exactly_the_printed_dry_run_cost_covers_the_executed_pull(tmp_path):
+    log: list[dict[str, Any]] = []
+    dry = ts.pull_past_result_pages(None, ["plumber near me"], months=24, root=tmp_path, today=date(2026, 11, 22))
+    client = make_client(tmp_path, labs(log, {"historical_serps": serps_answer}), approve=str(dry.planned_usd))
+    report = ts.pull_past_result_pages(client, ["plumber near me"], months=24, execute=True, root=tmp_path,
+                                       panel_dir=tmp_path / "panel", today=date(2026, 11, 22))
+    assert report.calls == 1 and not report.failures and len(log) == 1
+
+
+def test_plan_pulls_counts_a_launch_month_page_exactly_when_the_window_reaches_it():
+    today = date(2026, 11, 22)
+    start, end, covered = ts._history_window(today, 24)
+    assert (start, end, covered) == (date(2024, 12, 1), today, 24)
+    rows = [{"site": "inside.com", "launch_date": date(2024, 12, 15)}, {"site": "outside.com", "launch_date": date(2024, 11, 30)}]
+    assert ts.plan_pulls(10, rows, today=today).sites_without_launch_page[24] == 1
+
+
+def test_same_searches_in_another_order_on_a_later_day_resume_the_same_job_and_pay_nothing(tmp_path):
+    log: list[dict[str, Any]] = []
+    client = make_client(tmp_path, labs(log, {"historical_serps": serps_answer}), approve="5.00")
+    first = ts.pull_past_result_pages(client, ["plumber near me", "emergency plumber"], months=24, execute=True, root=tmp_path,
+                                      panel_dir=tmp_path / "panel", today=date(2026, 11, 22))
+    spent = client.ledger.spent_total
+    again = ts.pull_past_result_pages(client, ["emergency plumber", "plumber near me", "plumber near me"], months=24, execute=True,
+                                      root=tmp_path, panel_dir=tmp_path / "panel", today=date(2026, 12, 5))
+    assert again.job == first.job and again.manifest["date_from"] == "2024-12-01"
+    assert (len(log), again.calls_from_cache, client.ledger.spent_total, again.spent_usd) == (2, 2, spent, 0)
+    # The dry run of a job that already has a manifest prices the frozen dates, not a fresh window.
+    later = ts.pull_past_result_pages(None, ["plumber near me", "emergency plumber"], months=24, root=tmp_path, today=date(2027, 3, 1))
+    assert later.job == first.job and later.planned_usd == budget.historical_serps_estimate(24, 2)
+
+
+def test_split_test_share_stays_at_or_under_the_rule_share():
+    six = [{"site": f"s{i}.com", "keyword": f"search {i}", "launch_date": date(2025, i + 1, 5)} for i in range(6)]
+    labels = ts.assign_split(six)
+    assert labels.count("test") == 1 and labels[-1] == "test", "floor(0.2 x 6) = 1 site, the latest launched"
+    two = [{"site": f"t{i}.com", "keyword": f"other {i}", "launch_date": date(2025, i + 1, 5)} for i in range(2)]
+    assert sorted(ts.assign_split(two)) == ["test", "train"], "two sites still give both sides one site"
+    hundred = [{"site": f"h{i}.com", "keyword": f"word{i}", "launch_date": date(2025, 5, 1)} for i in range(100)]
+    assert ts.assign_split(hundred, ts.SplitRule(test_share=0.29)).count("test") == 29  # no float round-down to 28
+    assert ts.DEFAULT_SPLIT_RULE.version == "split-rule-v2"

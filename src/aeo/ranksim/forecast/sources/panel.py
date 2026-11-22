@@ -34,6 +34,7 @@ import argparse
 import json
 import os
 import sys
+import warnings
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -72,10 +73,13 @@ PANEL_SCHEMA: pa.Schema = pa.schema(
         pa.field("previous_rank_absolute", pa.int16()),  # None when DataForSEO gives none or 0
         pa.field("main_domain_rank", pa.int32()),  # DataForSEO domain rank of the site
         pa.field("page_rank", pa.int32()),  # DataForSEO rank of the page
-        pa.field("etv", pa.float64()),  # DataForSEO estimated traffic of the item
+        # DataForSEO estimated traffic of the item. It is computed from the record's headline volume, so
+        # it is null on pages dated before keyword_info.time_update (record-dated, not page-dated).
+        pa.field("etv", pa.float64()),
         pa.field("kd", pa.float64()),  # keyword difficulty recorded with this page
-        pa.field("search_volume", pa.int64()),  # monthly volume of the last full month before the page
-        pa.field("intent", pa.string()),  # main intent label, dated by the source's last_updated_time
+        pa.field("search_volume", pa.int64()),  # monthly volume of the latest month already known on the page date
+        # main intent label; null on pages dated before the label's last_updated_time (or when it has no date)
+        pa.field("intent", pa.string()),
         pa.field("items_count", pa.int32()),  # elements on the page, all types
         pa.field("se_results_count", pa.int64()),
         # True: dated on or after dfs.POISON_RISK_START and not repaired. Null only when a writer left it
@@ -570,6 +574,11 @@ def site_positions(
     is not known to be outside the top 50. Pages flagged `poison_risk` are left
     out unless `drop_poison_risk` is False. `drop_poison_window` is its older
     name and is used when `drop_poison_risk` is not given.
+
+    When dropping is asked for and the frame has no flag column, the flag
+    cannot be read, so it fails closed: every page dated on or after
+    dfs.POISON_RISK_START (by snapshot_time) is dropped, repaired or not, and a
+    warning says so. Load the poison_risk column to keep repaired pages.
     """
     _require(panel, ["keyword_id", "snapshot_time", "site", "rank"])
     frame = panel
@@ -577,6 +586,16 @@ def site_positions(
     flag = _poison_flag_column(frame)
     if drop and flag is not None:
         frame = frame[~frame[flag].fillna(False).astype(bool)]
+    elif drop:
+        start = pd.Timestamp(dfs.POISON_RISK_START, tz="UTC")
+        risky = ~(pd.to_datetime(frame["snapshot_time"], utc=True) < start)  # a missing time counts as at risk
+        if bool(risky.any()):
+            warnings.warn(
+                f"site_positions: no {POISON_RISK_COLUMN} column, so {int(risky.sum())} row(s) dated on or after "
+                f"{dfs.POISON_RISK_START} were dropped by date alone (repaired pages included). Load {POISON_RISK_COLUMN} to keep repaired pages.",
+                stacklevel=2,
+            )
+        frame = frame[~risky.to_numpy()]
     frame = frame[~frame["site"].isin(EXCLUDED_SITES)]
     depth = frame.groupby(["keyword_id", "snapshot_time"], sort=False)["rank"].transform("max")
     keep = [

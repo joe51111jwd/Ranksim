@@ -21,7 +21,9 @@ intervals that resample whole searches (`stats.cluster_bootstrap_ratio`).
     written by Google for the search, so snippet accuracy flatters the scorer.
     It is not a page content number.
 (c) inside (b): accuracy on pairs whose main_domain_rank differs by less than a
-    threshold, against all pairs, and site strength alone on the same pairs.
+    threshold, against all pairs, and site strength alone on the same pairs
+    (one domain_rank line per content score, labelled "..., pairs scored by
+    <score>": the pairs of that subset where the score is known on both sides).
 
 Commands:
   python -m aeo.ranksim.forecast.content_eval download-flights
@@ -509,13 +511,17 @@ def _snippet_report(rows: pd.DataFrame, scores: Sequence[str], name: str) -> tup
         diff = np.abs(mdr_hi - mdr_lo)
         pairs["domain_rank_hi"] = mdr_hi
         pairs["domain_rank_lo"] = mdr_lo
-        strength_rows = [accuracy(pairs, "domain_rank", cluster_col="search_id", subset="cross-site, domain rank known", mask=known & cross_site)]
+        # Site strength alone on the same pairs as each content score: the pairs of the subset where that
+        # score is known on both sides (the content line leaves the others out as unscored pairs).
+        strength_rows: list[Accuracy] = []
+        subsets = [("cross-site, domain rank known", known & cross_site)]
+        subsets += [(f"cross-site, domain rank diff < {t}", known & cross_site & (diff < t)) for t in DOMAIN_RANK_THRESHOLDS]
         for score in scores:
-            table.append(accuracy(pairs, score, cluster_col="search_id", subset="cross-site, domain rank known", mask=known & cross_site))
-            for t in DOMAIN_RANK_THRESHOLDS:
-                table.append(accuracy(pairs, score, cluster_col="search_id", subset=f"cross-site, domain rank diff < {t}", mask=known & cross_site & (diff < t)))
-        for t in DOMAIN_RANK_THRESHOLDS:
-            strength_rows.append(accuracy(pairs, "domain_rank", cluster_col="search_id", subset=f"cross-site, domain rank diff < {t}", mask=known & cross_site & (diff < t)))
+            scored = ~np.isnan(pair_hits(pairs[f"{score}_hi"].to_numpy(), pairs[f"{score}_lo"].to_numpy()))  # as accuracy() counts them
+            for label, mask in subsets:
+                table.append(accuracy(pairs, score, cluster_col="search_id", subset=label, mask=mask))
+                strength_rows.append(accuracy(pairs, "domain_rank", cluster_col="search_id", subset=f"{label}, pairs scored by {score}",
+                                              mask=mask & scored))
         table.extend(strength_rows)
         lines.extend(a.line() for a in table)
         out.extend({"locales": name, "top_k": k, **a.__dict__} for a in table)

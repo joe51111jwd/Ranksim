@@ -5,6 +5,7 @@ from __future__ import annotations
 import io
 import json
 import math
+from dataclasses import replace
 from datetime import date
 
 import pytest
@@ -143,7 +144,7 @@ def test_validate_errors_and_warnings():
     assert "www.a.example is listed twice" in text
     assert "b.example has no launch date" in text
     assert "c.example lists the search 'X ' twice" in text
-    assert not any("d.example" in error for error in check.errors)
+    assert not any("d.example has" in error for error in check.errors)
     assert any("d.example has 9 pages" in warning for warning in check.warnings)
     excluded = manifest(site("smartcrewhq.com")).validate()
     assert any("excluded" in error for error in excluded.errors)
@@ -151,10 +152,16 @@ def test_validate_errors_and_warnings():
     assert any("not the manifest metric" in error for error in wrong_metric.errors)
 
 
-def test_shared_search_in_one_niche_is_a_warning():
+def test_shared_search_in_one_niche_is_an_error_unless_allow_shared_is_recorded():
     check = manifest(site("a.example"), site("b.example")).validate()
+    assert not check.ok
+    assert any("is on 2 sites of niche 'plumbing'" in error for error in check.errors)
+    allowed = replace(manifest(site("a.example"), site("b.example")), allow_shared=True)
+    check = allowed.validate()
     assert check.ok
-    assert any("is on 2 sites of niche 'plumbing'" in warning for warning in check.warnings)
+    assert any("is on 2 sites of niche 'plumbing'" in warning and "allow_shared" in warning for warning in check.warnings)
+    assert allowed.to_payload()["allow_shared"] is True
+    assert "allow_shared" not in manifest(site("a.example")).to_payload()  # unchanged hash when not used
 
 
 def test_hash_ignores_site_and_search_order():
@@ -166,7 +173,7 @@ def test_hash_ignores_site_and_search_order():
 
 def test_freeze_load_frozen_and_tamper_refusal(tmp_path):
     path = tmp_path / "seed_manifest.json"
-    original = manifest(site("a.example"), site("b.example", searches=tuple(pick_target_searches(pool(), seed=9))))
+    original = manifest(site("a.example"), site("b.example", niche="roofing", searches=tuple(pick_target_searches(pool(), seed=9))))
     digest = original.freeze(path)
     assert hash_path(path).read_text().strip() == digest
     loaded = load_frozen(path)
@@ -265,3 +272,41 @@ def test_late_dates_and_printed_schedule():
     buffer = io.StringIO()
     seeds.print_schedule(manifest(on_time), file=buffer)
     assert buffer.getvalue().startswith("Plan marker dates:")
+
+
+# --------------------------------------------------------------------------- freezing before launch
+
+
+def test_freeze_refuses_a_manifest_created_on_or_after_a_launch_date(tmp_path):
+    late = replace(manifest(site("a.example")), created_at="2027-01-15T00:00:00Z")  # day 46 after launch
+    with pytest.raises(ManifestError, match="before launch"):
+        late.freeze(tmp_path / "late.json")
+    launch_day = replace(manifest(site("a.example")), created_at="2026-11-30T08:00:00Z")
+    with pytest.raises(ManifestError, match="before launch"):
+        launch_day.freeze(tmp_path / "launch_day.json")
+    assert not (tmp_path / "late.json").exists() and not hash_path(tmp_path / "late.json").exists()
+
+
+def test_freeze_refuses_when_the_freeze_day_is_on_or_after_launch():
+    with pytest.raises(ManifestError, match="the day it is frozen"):
+        manifest(site("a.example")).freeze("unused.json", today=date(2026, 11, 30))
+
+
+def test_an_after_launch_reason_is_recorded_in_the_frozen_manifest(tmp_path):
+    late = replace(manifest(site("a.example")), created_at="2027-01-15T00:00:00Z",
+                   after_launch_reason="pilot site already live when the agency joined")
+    digest = late.freeze(tmp_path / "pilot.json", today=date(2027, 1, 15))
+    loaded = load_frozen(tmp_path / "pilot.json")
+    assert loaded.after_launch_reason == "pilot site already live when the agency joined"
+    assert loaded.manifest_hash() == digest != manifest(site("a.example")).manifest_hash()
+    blank = replace(late, after_launch_reason="  ")
+    assert not blank.validate().ok
+
+
+def test_pick_niche_searches_never_reuses_an_excluded_search():
+    first = pick_niche_searches(pool(60), ["a.example"], per_site=9, seed=3)
+    used = [item.search for item in first["a.example"]]
+    second = pick_niche_searches(pool(60), ["b.example"], per_site=9, seed=3, exclude=used)
+    assert not {item.search for item in second["b.example"]} & set(used)
+    with pytest.raises(ValueError, match="not already used by the niche"):
+        pick_niche_searches(pool(12), ["b.example"], per_site=9, seed=3, exclude=used)

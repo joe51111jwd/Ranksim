@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import zipfile
+from dataclasses import replace
 from datetime import UTC, date, datetime
 from pathlib import Path
 
@@ -529,7 +530,9 @@ def test_early_signals_on_a_hand_made_series():
 
 
 def test_early_signals_one_complete_week_has_no_slope_and_drops_excluded_rows():
-    rows = [row("2026-12-01", 3), row("2026-12-02", 4, page="https://www.smartcrewhq.com/x")]
+    # Fetched on 6 December, so the rows are knowable on both as_of dates below.
+    rows = [replace(item, fetched_at="2026-12-06T06:00:00Z")
+            for item in (row("2026-12-01", 3), row("2026-12-02", 4, page="https://www.smartcrewhq.com/x"))]
     # as_of 9 December: cutoff 7 December, days 0 to 7, so 8 days and 1 complete week.
     result = gsc.early_signals(rows, launch_date=LAUNCH, as_of=date(2026, 12, 9), target_searches=[])
     assert result["sc_complete_weeks"] == 1.0
@@ -594,3 +597,63 @@ def test_no_async_client_in_my_modules():
     for name in ("gsc.py", "seeds.py", "agency_form.py"):
         text = (Path(gsc.__file__).parent / name).read_text(encoding="utf-8")
         assert "Async" + "Client" not in text
+
+
+# =========================================================================== early signals: what was known on as_of
+
+
+def _daily(day: date, impressions: int, *, fetched: str | None, prelim: bool = False) -> GscRow:
+    return GscRow(data_date=day, query=None, page=None, clicks=0, impressions=impressions,
+                  ctr=None if not impressions else 0.0, position=10.0 if impressions else None, fetched_at=fetched,
+                  is_preliminary=prelim, period_start=day, source="test")
+
+
+def test_early_signals_do_not_change_when_a_later_fetch_is_added():
+    from datetime import timedelta
+
+    launch = date(2026, 12, 1)
+    as_of = launch + timedelta(days=30)
+    on_time = [_daily(launch + timedelta(days=n), 10, fetched="2026-12-31T05:00:00Z", prelim=n >= 27) for n in range(29)]
+    later = [_daily(launch + timedelta(days=n), 50, fetched="2027-01-15T06:00:00Z") for n in range(44)]
+    alone = gsc.early_signals(on_time, launch_date=launch, as_of=as_of, target_searches=[])
+    with_later = gsc.early_signals(on_time + later, launch_date=launch, as_of=as_of, target_searches=[])
+    assert with_later["sc_impressions_total"] == alone["sc_impressions_total"] == 270.0
+    assert with_later["sc_rows_ignored_fetched_late"] == 44.0
+    with pytest.raises(LeakError, match="fetched at 2027-01-15"):
+        gsc.early_signals(on_time + later, launch_date=launch, as_of=as_of, target_searches=[], strict=True)
+
+
+def test_strict_early_signals_refuse_a_row_with_no_fetch_time():
+    rows = [_daily(date(2026, 12, 2), 4, fetched=None)]
+    with pytest.raises(LeakError, match="no fetched_at"):
+        gsc.early_signals(rows, launch_date=LAUNCH, as_of=AS_OF, target_searches=[], strict=True)
+    assert gsc.early_signals(rows, launch_date=LAUNCH, as_of=AS_OF, target_searches=[])["sc_impressions_total"] == 4.0
+
+
+def test_a_day_known_only_as_preliminary_is_missing_not_zero():
+    from datetime import timedelta
+
+    launch = date(2026, 12, 1)
+    as_of = launch + timedelta(days=30)
+    table = "date,clicks,impressions,ctr,position\n" + "".join(
+        f"{(launch + timedelta(days=n)).isoformat()},0,10,0,12\n" for n in range(29)
+    )
+    parsed = gsc.parse_daily_table(table, fetched_at="2026-12-31T05:00:00Z")
+    result = gsc.early_signals(parsed.rows, launch_date=launch, as_of=as_of, target_searches=[])
+    # Days 27 and 28 are the export's newest two days, so preliminary: not known on as_of.
+    assert result["sc_days_unknown"] == 2.0 and result["sc_days_observed"] == 27.0
+    assert result["sc_impressions_per_week"] == 70.0 and result["sc_impressions_weekly_slope"] == 0.0
+    assert result["sc_impressions_total"] == 270.0
+    # A later export taken by as_of that has those days final makes them known again.
+    final = gsc.parse_daily_table(table + f"{(launch + timedelta(days=29)).isoformat()},0,10,0,12\n"
+                                  f"{(launch + timedelta(days=30)).isoformat()},0,10,0,12\n",
+                                  fetched_at="2026-12-31T20:00:00Z")
+    both = gsc.early_signals(list(parsed.rows) + list(final.rows), launch_date=launch, as_of=as_of, target_searches=[])
+    assert both["sc_days_unknown"] == 0.0 and both["sc_impressions_total"] == 290.0
+
+
+def test_early_signals_when_every_day_is_preliminary_are_unknown():
+    rows = [_daily(date(2026, 12, 1), 5, fetched="2026-12-04T05:00:00Z", prelim=True)]
+    result = gsc.early_signals(rows, launch_date=date(2026, 12, 1), as_of=date(2026, 12, 4), target_searches=[])
+    assert result["sc_impressions_total"] is None and result["sc_days_observed"] is None
+    assert result["sc_days_unknown"] == 2.0  # 1 and 2 December

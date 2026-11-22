@@ -287,7 +287,8 @@ def test_opr_materialise_from_local_zip_and_survivorship_field(tmp_path: Path) -
     assert later["interface-eu.org"].value["opr"] == 0.53
     assert later["interface-eu.org"].snapshot_date == date(2024, 7, 1)
     assert later["interface-eu.org"].value["survivorship_limited"] == 1.0
-    assert later["absent-site.com"].value["present"] == 0.0
+    # Not in the 2026-10 file at all: the file cannot say it was absent in 2024, so present is missing, not 0.
+    assert later["absent-site.com"].value["present"] is None and later["absent-site.com"].value["opr"] is None
     assert opr.materialise(["interface-eu.org"])["status"] == "cached"
 
 
@@ -579,3 +580,38 @@ def test_cc_absence_counts_only_from_a_window_that_ended_before(tmp_path: Path) 
     assert first.value["absent_in"] == OLD_RELEASE and first.value["absent_by"] == "2025-03-28"
     estimate = domain_age.best_start_date(SITE, [first])
     assert estimate.method == "between_last_absent_and_first_seen" and estimate.upper == date(2025, 6, 25)
+
+
+# ---------------------------------------------------------------------------
+# Review fixes
+
+
+def test_opr_site_absent_from_the_2026_file_is_missing_not_absent_in_a_past_month(tmp_path: Path) -> None:
+    opr = OpenPageRankHistory(root=tmp_path, client=failing_client())
+    opr.download_path.parent.mkdir(parents=True, exist_ok=True)
+    header = "Rank,Domain,Extension,Open Page Rank,Referring Domains,2024-04,2024-05,2024-06\n"
+    with zipfile.ZipFile(opr.download_path, "w") as archive:
+        archive.writestr("top10milliondomains-history.csv",
+                         header + "100,survivor.com,com,5.1,900,4.9,5.0,5.1\n200,latecomer.com,com,3.0,10,,,3.0\n")
+    opr.materialise(["survivor.com", "latecomer.com", "dropout.com"])
+    day = date(2024, 6, 15)  # the 2024-05 column is the newest published by then
+    feats = strength_features(["survivor.com", "latecomer.com", "dropout.com"], day, AsOfGuard(day), sources=[opr])
+    assert feats["survivor.com"]["opr_present"] == 1.0
+    assert feats["latecomer.com"]["opr_present"] == 0.0 and feats["latecomer.com"]["opr_opr"] is None  # in the file, blank that month
+    assert feats["dropout.com"]["opr_present"] is None and feats["dropout.com"]["opr_opr"] is None  # not in the file at all
+
+
+def test_the_discover_update_is_not_a_ranking_update_for_the_scoreboard_or_window_checks() -> None:
+    calendar = [
+        _update("core-a", "core", "2026-02-01T00:00:00Z", "2026-02-03T00:00:00Z"),
+        _update("February 2026 Discover update", "discover", "2026-02-05T00:00:00Z", "2026-02-27T10:02:00Z"),
+        _update("Ranking is experiencing an ongoing issue", "incident", "2026-02-10T00:00:00Z", "2026-02-11T00:00:00Z"),
+    ]
+    assert [u.name for u in updates.overlaps("2026-02-12", "2026-02-20", calendar)] == []
+    assert [u.name for u in updates.overlaps("2026-02-01", "2026-02-28", calendar)] == ["core-a", "Ranking is experiencing an ongoing issue"]
+    assert [u.name for u in updates.overlaps("2026-02-12", "2026-02-20", calendar, kinds=["discover"])] == ["February 2026 Discover update"]
+    assert [r["kind"] for r in updates.scoreboard_rows(calendar)] == ["core", "incident"]
+    packaged = updates.load_updates(path=updates.PACKAGED_PATH)
+    assert any(u.kind == "discover" for u in packaged), "the loaded list stays as Google lists it"
+    assert not [r for r in updates.scoreboard_rows(packaged) if r["kind"] == "discover"]
+    assert "February 2026 Discover update" not in [u.name for u in updates.overlaps("2026-02-10", "2026-02-20", packaged)]

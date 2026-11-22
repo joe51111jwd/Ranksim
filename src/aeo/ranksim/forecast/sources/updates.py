@@ -54,6 +54,13 @@ PACIFIC_OFFSETS = {"PDT": -7, "PST": -8}
 START_TOLERANCE_DAYS = 1
 END_TOLERANCE_DAYS = 2
 PACKAGED_PATH = Path(__file__).resolve().parent / "data" / "google_updates.json"
+# Kinds listed on the Ranking dashboard that are not web-ranking updates. The February 2026
+# Discover update changed Discover, not web search rankings (datahunt/github-serps.verified.md:
+# "Filter it out"). load_updates() still returns it, as Google lists it; overlaps() without an
+# explicit kinds list and scoreboard_rows() leave it out. The two "Ranking is experiencing an
+# ongoing issue" incidents (2023-10, 2024-08) were web-ranking problems, so they stay in: a window
+# they overlap is flagged.
+NON_WEB_RANKING_KINDS: frozenset[str] = frozenset({"discover"})
 
 _MONTHS = {name: index for index, name in enumerate(
     ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"], start=1)}
@@ -284,7 +291,9 @@ def overlaps(
     """Updates whose window [start, end] overlaps the closed date window [start, end].
 
     An open update (end None) runs until `open_until`, or forever when that is None.
-    Dates are compared as UTC calendar days, both ends included.
+    Dates are compared as UTC calendar days, both ends included. Without `kinds`,
+    every web-ranking kind counts (NON_WEB_RANKING_KINDS are left out); an
+    explicit `kinds` list is used exactly as given.
     """
     lo = as_date(start)
     hi = as_date(end)
@@ -295,6 +304,8 @@ def overlaps(
     out = []
     for item in chosen:
         if wanted is not None and item.kind not in wanted:
+            continue
+        if wanted is None and item.kind in NON_WEB_RANKING_KINDS:
             continue
         u_start = item.start_date
         u_end = item.end_date or open_until or date.max
@@ -307,10 +318,11 @@ def scoreboard_rows(updates: Iterable[RankingUpdate]) -> list[dict[str, Any]]:
     """Keyword arguments for `Scoreboard.record_core_update`: name, kind, started_on, ended_on, source_url.
 
     Dates are UTC calendar days. The scoreboard stamps the time it records each row itself.
+    Updates of NON_WEB_RANKING_KINDS (the Discover update) are not ranking updates and are left out.
     """
     return [{"name": item.name, "kind": item.kind, "started_on": item.start_date.isoformat(),
              "ended_on": item.end_date.isoformat() if item.end_date else None, "source_url": item.url}
-            for item in updates]
+            for item in updates if item.kind not in NON_WEB_RANKING_KINDS]
 
 
 def main() -> int:

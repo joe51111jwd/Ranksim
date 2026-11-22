@@ -6,6 +6,7 @@ Everything built here is SYNTHETIC or a hand-made fixture. Nothing is accuracy.
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
@@ -25,6 +26,12 @@ from aeo.ranksim.forecast.types import SYNTHETIC, Forecast, OrganicHit, Pull, Pu
 
 START = datetime(2026, 1, 5, 9, 0, tzinfo=timezone.utc)
 DASHES = ("\u2014", "\u2013")
+
+
+@pytest.fixture(autouse=True)
+def _no_committed_export(monkeypatch, tmp_path):
+    # The committed export of the repo (evals/scoreboard) must never anchor a test scoreboard.
+    monkeypatch.setenv("RANKSIM_EXPORT_DIR", str(tmp_path / "committed_export"))
 
 
 @pytest.fixture(scope="module")
@@ -295,7 +302,7 @@ def test_persistence_placeholder_uses_no_reading_after_as_of(tmp_path):
     clock = pipeline.VirtualClock(START)
     board = _board(tmp_path, clock)
     manifest = _manifest(launch=date(2026, 1, 1))
-    pipeline.register_manifest(board, manifest)
+    pipeline.register_manifest(board, manifest, today=date(2025, 12, 31))  # registered before launch
     spec = PullSpec("plumber prices", 1026201)
     early = START
     later = START + timedelta(days=3)
@@ -338,8 +345,10 @@ def test_marker1_pairs_readings_20_to_28_hours_apart(tmp_path):
     report = result["report"]
     assert report["pairs_used"] == 1 and len(result["pairs"]) == 1
     assert report["searches_unpaired"] == [{"search": "emergency plumber", "reason": "no two usable readings 20 to 28 hours apart"}]
-    assert report["headline"]["rate"] == 1.0 and report["built_from_pulls"] is True
-    assert result["evaluation"]["passed"] is None  # 10 units is under the minimum count
+    # 1 of 2 frozen searches gave a pair: below the measured share, so the headline is withheld.
+    assert report["headline"]["rate"] is None and report["built_from_pulls"] is True
+    assert report["headline"]["rate_on_measured_searches_only"] == 1.0
+    assert result["evaluation"]["passed"] is None
     assert any("NOT MEASURABLE" in line or "Marker 1" in line for line in pipeline.marker1_lines(result))
     board.close()
 
@@ -643,7 +652,8 @@ def test_marker1_reports_always_name_the_reader(tmp_path):
     board = _board(tmp_path, clock)
     spec = PullSpec("plumber prices", 1026201)
     day_b = START + timedelta(hours=24)
-    source = ReplaySource(_replay(spec, START, SITES) + _replay(spec, day_b, SITES))
+    # The first pull of each reading fails, so each reading keeps 4 pulls and drops 1.
+    source = ReplaySource(_replay(spec, START, SITES, failed=1) + _replay(spec, day_b, SITES, failed=1))
     pipeline.take_readings(board, source, [spec], clock=clock)
     clock.set(day_b)
     pipeline.take_readings(board, source, [spec], clock=clock)
@@ -651,10 +661,23 @@ def test_marker1_reports_always_name_the_reader(tmp_path):
     assert rebuilt["report"]["built_from_pulls"] is True
     assert rebuilt["report"]["reader"]["reader_version"] == "reader-v1"
     assert rebuilt["report"]["headline_beside_ablation"]["filter_off"] is not None
-    # Without stored pulls the report reads the stored readings and still names the reader settings.
+    # Copied with every pull, the readings are rebuilt from their pulls in the other scoreboard too.
+    full = Scoreboard(f"sqlite:///{tmp_path / 'full.db'}", clock=clock.now)
+    for reading_id in rebuilt["pairs"][0]:
+        reading = board.reading(reading_id)
+        names = list(reading.pull_ids) + [pid for pid, _reason in reading.dropped]
+        full.store_batch(pulls=[board.pull(pid) for pid in dict.fromkeys(names)], readings=[reading])
+    assert pipeline.marker1(full, ["plumber prices"], location_code=1026201)["report"]["built_from_pulls"] is True
+    full.close()
+    # Copied with their kept pulls only (the dropped pull is not stored there), the report reads the stored
+    # readings and still names the reader settings.
     bare = Scoreboard(f"sqlite:///{tmp_path / 'bare.db'}", clock=clock.now)
     for reading_id in rebuilt["pairs"][0]:
-        bare.add_reading(board.reading(reading_id))
+        reading = board.reading(reading_id)
+        dropped = {pid for pid, _reason in reading.dropped}
+        kept = [board.pull(pid) for pid in reading.pull_ids if pid not in dropped]
+        assert len(kept) == reading.pulls_kept == 4
+        bare.store_batch(pulls=kept, readings=[reading])
     stored = pipeline.marker1(bare, ["plumber prices"], location_code=1026201)
     assert stored["report"]["built_from_pulls"] is False
     assert stored["report"]["reader"]["reader_version"] == "reader-v2"
@@ -667,3 +690,334 @@ def test_marker1_reports_always_name_the_reader(tmp_path):
 def test_imports_live_under_the_imports_folder(tmp_path):
     paths = forecast_paths(tmp_path / "data")
     assert paths.imports == tmp_path / "data" / "imports"
+
+
+# ---------------------------------------------------------------------------------------------
+# Brand terms from the agency form
+
+
+def _form_file(tmp_path: Path, site: str, brands: list[str]) -> Path:
+    form = {"form_version": 1, "answers": {"site": site, "niche": "plumber", "brand_names": brands, "filled_by": "agency",
+                                           "filled_on": "2026-01-02", "footprint": {}, "launch_plan": {}}}
+    path = tmp_path / f"form-{site}.json"
+    path.write_text(json.dumps(form), encoding="utf-8")
+    return path
+
+
+def _pilot_manifest(domain: str, searches: list[str], launch: date = date(2026, 3, 1)) -> SeedManifest:
+    terciles = ("easy", "medium", "hard")
+    items = tuple(SeedSearch(search=text_, tercile=terciles[i % 3], difficulty_value=float(10 * i), difficulty_source="kd")
+                  for i, text_ in enumerate(searches))
+    site = SeedSite(domain=domain, niche="plumber", launch_date=launch, pages=12, searches=items)
+    return SeedManifest(sites=(site,), location_code=1026201, difficulty_metric="kd", created_at="2026-01-03T00:00:00Z")
+
+
+def _brand_flags(board: Scoreboard) -> dict[str, bool]:
+    from sqlalchemy import select
+    from sqlalchemy.orm import Session
+
+    from aeo.ranksim.forecast.scoreboard import SearchRow
+
+    with Session(board.engine) as session:
+        return {row.search: bool(row.is_brand) for row in session.scalars(select(SearchRow)).all()}
+
+
+def test_brand_names_on_the_imported_agency_form_flag_brand_searches(tmp_path):
+    clock = pipeline.VirtualClock(START)
+    board = _board(tmp_path, clock)
+    paths = forecast_paths(tmp_path / "data")
+    record = pipeline.import_form(paths, board, file=_form_file(tmp_path, "jpdrains.com", ["Joes Plumbing"]))
+    assert any("joes plumbing" in note for note in record.notes)
+    pipeline.register_manifest(board, _pilot_manifest("jpdrains.com", ["joes plumbing reviews", "emergency plumber", "jpdrains"]),
+                               source="pilot")
+    flags = _brand_flags(board)
+    board.close()
+    assert flags == {"joes plumbing reviews": True, "emergency plumber": False, "jpdrains": True}
+
+
+def test_a_pilot_without_an_imported_form_is_refused(tmp_path):
+    board = _board(tmp_path, pipeline.VirtualClock(START))
+    with pytest.raises(ScoreboardRefusal, match="No agency form is imported"):
+        pipeline.register_manifest(board, _pilot_manifest("jpdrains.com", ["joes plumbing reviews"]), source="pilot")
+    assert pipeline.scoreboard_counts(board)["sites"] == 0
+    board.close()
+
+
+def test_a_form_imported_after_the_site_is_registered_is_refused_when_it_changes_the_brand(tmp_path):
+    board = _board(tmp_path, pipeline.VirtualClock(START))
+    pipeline.register_manifest(board, _pilot_manifest("jpdrains.com", ["emergency plumber"]), source="seed")
+    with pytest.raises(ScoreboardRefusal, match="never changed"):
+        pipeline.import_form(forecast_paths(tmp_path / "data"), board, file=_form_file(tmp_path, "jpdrains.com", ["Joes Plumbing"]))
+    # A form naming no other brand flags the same searches as the domain name, so it is accepted.
+    pipeline.import_form(forecast_paths(tmp_path / "data"), board, file=_form_file(tmp_path, "jpdrains.com", []))
+    assert pipeline.register_manifest(board, _pilot_manifest("jpdrains.com", ["emergency plumber"]), source="seed").sites_already == 1
+    board.close()
+
+
+# ---------------------------------------------------------------------------------------------
+# Registering after launch
+
+
+def test_register_refuses_a_site_that_already_launched_unless_a_reason_is_recorded(tmp_path):
+    clock = pipeline.VirtualClock(datetime(2026, 3, 2, 9, 0, tzinfo=timezone.utc))
+    board = _board(tmp_path, clock)
+    manifest = _manifest(launch=date(2026, 3, 1))
+    with pytest.raises(ScoreboardRefusal, match="before launch"):
+        pipeline.register_manifest(board, manifest)
+    with pytest.raises(ScoreboardRefusal, match="before launch"):
+        pipeline.register_manifest(board, manifest, today=date(2026, 3, 1))  # launch day itself is too late
+    assert pipeline.scoreboard_counts(board)["sites"] == 0
+    backfilled = replace(manifest, after_launch_reason="pilot site already live when the agency joined")
+    assert pipeline.register_manifest(board, backfilled).sites_added == 1
+    board.close()
+
+
+def test_re_registering_after_launch_changes_nothing_and_is_allowed(tmp_path):
+    clock = pipeline.VirtualClock(START)
+    board = _board(tmp_path, clock)
+    manifest = _manifest(launch=date(2026, 3, 1))
+    pipeline.register_manifest(board, manifest)
+    clock.set(datetime(2026, 4, 1, tzinfo=timezone.utc))
+    again = pipeline.register_manifest(board, manifest)
+    assert (again.sites_added, again.searches_added) == (0, 0)
+    board.close()
+
+
+# ---------------------------------------------------------------------------------------------
+# Marker 1 counts every frozen search
+
+
+def test_marker1_is_not_passed_when_most_frozen_searches_have_no_clean_pair(tmp_path):
+    clock = pipeline.VirtualClock(START)
+    board = _board(tmp_path, clock)
+    searches = [f"plumber search {i:03d}" for i in range(300)]
+    pipeline.freeze_marker1_sample(board, searches, n=300)
+    specs = [PullSpec(s, 1026201) for s in searches]
+    day_b = START + timedelta(hours=24)
+    recorded: list[Pull] = []
+    for moment in (START, day_b):
+        for index, spec in enumerate(specs):
+            recorded += _replay(spec, moment, SITES, failed=0 if index < 3 else 3)  # 297 come back degraded
+    source = ReplaySource(recorded)
+    pipeline.take_readings(board, source, specs, clock=clock)
+    clock.set(day_b)
+    pipeline.take_readings(board, source, specs, clock=clock)
+    result = pipeline.marker1(board, pipeline.frozen_marker1_searches(board), location_code=1026201)
+    board.close()
+    report = result["report"]
+    assert report["pairs_used"] == 3 and report["searches_requested"] == 300
+    assert report["headline"]["rate"] is None and "NOT MEASURABLE" in report["headline"]["not_measurable"]
+    assert result["evaluation"]["passed"] is None
+    assert any("NOT MEASURABLE" in line for line in pipeline.marker1_lines(result))
+
+
+def test_marker1_on_a_list_that_is_not_the_frozen_sample_is_not_a_marker_result(tmp_path):
+    clock = pipeline.VirtualClock(START)
+    board = _board(tmp_path, clock)
+    specs = [PullSpec(f"plumber search {i:02d}", 1026201) for i in range(4)]
+    day_b = START + timedelta(hours=24)
+    source = ReplaySource([p for spec in specs for moment in (START, day_b) for p in _replay(spec, moment, SITES)])
+    pipeline.take_readings(board, source, specs, clock=clock)
+    clock.set(day_b)
+    pipeline.take_readings(board, source, specs, clock=clock)
+    result = pipeline.marker1(board, [spec.search for spec in specs], location_code=1026201, frozen_list=False)
+    board.close()
+    assert result["evaluation"]["passed"] is None and result["evaluation"]["not_a_marker_result"] is True
+    assert pipeline.marker1_lines(result)[0].startswith("NOT A MARKER RESULT")
+
+
+# ---------------------------------------------------------------------------------------------
+# Round mode: one reading per search and date, and the pull gap floor
+
+
+def test_assemble_keeps_one_reading_per_search_and_date(tmp_path):
+    clock = pipeline.VirtualClock(START)
+    board = _board(tmp_path, clock)
+    spec = PullSpec("plumber prices", 1026201)
+    day = START.date()
+
+    def round_at(hour: int) -> None:
+        clock.set(datetime.combine(day, datetime.min.time(), tzinfo=timezone.utc) + timedelta(hours=hour))
+        pipeline.read_round(board, ReplaySource([_pull(spec, clock.now(), SITES, tag=f"-r{hour}")]), [spec], clock=clock)
+
+    for hour in (10, 11, 12):
+        round_at(hour)
+    first = pipeline.assemble(board, day)
+    assert first.readings_stored == 1
+    for hour in (14, 19):
+        round_at(hour)
+    second = pipeline.assemble(board, day)
+    assert second.readings_stored == 0 and second.newer_pulls_left_out == 1
+    assert second.already_assembled[0]["reading_id"] == first.reading_ids[0]
+    same_day = [r for r in pipeline.stored_readings(board, "plumber prices", location_code=1026201)
+                if r.taken_at.startswith(day.isoformat())]
+    assert len(same_day) == 1
+    third = pipeline.assemble(board, day)
+    assert third.readings_stored == 0 and third.readings_already_stored == 1
+    board.close()
+
+
+def test_assemble_counts_pulls_seconds_apart_as_one_pull(tmp_path):
+    clock = pipeline.VirtualClock(START)
+    board = _board(tmp_path, clock)
+    spec = PullSpec("plumber prices", 1026201)
+    for second in range(5):
+        clock.set(START + timedelta(seconds=second))
+        pipeline.read_round(board, ReplaySource([_pull(spec, clock.now(), SITES, tag=f"-s{second}")]), [spec], clock=clock)
+    summary = pipeline.assemble(board, START.date())
+    assert summary.pulls_too_close == 4
+    assert summary.readings_built - summary.degraded == 0  # one real pull is never a clean reading
+    board.close()
+
+
+def test_take_readings_refuses_a_gap_below_the_floor(tmp_path):
+    board = _board(tmp_path, pipeline.VirtualClock(START))
+    spec = PullSpec("plumber prices", 1026201)
+    with pytest.raises(ValueError, match="at least 60 seconds"):
+        pipeline.take_readings(board, ReplaySource(_replay(spec, START, SITES)), [spec], gap_seconds=1)
+    assert pipeline.scoreboard_counts(board)["pulls"] == 0
+    board.close()
+
+
+# ---------------------------------------------------------------------------------------------
+# Costs of searches with a Google operator
+
+
+def test_reading_cost_with_specs_is_what_the_dataforseo_client_reserves():
+    from aeo.ranksim.forecast.dataforseo import DataForSeoClient
+
+    specs = pipeline.search_specs(["plumber site:example.com", "plumber prices"], 1026201)
+    plan = pipeline.plan_reading_cost(None, "dataforseo", 2, pulls=5, specs=specs)
+    reserved = sum(DataForSeoClient._serp_estimate(spec, "standard_normal", True) for spec in specs) * 5
+    assert plan.usd == reserved
+    assert any("Google operator" in note for note in plan.notes)
+    one_round = pipeline.plan_round_cost(None, "dataforseo", 2, specs=specs)
+    assert one_round.usd == reserved / 5
+    sample = pipeline.plan_sample_serp(None, "dataforseo", 2, specs=specs)
+    assert sample.usd == sum(DataForSeoClient._serp_estimate(spec, "standard_normal", True) for spec in specs)
+
+
+# ---------------------------------------------------------------------------------------------
+# The committed export anchors the scoreboard
+
+
+def test_open_scoreboard_anchors_to_the_committed_export_and_catches_a_cut_tail(tmp_path, monkeypatch):
+    committed = tmp_path / "committed_export"
+    monkeypatch.setenv("RANKSIM_EXPORT_DIR", str(committed))
+    paths = forecast_paths(tmp_path / "data")
+    clock = pipeline.VirtualClock(datetime(2026, 2, 1, 9, 0, tzinfo=timezone.utc))
+    board = pipeline.open_scoreboard(paths, clock=clock)
+    assert board.heads_anchor is None  # no export yet
+    pipeline.register_manifest(board, _manifest())
+    board.register_model_version("m1", description="test", frozen_at=clock.now())
+    for search in ("plumber prices", "emergency plumber"):
+        board.record_forecast(Forecast(site="seedone.example", search=search, stage="upload", as_of=clock.now().date(),
+                                       point=12, range_low=8, range_high=20, label="contested", model_version="m1"))
+    pipeline.export_scoreboard(board, committed)
+    board.close()
+    board = pipeline.open_scoreboard(paths, clock=clock)
+    assert board.heads_anchor == committed and board.verify().ok
+    with board.engine.begin() as connection:
+        connection.execute(text("DROP TRIGGER forecasts_no_delete"))
+        connection.execute(text("DELETE FROM forecasts WHERE seq = 2"))
+    board.install_triggers()
+    status = board.verify()
+    assert not status.ok and any("Rows were deleted" in problem for problem in status.problems)
+    assert pipeline.open_scoreboard(paths, clock=clock, export_dir=None).heads_anchor is None
+    board.close()
+
+
+# ---------------------------------------------------------------------------------------------
+# Stage calendar
+
+
+def test_stage_calendar_lists_stages_due_soon_and_stages_missed(tmp_path):
+    clock = pipeline.VirtualClock(datetime(2026, 11, 22, 9, 0, tzinfo=timezone.utc))
+    board = _board(tmp_path, clock)
+    pipeline.register_manifest(board, _manifest(launch=date(2026, 11, 30)))
+    # 30 November launch: d7 7 Dec, d14 14 Dec, d30 30 Dec, d60 29 Jan (plan audit, dates section).
+    soon = pipeline.stage_calendar(board, date(2026, 11, 28))
+    assert [(item["stage"], item["stage_date"]) for item in soon["due"]] == [("upload", "2026-11-30")]
+    assert soon["missed"] == []
+    later = pipeline.stage_calendar(board, date(2026, 12, 28))
+    assert [(item["stage"], item["stage_date"]) for item in later["due"]] == [("d30", "2026-12-30")]
+    assert [(item["stage"], item["stage_date"]) for item in later["missed"]] == [
+        ("upload", "2026-11-30"), ("d7", "2026-12-07"), ("d14", "2026-12-14")]
+    board.close()
+
+
+# ---------------------------------------------------------------------------------------------
+# Baselines of markers 3 to 5
+
+
+def test_stage_marker_says_which_baselines_are_missing_and_why(demo_result):
+    report = demo_result.stage_reports["d30"]
+    assert "band_prior" in report["baselines_missing"] and "site_strength" in report["baselines_missing"]
+    notes = " ".join(report["baseline_notes"])
+    assert "no graded synthetic d30 forecast of the training split" in notes
+    assert "strength.py" in notes
+    assert any("strength.py" in note for note in demo_result.marker_evaluations["4"]["notes"])
+
+
+def test_band_prior_training_uses_training_cells_on_other_sites_only(tmp_path):
+    launch = date(2026, 1, 6)
+    clock = pipeline.VirtualClock(datetime(2026, 1, 5, 9, 0, tzinfo=timezone.utc))
+    board = _board(tmp_path, clock)
+    cells, why = pipeline.band_prior_training(board, source="seed", stage="d30", as_of=date(2026, 6, 1))
+    assert cells == [] and "no graded backtest d30 forecast of the training split" in why
+    spec = PullSpec("plumber prices", 1026201)
+    sites = {"seedone.example": "seed", "trainone.example": "backtest", "heldout.example": "backtest"}
+    for site, source in sites.items():
+        board.add_site(site, source=source, launch_date=launch, launch_date_source="test", built_by="test", niche="plumber")
+        board.add_search(site, spec.search, location_code=1026201, difficulty="easy")
+    board.register_model_version("m1", description="test", frozen_at=clock.now())
+    clock.set(datetime(2026, 2, 5, 9, 0, tzinfo=timezone.utc))  # day 30
+    for site, split in (("seedone.example", None), ("trainone.example", "train"), ("heldout.example", "test")):
+        board.record_forecast(Forecast(site=site, search=spec.search, stage="d30", as_of=date(2026, 2, 5), point=3,
+                                       range_low=1, range_high=5, label="contested", model_version="m1",
+                                       notes={"split": split} if split else {}))
+    day90 = datetime(2026, 4, 6, 12, 0, tzinfo=timezone.utc)
+    clock.set(day90)
+    order = ["trainone.example", "heldout.example", "seedone.example"] + SITES
+    pipeline.take_readings(board, ReplaySource(_replay(spec, day90, order)), [spec], clock=clock)
+    clock.set(datetime(2026, 4, 7, 9, 0, tzinfo=timezone.utc))
+    assert pipeline.grade(board, date(2026, 4, 7))["counts"]["graded"] == 3
+    cells, why = pipeline.band_prior_training(board, source="seed", stage="d30", as_of=date(2026, 4, 7))
+    assert [cell.site for cell in cells] == ["trainone.example"]  # the test split and the seed site are left out
+    assert "fitted on 1 graded backtest d30 cells of the training split" in why
+    result = pipeline.stage_marker(board, source="seed", stage="d30", as_of=date(2026, 4, 7))
+    assert result["report"]["band_prior"] is not None
+    assert "band_prior" not in result["report"]["baselines_missing"]
+    assert result["report"]["baselines_missing"] == ["site_strength"]
+    assert any("strength.py" in note for note in result["baseline_notes"])
+    board.close()
+
+
+# ---------------------------------------------------------------------------------------------
+# SmartCrew files are refused by name and by content
+
+
+def test_a_smartcrew_search_console_export_is_refused_whatever_site_is_typed(tmp_path):
+    import zipfile
+
+    downloads = tmp_path / "Downloads"
+    downloads.mkdir()
+    export = downloads / "smartcrewhq.com-Performance-on-Search-2026-11-21.zip"
+    with zipfile.ZipFile(export, "w") as archive:
+        archive.writestr("Dates.csv", "Date,Clicks,Impressions,CTR,Position\n2026-11-20,3,120,2.5%,14.2\n")
+    paths = forecast_paths(tmp_path / "data")
+    board = _board(tmp_path, pipeline.VirtualClock(START))
+    with pytest.raises(ValueError, match="SmartCrew"):
+        pipeline.import_gsc(paths, board, site="one.com", file=export, kind="ui", fetched_at=START)
+    other = downloads / "two.com-Performance-on-Search-2026-11-21.zip"
+    other.write_bytes(export.read_bytes())
+    with pytest.raises(ValueError, match="property two.com, not of one.com"):
+        pipeline.import_gsc(paths, board, site="one.com", file=other, kind="ui", fetched_at=START)
+    named = downloads / "export.zip"
+    with zipfile.ZipFile(named, "w") as archive:
+        archive.writestr("Dates.csv", "Date,Clicks,Impressions,CTR,Position\n2026-11-20,3,120,2.5%,14.2\n")
+        archive.writestr("Queries.csv", "Top queries,Clicks,Impressions,CTR,Position\nsmartcrew software,4,210,1.9%,3.1\n")
+    with pytest.raises(ValueError, match="naming SmartCrew"):
+        pipeline.import_gsc(paths, board, site="one.com", file=named, kind="ui", fetched_at=START)
+    assert not board.freezes() and not (paths.imports / "gsc").exists()
+    board.close()

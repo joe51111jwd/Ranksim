@@ -78,6 +78,7 @@ from .config import EXCLUDED_SITES, forecast_paths
 from .sources import dfs_samples as dfs
 from .sources import panel as panel_mod
 from .sources.universe import SearchRow, normalise
+from ..site_history import site_key
 from .types import SYNTHETIC
 
 __all__ = [
@@ -140,6 +141,43 @@ def _get(row: Any, name: str, default: Any = None) -> Any:
 
 def _months_between(earlier: date, later: date) -> int:
     return (later.year * 12 + later.month) - (earlier.year * 12 + earlier.month)
+
+
+def _site(value: Any) -> str:
+    """The registrable site of a domain, host, origin or URL, lower case ("" when empty).
+
+    Every site a pull, a sample or the target selection receives goes through
+    this before the EXCLUDED_SITES check and before de-duplicating, so
+    "www.SmartCrewHQ.com" or "https://smartcrewhq.com/" are dropped like
+    "smartcrewhq.com". An already-normalised site comes back unchanged.
+    """
+    text = str(value or "").strip().lower()
+    return site_key(text) if text else ""
+
+
+def _wanted_sites(values: Iterable[Any]) -> list[str]:
+    """Normalised sites in first-seen order, de-duplicated, with excluded and empty sites removed."""
+    out: dict[str, None] = {}
+    for value in values:
+        site = _site(_get(value, "site") if not isinstance(value, str) else value)
+        if site and site not in EXCLUDED_SITES:
+            out.setdefault(site, None)
+    return list(out)
+
+
+def _history_window(day: date, months: int) -> tuple[date, date, int]:
+    """(date_from, date_to, calendar months covered) of a past-result-pages pull asked on `day` for `months` months.
+
+    The window is `months` calendar months ending with the month of `day`:
+    from the first day of the month months-1 back to `day`. The month count
+    uses the client's own inclusive formula (dataforseo.historical_serps), so
+    the dry run prices exactly what the executed call reserves.
+    """
+    if months < 1:
+        raise ValueError("months must be 1 or more")
+    start = add_months(day, -(months - 1))
+    covered = (day.year - start.year) * 12 + (day.month - start.month) + 1
+    return start, day, covered
 
 
 def _as_date(value: Any) -> date | None:
@@ -272,6 +310,8 @@ def plan_pulls(
             start = _as_date(_get(row, "launch_date")) or _as_date(_get(row, "registered_on"))
             if start is not None:
                 ages.append(_months_between(start, day))
+    # A window of `window` months covers the month of `day` and the window-1 months before it
+    # (_history_window), so a site whose launch month is `age` months back has a launch-month page iff age < window.
     without = {window: sum(1 for age in ages if age + 1 > window) for window in windows}
     return PullPlan(
         searches=n_searches, sites=n_sites, rows_per_site=rows_per_site, windows=windows, lines=lines, totals_upper=upper,
@@ -384,8 +424,8 @@ def run_samples(
     are written to a small JSON under the forecast data directory.
     """
     day = today or _utcnow().date()
-    sites = [s for s in dict.fromkeys(small_sites) if s not in EXCLUDED_SITES]
-    targets = [s for s in dict.fromkeys(ranked_targets if ranked_targets is not None else sites) if s not in EXCLUDED_SITES]
+    sites = _wanted_sites(small_sites)
+    targets = _wanted_sites(ranked_targets) if ranked_targets is not None else list(sites)
     words = list(dict.fromkeys(keywords))
     cap = SAMPLE_MAX_USD
     fit_traffic = min(len(sites), _traffic_sample_fit(cap))
@@ -526,19 +566,34 @@ def pull_past_result_pages(
     Raw answers are saved by the client before parsing. Normalising decompresses
     each saved answer to a .json file and hands it to panel.build_panel, the
     same parser the free samples use.
+
+    `months` is the number of calendar months asked for, the month of today
+    included (_history_window). The planned cost is priced from the same dates
+    the request sends, so the dry run equals what the client reserves. The
+    keywords are de-duplicated and sorted before the job is named, so the same
+    searches in another order resume the same job and pay nothing again. A job
+    whose manifest already exists keeps its frozen dates, and its cost is
+    priced from them.
     """
-    keywords = list(dict.fromkeys(_get(s, "keyword") if not isinstance(s, str) else s for s in searches))
-    keywords = [k for k in keywords if k]
-    planned = historical_serps_estimate(months, len(keywords)) if keywords else Decimal(0)
+    keywords = sorted({str(k) for k in (_get(s, "keyword") if not isinstance(s, str) else s for s in searches) if k})
     name = job or _job_name("historical_serps", {"keywords": keywords, "months": months, "location": location_code, "language": language_code})
+    base = Path(root) if root else default_root()
+    day = today or _utcnow().date()
+    date_from, date_to, covered = _history_window(day, months)
+    stored_path = base / "jobs" / f"{name}.json"
+    if stored_path.is_file():  # read only: a dry run never writes, but it prices the frozen dates a resumed run will ask
+        stored = json.loads(stored_path.read_text(encoding="utf-8"))
+        if stored.get("kind") == KIND_HISTORICAL_SERPS and stored.get("date_from") and stored.get("date_to"):
+            frozen_from, frozen_to = date.fromisoformat(stored["date_from"]), date.fromisoformat(stored["date_to"])
+            covered = max(1, (frozen_to.year - frozen_from.year) * 12 + (frozen_to.month - frozen_from.month) + 1)
+            keywords = list(stored.get("keywords", keywords))
+    planned = historical_serps_estimate(covered, len(keywords)) if keywords else Decimal(0)
     if not execute:
         return PullReport(KIND_HISTORICAL_SERPS, name, True, len(keywords), planned)
     ledger = _require_client(client)
-    base = Path(root) if root else default_root()
-    day = today or _utcnow().date()
     manifest = _manifest(base, name, KIND_HISTORICAL_SERPS, {
         "keywords": keywords, "location_code": location_code, "language_code": language_code, "locale": locale,
-        "date_from": add_months(day, -months).isoformat(), "date_to": day.isoformat(), "months": months,
+        "date_from": date_from.isoformat(), "date_to": date_to.isoformat(), "months": months,
     })
     report = PullReport(KIND_HISTORICAL_SERPS, name, False, len(manifest["keywords"]), planned, manifest=manifest)
     spent_before = ledger.spent_for_kind(KIND_HISTORICAL_SERPS)
@@ -649,7 +704,7 @@ def pull_traffic_curves(
     today: date | None = None,
 ) -> PullReport:
     """Monthly traffic curves (Historical Bulk Traffic Estimation) in chunks of up to 1,000 sites, then two parquet tables."""
-    names = sorted({str(_get(s, "site") if not isinstance(s, str) else s) for s in sites} - set(EXCLUDED_SITES) - {""})
+    names = sorted(_wanted_sites(sites))
     chunks = [names[i : i + chunk_size] for i in range(0, len(names), chunk_size)]
     planned = sum((historical_traffic_cost(len(chunk)) for chunk in chunks), Decimal(0))
     name = job or _job_name("traffic", {"sites": names, "months": months, "location": location_code, "chunk": chunk_size})
@@ -764,7 +819,7 @@ def pull_exact_positions(
     root: Path | None = None,
 ) -> PullReport:
     """Exact positions (ranked keywords, standard Labs rate) for each site, then two parquet tables."""
-    names = sorted({str(_get(s, "site") if not isinstance(s, str) else s) for s in sites} - set(EXCLUDED_SITES) - {""})
+    names = sorted(_wanted_sites(sites))
     planned = ranked_keywords_cost(len(names), rows_per_site)
     name = job or _job_name("positions", {"sites": names, "rows": rows_per_site, "location": location_code})
     if not execute:
@@ -937,6 +992,11 @@ def select_targets(
     score_fn(search, text). A site whose niche has no searches gets none (it is
     listed, never given another niche's searches). The rule never receives rankings, so searches where
     the site never ranks are kept like any other.
+
+    Sites are normalised (_site) before anything else: an excluded site is
+    dropped however it is spelled, and two spellings of one site make one
+    entry (the first in sorted order). page_text is matched on the normalised
+    site too.
     """
     rule = rule.with_scorer(score_fn)
     rule_hash = rule.rule_hash()
@@ -948,17 +1008,22 @@ def select_targets(
     for search in universe:
         by_niche.setdefault(_get(search, "niche"), []).append(search)
     all_searches = list(universe)
+    texts_by_site: dict[str, list[Dated]] = {}
+    for key, items in page_text.items():
+        texts_by_site.setdefault(_site(key), []).extend(items)
+    seen: set[str] = set()
     for entry in sorted(cohort, key=lambda r: str(_get(r, "site"))):
-        site = str(_get(entry, "site"))
-        if site in EXCLUDED_SITES:
+        site = _site(_get(entry, "site"))
+        if not site or site in EXCLUDED_SITES or site in seen:
             continue
+        seen.add(site)
         launch = _as_date(_get(entry, "launch_date"))
         if launch is None:
             without_launch.append(site)
             continue
         as_of = last_day_of_month(launch)
         guard = AsOfGuard(as_of)
-        texts = [guard.take(item) for item in page_text.get(site, ())]
+        texts = [guard.take(item) for item in texts_by_site.get(site, ())]
         text = "\n".join(str(t) for t in texts if t)
         if not text.strip():
             without_text.append(site)
@@ -1008,7 +1073,7 @@ def search_group(keyword: str) -> str:
 class SplitRule:
     """The frozen split rule of IMPLEMENTATION_SPEC section 6: by launch cohort in time, then by site, no search group on both sides."""
 
-    version: str = "split-rule-v1"
+    version: str = "split-rule-v2"  # v2: floor of the share (v1 rounded up), sites normalised, excluded sites excluded
     test_share: float = 0.2
     seed: int = 20261122
 
@@ -1024,24 +1089,28 @@ def assign_split(cells: Sequence[Mapping[str, Any]], rule: SplitRule = DEFAULT_S
     """One split label per cell (train, test or excluded).
 
     1. Sites are ordered by launch month. Whole months from the latest back go to
-       test while the test share stays at or under rule.test_share of sites. The
-       boundary month is split by site, in sha256(seed | site) order, to reach
-       the share. So test sites launched after every train site, except inside
-       the boundary month.
+       test while the test share stays at or under rule.test_share of sites
+       (floor of test_share x sites, but at least one test site when there are
+       two or more sites, so both sides are non-empty). The boundary month is
+       split by site, in sha256(seed | site) order, to reach the share. So test
+       sites launched after every train site, except inside the boundary month.
     2. Every cell of a site takes the site's side.
     3. Every search group used by a test site belongs to test. A train cell in
        such a group is excluded. So no search group is on both sides.
-    4. A cell whose site has no launch date is excluded.
+    4. A cell whose site has no launch date is excluded, and so is a cell of an
+       excluded site (EXCLUDED_SITES), however the site is spelled.
     """
     if not 0 < rule.test_share < 1:
         raise ValueError("test_share must be between 0 and 1")
     launch: dict[str, date] = {}
     for cell in cells:
         day = _as_date(cell.get("launch_date"))
-        if day is not None:
-            launch.setdefault(str(cell["site"]), day)
+        site = _site(cell["site"])
+        if day is not None and site and site not in EXCLUDED_SITES:
+            launch.setdefault(site, day)
     sites = sorted(launch)
-    target = math.ceil(rule.test_share * len(sites)) if len(sites) > 1 else 0
+    # Decimal, not float: 0.29 * 100 is 28.999... in floating point.
+    target = max(1, math.floor(Decimal(str(rule.test_share)) * len(sites))) if len(sites) > 1 else 0
     by_month: dict[date, list[str]] = {}
     for site in sites:
         by_month.setdefault(month_start(launch[site]), []).append(site)
@@ -1052,10 +1121,10 @@ def assign_split(cells: Sequence[Mapping[str, Any]], rule: SplitRule = DEFAULT_S
         if room <= 0:
             break
         test_sites.update(members[:room])
-    test_groups = {search_group(str(c["keyword"])) for c in cells if str(c["site"]) in test_sites}
+    test_groups = {search_group(str(c["keyword"])) for c in cells if _site(c["site"]) in test_sites}
     out = []
     for cell in cells:
-        site = str(cell["site"])
+        site = _site(cell["site"])
         if site not in launch:
             out.append("excluded")
         elif site in test_sites:
@@ -1079,10 +1148,12 @@ def cohort_cells(
     cohort. target_rule_hash is the selection rule's hash. split is assigned by
     the frozen split rule; its hash is in frame.attrs["split_rule_hash"].
     """
-    info = {str(_get(row, "site")): row for row in cohort}
+    info: dict[str, Any] = {}
+    for row in cohort:
+        info[_site(_get(row, "site"))] = row
     records: list[dict[str, Any]] = []
     for target in targets.rows:
-        row = info.get(target.site)
+        row = info.get(_site(target.site))
         uncertainty = _get(row, "launch_uncertainty_days") if row is not None else None
         records.append({
             "site": target.site, "keyword": target.keyword, "keyword_id": target.keyword_id, "locale": target.locale,

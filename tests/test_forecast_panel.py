@@ -79,9 +79,12 @@ def test_history_parser_reads_real_layout(sample_root: Path):
     assert alpha["is_new"] is True
     assert next(row for row in first if row["rank"] == 4)["previous_rank_absolute"] == 7
     assert alpha["kd"] == 7.0  # the difficulty recorded with this page, not the record-level one
-    assert alpha["search_volume"] == 40  # May 2025 is the last full month before a June page
+    # No monthly volume was known on 2025-06-01: May counts from 2025-07-16, April (null) from 2025-06-15.
+    assert alpha["search_volume"] is None
     assert alpha["main_domain_rank"] == 300 and alpha["page_rank"] == 0
-    assert alpha["intent"] == "commercial" and alpha["location_code"] == 2840
+    # The intent label is dated 2025-12-27 and the record's etv comes from the 2026-04-12 headline volume:
+    # neither existed on this 2025-06-01 page, so both are null on it.
+    assert alpha["intent"] is None and alpha["etv"] is None and alpha["location_code"] == 2840
     assert alpha["poison_risk"] is False
     poisoned = [row for row in rows if row["keyword"] == "poisoned page"]
     assert len(poisoned) == 1 and poisoned[0]["poison_risk"] is True
@@ -89,11 +92,17 @@ def test_history_parser_reads_real_layout(sample_root: Path):
     assert set(rows[0]) == set(dfs.PANEL_ROW_FIELDS)
 
 
-def test_volume_known_at_uses_the_last_full_month_and_keeps_missing_missing():
+def test_volume_known_at_uses_the_latest_month_already_known_and_keeps_missing_missing():
+    assert dfs.VOLUME_PUBLICATION_LAG_DAYS == 45
     info = {"history": {"202504": None, "202505": 40, "202506": 50}}
-    assert dfs.volume_known_at(info, date(2025, 6, 15)) == 40
+    # May counts as known from 2025-06-01 + 45 days = 2025-07-16, June from 2025-08-15.
+    assert dfs.volume_known_at(info, date(2025, 7, 16)) == 40
+    assert dfs.volume_known_at(info, date(2025, 8, 14)) == 40
+    assert dfs.volume_known_at(info, date(2025, 8, 15)) == 50
+    # Before May is known the latest known month is April, which is missing: None, never May.
+    assert dfs.volume_known_at(info, date(2025, 7, 15)) is None
+    assert dfs.volume_known_at(info, date(2025, 6, 15)) is None
     assert dfs.volume_known_at(info, date(2025, 5, 2)) is None
-    assert dfs.volume_known_at(info, date(2025, 4, 2)) is None
     assert dfs.volume_known_at(None, date(2025, 6, 1)) is None
 
 
@@ -117,8 +126,10 @@ def test_labs_response_gives_the_same_rows_as_the_sample():
     assert alpha["kd"] is None and alpha["search_volume"] is None
     assert rows[2]["poison_risk"] is True
     sample = next(r for r in dfs.iter_history_rows(_tmp_history(), dfs.ParseStats(), locale="US_en") if r["rank"] == 1)
-    for name in ("locale", "keyword", "keyword_id", "rank", "rank_absolute", "domain", "site", "url", "title", "is_new", "main_domain_rank", "page_rank", "etv"):
+    for name in ("locale", "keyword", "keyword_id", "rank", "rank_absolute", "domain", "site", "url", "title", "is_new", "main_domain_rank", "page_rank"):
         assert alpha[name] == sample[name], name
+    # The sample's etv is computed from its 2026-04 headline volume, so it is null on this 2025-06 page.
+    assert sample["etv"] is None and alpha["etv"] == 1.5
     assert set(alpha) == set(sample)
 
 
@@ -434,3 +445,98 @@ def test_a_part_with_poison_risk_left_unset_is_filled_from_the_date(tmp_path: Pa
     pq.write_table(pa.Table.from_pylist(rows, schema=pn.PANEL_SCHEMA), target / "part-new.parquet")
     frame = pn.load_panel(["snapshot_date", "poison_risk"], panel_dir=tmp_path / "panel").sort_values("snapshot_date")
     assert list(frame["poison_risk"]) == [False, True] and not frame["poison_risk"].isna().any()
+
+
+# ---------------------------------------------------------------------------
+# No value later than its page (review fixes)
+
+REAL_SAMPLES = Path(__file__).resolve().parents[1] / "data" / "forecast" / "public" / "dataforseo_samples" / "google_history"
+needs_real_samples = pytest.mark.skipif(not (REAL_SAMPLES / "serp_advanced" / "US_en.json.gz").exists(),
+                                        reason="the downloaded DataForSEO sample files are not on this machine")
+
+
+def _one_record(tmp_path: Path, pages: list[str], *, intent_dated: str | None, volume_dated: str | None) -> list[dict]:
+    record = {
+        "keyword": "dated widget", "location": 2840, "language": "en",
+        "keyword_info": {"search_volume": 500, "time_update": volume_dated, "history": {"202501": 10, "202502": 20}},
+        "search_intent_info": {"main_intent": "commercial", "last_updated_time": intent_dated},
+        "serp_info_history": [
+            {"time_update": day, "keyword_difficulty": 5, "items_count": 1, "se_results_count": 10,
+             "serp": [{"type": "organic", "rank_group": 1, "rank_absolute": 1, "domain": "a.com", "main_domain": "a.com",
+                       "url": "https://a.com/", "etv": 152.0}]}
+            for day in pages
+        ],
+    }
+    path = tmp_path / "US_en.json.gz"
+    with gzip.open(path, "wt", encoding="utf-8") as handle:
+        handle.write(json.dumps(record) + "\n")
+    return sorted(dfs.iter_history_rows(path), key=lambda row: row["snapshot_time"])
+
+
+def test_intent_and_etv_are_null_on_pages_older_than_their_record_date(tmp_path: Path):
+    rows = _one_record(tmp_path, ["2025-03-01T00:00:00Z", "2025-06-01T00:00:00Z", "2025-09-01T00:00:00Z"],
+                       intent_dated="2025-06-01T00:00:00Z", volume_dated="2025-08-15T00:00:00Z")
+    assert [row["intent"] for row in rows] == [None, "commercial", "commercial"]  # on the label's own date it is known
+    assert [row["etv"] for row in rows] == [None, None, 152.0]
+    assert [row["kd"] for row in rows] == [5.0, 5.0, 5.0]  # the page's own difficulty is untouched
+    undated = _one_record(tmp_path, ["2025-09-01T00:00:00Z"], intent_dated=None, volume_dated=None)
+    assert undated[0]["intent"] is None and undated[0]["etv"] is None, "an undated record value is refused, not assumed"
+
+
+def test_page_volume_counts_from_the_publication_lag_after_the_month(tmp_path: Path):
+    rows = _one_record(tmp_path, ["2025-03-01T00:00:00Z", "2025-03-17T00:00:00Z", "2025-04-14T00:00:00Z", "2025-04-15T00:00:00Z"],
+                       intent_dated=None, volume_dated=None)
+    # January counts from 2025-02-01 + 45 days = 2025-03-18, February from 2025-04-15.
+    assert [row["search_volume"] for row in rows] == [None, None, 10, 20]
+
+
+def test_keyword_history_puts_the_current_kd_only_on_the_newest_month(sample_root: Path):
+    hist = list(dfs.iter_keyword_rows(sample_root / "google_history/keywords/US_en.json.gz", "dfs_keywords_history"))
+    assert [(r["snapshot_month"], r["kd"]) for r in hist] == [("2025-12", None), ("2026-02", 12.0)]
+    plain = list(dfs.iter_keyword_rows(sample_root / "google/keywords/US_en.json.gz", "dfs_keywords"))
+    assert plain[0]["kd"] == 12.0  # a single-row record keeps its kd
+
+
+def test_site_positions_without_the_flag_column_fails_closed_on_the_date(tmp_path: Path):
+    when = [datetime(2026, 9, 12, tzinfo=timezone.utc), datetime(2026, 10, 1, tzinfo=timezone.utc)]
+    rows = pd.DataFrame({"keyword_id": ["k", "k", "k2", "k2"], "snapshot_time": [when[0], when[0], when[1], when[1]],
+                         "site": ["a.com", "b.com", "a.com", "b.com"], "rank": [1, 2, 1, 2]})
+    with pytest.warns(UserWarning, match="dropped by date alone"):
+        kept = pn.site_positions(rows, drop_poison_risk=True)
+    assert set(kept["keyword_id"]) == {"k"}
+    assert len(pn.site_positions(rows, drop_poison_risk=False)) == 4
+    flagged = rows.assign(poison_risk=[False, False, False, False])  # a repaired page: the flag column is believed
+    assert len(pn.site_positions(flagged, drop_poison_risk=True)) == 4
+
+
+@needs_real_samples
+def test_real_sample_pages_carry_no_intent_etv_or_volume_dated_after_the_page():
+    path = REAL_SAMPLES / "serp_advanced" / "US_en.json.gz"
+    with gzip.open(path, "rt", encoding="utf-8") as handle:
+        records = {r["keyword"]: r for r in map(json.loads, handle)}
+    recorded = {}
+    with gzip.open(REAL_SAMPLES / "keywords" / "US_en.json.gz", "rt", encoding="utf-8") as handle:
+        for record in map(json.loads, handle):
+            for month, info in record["keyword_info_history"].items():
+                if info.get("time_update"):
+                    recorded[(record["keyword"], month)] = dfs._time(info["time_update"])
+    for row in dfs.iter_history_rows(path):
+        record = records[row["keyword"]]
+        when = row["snapshot_time"]
+        if row["intent"] is not None:
+            assert dfs._time(record["search_intent_info"]["last_updated_time"]) <= when, row["keyword"]
+        if row["etv"] is not None:
+            assert dfs._time(record["keyword_info"]["time_update"]) <= when, row["keyword"]
+        month = dfs.volume_month_known_at(record["keyword_info"], when.date())
+        known = recorded.get((row["keyword"], month)) if month else None
+        assert known is None or known <= when, (row["keyword"], when, month, known)
+
+
+@needs_real_samples
+def test_real_keyword_history_rows_older_than_the_record_carry_no_kd():
+    path = REAL_SAMPLES / "keywords" / "US_en.json.gz"
+    with gzip.open(path, "rt", encoding="utf-8") as handle:
+        newest = {r["keyword"]: max(r["keyword_info_history"]) for r in map(json.loads, handle)}
+    for row in dfs.iter_keyword_rows(path, "dfs_keywords_history"):
+        if row["snapshot_month"].replace("-", "") < newest[row["keyword"]]:
+            assert row["kd"] is None, row["keyword"]

@@ -30,8 +30,11 @@ from __future__ import annotations
 
 import json
 import math
+import os
+import re
 import shutil
 import time as time_module
+import zipfile
 from collections import Counter
 from dataclasses import dataclass, field, replace
 from datetime import date, datetime, time, timedelta, timezone
@@ -233,10 +236,40 @@ def _at(day: date, hour: int, minute: int = 0) -> datetime:
 # ----------------------------------------------------------------------------------------------
 
 
-def open_scoreboard(paths: ForecastPaths, *, clock: Clock | None = None) -> Scoreboard:
-    """The scoreboard at paths.scoreboard_url (RANKSIM_SCOREBOARD_URL wins), stamped with the checked-out commit."""
+DEFAULT_EXPORT_DIR = "evals/scoreboard"
+EXPORT_DIR_ENV = "RANKSIM_EXPORT_DIR"
+_DEFAULT = object()  # "use the default export folder"
+
+
+def default_export_dir() -> Path:
+    """The committed export folder: RANKSIM_EXPORT_DIR when set, else evals/scoreboard (relative to the working folder)."""
+    return Path(os.environ.get(EXPORT_DIR_ENV) or DEFAULT_EXPORT_DIR)
+
+
+def heads_anchor_for(export_dir: str | Path | None | object = _DEFAULT) -> Path | None:
+    """The export folder to anchor the scoreboard to, or None when there is no committed export there yet.
+
+    An export folder counts only when it holds HEADS.json. `export_dir=None` means: no anchor.
+    """
+    if export_dir is None:
+        return None
+    folder = default_export_dir() if export_dir is _DEFAULT else Path(export_dir)  # type: ignore[arg-type]
+    return folder if (folder / "HEADS.json").exists() else None
+
+
+def open_scoreboard(
+    paths: ForecastPaths, *, clock: Clock | None = None, export_dir: str | Path | None | object = _DEFAULT
+) -> Scoreboard:
+    """The scoreboard at paths.scoreboard_url (RANKSIM_SCOREBOARD_URL wins), stamped with the checked-out commit.
+
+    When the committed export folder (`export_dir`, default `default_export_dir()`) holds HEADS.json,
+    it is passed as the scoreboard's heads_anchor: every verify, report and export then checks that the
+    committed head hashes are still a prefix of the database, which catches rows cut off its end.
+    Pass export_dir=None to open without an anchor.
+    """
     chosen = clock or SystemClock()
-    return Scoreboard(paths.scoreboard_url, clock=chosen.now, code_commit=detect_code_commit())
+    return Scoreboard(paths.scoreboard_url, clock=chosen.now, code_commit=detect_code_commit(),
+                      heads_anchor=heads_anchor_for(export_dir))
 
 
 def open_ledger(paths: ForecastPaths, *, clock: Clock | None = None) -> SpendLedger:
@@ -448,18 +481,33 @@ def plan_reading_cost(
     pulls: int = DEFAULT_PULLS,
     depth: int = TOP_DEPTH,
     item: str | None = None,
+    specs: Sequence[PullSpec] | None = None,
 ) -> CostPlan:
-    """The cost of one reading run: `searches` searches read `pulls` times at `depth`."""
+    """The cost of one reading run: `searches` searches read `pulls` times at `depth`.
+
+    With `specs` (the PullSpecs that will be sent; their count must equal `searches`) the DataForSEO
+    figure is the client's own estimate per spec: each spec's depth, and five times the pages for a
+    search holding a Google operator (site:, intitle: ...). That is the amount --execute checks and
+    reserves. Without specs the operator charge cannot be known and is not added.
+    """
     if searches < 0 or pulls < 1 or depth < 1:
         raise ValueError("searches must be 0 or more, pulls and depth at least 1")
+    if specs is not None and len(specs) != searches:
+        raise ValueError(f"{len(specs)} specs were given for {searches} searches")
     item = item or f"a reading of {searches} searches, {pulls} pulls each, depth {depth}"
     if provider == "dataforseo":
         tasks = searches * pulls
         posts = pulls * math.ceil(searches / DATAFORSEO_POSTS_PER_CALL) if searches else 0
-        usd = serp_cost(depth, mode=DATAFORSEO_MODE, resolve_poisoned_results=True, pulls=tasks)
+        if specs is not None:
+            usd = sum((_dataforseo_task_cost(spec) * pulls for spec in specs), Decimal(0))
+        else:
+            usd = serp_cost(depth, mode=DATAFORSEO_MODE, resolve_poisoned_results=True, pulls=tasks)
+        operators = sum(1 for spec in specs or () if _dataforseo_task_cost(spec) != serp_cost(
+            spec.depth, mode=DATAFORSEO_MODE, resolve_poisoned_results=True))
         notes = (
             f"Standard queue, normal priority, the repair option on. {posts} task_post calls carry the {tasks} tasks.",
             "The provider's own cost field settles each call in the ledger.",
+            *((f"{operators} searches hold a Google operator, so they are charged five times the pages.",) if operators else ()),
         )
         return _plan(ledger, provider=provider, item=item, kind=KIND_SERP_STANDARD_NORMAL, calls=tasks,
                      call_unit="SERP tasks", usd=usd, notes=notes)
@@ -467,7 +515,10 @@ def plan_reading_cost(
         from .serper import CREDITS_PER_PAGE_ESTIMATE, serper_pages
 
         pages = serper_pages(depth)
-        requests = searches * pulls * pages
+        if specs is not None:
+            requests = pulls * sum(serper_pages(spec.depth) for spec in specs)
+        else:
+            requests = searches * pulls * pages
         usd = serper_cost(requests * CREDITS_PER_PAGE_ESTIMATE)
         notes = (f"{pages} pages of 10 per pull. Serper has no repair option for poisoned pages.",)
         return _plan(ledger, provider=provider, item=item, kind=KIND_SERPER_SEARCH, calls=requests,
@@ -478,29 +529,65 @@ def plan_reading_cost(
     raise ValueError(f"Unknown provider {provider!r}. Choose one of {', '.join(PROVIDERS)}.")
 
 
-def plan_round_cost(ledger: SpendLedger | None, provider: str, searches: int, *, depth: int = TOP_DEPTH) -> CostPlan:
+def _dataforseo_task_cost(spec: PullSpec) -> Decimal:
+    """One DataForSEO task for `spec`, as DataForSeoClient estimates, checks and reserves it (x5 for an operator)."""
+    return serp_cost(spec.depth, mode=DATAFORSEO_MODE, resolve_poisoned_results=True, keyword=spec.search)
+
+
+def plan_round_cost(
+    ledger: SpendLedger | None,
+    provider: str,
+    searches: int,
+    *,
+    depth: int = TOP_DEPTH,
+    specs: Sequence[PullSpec] | None = None,
+) -> CostPlan:
     """The cost of ONE round of pulls (round mode): one pull of each of `searches` searches at `depth`."""
-    return plan_reading_cost(ledger, provider, searches, pulls=1, depth=depth,
+    return plan_reading_cost(ledger, provider, searches, pulls=1, depth=depth, specs=specs,
                              item=f"one round of {searches} searches, one pull each, depth {depth}")
 
 
-def plan_sample_serp(ledger: SpendLedger | None, provider: str, searches: int, *, depth: int = TOP_DEPTH) -> CostPlan:
-    """The $1 SERP sample: as many single pulls as fit under the cap, the way the client picks them."""
+def plan_sample_serp(
+    ledger: SpendLedger | None,
+    provider: str,
+    searches: int,
+    *,
+    depth: int = TOP_DEPTH,
+    specs: Sequence[PullSpec] | None = None,
+) -> CostPlan:
+    """The $1 SERP sample: as many single pulls as fit under the cap, the way the client picks them.
+
+    With `specs`, the pulls are taken in order and each costs what the client estimates for it (five
+    times the pages for a search holding a Google operator), stopping at the first that does not fit,
+    exactly as DataForSeoClient.sample_serp does.
+    """
     if provider == "dataforseo":
         each = serp_cost(depth, mode=DATAFORSEO_MODE, resolve_poisoned_results=True)
+        costs = [_dataforseo_task_cost(spec) for spec in specs] if specs is not None else None
         kind = KIND_SERP_STANDARD_NORMAL
         unit = "SERP tasks"
     elif provider == "serper":
         from .serper import CREDITS_PER_PAGE_ESTIMATE, serper_pages
 
         each = serper_cost(serper_pages(depth) * CREDITS_PER_PAGE_ESTIMATE)
+        costs = [serper_cost(serper_pages(spec.depth) * CREDITS_PER_PAGE_ESTIMATE) for spec in specs] if specs is not None else None
         kind = KIND_SERPER_SEARCH
         unit = "Serper pulls"
     else:
         raise ValueError("The SERP sample runs on dataforseo or serper.")
-    fit = _fit_under_cap(searches, each)
+    if costs is not None:
+        searches = len(costs)
+        fit, usd = 0, Decimal(0)
+        for cost in costs:
+            if usd + cost > SAMPLE_MAX_USD:
+                break
+            usd += cost
+            fit += 1
+    else:
+        fit = _fit_under_cap(searches, each)
+        usd = each * fit
     return _plan(ledger, provider=provider, item=f"the SERP sample ({fit} pulls at depth {depth})", kind=kind,
-                 calls=fit, call_unit=unit, usd=each * fit, sample=True,
+                 calls=fit, call_unit=unit, usd=usd, sample=True,
                  notes=(f"Searches beyond the first {fit} do not fit under the {usd_text(SAMPLE_MAX_USD)} cap.",) if fit < searches else ())
 
 
@@ -611,13 +698,63 @@ def read_search_file(path: str | Path) -> list[str]:
     return [line.strip() for line in lines if line.strip() and not line.strip().startswith("#")]
 
 
-def register_manifest(scoreboard: Scoreboard, manifest: SeedManifest, *, source: str = "seed") -> RegisterResult:
+FORM_FREEZE_PREFIX = "form."
+
+
+def form_brand_terms(scoreboard: Scoreboard, site: str, *, paths: ForecastPaths | None = None) -> tuple[str, ...] | None:
+    """The brand terms of every agency form imported for `site`, joined. None when no form was imported.
+
+    The terms are read from the form's freeze record, or, for a form frozen before the record held
+    them, from the stored copy under `paths` (its sha256 must still match the frozen one).
+    """
+    from .agency_form import brand_terms as form_terms
+
+    name = site_key(site)
+    found = False
+    terms: set[str] = set()
+    for row in scoreboard.freezes():
+        if not str(row["name"]).startswith(f"{FORM_FREEZE_PREFIX}{name}."):
+            continue
+        payload = row["payload"] or {}
+        if payload.get("kind") != "agency_form" or payload.get("site") != name:
+            continue
+        found = True
+        if isinstance(payload.get("brand_terms"), list):
+            terms.update(str(term) for term in payload["brand_terms"])
+            continue
+        if paths is None:
+            raise ScoreboardRefusal(
+                f"The agency form {row['name']} for {name} was frozen without its brand terms, and no data folder was "
+                "given to read the stored copy from."
+            )
+        stored = paths.root / str(payload["stored_path"])
+        if _file_digest(stored) != payload.get("sha256"):
+            raise ScoreboardRefusal(f"The stored copy {stored} of agency form {row['name']} no longer matches its frozen sha256.")
+        terms.update(form_terms(load_form(stored)))
+    return tuple(sorted(terms)) if found else None
+
+
+def register_manifest(
+    scoreboard: Scoreboard,
+    manifest: SeedManifest,
+    *,
+    source: str = "seed",
+    paths: ForecastPaths | None = None,
+    today: date | None = None,
+) -> RegisterResult:
     """Add the manifest's sites and searches to the scoreboard and freeze the manifest hash there.
 
     Sites get their launch date with the manifest hash as its source. Searches get their tercile,
-    difficulty value and target URL. Brand flags are worked out by the scoreboard from each site's
-    name. Running it again with the same manifest adds nothing. A different manifest for a site that
-    is already registered is refused.
+    difficulty value and target URL. Brand flags: a site with an imported agency form gets the form's
+    brand terms (agency_form.brand_terms), so a search naming the brand is flagged and kept out of the
+    headline. A pilot site must have its form imported first (`form import`), because a pilot's brand
+    usually differs from its domain; a seed site without a form falls back to its domain name.
+
+    A site that is not on the scoreboard yet is refused when `today` (default: the scoreboard clock's
+    UTC date) is on or after its launch date, unless the manifest records an after-launch reason
+    (SeedManifest.after_launch_reason, for a backfilled pilot): a list picked after launch can be
+    chosen from early rankings. Running it again with the same manifest adds nothing. A different
+    manifest for a site that is already registered is refused.
     """
     check = manifest.validate()
     if not check.ok:
@@ -627,10 +764,40 @@ def register_manifest(scoreboard: Scoreboard, manifest: SeedManifest, *, source:
     existing_keys = _registered_search_keys(scoreboard)
     sites_added = sites_already = searches_added = searches_already = 0
     known_sites = _registered_sites(scoreboard)
-    for site in sorted(manifest.sites, key=lambda item: site_key(item.domain)):
+    day = today if today is not None else scoreboard._now().date()
+    reason = getattr(manifest, "after_launch_reason", None)
+    terms_by_site: dict[str, tuple[str, ...]] = {}
+    for site in manifest.sites:
         name = site_key(site.domain)
         if site.launch_date is None:
             raise ScoreboardRefusal(f"{site.domain} has no launch date.")
+        if name not in known_sites and day >= site.launch_date and not reason:
+            raise ScoreboardRefusal(
+                f"{name} launched on {site.launch_date.isoformat()} and today is {day.isoformat()}. Its searches must be "
+                "frozen and registered before launch, or they could be chosen from early rankings. For a backfilled pilot, "
+                "freeze the manifest with an after-launch reason."
+            )
+        terms = form_brand_terms(scoreboard, name, paths=paths)
+        if terms is None and source == "pilot":
+            raise ScoreboardRefusal(
+                f"No agency form is imported for the pilot {name}. Its brand names decide which searches are brand "
+                "searches, and those are kept out of the headline. Run: python -m aeo.ranksim forecast form import "
+                "--file <the filled form>, then register again."
+            )
+        terms_by_site[name] = terms or ()
+        if name in known_sites:
+            stored_terms = tuple(sorted(_registered_brand_terms(scoreboard, name)))
+            wanted = tuple(sorted({str(term).strip().lower() for term in terms_by_site[name] if str(term).strip()}))
+            if not _same_brand_terms(name, stored_terms, wanted):
+                raise ScoreboardRefusal(
+                    f"{name} is already on the scoreboard with the brand terms {list(stored_terms)}, but its imported "
+                    f"agency forms give {list(wanted)}. A registered site is never changed, so its brand flags cannot be "
+                    "repaired here. Tell the engineer."
+                )
+            terms_by_site[name] = stored_terms  # the same flags; the stored row is never rewritten
+    for site in sorted(manifest.sites, key=lambda item: site_key(item.domain)):
+        name = site_key(site.domain)
+        assert site.launch_date is not None
         scoreboard.add_site(
             name,
             source=source,
@@ -638,6 +805,7 @@ def register_manifest(scoreboard: Scoreboard, manifest: SeedManifest, *, source:
             launch_date_source=f"frozen seed manifest {digest}",
             built_by=site.built_by,
             niche=site.niche,
+            brand_terms=terms_by_site[name],
         )
         if name in known_sites:
             sites_already += 1
@@ -668,6 +836,22 @@ def register_manifest(scoreboard: Scoreboard, manifest: SeedManifest, *, source:
 def _registered_sites(scoreboard: Scoreboard) -> set[str]:
     with Session(scoreboard.engine) as session:
         return set(session.scalars(select(SiteRow.site)).all())
+
+
+def _same_brand_terms(site: str, stored: Sequence[str], wanted: Sequence[str]) -> bool:
+    """True when two lists of brand terms flag the same searches. No terms means the domain name (the scoreboard's fallback)."""
+
+    def compact(terms: Sequence[str]) -> set[str]:
+        return {"".join(ch for ch in str(term).casefold() if ch.isalnum()) for term in terms} - {""}
+
+    label = [site.split(".")[0]]
+    return compact(stored or label) == compact(wanted or label)
+
+
+def _registered_brand_terms(scoreboard: Scoreboard, site: str) -> list[str]:
+    with Session(scoreboard.engine) as session:
+        row = session.get(SiteRow, site)
+        return list(row.brand_terms or []) if row is not None else []
 
 
 def _registered_search_keys(scoreboard: Scoreboard) -> set[tuple[str, str]]:
@@ -806,6 +990,11 @@ def take_readings(
     The money spent is the ledger's spent total after the run minus before it (settled charges
     plus open reservations, as budget.py counts them). It is None when no ledger is given.
     """
+    if gap_seconds < MIN_PULL_GAP_SECONDS:
+        raise ValueError(
+            f"The pulls of one reading must be at least {MIN_PULL_GAP_SECONDS} seconds apart. Got {gap_seconds:g}. "
+            "Pulls taken seconds apart share one spell of altered pages."
+        )
     chosen = clock or SystemClock()
     before = ledger.spent_total if ledger is not None else None
     started_at = chosen.now()
@@ -991,12 +1180,44 @@ class AssembleSummary:
     skipped: tuple[dict[str, str], ...]
     labels: dict[str, int]
     reader_version: str
+    pulls_too_close: int = 0  # ok pulls left out because they came less than MIN_PULL_GAP_SECONDS after a kept pull
+    already_assembled: tuple[dict[str, str], ...] = ()  # searches that already had a reading of this date
+
+    @property
+    def newer_pulls_left_out(self) -> int:
+        """Searches already assembled for this date whose stored pulls have changed since: those pulls were not used."""
+        return sum(1 for item in self.already_assembled if item.get("newer_pulls") == "yes")
 
     def to_dict(self) -> dict[str, Any]:
         out = dict(self.__dict__)
         out["reading_ids"] = list(self.reading_ids)
         out["skipped"] = [dict(item) for item in self.skipped]
+        out["already_assembled"] = [dict(item) for item in self.already_assembled]
+        out["newer_pulls_left_out"] = self.newer_pulls_left_out
         return out
+
+
+def _spaced_pulls(pulls: Sequence[Pull]) -> tuple[list[Pull], int]:
+    """The pulls of one request with the ok pulls at least MIN_PULL_GAP_SECONDS apart, and how many were left out.
+
+    Ok pulls are taken in order of their requested time. One that was requested less than
+    MIN_PULL_GAP_SECONDS after the last kept ok pull shares its spell of altered pages, so it counts
+    as the same pull and is left out. Failed pulls are kept: the reader drops them anyway.
+    """
+    ordered = sorted(pulls, key=lambda p: (parse_utc(p.requested_at), p.pull_id))
+    kept: list[Pull] = []
+    last: datetime | None = None
+    left_out = 0
+    floor = timedelta(seconds=MIN_PULL_GAP_SECONDS)
+    for pull in ordered:
+        if pull.ok:
+            moment = parse_utc(pull.requested_at)
+            if last is not None and moment - last < floor:
+                left_out += 1
+                continue
+            last = moment
+        kept.append(pull)
+    return kept, left_out
 
 
 def assemble(
@@ -1011,10 +1232,16 @@ def assemble(
     """Build and store one clean reading per search for the UTC date `day` from its stored pulls.
 
     The pulls used are those completed on that UTC day (with `specs`, only pulls of exactly those
-    requests). Each reading gets the latest earlier non-degraded reading of its search, location
-    and device as history (at most HISTORY_MAX_AGE_DAYS old, same label) and the round suspects
-    of every round its pulls came from. A reading already stored with the same id is left as it
-    is. Free: nothing is sent and nothing is spent.
+    requests). Ok pulls of one request requested less than MIN_PULL_GAP_SECONDS apart count as one
+    pull (`pulls_too_close`). Each reading gets the latest earlier non-degraded reading of its
+    search, location and device as history (at most HISTORY_MAX_AGE_DAYS old, same label) and the
+    round suspects of every round its pulls came from.
+
+    One reading per search, location, device and UTC date: when one is already stored for that date
+    (from an earlier assemble or read), the search is left as it is and listed in
+    `already_assembled`, with newer_pulls "yes" when its stored pulls have changed since (those
+    pulls are then not used). Running it twice on the same pulls changes nothing. Free: nothing is
+    sent and nothing is spent.
     """
     start = datetime.combine(day, time(0, 0), tzinfo=timezone.utc)
     end = start + timedelta(days=1)
@@ -1029,9 +1256,28 @@ def assemble(
         groups.setdefault((search_key(pull.spec.search), int(pull.spec.location_code), pull.spec.device), []).append(pull)
     built: list[CleanReading] = []
     skipped: list[dict[str, str]] = []
+    already_assembled: list[dict[str, str]] = []
     history_used = 0
+    too_close = 0
     for key in sorted(groups):
-        mine = groups[key]
+        mine, left_out = _spaced_pulls(groups[key])
+        spec0 = mine[0].spec
+        stored_today = [
+            r for r in scoreboard.readings_for(spec0.search, spec0.location_code, spec0.device, on_or_before=day,
+                                               not_before=start, non_degraded_only=False)
+        ]
+        if stored_today:
+            used = {pid for r in stored_today for pid in r.pull_ids} | {
+                str(pid) for r in stored_today for pid, _reason in r.dropped}
+            newer = any(pull.pull_id not in used for pull in mine)
+            already_assembled.append({
+                "search": spec0.search,
+                "reading_id": stored_today[0].reading_id,
+                "taken_at": stored_today[0].taken_at,
+                "newer_pulls": "yes" if newer else "no",
+            })
+            continue
+        too_close += left_out
         first = min(parse_utc(pull.completed_at) for pull in mine)
         label = reading_label(mine)
         past: list[CleanReading] = []
@@ -1048,7 +1294,7 @@ def assemble(
         history_used += 1 if past else 0
         built.extend(made)
     new: list[CleanReading] = []
-    already = 0
+    already = len(already_assembled)
     for reading in built:
         try:
             scoreboard.reading(reading.reading_id)
@@ -1072,6 +1318,8 @@ def assemble(
         skipped=tuple(skipped),
         labels=dict(sorted(Counter(reading.label for reading in built).items())),
         reader_version=reader_version_name(version, overlap_rule=overlap_rule),
+        pulls_too_close=too_close,
+        already_assembled=tuple(already_assembled),
     )
 
 
@@ -1211,8 +1459,16 @@ def marker1(
     a_date: date | None = None,
     b_date: date | None = None,
     reader_version: int = DEFAULT_RULE_VERSION,
+    frozen_list: bool = True,
 ) -> dict[str, Any]:
     """The marker 1 report and its evaluation, from readings already in the scoreboard.
+
+    Every search of `searches` counts in the denominator: a search with no usable pair (degraded
+    readings, no reading B 20 to 28 hours after A) is not dropped from the marker. When fewer than
+    noise.MARKER1_MIN_MEASURED_SHARE of the searches give a pair, the headline is withheld and the
+    marker is not measurable. Marker 1 is judged only on the frozen sample: with
+    frozen_list=False (a list that is not the frozen marker1.sample) the verdict is NOT A MARKER
+    RESULT and passed is None; the computed value is kept under list_check_passed.
 
     When every pull of every paired reading is stored, the report rebuilds the readings from their
     pulls with reader `reader_version` (so it also carries the raw single-pull baseline and the
@@ -1247,19 +1503,30 @@ def marker1(
             found = [item for item in found if item.search == spec.search]
             if found:
                 history[spec.search] = found[0]
-        report = marker1_report_from_pulls(pulls, version=reader_version, history=history)
+        report = marker1_report_from_pulls(pulls, version=reader_version, history=history,
+                                           searches_requested=len(searches))
     else:
         stored = sorted({str(r.reader_version or "unknown") for pair in readings for r in pair})
-        report = agreement_report(readings, reader={**settings, "history_used": None, "stored_reader_versions": stored})
+        report = agreement_report(readings, reader={**settings, "history_used": None, "stored_reader_versions": stored},
+                                  searches_requested=len(searches))
     notes = [] if from_pulls else ["The report uses the stored clean readings. Their pulls are not all stored, so there is no raw pull baseline."]
     if synthetic:
         report["label"] = SYNTHETIC
     report["searches_requested"] = len(searches)
     report["searches_unpaired"] = unpaired
     report["built_from_pulls"] = from_pulls
+    report["frozen_list"] = bool(frozen_list)
     evaluation = markers_module.evaluate_marker(1, report)
+    if not frozen_list:
+        evaluation["list_check_passed"] = evaluation["passed"]
+        evaluation["passed"] = None
+        evaluation["not_a_marker_result"] = True
+        evaluation["notes"] = list(evaluation["notes"]) + [
+            "NOT A MARKER RESULT: the searches are not the frozen marker 1 sample, so this cannot pass marker 1."
+        ]
     if unpaired:
-        notes.append(f"{len(unpaired)} of {len(searches)} searches have no pair of readings 20 to 28 hours apart.")
+        notes.append(f"{len(unpaired)} of {len(searches)} searches have no pair of readings 20 to 28 hours apart. "
+                     "They count against the marker, not out of it.")
     report["pipeline_notes"] = notes
     return {"report": report, "evaluation": evaluation, "pairs": [list(item) for item in pair_ids]}
 
@@ -1269,10 +1536,17 @@ def marker1_lines(result: Mapping[str, Any]) -> list[str]:
     report = result["report"]
     label = report.get("label", REAL)
     head = report.get("headline") or {}
-    lines = [
+    lines = []
+    if result["evaluation"].get("not_a_marker_result"):
+        lines.append("NOT A MARKER RESULT: these searches are not the frozen marker 1 sample. Diagnostics only.")
+    lines += [
         f"Marker 1, the clean reader. Pairs used: {report.get('pairs_used')} of {report.get('searches_requested')} searches ({label}).",
         f"Headline agreement: {_pct(head.get('rate'))} of {head.get('count')} top 10 units ({label}).",
     ]
+    if head.get("not_measurable"):
+        lines.append(f"{head['not_measurable']} ({label}).")
+        lines.append(f"On the measured searches alone it would be {_pct(head.get('rate_on_measured_searches_only'))}. "
+                     f"That is not the headline ({label}).")
     interval = head.get("cluster_interval") or [None, None]
     if interval[0] is not None:
         lines.append(f"Interval over searches: {_pct(interval[0])} to {_pct(interval[1])} ({label}).")
@@ -1298,14 +1572,116 @@ def grade(scoreboard: Scoreboard, today: date) -> dict[str, Any]:
     return grade_job.run(scoreboard, today)
 
 
+TRAINING_SPLIT = "train"
+TRAINING_SOURCE = "backtest"  # training cells come from the backtest's training split
+SITE_STRENGTH_MISSING = (
+    "The site strength only baseline is missing: strength.py (part 3, the site-strength map) is not finished, "
+    "so it is not computed yet. It will be wired in when strength.py is done. Until then markers 3 to 5 cannot pass."
+)
+
+
+def band_prior_training(
+    scoreboard: Scoreboard, *, source: str, stage: str, as_of: date, model_version: str | None = None
+) -> tuple[list[Any], str]:
+    """Graded cells of the TRAINING split for the band prior baseline, and a plain sentence saying where they came from.
+
+    Training cells are graded forecasts of the same stage whose notes carry split "train", from the
+    backtest (from synthetic forecasts for a synthetic report, so sources are never mixed with
+    synthetic data). Every cell on a site that is graded in the report (the held-out sites) is left
+    out, so the band prior never sees a held-out site. The list is empty when none remain; the
+    sentence then says why.
+    """
+    held_out = {record.cell.site for record in scoreboard.graded_records(source, stage, as_of, "original",
+                                                                           model_version=model_version)}
+    training_source = "synthetic" if source == "synthetic" else TRAINING_SOURCE
+    with Session(scoreboard.engine) as session:
+        versions = sorted(set(session.scalars(
+            select(ForecastRow.model_version).where(ForecastRow.source == training_source, ForecastRow.stage == stage)
+        ).all()))
+    cells: list[Any] = []
+    dropped_sites: set[str] = set()
+    for version in versions:
+        for record in scoreboard.graded_records(training_source, stage, as_of, "original", model_version=version):
+            if record.split != TRAINING_SPLIT:
+                continue
+            if record.cell.site in held_out:
+                dropped_sites.add(record.cell.site)
+                continue
+            cells.append(record.cell)
+    if cells:
+        sites = len({cell.site for cell in cells})
+        why = (f"The band prior by difficulty is fitted on {len(cells)} graded {training_source} {stage} cells of the "
+               f"training split from {sites} sites, none of them graded in this report.")
+    elif dropped_sites:
+        why = (f"The band prior by difficulty is missing: every graded training cell of {training_source} {stage} is on a "
+               f"site graded in this report ({len(dropped_sites)} sites), and the prior is fitted on other sites only.")
+    else:
+        why = (f"The band prior by difficulty is missing: there is no graded {training_source} {stage} forecast of the "
+               f"training split as of {as_of.isoformat()} to fit it on.")
+    return cells, why
+
+
 def stage_marker(
     scoreboard: Scoreboard, *, source: str, stage: str, as_of: date, model_version: str | None = None
 ) -> dict[str, Any]:
-    """The stage report for one source and stage, and the marker judged on it when the stage has one (3, 4 or 5)."""
-    report = report_module.stage_report(scoreboard, source=source, stage=stage, as_of=as_of, model_version=model_version)
+    """The stage report for one source and stage, and the marker judged on it when the stage has one (3, 4 or 5).
+
+    The band prior baseline is fitted on graded training cells (see `band_prior_training`) when any
+    exist. The site strength only baseline is not computed yet. `baseline_notes` says in plain
+    sentences which required baseline is missing and why; the report and the marker never pass
+    while one is missing.
+    """
+    scoreboard.require_verified()
+    training, band_note = band_prior_training(scoreboard, source=source, stage=stage, as_of=as_of, model_version=model_version)
+    report = report_module.stage_report(scoreboard, source=source, stage=stage, as_of=as_of, model_version=model_version,
+                                        band_prior_training=training or None)
+    notes = [band_note]
+    if "site_strength" in (report.get("baselines_missing") or []):
+        notes.append(SITE_STRENGTH_MISSING)
+    report["baseline_notes"] = notes
+    report["notes"] = list(report.get("notes") or []) + notes
     number = STAGE_MARKERS.get(stage)
     evaluation = markers_module.evaluate_marker(number, report) if number is not None else None
-    return {"report": report, "evaluation": evaluation, "marker": number}
+    if evaluation is not None:
+        evaluation["notes"] = list(evaluation["notes"]) + notes
+    return {"report": report, "evaluation": evaluation, "marker": number, "baseline_notes": notes}
+
+
+# ----------------------------------------------------------------------------------------------
+# Stage calendar: which stage forecasts are due soon and which were missed
+# ----------------------------------------------------------------------------------------------
+
+STAGE_DUE_WINDOW_DAYS = 3
+
+
+def stage_calendar(scoreboard: Scoreboard, today: date, *, window_days: int = STAGE_DUE_WINDOW_DAYS) -> dict[str, list[dict[str, Any]]]:
+    """Seed and pilot stages due from `today` to `today + window_days`, and stages that were missed.
+
+    A stage's forecast is dated on or before its stage day (launch + config.STAGE_DAYS), and the
+    scoreboard refuses one dated later or written more than a day after its date. So the stage job
+    must run on or before the stage day. A stage whose day is before `today` with no forecast on the
+    scoreboard is MISSED: it is reported, and it is never backfilled (a later forecast would be a
+    shorter lead, never that stage).
+    """
+    with Session(scoreboard.engine) as session:
+        sites = session.scalars(select(SiteRow).where(SiteRow.source.in_(("seed", "pilot"))).order_by(SiteRow.site)).all()
+        made = {(row.site, row.stage) for row in session.scalars(select(ForecastRow)).all()}
+        site_rows = [(row.site, row.source, date.fromisoformat(row.launch_date)) for row in sites]
+    due: list[dict[str, Any]] = []
+    missed: list[dict[str, Any]] = []
+    for site, source, launch in site_rows:
+        for stage, offset in STAGE_DAYS.items():
+            day = launch + timedelta(days=offset)
+            entry = {"site": site, "source": source, "stage": stage, "stage_date": day.isoformat(),
+                     "recorded": (site, stage) in made}
+            if entry["recorded"]:
+                continue
+            if day < today:
+                missed.append(entry)
+            elif day <= today + timedelta(days=window_days):
+                due.append(entry)
+    key = lambda item: (item["stage_date"], item["site"], item["stage"])  # noqa: E731
+    return {"due": sorted(due, key=key), "missed": sorted(missed, key=key)}
 
 
 # ----------------------------------------------------------------------------------------------
@@ -1557,7 +1933,47 @@ def _refuse_client_data(site: str, path: Path) -> str:
     parts = {part.casefold() for part in path.resolve().parts}
     if "smartcrew" in parts:
         raise ValueError("Files under smartcrew/ are SmartCrew's private data and are never imported.")
+    names = [path.name]
+    if path.is_dir():
+        names.extend(child.name for child in path.rglob("*"))
+    elif path.suffix.casefold() == ".zip":
+        try:
+            with zipfile.ZipFile(path) as archive:
+                names.extend(archive.namelist())
+        except zipfile.BadZipFile:
+            pass  # the parser reports a broken zip
+    for item in names:
+        if _names_excluded(item):
+            raise ValueError(
+                f"{item!r} names SmartCrew ({', '.join(sorted(EXCLUDED_SITES))}). SmartCrew's Search Console exports and "
+                "files are private data and are never imported, whatever --site says."
+            )
+    prop = _export_property(path.name)
+    if prop is not None and prop != name:
+        raise ValueError(
+            f"{path.name} is a Search Console export of the property {prop}, not of {name}. Nothing was imported. "
+            "Check --site and the file."
+        )
     return name
+
+
+def _names_excluded(text: str | None) -> bool:
+    """True when a file name, query or page names SmartCrew or an excluded site (any case, any sc-domain_ form)."""
+    if not text:
+        return False
+    folded = str(text).casefold()
+    if "smartcrew" in folded:
+        return True
+    return any(site in folded or site.split(".")[0] in folded for site in EXCLUDED_SITES)
+
+
+def _export_property(file_name: str) -> str | None:
+    """The property a Search Console UI export is named after ("example.com-Performance-on-Search-..."), or None."""
+    match = re.match(r"^(?:sc-domain[_:])?(?:https?[_:]+(?:www\.)?)?([a-z0-9.-]+\.[a-z]{2,})[_/]?-performance-on-search",
+                     file_name.casefold())
+    if match is None:
+        return None
+    return site_key(match.group(1)) or None
 
 
 def _file_digest(path: Path) -> str:
@@ -1634,6 +2050,13 @@ def import_gsc(
         rows, notes = list(table.rows), list(table.notes)
     else:
         rows = list(gsc.parse_index_status(source))
+    for row in rows:
+        for cell in (getattr(row, "query", None), getattr(row, "page", None)):
+            if _names_excluded(cell):
+                raise ValueError(
+                    f"The export holds a row naming SmartCrew ({cell!r}). It looks like SmartCrew's Search Console data, "
+                    "which is never imported. Nothing was imported."
+                )
     dates = sorted(day.isoformat() for day in (_row_day(row) for row in rows) if day is not None)
     digest = _file_digest(source)
     target = _store_copy(paths, "gsc", name, source, digest)
@@ -1660,18 +2083,32 @@ def import_form(paths: ForecastPaths, scoreboard: Scoreboard, *, file: str | Pat
     source = Path(file)
     if not source.exists():
         raise FileNotFoundError(f"{source} does not exist")
+    from .agency_form import brand_terms as form_terms
+
     form = load_form(source)
     name = _refuse_client_data(form.site, source)
+    terms = list(form_terms(form))
+    notes: list[str] = []
+    if name in _registered_sites(scoreboard):
+        stored = sorted(_registered_brand_terms(scoreboard, name))
+        if not _same_brand_terms(name, stored, terms):
+            raise ScoreboardRefusal(
+                f"{name} is already on the scoreboard with the brand terms {stored}, and this form gives {terms}. "
+                "A registered site is never changed. Import the form before seeds register. Nothing was imported."
+            )
     digest = _file_digest(source)
     target = _store_copy(paths, "forms", name, source, digest)
-    freeze_name = f"form.{name}.{digest[:16]}"
+    freeze_name = f"{FORM_FREEZE_PREFIX}{name}.{digest[:16]}"
     relative = str(target.relative_to(paths.root)).replace("\\", "/")
     scoreboard.freeze(
         freeze_name,
         {"kind": "agency_form", "site": name, "sha256": digest, "stored_path": relative,
-         "filled_on": form.filled_on.isoformat(), "filled_by": form.filled_by, "original_name": source.name},
+         "filled_on": form.filled_on.isoformat(), "filled_by": form.filled_by, "original_name": source.name,
+         "brand_terms": terms},
     )
-    return ImportRecord("agency_form", name, digest, relative, freeze_name, 1, form.filled_on.isoformat(), form.filled_on.isoformat())
+    notes.append("Brand terms for the brand search flag: " + (", ".join(terms) or "none") + ".")
+    return ImportRecord("agency_form", name, digest, relative, freeze_name, 1, form.filled_on.isoformat(),
+                        form.filled_on.isoformat(), tuple(notes))
 
 
 # ----------------------------------------------------------------------------------------------
@@ -1839,6 +2276,7 @@ def demo(
         location_code=world.location_code,
         difficulty_metric=DEMO_DIFFICULTY_METRIC,
         created_at=utc_iso(clock.now()),
+        allow_shared=True,  # the synthetic world gives sites of one niche overlapping targets, and says so
     )
     manifest_path = folder / "seed_manifest.json"
     digest = manifest.freeze(manifest_path)

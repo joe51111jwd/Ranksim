@@ -139,6 +139,25 @@ def _compact(value: str) -> str:
     return re.sub(r"[^0-9a-z]", "", str(value).lower())
 
 
+BRAND_SHORT_LABEL = 3  # a derived site label shorter than this must match a whole word of the search
+
+
+def derived_label_is_brand(site: str, search: str) -> bool:
+    """The brand rule when no brand terms are registered: the site label (site.split('.')[0]) inside the search.
+
+    The compacted label must sit inside the compacted search. A label shorter than
+    BRAND_SHORT_LABEL characters must be a whole word of the search, so x.com is not a
+    brand search on "xbox" and hp.com is one on "hp laptop". backtest.is_brand_search
+    uses the same rule (IMPLEMENTATION_SPEC section 6).
+    """
+    label = _compact(str(site).strip().lower().split(".")[0])
+    if not label:
+        return False
+    if len(label) >= BRAND_SHORT_LABEL:
+        return label in _compact(search)
+    return label in re.split(r"[^0-9a-z]+", str(search).lower())
+
+
 def _iso_date(value: date | datetime | str) -> str:
     return as_date(value).isoformat()
 
@@ -777,8 +796,7 @@ class Scoreboard:
             registered = [term for term in (site_row.brand_terms or []) if _compact(term)]
             term_match = next((term for term in registered if _compact(term) in compact), None)
             if is_brand is None:
-                terms = registered or [site_row.site.split(".")[0]]
-                brand = any(_compact(term) and _compact(term) in compact for term in terms)
+                brand = term_match is not None if registered else derived_label_is_brand(site_row.site, key)
             elif not is_brand and term_match is not None:
                 # An explicit False may never clear the flag a registered brand term sets: brand
                 # searches are the easiest hits and are kept out of the headline (spec section 2).

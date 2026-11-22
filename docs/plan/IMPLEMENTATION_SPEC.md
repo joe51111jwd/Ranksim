@@ -177,6 +177,26 @@ Public and paid data land in the same shapes, so a model trained on the free sam
 
 Downloads go under `data/forecast/public/` (ignored by git). Every loader records the URL, the fetch time and the sha256 of what it read in a `SOURCES.json` beside the cache, and is resumable. Nothing that is personal data about individuals is loaded.
 
-## 9. Findings about the plan itself
+## 9. Live forecasting (`forecasting.py`, `forecast train | upload | update | due`)
+
+**One page, never a later one.** A live forecast for a search uses the latest stored clean reading of that search that is not degraded, taken on or before the forecast date and not after the moment the forecast is made. A search with no such reading is skipped and named. It is never called NT50. Features come from that page through the same functions the backtests use. Strength values go through the dated lists, and a value published after the date raises `LeakError`.
+
+**Model bundles.** A bundle is a folder under `data/forecast/models/<name>/` with the placement model, a placement model fitted on site strength only, the updater, the trust model and `bundle.json`. The manifest records the training source, the label (REAL or SYNTHETIC), whether never-ranked cells were in training, the training cutoff, the features and the sha256 of every file. Loading checks every hash. A bundle is never replaced. A bundle whose training cutoff is after the forecast date raises `LeakError`. A bundle trained on SYNTHETIC rows never forecasts a seed or pilot site.
+
+**Appearance gate (OUR READING).** The free panel only holds sites that appeared on a search, so a placement model trained on it answers "where does a site land, given that it appears". Such a bundle is called conditional. It forecasts a real site only through a gate: forecast = P(in top 50 on day 90) times the landing distribution inside the top 50, with the rest on NT50. P is fitted on graded seed and pilot outcomes known on the forecast date (brand searches out, original grades only) once there are at least 100 cells from at least 10 sites. Until then P is the fixed prior 0.16. The prior is arithmetic on published figures, written out step by step in `forecasting.py`: 6.11% of pages reach the top 10 within a year, 40.82% of those arrive in the first month and the rest are assumed to arrive evenly over months 2 to 12, so 51.58% of them are in by day 90 (0.0315), and places 11 to 50 are assumed at most four times as likely as places 1 to 10 (0.0315 x 5 = 0.158, rounded to 0.16). None of these figures is a Ranksim result. Every forecast line and model version says "prior, not fitted". A bundle trained on cells that include never-ranked searches (the paid cohort) needs no gate.
+
+**Stage forecasts under a conditional bundle.** The updater of a conditional bundle learned from sites that appeared. Until a clean reading shows the site inside the top 50 for that search, P(in top 50) of a stage forecast is capped at the gate value. After that the updater's answer is used as it is.
+
+**Site strength only baseline for live forecasts (OUR READING).** The bundle's placement model fitted on strength features only, applied to the same row on the same date through the same gate, stored with each forecast when it is made.
+
+**One forecast per site, search and stage.** The live commands write one forecast per (site, search, stage) across all model versions, so models cannot be shopped. A cell that already has a forecast at that stage is listed and left alone.
+
+**Dates.** A stage forecast is dated on its stage day. It can be written on the stage day or on the one grace day after it (`FORECAST_FROZEN_GAP_DAYS`). After that the stage is reported MISSED and is never backfilled. `--all-due` never records a stage before its day.
+
+**Search difficulty and volume in live forecasts.** A seed manifest's difficulty and volume feed the model only when the manifest names the same difficulty metric the bundle was trained with.
+
+**Search Console signals.** Only frozen exports fetched on or before the forecast date are read. A stored copy whose hash no longer matches its freeze is skipped and counted.
+
+## 10. Findings about the plan itself
 
 The audit of the plan is in `docs/plan/PLAN_AUDIT.md`. The code is built so that each finding is either fixed by a refusal or printed in the reports.

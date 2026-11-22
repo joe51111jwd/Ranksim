@@ -6,8 +6,7 @@ Hand-made frames only. Every outcome here is made up for the test; none is REAL 
 from __future__ import annotations
 
 import json
-import math
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, timedelta
 from pathlib import Path
 
 import numpy as np
@@ -16,7 +15,7 @@ import pytest
 
 from aeo.ranksim.forecast import strength as S
 from aeo.ranksim.forecast.config import NT50
-from aeo.ranksim.forecast.features import MODEL_MEASURES, freeze_prereg, require_prereg, search_group
+from aeo.ranksim.forecast.features import freeze_prereg, require_prereg, search_group
 
 
 def test_within_page_pairs_kinds():

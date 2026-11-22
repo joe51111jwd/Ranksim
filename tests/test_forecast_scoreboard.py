@@ -1349,3 +1349,40 @@ def test_stage_report_fits_the_band_prior_on_training_cells_and_lists_missing_ba
     with pytest.raises(ScoreboardRefusal, match="training data only"):
         stage_report(board, source="seed", stage="d60", as_of=as_of,
                      band_prior_training=[GradedCell("site0.example", "q", NT50, NT50)])
+
+
+def test_a_short_derived_site_label_is_a_brand_search_only_as_a_whole_word(board: Scoreboard):
+    """x.com on "xbox" is not a brand search; hp.com on "hp laptop" is. Same rule as the backtest."""
+    from aeo.ranksim.forecast.scoreboard import derived_label_is_brand
+
+    for site in ("x.com", "hp.com", "roofpros.com"):
+        board.add_site(site, source="seed", launch_date=LAUNCH, launch_date_source="seed manifest", built_by="ranksim")
+    cases = [
+        ("x.com", "xbox series prices", False),
+        ("x.com", "x login", True),
+        ("hp.com", "hp laptop deals", True),
+        ("hp.com", "cheap php hosting", False),
+        ("roofpros.com", "roof pros near me", True),
+        ("roofpros.com", "roof repair cost", False),
+    ]
+    for site, search, expected in cases:
+        assert derived_label_is_brand(site, search) is expected, (site, search)
+        board.add_search(site, search, location_code=LOC)
+    with board._session() as session:  # noqa: SLF001 - the stored flag is what the reports read
+        from aeo.ranksim.forecast.scoreboard import SearchRow
+        from sqlalchemy import select
+
+        stored = {(row.site, row.search): bool(row.is_brand) for row in session.scalars(select(SearchRow))}
+    for site, search, expected in cases:
+        assert stored[(site, search)] is expected, (site, search)
+
+
+def test_the_scoreboard_and_the_backtest_use_one_brand_rule():
+    from aeo.ranksim.forecast import backtest
+    from aeo.ranksim.forecast.scoreboard import BRAND_SHORT_LABEL, derived_label_is_brand
+
+    assert BRAND_SHORT_LABEL == backtest.BRAND_SHORT_LABEL
+    for site in ("x.com", "hp.com", "ab.io", "roofpros.com", "alpha-roofing.com", "q1.net"):
+        for search in ("xbox one", "x login", "hp laptop", "php hosting", "ab workout", "cab ride", "roof pros", "alpha roofing",
+                       "q1 results", "q10 pills", "roofing near me"):
+            assert derived_label_is_brand(site, search) == backtest.is_brand_search(site, search), (site, search)

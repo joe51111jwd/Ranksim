@@ -1281,7 +1281,7 @@ REGISTRARS: tuple[Callable[[Any, argparse.ArgumentParser], None], ...] = (
 # Command groups that live in their own modules. Each module exports REGISTRARS, a tuple of
 # functions with the same signature as the ones above, and imports this module for Context and
 # the shared helpers. They are loaded here, when the parser is built, so the import is one way.
-PLUGIN_MODULES: tuple[str, ...] = ("cli_forecasting", "cli_data")
+PLUGIN_MODULES: tuple[str, ...] = ("cli_forecasting", "cli_data", "cli_paid")
 
 
 def _plugin_registrars() -> tuple[Callable[[Any, argparse.ArgumentParser], None], ...]:

@@ -17,7 +17,7 @@ import pandas as pd
 import pytest
 
 from aeo.ranksim.forecast import features as F
-from aeo.ranksim.forecast.asof import AsOfGuard, Dated, LeakError
+from aeo.ranksim.forecast.asof import Dated, LeakError
 from aeo.ranksim.forecast.config import NT50
 from aeo.ranksim.forecast.sources.strength_lists import Snapshot
 from aeo.ranksim.forecast.types import SYNTHETIC

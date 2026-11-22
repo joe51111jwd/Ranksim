@@ -16,7 +16,11 @@ Rules this module enforces (docs/plan/IMPLEMENTATION_SPEC.md section 5):
 - Each paid kind gets a $1 sample first. Until a sample is recorded for a kind,
   that kind may not spend more than SAMPLE_MAX_USD in total. So a big pull
   (anything above SAMPLE_MAX_USD) is refused until its sample is recorded, and
-  a big pull split into many small calls is refused too.
+  a big pull split into many small calls is refused too. A sample that learned
+  nothing (every call failed or came back empty) is written as "sample_failed":
+  it does not open the gate and the sample may be run again.
+- `check` answers whether a reservation would be refused, without writing, so a
+  client can refuse a whole batch before its first paid call.
 - The ledger is an append-only JSONL file. Each line is hash chained with
   chain.row_hash. A broken chain refuses every new reservation.
 - Money is kept as integer micro-dollars (1 USD = 1,000,000). Totals never

@@ -123,19 +123,29 @@ when absent. The clean position is the median exactly as
 `aeo.ranksim.consensus.median_position` computes it (even count: the mean of
 the two middle values rounded half up). A median above 50 is NT50 and the site
 is not listed. A reading with fewer than MIN_KEPT_PULLS kept pulls is degraded.
+A reading whose request asked for fewer than 50 results is degraded
+(`shallow_depth`): a site it did not see may be at rank 11, so it cannot say
+NT50. The reading is dated by the latest pull the filter judged (every pull
+that passed the structural drops, kept or not), because the dropped clusters
+decide what the reading says.
 
 Round mode: the pulls of one reading may be hours apart. `fetch_round` makes
 one round, `round_suspects` reads the suspects of a round, and
 `assemble_readings` builds one reading per request from the pulls whose
 completed times fall inside one window of `window_hours`. `read_clean` uses
-them inside.
+them inside. Signal (c) judges each pull against the suspects of its own round
+(`suspects_for_pull`), never a join of rounds. A round that a source stopped
+after paying for part of it still hands its pulls back (`RoundFailed.pulls`).
 
 Provenance on every reading: `reader_version` (READER_VERSION, or the name
 with "-filter-off" for the ablation) and, for a degraded reading,
 `degraded_reason`, one line that starts with one of DEGRADED_REASONS. The
-label is set here: a reading holding any pull of a synthetic provider
-(`types.SYNTHETIC_PROVIDERS`) is SYNTHETIC, every other reading is REAL. A
-history reading must carry the same label as the pulls it judges.
+label is set here: a reading holding any pull of a provider that is not real
+(`NOT_REAL_PROVIDERS`: the simulated world of types.SYNTHETIC_PROVIDERS and the
+DataForSEO sandbox, whose answers are dummy data) is SYNTHETIC, every other
+reading is REAL. A history reading must carry the same label as the pulls it
+judges. The reading id covers everything that can change what the reader makes
+of the same pulls (`new_reading_id`).
 """
 
 from __future__ import annotations
@@ -708,9 +718,7 @@ def _round_list(suspects: "RoundSuspects | Iterable[RoundSuspects] | None") -> R
     for item in items:
         if not isinstance(item, RoundSuspects):
             raise TypeError(f"suspects must be RoundSuspects, not {type(item).__name__}")
-    if not items:
-        return None
-    return items[0] if len(items) == 1 else items
+    return items or None
 
 
 def suspects_for_pull(pull: Pull, suspects: "RoundSuspects | Iterable[RoundSuspects] | None") -> RoundSuspects | None:

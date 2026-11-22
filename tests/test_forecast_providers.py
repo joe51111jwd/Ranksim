@@ -892,3 +892,16 @@ def test_serper_pull_with_10_of_50_results_is_marked_partial(tmp_path):
 
     (whole,) = serper_source(tmp_path, full, clock, ledger).fetch([spec("water heater repair", depth=50)])
     assert whole.ok and len(whole.hits) == 50 and whole.partial is False
+
+
+def test_a_resubmission_the_approval_cannot_cover_keeps_the_pulls_already_collected(tmp_path):
+    """$0.0072 approved: the first post of two tasks ($0.0072) fits, the resubmission of the failed one does not.
+    The ok pull and the failed pull both come back (nothing thrown away), and the failed one says why it was not retried."""
+    clock = Clock()
+    ledger = ledger_for(tmp_path, clock, approve="0.0072")
+    queue = FakeQueue({"alpha": [("ok", [organic(1, "x.com", "https://x.com/", 1)])],
+                       "beta": [("fail", 40103, "Task execution failed.")]})
+    alpha, beta = dfs_client(tmp_path, queue, clock, ledger).serp_fetch([spec("alpha"), spec("beta")])
+    assert len(queue.posts) == 1 and ledger.spent_total == Decimal("0.007200")
+    assert alpha.ok and alpha.hits[0].site == "x.com"
+    assert beta.ok is False and beta.status_code == 40103 and "Not resubmitted" in beta.status_message

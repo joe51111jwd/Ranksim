@@ -1,0 +1,2564 @@
+{
+  "computed_at": "2026-11-22T18:36:55Z",
+  "label": "REAL",
+  "marker2_input_free": {
+    "counts": {
+      "missing": 0,
+      "right": 23576,
+      "tied": 12,
+      "wrong": 15058
+    },
+    "gain_over_link_count": {
+      "baseline": "st_s_cc_pr",
+      "difference": 0.021257051182528592,
+      "difference_interval": [
+        -0.0034921386401487796,
+        0.04612906103025515
+      ],
+      "note": "the best single strength measure on the same pairs, at least as strict as link count"
+    },
+    "label": "REAL",
+    "pairs": {
+      "count": 38646,
+      "rate": 0.6102054546395487,
+      "two_way_interval": [
+        0.5844243612819882,
+        0.6343133457488445
+      ]
+    }
+  },
+  "marker2_input_free_plus_mdr": {
+    "counts": {
+      "missing": 0,
+      "right": 23425,
+      "tied": 8,
+      "wrong": 15213
+    },
+    "gain_over_link_count": {
+      "baseline": "st_s_cc_pr",
+      "difference": 0.01729803860684159,
+      "difference_interval": [
+        -0.00799732060456743,
+        0.04444702410474691
+      ],
+      "note": "the best single strength measure on the same pairs, at least as strict as link count"
+    },
+    "label": "REAL",
+    "pairs": {
+      "count": 38646,
+      "rate": 0.6062464420638617,
+      "two_way_interval": [
+        0.5813406386850007,
+        0.6301267464120427
+      ]
+    }
+  },
+  "marker2_text_free": "Marker 2, Trust model: NOT PASSED (REAL).\nCheck pair accuracy: 61.0% against 70.0%, not met (REAL).\nCheck lower bound of gain over link count: -0.3% against 0.0%, not met (REAL).",
+  "marker2_verdict_free": {
+    "checks": [
+      {
+        "name": "pair accuracy",
+        "ok": false,
+        "target": 0.7,
+        "value": 0.6102054546395487
+      },
+      {
+        "name": "lower bound of gain over link count",
+        "ok": false,
+        "target": 0.0,
+        "value": -0.0034921386401487796
+      }
+    ],
+    "counts": {
+      "missing": 0,
+      "right": 23576,
+      "tied": 12,
+      "wrong": 15058
+    },
+    "date": "2026-12-14",
+    "label": "REAL",
+    "marker": 2,
+    "markers_hash": "97095e561a44ed877e0c0be5c28f1a2fbb0988a7b5c9aa52f0d36d624befa69f",
+    "name": "Trust model",
+    "notes": [],
+    "passed": false
+  },
+  "marker2_verdict_free_plus_mdr": {
+    "checks": [
+      {
+        "name": "pair accuracy",
+        "ok": false,
+        "target": 0.7,
+        "value": 0.6062464420638617
+      },
+      {
+        "name": "lower bound of gain over link count",
+        "ok": false,
+        "target": 0.0,
+        "value": -0.00799732060456743
+      }
+    ],
+    "counts": {
+      "missing": 0,
+      "right": 23425,
+      "tied": 8,
+      "wrong": 15213
+    },
+    "date": "2026-12-14",
+    "label": "REAL",
+    "marker": 2,
+    "markers_hash": "97095e561a44ed877e0c0be5c28f1a2fbb0988a7b5c9aa52f0d36d624befa69f",
+    "name": "Trust model",
+    "notes": [],
+    "passed": false
+  },
+  "name": "trust",
+  "prereg_sha256": "3adfaf6311711b036779ca0fe4fb91f46dd8964949e9e72ef94c3a883d2f9cce",
+  "primary": "cross_encoder_en",
+  "rehearsal": false,
+  "runs": {
+    "cross_encoder_en": {
+      "config": {
+        "backend": "cross_encoder",
+        "language": "en"
+      },
+      "content_backend": "cross_encoder",
+      "content_model": "minilm-l6@233902d25c44",
+      "counts": {
+        "search_groups_on_both_sides": 0,
+        "sites_on_both_sides": 0,
+        "test_rows": 12386,
+        "test_searches": 768,
+        "test_sites": 5379,
+        "train_pages": 4832,
+        "train_rows": 122927,
+        "train_rows_missing_title": 0,
+        "train_searches": 1502,
+        "train_sites": 29097
+      },
+      "evaluation": {
+        "models": {
+          "free_gbt": {
+            "best_single_measure": "st_s_cc_pr",
+            "both_sites_young": {
+              "best_single_measure": {
+                "clusters": 23,
+                "count": 35,
+                "rate": 0.5857142857142857,
+                "rate_decided_only": 0.6,
+                "right": 18,
+                "search_interval": [
+                  0.45588235294117646,
+                  0.7241379310344828
+                ],
+                "site_interval": [
+                  0.42424242424242425,
+                  0.7352941176470589
+                ],
+                "sites": 54,
+                "tied": 5,
+                "two_way_interval": [
+                  0.23326923076923078,
+                  0.9412581699346401
+                ],
+                "wrong": 12
+              },
+              "gain_over_best_single_measure": {
+                "count": 35,
+                "difference": -0.014285714285714285,
+                "difference_interval": [
+                  -0.5170254237288135,
+                  0.4616071428571425
+                ],
+                "interval_method": "two-way bootstrap over searches and sites",
+                "search_interval": [
+                  -0.18333333333333332,
+                  0.15517241379310345
+                ]
+              },
+              "median_start_uncertainty_days": 93.0,
+              "model": {
+                "clusters": 23,
+                "count": 35,
+                "rate": 0.5714285714285714,
+                "rate_decided_only": 0.5714285714285714,
+                "right": 20,
+                "search_interval": [
+                  0.4284821428571428,
+                  0.7308333333333329
+                ],
+                "site_interval": [
+                  0.40540540540540543,
+                  0.75
+                ],
+                "sites": 54,
+                "tied": 0,
+                "two_way_interval": [
+                  0.16666666666666666,
+                  0.961666666666666
+                ],
+                "wrong": 15
+              },
+              "pairs": 35
+            },
+            "gain_over_best_single_measure": {
+              "count": 38646,
+              "difference": 0.021257051182528592,
+              "difference_interval": [
+                -0.0034921386401487796,
+                0.04612906103025515
+              ],
+              "interval_method": "two-way bootstrap over searches and sites",
+              "search_interval": [
+                0.00927154623373452,
+                0.032829023116589764
+              ]
+            },
+            "gain_over_link_count": {
+              "count": 38646,
+              "difference": 0.042138901826838486,
+              "difference_interval": [
+                0.015054248121294078,
+                0.07233439088637392
+              ],
+              "interval_method": "two-way bootstrap over searches and sites",
+              "search_interval": [
+                0.02847990282852523,
+                0.055476342548162846
+              ]
+            },
+            "pairs": {
+              "clusters": 735,
+              "count": 38646,
+              "rate": 0.6102054546395487,
+              "rate_decided_only": 0.610239685251333,
+              "right": 23576,
+              "search_interval": [
+                0.5977891721310193,
+                0.6217715439089969
+              ],
+              "site_interval": [
+                0.5741375727533219,
+                0.6485638828465516
+              ],
+              "sites": 5290,
+              "tied": 12,
+              "two_way_interval": [
+                0.5844243612819882,
+                0.6343133457488445
+              ],
+              "wrong": 15058
+            }
+          },
+          "free_plus_mdr_gbt": {
+            "best_single_measure": "st_s_cc_pr",
+            "both_sites_young": {
+              "best_single_measure": {
+                "clusters": 23,
+                "count": 35,
+                "rate": 0.5857142857142857,
+                "rate_decided_only": 0.6,
+                "right": 18,
+                "search_interval": [
+                  0.45588235294117646,
+                  0.7241379310344828
+                ],
+                "site_interval": [
+                  0.42424242424242425,
+                  0.7352941176470589
+                ],
+                "sites": 54,
+                "tied": 5,
+                "two_way_interval": [
+                  0.23326923076923078,
+                  0.9412581699346401
+                ],
+                "wrong": 12
+              },
+              "gain_over_best_single_measure": {
+                "count": 35,
+                "difference": 0.07142857142857142,
+                "difference_interval": [
+                  -0.44143738140417454,
+                  0.5384615384615384
+                ],
+                "interval_method": "two-way bootstrap over searches and sites",
+                "search_interval": [
+                  -0.1093845274390244,
+                  0.25
+                ]
+              },
+              "median_start_uncertainty_days": 93.0,
+              "model": {
+                "clusters": 23,
+                "count": 35,
+                "rate": 0.6571428571428571,
+                "rate_decided_only": 0.6571428571428571,
+                "right": 23,
+                "search_interval": [
+                  0.5,
+                  0.8108530405405403
+                ],
+                "site_interval": [
+                  0.4857142857142857,
+                  0.8276108374384235
+                ],
+                "sites": 54,
+                "tied": 0,
+                "two_way_interval": [
+                  0.23529411764705882,
+                  1.0
+                ],
+                "wrong": 12
+              },
+              "pairs": 35
+            },
+            "gain_over_best_single_measure": {
+              "count": 38646,
+              "difference": 0.01729803860684159,
+              "difference_interval": [
+                -0.00799732060456743,
+                0.04444702410474691
+              ],
+              "interval_method": "two-way bootstrap over searches and sites",
+              "search_interval": [
+                0.004750215149890621,
+                0.029664014836700107
+              ]
+            },
+            "gain_over_link_count": {
+              "count": 38646,
+              "difference": 0.038179889251151476,
+              "difference_interval": [
+                0.01009228417030551,
+                0.07022759732767365
+              ],
+              "interval_method": "two-way bootstrap over searches and sites",
+              "search_interval": [
+                0.02404382279454869,
+                0.05157290803632146
+              ]
+            },
+            "pairs": {
+              "clusters": 735,
+              "count": 38646,
+              "rate": 0.6062464420638617,
+              "rate_decided_only": 0.6062684403954656,
+              "right": 23425,
+              "search_interval": [
+                0.5942968203338114,
+                0.6180386696716685
+              ],
+              "site_interval": [
+                0.5669488448998455,
+                0.6448257372995143
+              ],
+              "sites": 5290,
+              "tied": 8,
+              "two_way_interval": [
+                0.5813406386850007,
+                0.6301267464120427
+              ],
+              "wrong": 15213
+            }
+          },
+          "free_plus_mdr_ridge": {
+            "best_single_measure": "st_s_cc_pr",
+            "both_sites_young": {
+              "best_single_measure": {
+                "clusters": 23,
+                "count": 35,
+                "rate": 0.5857142857142857,
+                "rate_decided_only": 0.6,
+                "right": 18,
+                "search_interval": [
+                  0.45588235294117646,
+                  0.7241379310344828
+                ],
+                "site_interval": [
+                  0.42424242424242425,
+                  0.7352941176470589
+                ],
+                "sites": 54,
+                "tied": 5,
+                "two_way_interval": [
+                  0.23326923076923078,
+                  0.9412581699346401
+                ],
+                "wrong": 12
+              },
+              "gain_over_best_single_measure": {
+                "count": 35,
+                "difference": 0.04285714285714286,
+                "difference_interval": [
+                  -0.42857142857142855,
+                  0.47062908496732003
+                ],
+                "interval_method": "two-way bootstrap over searches and sites",
+                "search_interval": [
+                  -0.129115275142315,
+                  0.2000595238095235
+                ]
+              },
+              "median_start_uncertainty_days": 93.0,
+              "model": {
+                "clusters": 23,
+                "count": 35,
+                "rate": 0.6285714285714286,
+                "rate_decided_only": 0.6285714285714286,
+                "right": 22,
+                "search_interval": [
+                  0.47058823529411764,
+                  0.7857142857142857
+                ],
+                "site_interval": [
+                  0.45714285714285713,
+                  0.7878787878787878
+                ],
+                "sites": 54,
+                "tied": 0,
+                "two_way_interval": [
+                  0.22215447154471543,
+                  1.0
+                ],
+                "wrong": 13
+              },
+              "pairs": 35
+            },
+            "gain_over_best_single_measure": {
+              "count": 38646,
+              "difference": 0.018540081767841433,
+              "difference_interval": [
+                -0.004923288557795567,
+                0.04272086024389941
+              ],
+              "interval_method": "two-way bootstrap over searches and sites",
+              "search_interval": [
+                0.007644783384761317,
+                0.0300366676743637
+              ]
+            },
+            "gain_over_link_count": {
+              "count": 38646,
+              "difference": 0.03942193241215132,
+              "difference_interval": [
+                0.012839968131287653,
+                0.0683487022379938
+              ],
+              "interval_method": "two-way bootstrap over searches and sites",
+              "search_interval": [
+                0.026543470538421567,
+                0.051765593825311935
+              ]
+            },
+            "pairs": {
+              "clusters": 735,
+              "count": 38646,
+              "rate": 0.6074884852248615,
+              "rate_decided_only": 0.6074996118213343,
+              "right": 23475,
+              "search_interval": [
+                0.5951957904778397,
+                0.6190974569132754
+              ],
+              "site_interval": [
+                0.5710296807456989,
+                0.6417732965663647
+              ],
+              "sites": 5290,
+              "tied": 4,
+              "two_way_interval": [
+                0.5811805866033559,
+                0.6314338145489822
+              ],
+              "wrong": 15167
+            }
+          },
+          "free_ridge": {
+            "best_single_measure": "st_s_cc_pr",
+            "both_sites_young": {
+              "best_single_measure": {
+                "clusters": 23,
+                "count": 35,
+                "rate": 0.5857142857142857,
+                "rate_decided_only": 0.6,
+                "right": 18,
+                "search_interval": [
+                  0.45588235294117646,
+                  0.7241379310344828
+                ],
+                "site_interval": [
+                  0.42424242424242425,
+                  0.7352941176470589
+                ],
+                "sites": 54,
+                "tied": 5,
+                "two_way_interval": [
+                  0.23326923076923078,
+                  0.9412581699346401
+                ],
+                "wrong": 12
+              },
+              "gain_over_best_single_measure": {
+                "count": 35,
+                "difference": -0.014285714285714285,
+                "difference_interval": [
+                  -0.5385775862068966,
+                  0.466792452830188
+                ],
+                "interval_method": "two-way bootstrap over searches and sites",
+                "search_interval": [
+                  -0.1935483870967742,
+                  0.19123576850094842
+                ]
+              },
+              "median_start_uncertainty_days": 93.0,
+              "model": {
+                "clusters": 23,
+                "count": 35,
+                "rate": 0.5714285714285714,
+                "rate_decided_only": 0.5714285714285714,
+                "right": 20,
+                "search_interval": [
+                  0.4089987714987715,
+                  0.7586206896551724
+                ],
+                "site_interval": [
+                  0.39021002710027103,
+                  0.7647058823529411
+                ],
+                "sites": 54,
+                "tied": 0,
+                "two_way_interval": [
+                  0.16666666666666666,
+                  1.0
+                ],
+                "wrong": 15
+              },
+              "pairs": 35
+            },
+            "gain_over_best_single_measure": {
+              "count": 38646,
+              "difference": 0.01894115820524763,
+              "difference_interval": [
+                -0.002310163769626667,
+                0.04211355230431671
+              ],
+              "interval_method": "two-way bootstrap over searches and sites",
+              "search_interval": [
+                0.008938285132168012,
+                0.029508732384187965
+              ]
+            },
+            "gain_over_link_count": {
+              "count": 38646,
+              "difference": 0.03982300884955752,
+              "difference_interval": [
+                0.014162012257838821,
+                0.06854821334153992
+              ],
+              "interval_method": "two-way bootstrap over searches and sites",
+              "search_interval": [
+                0.027426296830159656,
+                0.05182002885769367
+              ]
+            },
+            "pairs": {
+              "clusters": 735,
+              "count": 38646,
+              "rate": 0.6078895616622678,
+              "rate_decided_only": 0.6079035221655754,
+              "right": 23490,
+              "search_interval": [
+                0.595634856603681,
+                0.6196018277203537
+              ],
+              "site_interval": [
+                0.564700999201768,
+                0.6517220591897384
+              ],
+              "sites": 5290,
+              "tied": 5,
+              "two_way_interval": [
+                0.5817553327585894,
+                0.6313256439351863
+              ],
+              "wrong": 15151
+            }
+          }
+        },
+        "pages": 1180,
+        "pairs": 38646,
+        "single_measures": {
+          "st_mdr_before": {
+            "clusters": 735,
+            "count": 38646,
+            "rate": 0.5645862443719919,
+            "rate_decided_only": 0.5753395713854512,
+            "right": 19061,
+            "search_interval": [
+              0.5528404307975128,
+              0.5759058290625061
+            ],
+            "site_interval": [
+              0.5087503434427526,
+              0.6224969785442621
+            ],
+            "sites": 5290,
+            "tied": 5516,
+            "two_way_interval": [
+              0.53853963911851,
+              0.5900339946983967
+            ],
+            "wrong": 14069
+          },
+          "st_s_cc_hc": {
+            "clusters": 735,
+            "count": 38646,
+            "rate": 0.5838767272162708,
+            "rate_decided_only": 0.5839832111303987,
+            "right": 22540,
+            "search_interval": [
+              0.5720073989187354,
+              0.5958440918995574
+            ],
+            "site_interval": [
+              0.5226130013313367,
+              0.6494923069595692
+            ],
+            "sites": 5290,
+            "tied": 49,
+            "two_way_interval": [
+              0.5569308928367296,
+              0.6088144584203604
+            ],
+            "wrong": 16057
+          },
+          "st_s_cc_hosts": {
+            "clusters": 735,
+            "count": 38646,
+            "rate": 0.5680665528127102,
+            "rate_decided_only": 0.5732016140253235,
+            "right": 20598,
+            "search_interval": [
+              0.5559930127482032,
+              0.580295948298711
+            ],
+            "site_interval": [
+              0.5094612932260879,
+              0.6287015145092761
+            ],
+            "sites": 5290,
+            "tied": 2711,
+            "two_way_interval": [
+              0.5404075394959308,
+              0.593529182635141
+            ],
+            "wrong": 15337
+          },
+          "st_s_cc_pr": {
+            "clusters": 735,
+            "count": 38646,
+            "rate": 0.5889484034570202,
+            "rate_decided_only": 0.5890613260097936,
+            "right": 22736,
+            "search_interval": [
+              0.576622415066672,
+              0.6010421438956416
+            ],
+            "site_interval": [
+              0.5284568325002419,
+              0.6523452946685274
+            ],
+            "sites": 5290,
+            "tied": 49,
+            "two_way_interval": [
+              0.5616651360906236,
+              0.614694337331633
+            ],
+            "wrong": 15861
+          },
+          "st_s_crux": {
+            "clusters": 735,
+            "count": 38646,
+            "rate": 0.5815737721885835,
+            "rate_decided_only": 0.6020325597954495,
+            "right": 18601,
+            "search_interval": [
+              0.5695619920252794,
+              0.5933366654254657
+            ],
+            "site_interval": [
+              0.5252128826684245,
+              0.6391344902231189
+            ],
+            "sites": 5290,
+            "tied": 7749,
+            "two_way_interval": [
+              0.5548497273323887,
+              0.6064557840695092
+            ],
+            "wrong": 12296
+          },
+          "st_s_opr": {
+            "clusters": 735,
+            "count": 38646,
+            "rate": 0.5591523055426176,
+            "rate_decided_only": 0.5769748804633309,
+            "right": 17135,
+            "search_interval": [
+              0.5482070026990465,
+              0.5705766131707393
+            ],
+            "site_interval": [
+              0.5063909332394009,
+              0.6154193810176587
+            ],
+            "sites": 5290,
+            "tied": 8948,
+            "two_way_interval": [
+              0.5344917994297208,
+              0.5833659487804866
+            ],
+            "wrong": 12563
+          },
+          "st_s_tranco": {
+            "clusters": 735,
+            "count": 38646,
+            "rate": 0.5836179682243958,
+            "rate_decided_only": 0.5912621085034878,
+            "right": 20936,
+            "search_interval": [
+              0.5713618732331531,
+              0.596081775922325
+            ],
+            "site_interval": [
+              0.5220965709271751,
+              0.6483960991369198
+            ],
+            "sites": 5290,
+            "tied": 3237,
+            "two_way_interval": [
+              0.5568449730829045,
+              0.6090412585119239
+            ],
+            "wrong": 14473
+          }
+        },
+        "threshold_places": 10.0,
+        "within_page_shuffle": {
+          "clusters": 735,
+          "count": 38646,
+          "rate": 0.5010350359674999,
+          "rate_decided_only": 0.5010350359674999,
+          "right": 19363,
+          "search_interval": [
+            0.49131553522701804,
+            0.5105220671626608
+          ],
+          "site_interval": [
+            0.49279462405791224,
+            0.509313382103951
+          ],
+          "sites": 5290,
+          "tied": 0,
+          "two_way_interval": [
+            0.4820354097799667,
+            0.5196641596536068
+          ],
+          "wrong": 19283
+        }
+      },
+      "feature_sets": {
+        "free": {
+          "cv": {
+            "dropped_all_missing": [
+              "fp_referring_domains",
+              "fp_brand_search_volume",
+              "fp_review_count",
+              "fp_review_rating",
+              "fp_links_planned",
+              "fp_press_planned",
+              "fp_pages_at_launch"
+            ],
+            "gbt": {
+              "{\"min_child_samples\": 200, \"num_leaves\": 15}": {
+                "mse": 194.04895040879902,
+                "rounds": [
+                  85,
+                  209,
+                  174
+                ]
+              },
+              "{\"min_child_samples\": 200, \"num_leaves\": 7}": {
+                "mse": 194.17867243403066,
+                "rounds": [
+                  221,
+                  421,
+                  456
+                ]
+              },
+              "{\"min_child_samples\": 400, \"num_leaves\": 31}": {
+                "mse": 193.47800914405113,
+                "rounds": [
+                  69,
+                  87,
+                  149
+                ]
+              },
+              "{\"min_child_samples\": 50, \"num_leaves\": 15}": {
+                "mse": 194.00150444580933,
+                "rounds": [
+                  69,
+                  210,
+                  149
+                ]
+              }
+            },
+            "label_variance": 206.65034334355104,
+            "ridge": {
+              "1.0": 197.39136470917586,
+              "10.0": 197.3658006468157,
+              "100.0": 197.36026439226688,
+              "1000.0": 197.9773327594146
+            },
+            "rows": 122927
+          },
+          "features_used": [
+            "st_s_cc_hc",
+            "st_s_cc_pr",
+            "st_s_cc_hosts",
+            "st_s_crux",
+            "st_s_tranco",
+            "st_cc_present",
+            "st_crux_present",
+            "st_tranco_present",
+            "sd_age_days",
+            "sd_uncertainty_days",
+            "sd_left_censored",
+            "sd_age_lower_bound_days",
+            "sd_no_evidence",
+            "sd_registration_known",
+            "sd_possibly_reregistered",
+            "tld_code"
+          ],
+          "model_file": "data/forecast/models/trust/trust-v1-free-cross_encoder-en.json",
+          "model_sha256": "c60b68947555ea0443771b0ebe25b79caf4c48bbe3c75d43ae1ea57d7f049d07",
+          "rounds": 101
+        },
+        "free_plus_mdr": {
+          "cv": {
+            "dropped_all_missing": [
+              "fp_referring_domains",
+              "fp_brand_search_volume",
+              "fp_review_count",
+              "fp_review_rating",
+              "fp_links_planned",
+              "fp_press_planned",
+              "fp_pages_at_launch"
+            ],
+            "gbt": {
+              "{\"min_child_samples\": 200, \"num_leaves\": 15}": {
+                "mse": 193.15295865802136,
+                "rounds": [
+                  124,
+                  187,
+                  236
+                ]
+              },
+              "{\"min_child_samples\": 200, \"num_leaves\": 7}": {
+                "mse": 193.723036672461,
+                "rounds": [
+                  225,
+                  425,
+                  385
+                ]
+              },
+              "{\"min_child_samples\": 400, \"num_leaves\": 31}": {
+                "mse": 192.78494697616495,
+                "rounds": [
+                  82,
+                  123,
+                  170
+                ]
+              },
+              "{\"min_child_samples\": 50, \"num_leaves\": 15}": {
+                "mse": 193.23304274983434,
+                "rounds": [
+                  65,
+                  201,
+                  345
+                ]
+              }
+            },
+            "label_variance": 206.65034334355104,
+            "ridge": {
+              "1.0": 196.7239587882225,
+              "10.0": 196.69996273668468,
+              "100.0": 196.7015179071344,
+              "1000.0": 197.3455873408957
+            },
+            "rows": 122927
+          },
+          "features_used": [
+            "st_s_cc_hc",
+            "st_s_cc_pr",
+            "st_s_cc_hosts",
+            "st_s_crux",
+            "st_s_tranco",
+            "st_cc_present",
+            "st_crux_present",
+            "st_tranco_present",
+            "sd_age_days",
+            "sd_uncertainty_days",
+            "sd_left_censored",
+            "sd_age_lower_bound_days",
+            "sd_no_evidence",
+            "sd_registration_known",
+            "sd_possibly_reregistered",
+            "tld_code",
+            "mdr_before"
+          ],
+          "model_file": "data/forecast/models/trust/trust-v1-free_plus_mdr-cross_encoder-en.json",
+          "model_sha256": "6287b8794d2586760c86ca8f35610c15f2a0fe7af2406112272a52202f9cc15d",
+          "rounds": 125
+        }
+      },
+      "label_summary": {
+        "test_residual_sd": 13.357504199343376,
+        "train_residual_sd": 14.375338025366606
+      },
+      "label_table_version": "3f6b301778dbebaf"
+    },
+    "lexical_all": {
+      "config": {
+        "backend": "lexical",
+        "language": null
+      },
+      "content_backend": "lexical",
+      "content_model": "bm25f-v1",
+      "counts": {
+        "search_groups_on_both_sides": 0,
+        "sites_on_both_sides": 0,
+        "test_rows": 39015,
+        "test_searches": 3069,
+        "test_sites": 17920,
+        "train_pages": 14047,
+        "train_rows": 346118,
+        "train_rows_missing_title": 53882,
+        "train_searches": 5346,
+        "train_sites": 83343
+      },
+      "evaluation": {
+        "models": {
+          "free_gbt": {
+            "best_single_measure": "st_s_cc_pr",
+            "both_sites_young": {
+              "best_single_measure": {
+                "clusters": 53,
+                "count": 79,
+                "rate": 0.47468354430379744,
+                "rate_decided_only": 0.4714285714285714,
+                "right": 33,
+                "search_interval": [
+                  0.366656976744186,
+                  0.5812735445205479
+                ],
+                "site_interval": [
+                  0.36627906976744184,
+                  0.5844480519480517
+                ],
+                "sites": 118,
+                "tied": 9,
+                "two_way_interval": [
+                  0.2134295725703695,
+                  0.7592881944444443
+                ],
+                "wrong": 37
+              },
+              "gain_over_best_single_measure": {
+                "count": 79,
+                "difference": 0.056962025316455694,
+                "difference_interval": [
+                  -0.23534125188536953,
+                  0.3519191919191916
+                ],
+                "interval_method": "two-way bootstrap over searches and sites",
+                "search_interval": [
+                  -0.04939814814814814,
+                  0.17307692307692307
+                ]
+              },
+              "median_start_uncertainty_days": 93.0,
+              "model": {
+                "clusters": 53,
+                "count": 79,
+                "rate": 0.5316455696202531,
+                "rate_decided_only": 0.5316455696202531,
+                "right": 42,
+                "search_interval": [
+                  0.42857142857142855,
+                  0.6301730353280459
+                ],
+                "site_interval": [
+                  0.4176951476793249,
+                  0.6419753086419753
+                ],
+                "sites": 118,
+                "tied": 0,
+                "two_way_interval": [
+                  0.25,
+                  0.8133703703703702
+                ],
+                "wrong": 37
+              },
+              "pairs": 79
+            },
+            "gain_over_best_single_measure": {
+              "count": 119425,
+              "difference": -0.007180238643500105,
+              "difference_interval": [
+                -0.02128642569215711,
+                0.007535570902040046
+              ],
+              "interval_method": "two-way bootstrap over searches and sites",
+              "search_interval": [
+                -0.013627379750986298,
+                -0.0007269331251563105
+              ]
+            },
+            "gain_over_link_count": {
+              "count": 119425,
+              "difference": 0.009997906635963994,
+              "difference_interval": [
+                -0.005672613684922135,
+                0.027452857905235772
+              ],
+              "interval_method": "two-way bootstrap over searches and sites",
+              "search_interval": [
+                0.0025553000466455034,
+                0.01684536832292705
+              ]
+            },
+            "pairs": {
+              "clusters": 2516,
+              "count": 119425,
+              "rate": 0.5789784383504292,
+              "rate_decided_only": 0.5789962980954455,
+              "right": 69131,
+              "search_interval": [
+                0.5721773179210796,
+                0.5852860663859399
+              ],
+              "site_interval": [
+                0.5264387814979287,
+                0.6404230572678
+              ],
+              "sites": 15440,
+              "tied": 27,
+              "two_way_interval": [
+                0.5593613290181586,
+                0.5981019561359647
+              ],
+              "wrong": 50267
+            }
+          },
+          "free_plus_mdr_gbt": {
+            "best_single_measure": "st_s_cc_pr",
+            "both_sites_young": {
+              "best_single_measure": {
+                "clusters": 53,
+                "count": 79,
+                "rate": 0.47468354430379744,
+                "rate_decided_only": 0.4714285714285714,
+                "right": 33,
+                "search_interval": [
+                  0.366656976744186,
+                  0.5812735445205479
+                ],
+                "site_interval": [
+                  0.36627906976744184,
+                  0.5844480519480517
+                ],
+                "sites": 118,
+                "tied": 9,
+                "two_way_interval": [
+                  0.2134295725703695,
+                  0.7592881944444443
+                ],
+                "wrong": 37
+              },
+              "gain_over_best_single_measure": {
+                "count": 79,
+                "difference": 0.056962025316455694,
+                "difference_interval": [
+                  -0.2095326278659612,
+                  0.3715178571428567
+                ],
+                "interval_method": "two-way bootstrap over searches and sites",
+                "search_interval": [
+                  -0.0466764705882353,
+                  0.175
+                ]
+              },
+              "median_start_uncertainty_days": 93.0,
+              "model": {
+                "clusters": 53,
+                "count": 79,
+                "rate": 0.5316455696202531,
+                "rate_decided_only": 0.5316455696202531,
+                "right": 42,
+                "search_interval": [
+                  0.41891106222501573,
+                  0.6527777777777778
+                ],
+                "site_interval": [
+                  0.4074074074074074,
+                  0.6578947368421053
+                ],
+                "sites": 118,
+                "tied": 0,
+                "two_way_interval": [
+                  0.22666037735849057,
+                  0.8173297491039421
+                ],
+                "wrong": 37
+              },
+              "pairs": 79
+            },
+            "gain_over_best_single_measure": {
+              "count": 119425,
+              "difference": 0.0005610215616495709,
+              "difference_interval": [
+                -0.013784074510199702,
+                0.015491461311520722
+              ],
+              "interval_method": "two-way bootstrap over searches and sites",
+              "search_interval": [
+                -0.006084521530912366,
+                0.006859344278277783
+              ]
+            },
+            "gain_over_link_count": {
+              "count": 119425,
+              "difference": 0.01773916684111367,
+              "difference_interval": [
+                0.0016997761369628884,
+                0.03570280755661934
+              ],
+              "interval_method": "two-way bootstrap over searches and sites",
+              "search_interval": [
+                0.010565851940515968,
+                0.024435349079171546
+              ]
+            },
+            "pairs": {
+              "clusters": 2516,
+              "count": 119425,
+              "rate": 0.5867196985555788,
+              "rate_decided_only": 0.5867269605995896,
+              "right": 70064,
+              "search_interval": [
+                0.5801871770409265,
+                0.5931061625932681
+              ],
+              "site_interval": [
+                0.5324595188692894,
+                0.6458414912662078
+              ],
+              "sites": 15440,
+              "tied": 10,
+              "two_way_interval": [
+                0.5681266961816269,
+                0.6042527068516316
+              ],
+              "wrong": 49351
+            }
+          },
+          "free_plus_mdr_ridge": {
+            "best_single_measure": "st_s_cc_pr",
+            "both_sites_young": {
+              "best_single_measure": {
+                "clusters": 53,
+                "count": 79,
+                "rate": 0.47468354430379744,
+                "rate_decided_only": 0.4714285714285714,
+                "right": 33,
+                "search_interval": [
+                  0.366656976744186,
+                  0.5812735445205479
+                ],
+                "site_interval": [
+                  0.36627906976744184,
+                  0.5844480519480517
+                ],
+                "sites": 118,
+                "tied": 9,
+                "two_way_interval": [
+                  0.2134295725703695,
+                  0.7592881944444443
+                ],
+                "wrong": 37
+              },
+              "gain_over_best_single_measure": {
+                "count": 79,
+                "difference": 0.08227848101265822,
+                "difference_interval": [
+                  -0.18981944444444446,
+                  0.39317375886524814
+                ],
+                "interval_method": "two-way bootstrap over searches and sites",
+                "search_interval": [
+                  -0.02857142857142857,
+                  0.19375
+                ]
+              },
+              "median_start_uncertainty_days": 93.0,
+              "model": {
+                "clusters": 53,
+                "count": 79,
+                "rate": 0.5569620253164557,
+                "rate_decided_only": 0.5569620253164557,
+                "right": 44,
+                "search_interval": [
+                  0.43748204022988507,
+                  0.6707355665328806
+                ],
+                "site_interval": [
+                  0.4320521102497846,
+                  0.6746987951807228
+                ],
+                "sites": 118,
+                "tied": 0,
+                "two_way_interval": [
+                  0.2790517861424119,
+                  0.8445542635658909
+                ],
+                "wrong": 35
+              },
+              "pairs": 79
+            },
+            "gain_over_best_single_measure": {
+              "count": 119425,
+              "difference": -0.005003140046054008,
+              "difference_interval": [
+                -0.018169742728577642,
+                0.009302142577827176
+              ],
+              "interval_method": "two-way bootstrap over searches and sites",
+              "search_interval": [
+                -0.010380774119350058,
+                0.000691551084045626
+              ]
+            },
+            "gain_over_link_count": {
+              "count": 119425,
+              "difference": 0.01217500523341009,
+              "difference_interval": [
+                -0.003955719898260114,
+                0.02934056950236659
+              ],
+              "interval_method": "two-way bootstrap over searches and sites",
+              "search_interval": [
+                0.005888923270710134,
+                0.018776722069153012
+              ]
+            },
+            "pairs": {
+              "clusters": 2516,
+              "count": 119425,
+              "rate": 0.5811555369478753,
+              "rate_decided_only": 0.5811616533797817,
+              "right": 69400,
+              "search_interval": [
+                0.5745720244399213,
+                0.5878729683422106
+              ],
+              "site_interval": [
+                0.5355393685553183,
+                0.6234636837598033
+              ],
+              "sites": 15440,
+              "tied": 9,
+              "two_way_interval": [
+                0.564411677885306,
+                0.5976189059815702
+              ],
+              "wrong": 50016
+            }
+          },
+          "free_ridge": {
+            "best_single_measure": "st_s_cc_pr",
+            "both_sites_young": {
+              "best_single_measure": {
+                "clusters": 53,
+                "count": 79,
+                "rate": 0.47468354430379744,
+                "rate_decided_only": 0.4714285714285714,
+                "right": 33,
+                "search_interval": [
+                  0.366656976744186,
+                  0.5812735445205479
+                ],
+                "site_interval": [
+                  0.36627906976744184,
+                  0.5844480519480517
+                ],
+                "sites": 118,
+                "tied": 9,
+                "two_way_interval": [
+                  0.2134295725703695,
+                  0.7592881944444443
+                ],
+                "wrong": 37
+              },
+              "gain_over_best_single_measure": {
+                "count": 79,
+                "difference": 0.03164556962025317,
+                "difference_interval": [
+                  -0.20897327876745306,
+                  0.3
+                ],
+                "interval_method": "two-way bootstrap over searches and sites",
+                "search_interval": [
+                  -0.06181530898876404,
+                  0.14084507042253522
+                ]
+              },
+              "median_start_uncertainty_days": 93.0,
+              "model": {
+                "clusters": 53,
+                "count": 79,
+                "rate": 0.5063291139240507,
+                "rate_decided_only": 0.5063291139240507,
+                "right": 40,
+                "search_interval": [
+                  0.38551899907321596,
+                  0.6309680451127818
+                ],
+                "site_interval": [
+                  0.3918647095371233,
+                  0.6282407407407405
+                ],
+                "sites": 118,
+                "tied": 0,
+                "two_way_interval": [
+                  0.2087797619047619,
+                  0.7931388757675955
+                ],
+                "wrong": 39
+              },
+              "pairs": 79
+            },
+            "gain_over_best_single_measure": {
+              "count": 119425,
+              "difference": -0.0055390412392715095,
+              "difference_interval": [
+                -0.017773329442890697,
+                0.008501997652580948
+              ],
+              "interval_method": "two-way bootstrap over searches and sites",
+              "search_interval": [
+                -0.010697051082650717,
+                -0.00010294857946249286
+              ]
+            },
+            "gain_over_link_count": {
+              "count": 119425,
+              "difference": 0.01163910404019259,
+              "difference_interval": [
+                -0.004039399279728851,
+                0.029176002091834328
+              ],
+              "interval_method": "two-way bootstrap over searches and sites",
+              "search_interval": [
+                0.005399033174053162,
+                0.017961286363235567
+              ]
+            },
+            "pairs": {
+              "clusters": 2516,
+              "count": 119425,
+              "rate": 0.5806196357546577,
+              "rate_decided_only": 0.5806311134932333,
+              "right": 69332,
+              "search_interval": [
+                0.5742319871287063,
+                0.5871989801213843
+              ],
+              "site_interval": [
+                0.5298450658637632,
+                0.6269076192749189
+              ],
+              "sites": 15440,
+              "tied": 17,
+              "two_way_interval": [
+                0.5627673014877465,
+                0.5966186618510255
+              ],
+              "wrong": 50076
+            }
+          }
+        },
+        "pages": 3693,
+        "pairs": 119425,
+        "single_measures": {
+          "st_mdr_before": {
+            "clusters": 2516,
+            "count": 119425,
+            "rate": 0.5623487544483986,
+            "rate_decided_only": 0.5725787585776668,
+            "right": 58742,
+            "search_interval": [
+              0.55634084460968,
+              0.5685799079516403
+            ],
+            "site_interval": [
+              0.5026403106394691,
+              0.6224746277703274
+            ],
+            "sites": 15440,
+            "tied": 16833,
+            "two_way_interval": [
+              0.5425804306613221,
+              0.5788505813501744
+            ],
+            "wrong": 43850
+          },
+          "st_s_cc_hc": {
+            "clusters": 2516,
+            "count": 119425,
+            "rate": 0.5821059242202219,
+            "rate_decided_only": 0.5821829976616127,
+            "right": 69462,
+            "search_interval": [
+              0.5753086116444104,
+              0.5889061369194611
+            ],
+            "site_interval": [
+              0.5176587913045182,
+              0.6482139778964795
+            ],
+            "sites": 15440,
+            "tied": 112,
+            "two_way_interval": [
+              0.5615381408781567,
+              0.6007990340844965
+            ],
+            "wrong": 49851
+          },
+          "st_s_cc_hosts": {
+            "clusters": 2516,
+            "count": 119425,
+            "rate": 0.5689805317144652,
+            "rate_decided_only": 0.5743971823354105,
+            "right": 63603,
+            "search_interval": [
+              0.5622615400648205,
+              0.5755410977764644
+            ],
+            "site_interval": [
+              0.5077428658835799,
+              0.6329652220780344
+            ],
+            "sites": 15440,
+            "tied": 8695,
+            "two_way_interval": [
+              0.547215508465711,
+              0.5895988138933903
+            ],
+            "wrong": 47127
+          },
+          "st_s_cc_pr": {
+            "clusters": 2516,
+            "count": 119425,
+            "rate": 0.5861586769939292,
+            "rate_decided_only": 0.5862395547844744,
+            "right": 69946,
+            "search_interval": [
+              0.5792075565128909,
+              0.5929120457731916
+            ],
+            "site_interval": [
+              0.5218578294783086,
+              0.6515395786757463
+            ],
+            "sites": 15440,
+            "tied": 112,
+            "two_way_interval": [
+              0.5658009122243706,
+              0.6046674273184363
+            ],
+            "wrong": 49367
+          },
+          "st_s_crux": {
+            "clusters": 2516,
+            "count": 119425,
+            "rate": 0.5804689135440653,
+            "rate_decided_only": 0.599864906993661,
+            "right": 57725,
+            "search_interval": [
+              0.5740242471442176,
+              0.5868176505499042
+            ],
+            "site_interval": [
+              0.5213845547375129,
+              0.6397889956198958
+            ],
+            "sites": 15440,
+            "tied": 23195,
+            "two_way_interval": [
+              0.5609647572670966,
+              0.5981018250653286
+            ],
+            "wrong": 38505
+          },
+          "st_s_opr": {
+            "clusters": 2516,
+            "count": 119425,
+            "rate": 0.5571279045426,
+            "rate_decided_only": 0.5742601199481894,
+            "right": 52759,
+            "search_interval": [
+              0.5511456621582074,
+              0.5630132423570658
+            ],
+            "site_interval": [
+              0.501662263019243,
+              0.6135433195152442
+            ],
+            "sites": 15440,
+            "tied": 27552,
+            "two_way_interval": [
+              0.5379801935528412,
+              0.573898849783184
+            ],
+            "wrong": 39114
+          },
+          "st_s_tranco": {
+            "clusters": 2516,
+            "count": 119425,
+            "rate": 0.5802093364036006,
+            "rate_decided_only": 0.5876331101108794,
+            "right": 64233,
+            "search_interval": [
+              0.5734180288424586,
+              0.5869655726899986
+            ],
+            "site_interval": [
+              0.5155865619301451,
+              0.646800447314638
+            ],
+            "sites": 15440,
+            "tied": 10117,
+            "two_way_interval": [
+              0.5588302258878982,
+              0.5991954873863843
+            ],
+            "wrong": 45075
+          }
+        },
+        "threshold_places": 10.0,
+        "within_page_shuffle": {
+          "clusters": 2516,
+          "count": 119425,
+          "rate": 0.5031107389575047,
+          "rate_decided_only": 0.5031107389575047,
+          "right": 60084,
+          "search_interval": [
+            0.4976041802235423,
+            0.508480214181483
+          ],
+          "site_interval": [
+            0.49847163908900927,
+            0.5079522632200906
+          ],
+          "sites": 15440,
+          "tied": 0,
+          "two_way_interval": [
+            0.49222424537491066,
+            0.5139846894441431
+          ],
+          "wrong": 59341
+        }
+      },
+      "feature_sets": {
+        "free": {
+          "cv": {
+            "dropped_all_missing": [
+              "fp_referring_domains",
+              "fp_brand_search_volume",
+              "fp_review_count",
+              "fp_review_rating",
+              "fp_links_planned",
+              "fp_press_planned",
+              "fp_pages_at_launch"
+            ],
+            "gbt": {
+              "{\"min_child_samples\": 200, \"num_leaves\": 15}": {
+                "mse": 193.0816227538928,
+                "rounds": [
+                  590,
+                  564,
+                  403
+                ]
+              },
+              "{\"min_child_samples\": 200, \"num_leaves\": 7}": {
+                "mse": 193.66701981499776,
+                "rounds": [
+                  589,
+                  600,
+                  600
+                ]
+              },
+              "{\"min_child_samples\": 400, \"num_leaves\": 31}": {
+                "mse": 192.81276158579854,
+                "rounds": [
+                  457,
+                  229,
+                  254
+                ]
+              },
+              "{\"min_child_samples\": 50, \"num_leaves\": 15}": {
+                "mse": 193.03281784086116,
+                "rounds": [
+                  553,
+                  437,
+                  409
+                ]
+              }
+            },
+            "label_variance": 198.49694750506225,
+            "ridge": {
+              "1.0": 197.2974339613254,
+              "10.0": 197.2963873290275,
+              "100.0": 197.29161674550832,
+              "1000.0": 197.38672846769904
+            },
+            "rows": 346118
+          },
+          "features_used": [
+            "st_s_cc_hc",
+            "st_s_cc_pr",
+            "st_s_cc_hosts",
+            "st_s_crux",
+            "st_s_tranco",
+            "st_cc_present",
+            "st_crux_present",
+            "st_tranco_present",
+            "sd_age_days",
+            "sd_uncertainty_days",
+            "sd_left_censored",
+            "sd_age_lower_bound_days",
+            "sd_no_evidence",
+            "sd_registration_known",
+            "sd_possibly_reregistered",
+            "tld_code"
+          ],
+          "model_file": "data/forecast/models/trust/trust-v1-free-lexical-all.json",
+          "model_sha256": "e2ab64f77a884357920c59197c571160c634240e7647ffe538baab8f66bb6a2d",
+          "rounds": 313
+        },
+        "free_plus_mdr": {
+          "cv": {
+            "dropped_all_missing": [
+              "fp_referring_domains",
+              "fp_brand_search_volume",
+              "fp_review_count",
+              "fp_review_rating",
+              "fp_links_planned",
+              "fp_press_planned",
+              "fp_pages_at_launch"
+            ],
+            "gbt": {
+              "{\"min_child_samples\": 200, \"num_leaves\": 15}": {
+                "mse": 192.3572743356607,
+                "rounds": [
+                  590,
+                  472,
+                  550
+                ]
+              },
+              "{\"min_child_samples\": 200, \"num_leaves\": 7}": {
+                "mse": 193.04751619416228,
+                "rounds": [
+                  600,
+                  596,
+                  600
+                ]
+              },
+              "{\"min_child_samples\": 400, \"num_leaves\": 31}": {
+                "mse": 192.02258982558365,
+                "rounds": [
+                  474,
+                  288,
+                  300
+                ]
+              },
+              "{\"min_child_samples\": 50, \"num_leaves\": 15}": {
+                "mse": 192.33315847849903,
+                "rounds": [
+                  589,
+                  595,
+                  427
+                ]
+              }
+            },
+            "label_variance": 198.49694750506225,
+            "ridge": {
+              "1.0": 197.03660486555881,
+              "10.0": 197.03553411004182,
+              "100.0": 197.03059895430442,
+              "1000.0": 197.12436838293993
+            },
+            "rows": 346118
+          },
+          "features_used": [
+            "st_s_cc_hc",
+            "st_s_cc_pr",
+            "st_s_cc_hosts",
+            "st_s_crux",
+            "st_s_tranco",
+            "st_cc_present",
+            "st_crux_present",
+            "st_tranco_present",
+            "sd_age_days",
+            "sd_uncertainty_days",
+            "sd_left_censored",
+            "sd_age_lower_bound_days",
+            "sd_no_evidence",
+            "sd_registration_known",
+            "sd_possibly_reregistered",
+            "tld_code",
+            "mdr_before"
+          ],
+          "model_file": "data/forecast/models/trust/trust-v1-free_plus_mdr-lexical-all.json",
+          "model_sha256": "29ffedf591f9dcba5cfbbcceb13cb4769fe3e88cadaec5bd45d91bdb8002d097",
+          "rounds": 354
+        }
+      },
+      "label_summary": {
+        "test_residual_sd": 13.130560140851527,
+        "train_residual_sd": 14.088894474197124
+      },
+      "label_table_version": "52749257f55bc535"
+    },
+    "lexical_en": {
+      "config": {
+        "backend": "lexical",
+        "language": "en"
+      },
+      "content_backend": "lexical",
+      "content_model": "bm25f-v1",
+      "counts": {
+        "search_groups_on_both_sides": 0,
+        "sites_on_both_sides": 0,
+        "test_rows": 12226,
+        "test_searches": 768,
+        "test_sites": 5379,
+        "train_pages": 4778,
+        "train_rows": 121189,
+        "train_rows_missing_title": 1738,
+        "train_searches": 1485,
+        "train_sites": 28664
+      },
+      "evaluation": {
+        "models": {
+          "free_gbt": {
+            "best_single_measure": "st_s_cc_pr",
+            "both_sites_young": {
+              "best_single_measure": {
+                "clusters": 19,
+                "count": 31,
+                "rate": 0.5806451612903226,
+                "rate_decided_only": 0.6,
+                "right": 15,
+                "search_interval": [
+                  0.43898628048780486,
+                  0.7692708333333331
+                ],
+                "site_interval": [
+                  0.40625,
+                  0.75
+                ],
+                "sites": 44,
+                "tied": 6,
+                "two_way_interval": [
+                  0.2,
+                  1.0
+                ],
+                "wrong": 10
+              },
+              "gain_over_best_single_measure": {
+                "count": 31,
+                "difference": -0.0967741935483871,
+                "difference_interval": [
+                  -0.5418154761904761,
+                  0.3573809523809511
+                ],
+                "interval_method": "two-way bootstrap over searches and sites",
+                "search_interval": [
+                  -0.24074074074074073,
+                  0.057692307692307696
+                ]
+              },
+              "median_start_uncertainty_days": 93.0,
+              "model": {
+                "clusters": 19,
+                "count": 31,
+                "rate": 0.4838709677419355,
+                "rate_decided_only": 0.4838709677419355,
+                "right": 15,
+                "search_interval": [
+                  0.3142857142857143,
+                  0.700092592592592
+                ],
+                "site_interval": [
+                  0.30303030303030304,
+                  0.6896551724137931
+                ],
+                "sites": 44,
+                "tied": 0,
+                "two_way_interval": [
+                  0.09250992063492064,
+                  1.0
+                ],
+                "wrong": 16
+              },
+              "pairs": 31
+            },
+            "gain_over_best_single_measure": {
+              "count": 37399,
+              "difference": 0.005347736570496538,
+              "difference_interval": [
+                -0.01904296012464992,
+                0.034975353861692815
+              ],
+              "interval_method": "two-way bootstrap over searches and sites",
+              "search_interval": [
+                -0.006169924688894748,
+                0.01722784148409444
+              ]
+            },
+            "gain_over_link_count": {
+              "count": 37399,
+              "difference": 0.026912484291023824,
+              "difference_interval": [
+                -0.0013162904456276725,
+                0.058057174619212566
+              ],
+              "interval_method": "two-way bootstrap over searches and sites",
+              "search_interval": [
+                0.013491565285605144,
+                0.04051994952495506
+              ]
+            },
+            "pairs": {
+              "clusters": 727,
+              "count": 37399,
+              "rate": 0.6009385277681222,
+              "rate_decided_only": 0.601038488303624,
+              "right": 22456,
+              "search_interval": [
+                0.5888427551110382,
+                0.6131617632519859
+              ],
+              "site_interval": [
+                0.5687600633996858,
+                0.6354989791928914
+              ],
+              "sites": 5210,
+              "tied": 37,
+              "two_way_interval": [
+                0.575737017857476,
+                0.6244797186158986
+              ],
+              "wrong": 14906
+            }
+          },
+          "free_plus_mdr_gbt": {
+            "best_single_measure": "st_s_cc_pr",
+            "both_sites_young": {
+              "best_single_measure": {
+                "clusters": 19,
+                "count": 31,
+                "rate": 0.5806451612903226,
+                "rate_decided_only": 0.6,
+                "right": 15,
+                "search_interval": [
+                  0.43898628048780486,
+                  0.7692708333333331
+                ],
+                "site_interval": [
+                  0.40625,
+                  0.75
+                ],
+                "sites": 44,
+                "tied": 6,
+                "two_way_interval": [
+                  0.2,
+                  1.0
+                ],
+                "wrong": 10
+              },
+              "gain_over_best_single_measure": {
+                "count": 31,
+                "difference": -0.0967741935483871,
+                "difference_interval": [
+                  -0.6407829225790391,
+                  0.4
+                ],
+                "interval_method": "two-way bootstrap over searches and sites",
+                "search_interval": [
+                  -0.29411764705882354,
+                  0.06897749042145587
+                ]
+              },
+              "median_start_uncertainty_days": 93.0,
+              "model": {
+                "clusters": 19,
+                "count": 31,
+                "rate": 0.4838709677419355,
+                "rate_decided_only": 0.4838709677419355,
+                "right": 15,
+                "search_interval": [
+                  0.3333333333333333,
+                  0.6666666666666666
+                ],
+                "site_interval": [
+                  0.3076388888888889,
+                  0.6551993534482757
+                ],
+                "sites": 44,
+                "tied": 0,
+                "two_way_interval": [
+                  0.07692307692307693,
+                  0.9259259259259259
+                ],
+                "wrong": 16
+              },
+              "pairs": 31
+            },
+            "gain_over_best_single_measure": {
+              "count": 37399,
+              "difference": 0.008877242707024252,
+              "difference_interval": [
+                -0.016905300264164338,
+                0.03756116863628866
+              ],
+              "interval_method": "two-way bootstrap over searches and sites",
+              "search_interval": [
+                -0.002715913633004674,
+                0.02148353934022169
+              ]
+            },
+            "gain_over_link_count": {
+              "count": 37399,
+              "difference": 0.030441990427551538,
+              "difference_interval": [
+                0.0019188923937560841,
+                0.06153741078376081
+              ],
+              "interval_method": "two-way bootstrap over searches and sites",
+              "search_interval": [
+                0.017269636169714088,
+                0.04394552310219892
+              ]
+            },
+            "pairs": {
+              "clusters": 727,
+              "count": 37399,
+              "rate": 0.6044680339046499,
+              "rate_decided_only": 0.6044820024602877,
+              "right": 22604,
+              "search_interval": [
+                0.5925176962462517,
+                0.616503002188032
+              ],
+              "site_interval": [
+                0.5729416855417553,
+                0.6369386855586523
+              ],
+              "sites": 5210,
+              "tied": 5,
+              "two_way_interval": [
+                0.5802109034701228,
+                0.6280105219729268
+              ],
+              "wrong": 14790
+            }
+          },
+          "free_plus_mdr_ridge": {
+            "best_single_measure": "st_s_cc_pr",
+            "both_sites_young": {
+              "best_single_measure": {
+                "clusters": 19,
+                "count": 31,
+                "rate": 0.5806451612903226,
+                "rate_decided_only": 0.6,
+                "right": 15,
+                "search_interval": [
+                  0.43898628048780486,
+                  0.7692708333333331
+                ],
+                "site_interval": [
+                  0.40625,
+                  0.75
+                ],
+                "sites": 44,
+                "tied": 6,
+                "two_way_interval": [
+                  0.2,
+                  1.0
+                ],
+                "wrong": 10
+              },
+              "gain_over_best_single_measure": {
+                "count": 31,
+                "difference": -0.0967741935483871,
+                "difference_interval": [
+                  -0.5909511784511785,
+                  0.27278409090909056
+                ],
+                "interval_method": "two-way bootstrap over searches and sites",
+                "search_interval": [
+                  -0.28846153846153844,
+                  0.05405405405405406
+                ]
+              },
+              "median_start_uncertainty_days": 93.0,
+              "model": {
+                "clusters": 19,
+                "count": 31,
+                "rate": 0.4838709677419355,
+                "rate_decided_only": 0.4838709677419355,
+                "right": 15,
+                "search_interval": [
+                  0.3333333333333333,
+                  0.6538461538461539
+                ],
+                "site_interval": [
+                  0.2857142857142857,
+                  0.6764705882352942
+                ],
+                "sites": 44,
+                "tied": 0,
+                "two_way_interval": [
+                  0.05263157894736842,
+                  0.9334693877551014
+                ],
+                "wrong": 16
+              },
+              "pairs": 31
+            },
+            "gain_over_best_single_measure": {
+              "count": 37399,
+              "difference": 0.012794459744912966,
+              "difference_interval": [
+                -0.009489618423929862,
+                0.037468723476022786
+              ],
+              "interval_method": "two-way bootstrap over searches and sites",
+              "search_interval": [
+                0.002515338815858131,
+                0.02309875333058817
+              ]
+            },
+            "gain_over_link_count": {
+              "count": 37399,
+              "difference": 0.03435920746544025,
+              "difference_interval": [
+                0.008141025386161694,
+                0.0629185400648855
+              ],
+              "interval_method": "two-way bootstrap over searches and sites",
+              "search_interval": [
+                0.022542280523710965,
+                0.046067938218359646
+              ]
+            },
+            "pairs": {
+              "clusters": 727,
+              "count": 37399,
+              "rate": 0.6083852509425386,
+              "rate_decided_only": 0.6083968444979275,
+              "right": 22751,
+              "search_interval": [
+                0.595563206511077,
+                0.6213084501579637
+              ],
+              "site_interval": [
+                0.5668748003399181,
+                0.6472791611751504
+              ],
+              "sites": 5210,
+              "tied": 4,
+              "two_way_interval": [
+                0.5817137642978869,
+                0.6328722989137715
+              ],
+              "wrong": 14644
+            }
+          },
+          "free_ridge": {
+            "best_single_measure": "st_s_cc_pr",
+            "both_sites_young": {
+              "best_single_measure": {
+                "clusters": 19,
+                "count": 31,
+                "rate": 0.5806451612903226,
+                "rate_decided_only": 0.6,
+                "right": 15,
+                "search_interval": [
+                  0.43898628048780486,
+                  0.7692708333333331
+                ],
+                "site_interval": [
+                  0.40625,
+                  0.75
+                ],
+                "sites": 44,
+                "tied": 6,
+                "two_way_interval": [
+                  0.2,
+                  1.0
+                ],
+                "wrong": 10
+              },
+              "gain_over_best_single_measure": {
+                "count": 31,
+                "difference": -0.03225806451612903,
+                "difference_interval": [
+                  -0.5,
+                  0.46153846153846156
+                ],
+                "interval_method": "two-way bootstrap over searches and sites",
+                "search_interval": [
+                  -0.21055161943319836,
+                  0.1724137931034483
+                ]
+              },
+              "median_start_uncertainty_days": 93.0,
+              "model": {
+                "clusters": 19,
+                "count": 31,
+                "rate": 0.5483870967741935,
+                "rate_decided_only": 0.5483870967741935,
+                "right": 17,
+                "search_interval": [
+                  0.35135135135135137,
+                  0.782608695652174
+                ],
+                "site_interval": [
+                  0.34285714285714286,
+                  0.7693548387096768
+                ],
+                "sites": 44,
+                "tied": 0,
+                "two_way_interval": [
+                  0.10808397683397684,
+                  1.0
+                ],
+                "wrong": 14
+              },
+              "pairs": 31
+            },
+            "gain_over_best_single_measure": {
+              "count": 37399,
+              "difference": 0.0145191047888981,
+              "difference_interval": [
+                -0.005623409692814259,
+                0.03714494450247151
+              ],
+              "interval_method": "two-way bootstrap over searches and sites",
+              "search_interval": [
+                0.005553980496198449,
+                0.023552371715389295
+              ]
+            },
+            "gain_over_link_count": {
+              "count": 37399,
+              "difference": 0.03608385250942538,
+              "difference_interval": [
+                0.010392495292053104,
+                0.06278379581748902
+              ],
+              "interval_method": "two-way bootstrap over searches and sites",
+              "search_interval": [
+                0.025028109220009472,
+                0.047275898537867345
+              ]
+            },
+            "pairs": {
+              "clusters": 727,
+              "count": 37399,
+              "rate": 0.6101098959865237,
+              "rate_decided_only": 0.6101246189228219,
+              "right": 22815,
+              "search_interval": [
+                0.5976526952568196,
+                0.622494725115276
+              ],
+              "site_interval": [
+                0.5594907965367066,
+                0.6576845684762315
+              ],
+              "sites": 5210,
+              "tied": 5,
+              "two_way_interval": [
+                0.5832513555101859,
+                0.6348699423786698
+              ],
+              "wrong": 14579
+            }
+          }
+        },
+        "pages": 1168,
+        "pairs": 37399,
+        "single_measures": {
+          "st_mdr_before": {
+            "clusters": 727,
+            "count": 37399,
+            "rate": 0.5670739859354528,
+            "rate_decided_only": 0.5780856031128405,
+            "right": 18571,
+            "search_interval": [
+              0.5557106402276083,
+              0.5785857738222514
+            ],
+            "site_interval": [
+              0.5063951535346466,
+              0.624531088889927
+            ],
+            "sites": 5210,
+            "tied": 5274,
+            "two_way_interval": [
+              0.5367628043636954,
+              0.5930899195429258
+            ],
+            "wrong": 13554
+          },
+          "st_s_cc_hc": {
+            "clusters": 727,
+            "count": 37399,
+            "rate": 0.5917404208668681,
+            "rate_decided_only": 0.5918755355612683,
+            "right": 22103,
+            "search_interval": [
+              0.5795460959351098,
+              0.6041396012324179
+            ],
+            "site_interval": [
+              0.5258561145366855,
+              0.6564354670484938
+            ],
+            "sites": 5210,
+            "tied": 55,
+            "two_way_interval": [
+              0.5610584302829486,
+              0.6191279763104697
+            ],
+            "wrong": 15241
+          },
+          "st_s_cc_hosts": {
+            "clusters": 727,
+            "count": 37399,
+            "rate": 0.5740260434770983,
+            "rate_decided_only": 0.5796209484915591,
+            "right": 20154,
+            "search_interval": [
+              0.5616607792344492,
+              0.5863541526668236
+            ],
+            "site_interval": [
+              0.5116058558918828,
+              0.6361010400256254
+            ],
+            "sites": 5210,
+            "tied": 2628,
+            "two_way_interval": [
+              0.5409681869369369,
+              0.6039943401569252
+            ],
+            "wrong": 14617
+          },
+          "st_s_cc_pr": {
+            "clusters": 727,
+            "count": 37399,
+            "rate": 0.5955907911976256,
+            "rate_decided_only": 0.5957315766923736,
+            "right": 22247,
+            "search_interval": [
+              0.5825333836717592,
+              0.6087869329954146
+            ],
+            "site_interval": [
+              0.5302796929345216,
+              0.6587854732751542
+            ],
+            "sites": 5210,
+            "tied": 55,
+            "two_way_interval": [
+              0.5643183525545444,
+              0.6225173653734459
+            ],
+            "wrong": 15097
+          },
+          "st_s_crux": {
+            "clusters": 727,
+            "count": 37399,
+            "rate": 0.5887857964116687,
+            "rate_decided_only": 0.6110572259941804,
+            "right": 18270,
+            "search_interval": [
+              0.576537142320364,
+              0.601324803075903
+            ],
+            "site_interval": [
+              0.5287418311736684,
+              0.6460117861657549
+            ],
+            "sites": 5210,
+            "tied": 7500,
+            "two_way_interval": [
+              0.5597797280688278,
+              0.615510874130403
+            ],
+            "wrong": 11629
+          },
+          "st_s_opr": {
+            "clusters": 727,
+            "count": 37399,
+            "rate": 0.5679028851038798,
+            "rate_decided_only": 0.5884935707565251,
+            "right": 16888,
+            "search_interval": [
+              0.556847540850563,
+              0.580118449537282
+            ],
+            "site_interval": [
+              0.5115940296139228,
+              0.6228023569800047
+            ],
+            "sites": 5210,
+            "tied": 8702,
+            "two_way_interval": [
+              0.5395206861607776,
+              0.5930464039484862
+            ],
+            "wrong": 11809
+          },
+          "st_s_tranco": {
+            "clusters": 727,
+            "count": 37399,
+            "rate": 0.5913794486483596,
+            "rate_decided_only": 0.5998247407623777,
+            "right": 20535,
+            "search_interval": [
+              0.5789011785207896,
+              0.6048007778248936
+            ],
+            "site_interval": [
+              0.5251697893334898,
+              0.6543648903252278
+            ],
+            "sites": 5210,
+            "tied": 3164,
+            "two_way_interval": [
+              0.5599227534034761,
+              0.6183026737223382
+            ],
+            "wrong": 13700
+          }
+        },
+        "threshold_places": 10.0,
+        "within_page_shuffle": {
+          "clusters": 727,
+          "count": 37399,
+          "rate": 0.5076071552715313,
+          "rate_decided_only": 0.5076071552715313,
+          "right": 18984,
+          "search_interval": [
+            0.4982641545816861,
+            0.5176517818471914
+          ],
+          "site_interval": [
+            0.49915952425855636,
+            0.5154928438445291
+          ],
+          "sites": 5210,
+          "tied": 0,
+          "two_way_interval": [
+            0.4871359400526466,
+            0.5278999006485511
+          ],
+          "wrong": 18415
+        }
+      },
+      "feature_sets": {
+        "free": {
+          "cv": {
+            "dropped_all_missing": [
+              "fp_referring_domains",
+              "fp_brand_search_volume",
+              "fp_review_count",
+              "fp_review_rating",
+              "fp_links_planned",
+              "fp_press_planned",
+              "fp_pages_at_launch"
+            ],
+            "gbt": {
+              "{\"min_child_samples\": 200, \"num_leaves\": 15}": {
+                "mse": 193.4316255773955,
+                "rounds": [
+                  223,
+                  202,
+                  235
+                ]
+              },
+              "{\"min_child_samples\": 200, \"num_leaves\": 7}": {
+                "mse": 194.0943991111434,
+                "rounds": [
+                  128,
+                  289,
+                  260
+                ]
+              },
+              "{\"min_child_samples\": 400, \"num_leaves\": 31}": {
+                "mse": 193.29133606943674,
+                "rounds": [
+                  76,
+                  73,
+                  77
+                ]
+              },
+              "{\"min_child_samples\": 50, \"num_leaves\": 15}": {
+                "mse": 193.36426508936492,
+                "rounds": [
+                  127,
+                  199,
+                  177
+                ]
+              }
+            },
+            "label_variance": 202.59328690541756,
+            "ridge": {
+              "1.0": 196.93676400734333,
+              "10.0": 196.91794309652394,
+              "100.0": 196.9118929056898,
+              "1000.0": 197.30291331274375
+            },
+            "rows": 121189
+          },
+          "features_used": [
+            "st_s_cc_hc",
+            "st_s_cc_pr",
+            "st_s_cc_hosts",
+            "st_s_crux",
+            "st_s_tranco",
+            "st_cc_present",
+            "st_crux_present",
+            "st_tranco_present",
+            "sd_age_days",
+            "sd_uncertainty_days",
+            "sd_left_censored",
+            "sd_age_lower_bound_days",
+            "sd_no_evidence",
+            "sd_registration_known",
+            "sd_possibly_reregistered",
+            "tld_code"
+          ],
+          "model_file": "data/forecast/models/trust/trust-v1-free-lexical-en.json",
+          "model_sha256": "318e484d9affcf05fef57dc1babde58c8473f408689231d7a332ce82efe4d450",
+          "rounds": 75
+        },
+        "free_plus_mdr": {
+          "cv": {
+            "dropped_all_missing": [
+              "fp_referring_domains",
+              "fp_brand_search_volume",
+              "fp_review_count",
+              "fp_review_rating",
+              "fp_links_planned",
+              "fp_press_planned",
+              "fp_pages_at_launch"
+            ],
+            "gbt": {
+              "{\"min_child_samples\": 200, \"num_leaves\": 15}": {
+                "mse": 192.75032609313322,
+                "rounds": [
+                  132,
+                  264,
+                  267
+                ]
+              },
+              "{\"min_child_samples\": 200, \"num_leaves\": 7}": {
+                "mse": 193.15739235494354,
+                "rounds": [
+                  346,
+                  378,
+                  393
+                ]
+              },
+              "{\"min_child_samples\": 400, \"num_leaves\": 31}": {
+                "mse": 192.3680620902775,
+                "rounds": [
+                  230,
+                  97,
+                  77
+                ]
+              },
+              "{\"min_child_samples\": 50, \"num_leaves\": 15}": {
+                "mse": 192.64904392197207,
+                "rounds": [
+                  132,
+                  289,
+                  234
+                ]
+              }
+            },
+            "label_variance": 202.59328690541756,
+            "ridge": {
+              "1.0": 196.35783462378495,
+              "10.0": 196.33995289668238,
+              "100.0": 196.33775900657557,
+              "1000.0": 196.74757414364728
+            },
+            "rows": 121189
+          },
+          "features_used": [
+            "st_s_cc_hc",
+            "st_s_cc_pr",
+            "st_s_cc_hosts",
+            "st_s_crux",
+            "st_s_tranco",
+            "st_cc_present",
+            "st_crux_present",
+            "st_tranco_present",
+            "sd_age_days",
+            "sd_uncertainty_days",
+            "sd_left_censored",
+            "sd_age_lower_bound_days",
+            "sd_no_evidence",
+            "sd_registration_known",
+            "sd_possibly_reregistered",
+            "tld_code",
+            "mdr_before"
+          ],
+          "model_file": "data/forecast/models/trust/trust-v1-free_plus_mdr-lexical-en.json",
+          "model_sha256": "86caf3ce9f62f1640be08dfe90dfb2238a191aaf2d57252ed2404aab8f5d55e0",
+          "rounds": 134
+        }
+      },
+      "label_summary": {
+        "test_residual_sd": 13.206498115199205,
+        "train_residual_sd": 14.233526861091653
+      },
+      "label_table_version": "52749257f55bc535"
+    }
+  },
+  "version": "trust-v1",
+  "what_is_predicted": "Content scores, the content-expected place, every trust model output.",
+  "what_is_real": "Positions, titles and list values as recorded on their dates.",
+  "what_this_is": "The plan's marker 2 definition applied to sites that already rank somewhere in a public sample, with result titles standing in for page content. It is not yet the plan's 20,000 new sites with traffic curves. Those need the paid pulls."
+}

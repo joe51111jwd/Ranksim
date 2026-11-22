@@ -29,7 +29,17 @@ What this module does (facts from the DataForSEO API map, read 2026-11-22):
   bytes as received (the uncompressed content of the .gz file).
 - Every paid call goes through the SpendLedger: reserve the estimate, send,
   settle with the provider's own `cost` field, release when nothing was sent.
-  Without a ledger every paid call is refused.
+  Without a ledger every paid call is refused. A SERP batch is checked against
+  the ledger as a whole before its first task_post, and the estimate follows the
+  provider's billing formula, x5 for a keyword holding a search operator. When a
+  batch stops after some tasks were paid for, the error carries one Pull per
+  spec (`error.pulls`): nothing paid for is thrown away.
+- The sandbox (base_url=DFS_SANDBOX) is free and answers with dummy data. Its
+  calls skip the ledger, its pulls carry PROVIDER_SANDBOX (readings from them
+  are SYNTHETIC, never REAL), its raw files go under their own folder, and no
+  $1 sample runs on it.
+- A $1 sample is recorded only when it learned something. Otherwise it is
+  written as a failed sample that keeps the big-pull gate closed.
 
 Labs data is country level only (no cities). Historical SERPs history depth is
 in conflict between two DataForSEO pages (12 months versus since August 2021).
@@ -43,7 +53,7 @@ import json
 import math
 import os
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
@@ -1046,14 +1056,25 @@ class DataForSeoClient:
                 if not again:
                     break
                 self._sleep(RESUBMIT_BACKOFF_SECONDS * attempt)
-                reposted = self.post_serp_tasks(
-                    [specs[index] for index in again],
-                    mode=mode,
-                    resolve_poisoned_results=resolve_poisoned_results,
-                    pull_ids=[pull_ids[index] for index in again],
-                    attempt=attempt,
-                    sample=sample,
-                )
+                try:
+                    reposted = self.post_serp_tasks(
+                        [specs[index] for index in again],
+                        mode=mode,
+                        resolve_poisoned_results=resolve_poisoned_results,
+                        pull_ids=[pull_ids[index] for index in again],
+                        attempt=attempt,
+                        sample=sample,
+                    )
+                except BudgetError as refusal:
+                    # A resubmission is an extra the approval does not cover: keep every pull already
+                    # collected (and any resubmitted task that was paid for), say why the rest were
+                    # not tried again, and stop resubmitting. Nothing is thrown away.
+                    self._attach_paid_pulls(refusal, specs, pull_ids, pulls, again, tuple(refusal.posted_tasks or ()))
+                    note = f" Not resubmitted: {refusal}"
+                    return [
+                        pull if pull.ok or index not in again else replace(pull, status_message=f"{pull.status_message or ''}{note}".strip())
+                        for index, pull in enumerate(refusal.pulls or pulls)
+                    ]
                 posted_all.extend(reposted)
                 for index, pull in zip(again, self.collect(reposted), strict=True):
                     pulls[index] = pull

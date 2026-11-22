@@ -127,7 +127,7 @@ from typing import Any, Callable, Sequence
 import numpy as np
 
 from .asof import Dated, add_months, as_date, month_start, utc_iso
-from .config import NT50, TOP_DEPTH
+from .config import DIFFICULTY_TERCILES, NT50, TOP_DEPTH
 from .types import SYNTHETIC, OrganicHit, Pull, PullSpec
 
 PROVIDER = "synthetic"
@@ -173,7 +173,7 @@ _SALT_FORM = 8
 _SALT_SPELL = 9
 DIRECTORY_STEM = "bigdirectory"
 
-TERCILES = ("easy", "medium", "hard")
+TERCILES = DIFFICULTY_TERCILES
 
 
 @dataclass(frozen=True)

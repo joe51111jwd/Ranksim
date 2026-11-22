@@ -29,7 +29,7 @@ To see the whole flow work before spending anything, run the demo. It uses a sim
 python -m aeo.ranksim forecast demo
 ```
 
-It prints the seed manifest hash, the reading runs, the marker 1 numbers, the grading summary, three refusals (a late forecast, a replaced forecast and an edit), the stage reports and the marker verdicts. Synthetic results can never pass a marker, so every verdict says NOT PASSED or NOT MEASURABLE YET. That is correct.
+It prints the seed manifest hash, the reading runs, the marker 1 numbers, the grading summary, three refusals (a late forecast, a replaced forecast and an edit), the stage reports and the marker verdicts. Synthetic results can never pass a marker, so every verdict says NOT A MARKER RESULT, with the result of the synthetic code check beside it. That is correct.
 
 ## Step 1. Day 1, 23 November. Set up
 
@@ -81,16 +81,39 @@ python -m aeo.ranksim forecast marker1 sample --candidates candidates.txt --n 30
 
 It draws 300 searches with a fixed seed, freezes the list in the scoreboard and writes it to the file. Free. Running it again with the same list changes nothing. A different list under the same name is refused.
 
-Reading A, on day A:
+Take the readings in round mode. Altered pages come in spells: pulls taken minutes apart are often altered the same way, and then the altered pulls outvote the clean one. Pulls taken hours apart mostly are not. So one reading is five rounds spread over one UTC day, and the reading is built from the stored rounds at the end of the day.
+
+One round, on day A:
 
 ```
-python -m aeo.ranksim forecast read --searches marker1_searches.txt --location-code 1026201
-python -m aeo.ranksim forecast read --searches marker1_searches.txt --location-code 1026201 --execute
+python -m aeo.ranksim forecast read-round --searches marker1_searches.txt --location-code 1026201
+python -m aeo.ranksim forecast read-round --searches marker1_searches.txt --location-code 1026201 --execute
 ```
 
-Reading B, 20 to 28 hours later, is the same command again.
+The dry run prints the cost of one round. One round of 300 searches is 300 tasks and costs 1.080000 USD. With `--execute` it takes one pull of every search, stores the pulls, and records the round in the scoreboard. It builds no reading yet.
 
-Each reading of 300 searches is 1,500 tasks and costs 5.400000 USD. Both readings cost 10.800000 USD. The Standard queue answers in up to 45 minutes per round and a reading has 5 rounds, so a reading can take a few hours. The command prints how many pulls came back, how many the poisoned page filter dropped and why, how many readings are degraded, and what was spent.
+Schedule five rounds across the day, at least an hour apart, so every round finishes on the same UTC date. The Standard queue answers in up to 45 minutes. For example, with cron on a machine set to UTC:
+
+```
+0 1 * * *   cd /path/to/Ranksim && .venv/bin/python -m aeo.ranksim forecast read-round --searches marker1_searches.txt --location-code 1026201 --execute
+30 5 * * *  cd /path/to/Ranksim && .venv/bin/python -m aeo.ranksim forecast read-round --searches marker1_searches.txt --location-code 1026201 --execute
+0 10 * * *  cd /path/to/Ranksim && .venv/bin/python -m aeo.ranksim forecast read-round --searches marker1_searches.txt --location-code 1026201 --execute
+30 14 * * * cd /path/to/Ranksim && .venv/bin/python -m aeo.ranksim forecast read-round --searches marker1_searches.txt --location-code 1026201 --execute
+0 19 * * *  cd /path/to/Ranksim && .venv/bin/python -m aeo.ranksim forecast read-round --searches marker1_searches.txt --location-code 1026201 --execute
+30 23 * * * cd /path/to/Ranksim && .venv/bin/python -m aeo.ranksim forecast assemble --date $(date -u +\%F)
+```
+
+After the last round, assemble the readings of that UTC date:
+
+```
+python -m aeo.ranksim forecast assemble --date 2026-11-28
+```
+
+`assemble` takes the pulls that completed on that UTC date, builds one clean reading per search, and stores it. Each reading gets the latest earlier clean reading of the same search as history (at most 21 days old), and the suspect sites of every round it came from. It prints how many readings it built, how many are degraded and why, and how many searches had a history. Free. Running it twice changes nothing.
+
+Reading B is the same five rounds and the same `assemble` on the next day, so the two readings are about 24 hours apart. Both readings cost 10.800000 USD in all.
+
+`read` still works and takes all five rounds in one process, one minute apart. Use it only when a day of rounds is not possible: its pulls share one spell of altered pages more often.
 
 Then judge marker 1:
 
@@ -98,7 +121,7 @@ Then judge marker 1:
 python -m aeo.ranksim forecast marker1 report --location-code 1026201
 ```
 
-It pairs reading A and reading B of each search, prints the share of top 10 units that agree within 2 places, the interval over searches, and the same number for single raw pulls on the same searches. It ends with the verdict. Free. Exit code 0 only when marker 1 passed.
+It pairs reading A and reading B of each search, prints the share of top 10 units that agree within 2 places, the interval over searches, the same number with the poisoned page filter switched off, and the same number for single raw pulls on the same searches. It names the reader version and its settings. Add `--reader-version 1` to rebuild the readings with the older rule (the default is 2). It ends with the verdict. Free. Exit code 0 only when marker 1 passed.
 
 Keep a copy the outside world can date:
 
@@ -142,14 +165,15 @@ python -m aeo.ranksim forecast seeds register --manifest seeds/seed_manifest.jso
 
 `seeds freeze` writes the hash beside the manifest. A frozen manifest is never rewritten. Commit both files. `seeds register` adds the sites with their launch dates and the searches with their difficulty, and freezes the manifest hash in the scoreboard. Free.
 
-Every week until day 90, and on days 30, 60 and 90:
+Every week until day 90, and on days 30, 60 and 90, take five rounds across the day and then assemble, as in step 2:
 
 ```
-python -m aeo.ranksim forecast read --manifest seeds/seed_manifest.json
-python -m aeo.ranksim forecast read --manifest seeds/seed_manifest.json --execute
+python -m aeo.ranksim forecast read-round --manifest seeds/seed_manifest.json
+python -m aeo.ranksim forecast read-round --manifest seeds/seed_manifest.json --execute
+python -m aeo.ranksim forecast assemble --date <that UTC date> --manifest seeds/seed_manifest.json
 ```
 
-One reading of 200 searches is 1,000 tasks and costs 3.600000 USD.
+One round of 200 searches is 200 tasks and costs 0.720000 USD. One reading (five rounds) is 1,000 tasks and costs 3.600000 USD.
 
 Each week, save the Search Console exports for each site:
 
@@ -169,11 +193,11 @@ python -m aeo.ranksim forecast sample traffic --sites small_new_sites.txt
 python -m aeo.ranksim forecast sample ranked-keywords --sites some_sites.txt
 ```
 
-1. `sample historical-serps` answers how deep and how far back past result pages go. At the budgeting estimate it fits 111 searches for 0.999000 USD. It prints the earliest and latest month returned.
+1. `sample historical-serps` answers how deep and how far back past result pages go. At the plan rate of 1 page per search per month it fits 333 searches for 0.999000 USD. It prints the earliest and latest month returned.
 2. `sample traffic` answers whether very small new sites show up in the traffic history. It fits 733 sites in one task for 0.999600 USD. It prints the share of sites with data.
 3. `sample ranked-keywords` fits 41 sites at 100 rows for 0.984000 USD.
 
-Note on past result pages: the budget table assumes up to 3 snapshots per month, so its estimate for 5,000 searches over 24 months is 43.200000 USD, not the plan's 14.40. The sample measures the real count. The provider's own cost field is what gets charged.
+Note on past result pages: the budget guard reserves 1 page per search per month, the plan's own rate, so 5,000 searches over 24 months is 14.400000 USD. That is still on the safe side. DataForSEO's free history samples (117 locales, 12 months) hold 53,091 dated pages for 11,691 searches, about 0.38 pages per search per month, with a median gap of 62 days between two pages of one search. At that rate the same pull would be 5.449423 USD. Every dry run and `budget prices` print both figures. The $1 sample measures the real count before the big pull, and the provider's own cost field is what gets charged.
 
 The big pulls are coming in the next step. There is no command for them yet.
 
@@ -240,7 +264,7 @@ Seed, pilot and backtest results are always reported apart. Marker 5 passes only
 
 ## When something goes wrong
 
-1. A paid command says Refused by the budget guard. Either the approved amount is used up or the $1 sample of that kind is not recorded yet. The message names the command to run.
+1. A paid command says Refused by the budget guard. Either the approved amount is used up or the $1 sample of that kind is not recorded yet. The message names the command to run, for example `python -m aeo.ranksim forecast budget approve --amount <USD> --by <name> --note <why>`.
 2. `verify` says the chains do not verify, or the export is not a prefix of the database. Stop. Do not record or grade anything. Tell the engineer what it printed.
 3. A command says DataForSEO needs a login. Set `DATAFORSEO_LOGIN` and `DATAFORSEO_PASSWORD` and run it again.
 4. `import` rebuilds an empty scoreboard from a committed export: `python -m aeo.ranksim forecast import --from evals/scoreboard`. It refuses a scoreboard that already holds rows.

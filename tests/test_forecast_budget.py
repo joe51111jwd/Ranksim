@@ -105,6 +105,7 @@ def test_fresh_ledger_refuses_every_paid_call_and_says_how_to_approve(tmp_path):
         ledger.reserve("one SERP pull", budget.KIND_SERP_STANDARD_NORMAL, Decimal("0.0036"))
     text = str(refused.value)
     assert ".approve(Decimal(" in text and "by=" in text and str(tmp_path / "spend.jsonl") in text
+    assert "python -m aeo.ranksim forecast budget approve --amount <USD> --by <name> --note <why>" in text
     assert chr(0x2014) not in text and chr(0x2013) not in text
     assert ledger.spent_total == Decimal("0")
 
@@ -266,3 +267,17 @@ def test_many_small_settlements_sum_exactly(tmp_path):
         ledger.settle(ledger.reserve("p", budget.KIND_SERP_STANDARD_NORMAL, Decimal("0.0036")), 0.0036)
     assert ledger.spent_total == Decimal("1.080000")
     assert ledger.remaining == Decimal("0.920000")
+
+
+
+def test_past_result_pages_are_reserved_at_one_page_a_month_and_the_sample_rate_is_printed():
+    assert budget.HISTORICAL_SERPS_SNAPSHOTS_PER_MONTH_ESTIMATE == 1
+    assert budget.historical_serps_estimate(24, 5000) == Decimal("14.40")  # the plan's own figure, not 43.20
+    rate = budget.HISTORICAL_SERPS_PAGES_PER_MONTH_SAMPLES
+    assert Decimal("0.37") < rate < Decimal("0.38")  # 53,091 pages / 11,691 searches / 12 months
+    measured = budget.historical_serps_sample_rate_estimate(24, 5000)
+    assert measured < budget.historical_serps_estimate(24, 5000) and measured == Decimal("5.449423")
+    lines = budget.historical_serps_estimate_lines(24, 5000)
+    assert "14.400000 USD" in lines[0] and "reserves" in lines[0]
+    assert "5.449423 USD" in lines[1] and "53,091 pages" in lines[1]
+    assert not any(chr(0x2014) in line or chr(0x2013) in line for line in lines)

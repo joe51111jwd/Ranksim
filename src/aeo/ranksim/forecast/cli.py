@@ -49,6 +49,7 @@ from .budget import (
     ProviderError,
     SpendLedger,
     historical_serps_estimate,
+    historical_serps_sample_rate_estimate,
     historical_traffic_cost,
     ranked_keywords_cost,
     serp_cost,
@@ -59,6 +60,7 @@ from .scoreboard import ChainBroken, Scoreboard, ScoreboardError, ScoreboardRefu
 from .seeds import ManifestError, SearchCandidate, SeedManifest, SeedSite, load_frozen, pick_niche_searches
 from .asof import utc_iso
 from .noise import sample_marker1_searches
+from .reader import DEFAULT_RULE_VERSION, READER_VERSIONS
 from .types import REAL, PullSpec
 
 PROG = "python -m aeo.ranksim forecast"
@@ -377,7 +379,8 @@ def cmd_budget_prices(ctx: Context, args: argparse.Namespace) -> int:
         "one clean reading (5 pulls, depth 50, Standard queue, repair on)": reading,
         "marker 1 (300 searches read twice)": serp_cost(TOP_DEPTH, pulls=DEFAULT_PULLS * 300 * 2),
         "seed sites (200 searches, 16 readings)": serp_cost(TOP_DEPTH, pulls=DEFAULT_PULLS * 200 * 16),
-        "past result pages (5,000 searches, 24 months, budgeting estimate)": historical_serps_estimate(24, 5000),
+        "past result pages (5,000 searches, 24 months, plan rate of 1 page a month, reserved)": historical_serps_estimate(24, 5000),
+        "past result pages (5,000 searches, 24 months, rate seen in the free history samples)": historical_serps_sample_rate_estimate(24, 5000),
         "traffic history (20,000 sites)": historical_traffic_cost(20000),
         "exact positions (2,000 sites, 100 rows)": ranked_keywords_cost(2000, 100),
     }
@@ -675,14 +678,18 @@ def cmd_read(ctx: Context, args: argparse.Namespace) -> int:
         return stop
     source = ctx.source(args.provider, serper_location=args.serper_location, location_code=specs[0].location_code)
     summary = pipeline.take_readings(ctx.scoreboard(), source, specs, pulls=int(args.pulls),
-                                     gap_seconds=float(args.gap_seconds), clock=ctx.clock, ledger=ctx.ledger())
+                                     gap_seconds=float(args.gap_seconds), clock=ctx.clock, ledger=ctx.ledger(),
+                                     version=int(args.reader_version))
     label = summary.label
     lines = [
         f"Read {summary.searches} searches with {summary.provider}, {summary.pulls_per_search} pulls each ({label}).",
         f"Pulls returned {summary.pulls_returned}, OK {summary.pulls_ok}, dropped by the filter {summary.pulls_dropped} ({label}).",
         "Drop reasons: " + (", ".join(f"{k} {v}" for k, v in summary.drop_reasons.items()) or "none") + ".",
         f"Readings stored {summary.readings}. Degraded {summary.degraded}. Pulls that look like copies: {summary.not_independent} ({label}).",
+        f"Reader {summary.reader_version}. Searches with an earlier reading passed as history: {summary.history_used}.",
         f"Spent {usd_text(summary.spent_usd or 0)}. Remaining {usd_text(ctx.ledger().remaining)}.",
+        "All rounds ran in this one process. Altered pages come in spells, so for real readings prefer "
+        f"round mode: {PROG} read-round five times across a day, then {PROG} assemble.",
     ]
     for index, message in summary.failed_rounds:
         lines.append(f"Round {index + 1} failed: {message}")
@@ -690,6 +697,53 @@ def cmd_read(ctx: Context, args: argparse.Namespace) -> int:
         lines.append("The budget guard refused part of this run. " + pipeline.APPROVE_HINT)
     ctx.emit(summary.to_dict(), lines)
     return EXIT_CHECK_FAILED if summary.failed_rounds else EXIT_OK
+
+
+def cmd_read_round(ctx: Context, args: argparse.Namespace) -> int:
+    if args.provider == "synthetic":
+        return ctx.fail("Synthetic readings run only inside forecast demo, so they never sit beside real readings.")
+    specs, manifest_hash = _specs_from(args)
+    plan = pipeline.plan_round_cost(ctx.ledger(), args.provider, len(specs), depth=int(args.depth))
+    stop = _dry_run_or_refuse(ctx, plan, args.execute, {"searches": len(specs), "manifest_hash": manifest_hash})
+    if stop is not None:
+        return stop
+    source = ctx.source(args.provider, serper_location=args.serper_location, location_code=specs[0].location_code)
+    summary = pipeline.read_round(ctx.scoreboard(), source, specs, clock=ctx.clock, ledger=ctx.ledger())
+    label = summary.label
+    lines = [
+        f"One round of {summary.searches} searches with {summary.provider} ({label}).",
+        f"Pulls stored {summary.pulls_returned}, OK {summary.pulls_ok} ({label}).",
+    ]
+    if summary.freeze_name:
+        lines.append(f"The round is recorded in the scoreboard as {summary.freeze_name}.")
+    if summary.failed:
+        lines.append(f"The round failed and stored nothing: {summary.failed}")
+    lines.append(f"Spent {usd_text(summary.spent_usd or 0)}. Remaining {usd_text(ctx.ledger().remaining)}.")
+    lines.append(f"No reading is built yet. After the last round of the day run: {PROG} assemble --date <UTC date>")
+    ctx.emit(summary.to_dict(), lines)
+    return EXIT_CHECK_FAILED if summary.failed else EXIT_OK
+
+
+def cmd_assemble(ctx: Context, args: argparse.Namespace) -> int:
+    has_input = bool(getattr(args, "manifest", None) or _searches_from(args))
+    specs = _specs_from(args)[0] if has_input else None
+    summary = pipeline.assemble(ctx.scoreboard(), args.date, specs=specs, version=int(args.reader_version))
+    labels = ", ".join(f"{count} {name}" for name, count in summary.labels.items()) or "none"
+    lines = [
+        f"Assembled the readings of {summary.day} (UTC) from {summary.pulls_found} stored pulls in {summary.rounds} rounds.",
+        f"Readings built {summary.readings_built}: {labels}. Newly stored {summary.readings_stored}. "
+        f"Already stored {summary.readings_already_stored}.",
+        f"Degraded {summary.degraded}. Reasons: "
+        + (", ".join(f"{k} {v}" for k, v in summary.degraded_reasons.items()) or "none") + ".",
+        f"Reader {summary.reader_version}. Searches with an earlier reading passed as history: {summary.history_used}.",
+        "This is free. Nothing was sent and nothing was spent.",
+    ]
+    for item in summary.skipped:
+        lines.append(f"Skipped {item['search']}: {item['reason']}")
+    if summary.pulls_found == 0:
+        lines.append(f"No stored pull completed on {summary.day}. Take the rounds first with: {PROG} read-round")
+    ctx.emit(summary.to_dict(), lines)
+    return EXIT_CHECK_FAILED if summary.skipped or summary.pulls_found == 0 else EXIT_OK
 
 
 # ----------------------------------------------------------------------------------------------
@@ -723,8 +777,8 @@ def cmd_marker1_sample(ctx: Context, args: argparse.Namespace) -> int:
     ctx.emit(payload, [
         f"Drew {len(sample.searches)} of {sample.candidates} searches with seed {sample.seed}.",
         f"Frozen in the scoreboard as {args.name} (sha256 {digest}). Wrote {out}.",
-        f"Next, on day A: {PROG} read --searches {out} --location-code <city> --execute",
-        "Then again 20 to 28 hours later on day B, then run marker1 report.",
+        f"Next, on day A: {PROG} read-round --searches {out} --location-code <city> --execute, five rounds hours apart,",
+        f"then {PROG} assemble --date <day A>. Do the same on day B, 20 to 28 hours later, then run marker1 report.",
     ])
     return EXIT_OK
 
@@ -733,7 +787,7 @@ def cmd_marker1_report(ctx: Context, args: argparse.Namespace) -> int:
     board = ctx.scoreboard()
     searches = pipeline.read_search_file(args.searches) if args.searches else pipeline.frozen_marker1_searches(board, args.name)
     result = pipeline.marker1(board, searches, location_code=int(args.location_code), device=args.device,
-                              a_date=args.a_date, b_date=args.b_date)
+                              a_date=args.a_date, b_date=args.b_date, reader_version=int(args.reader_version))
     ctx.emit(result, pipeline.marker1_lines(result))
     return EXIT_OK if result["evaluation"]["passed"] is True else EXIT_CHECK_FAILED
 
@@ -995,20 +1049,43 @@ def _register_seeds(sub: Any, common: argparse.ArgumentParser) -> None:
     register.set_defaults(handler=cmd_seeds_register)
 
 
+def _add_request_input(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--manifest", default=None, help="a frozen seed manifest: read all its searches")
+    _add_search_input(parser)
+    parser.add_argument("--location-code", type=int, default=None, help="the pinned city code, with --searches")
+    parser.add_argument("--language", default=DEFAULT_LANGUAGE)
+    parser.add_argument("--device", default=DEFAULT_DEVICE)
+    parser.add_argument("--depth", type=int, default=TOP_DEPTH)
+
+
+def _add_reader_version(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--reader-version", type=int, choices=sorted(READER_VERSIONS), default=DEFAULT_RULE_VERSION,
+                        help=f"the clean reader rule (default {DEFAULT_RULE_VERSION})")
+
+
 def _register_read(sub: Any, common: argparse.ArgumentParser) -> None:
-    read = sub.add_parser("read", parents=[common], help="one clean reading run (paid, dry run by default)")
-    read.add_argument("--manifest", default=None, help="a frozen seed manifest: read all its searches")
-    _add_search_input(read)
-    read.add_argument("--location-code", type=int, default=None, help="the pinned city code, with --searches")
-    read.add_argument("--language", default=DEFAULT_LANGUAGE)
-    read.add_argument("--device", default=DEFAULT_DEVICE)
-    read.add_argument("--depth", type=int, default=TOP_DEPTH)
+    read = sub.add_parser("read", parents=[common], help="one clean reading run, every round in this process (paid, dry run by default)")
+    _add_request_input(read)
     read.add_argument("--pulls", type=int, default=DEFAULT_PULLS)
     read.add_argument("--gap-seconds", type=float, default=float(MIN_PULL_GAP_SECONDS))
     read.add_argument("--provider", choices=pipeline.PROVIDERS, default="dataforseo")
     read.add_argument("--serper-location", default=None, help="Serper place name of the city, for --provider serper")
+    _add_reader_version(read)
     _add_paid(read)
     read.set_defaults(handler=cmd_read)
+    rnd = sub.add_parser("read-round", parents=[common],
+                         help="ONE round of pulls, stored for assemble (paid, dry run by default)")
+    _add_request_input(rnd)
+    rnd.add_argument("--provider", choices=pipeline.PROVIDERS, default="dataforseo")
+    rnd.add_argument("--serper-location", default=None, help="Serper place name of the city, for --provider serper")
+    _add_paid(rnd)
+    rnd.set_defaults(handler=cmd_read_round)
+    asm = sub.add_parser("assemble", parents=[common],
+                         help="build and store the readings of one UTC date from its stored rounds (free)")
+    asm.add_argument("--date", type=_iso_date, required=True, help="the UTC date whose stored pulls make the readings")
+    _add_request_input(asm)
+    _add_reader_version(asm)
+    asm.set_defaults(handler=cmd_assemble)
 
 
 def _register_marker1(sub: Any, common: argparse.ArgumentParser) -> None:
@@ -1029,6 +1106,7 @@ def _register_marker1(sub: Any, common: argparse.ArgumentParser) -> None:
     rep.add_argument("--device", default=DEFAULT_DEVICE)
     rep.add_argument("--a-date", type=_iso_date, default=None)
     rep.add_argument("--b-date", type=_iso_date, default=None)
+    _add_reader_version(rep)
     rep.set_defaults(handler=cmd_marker1_report)
 
 

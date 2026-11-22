@@ -91,11 +91,27 @@ SERP_MODES: dict[str, str] = {
     "live": "serp_live_page",
 }
 
-# Budgeting assumption, not a price: how many Historical SERPs snapshots one month can return.
-# The docs example returned 5 snapshots for a range that touched 3 calendar months, so billing is
-# per snapshot and can exceed one per month. The $1 sample measures the real count. Settlement
-# always uses the provider's own cost field.
-HISTORICAL_SERPS_SNAPSHOTS_PER_MONTH_ESTIMATE = 3
+# Budgeting assumption, not a price: how many Historical SERPs pages (snapshots) one search returns
+# per month. Billing is per page returned. This is the plan's own assumption ("$0.00012 per monthly
+# page. 5,000 searches over 24 months is $14.40"), and it is what the budget guard reserves.
+# Evidence: DataForSEO's free history samples (117 locales, May 2025 to April 2026) hold 53,091
+# dated pages for 11,691 searches across 12 months, about 0.38 pages per search per month, with a
+# median gap of 62 days between two pages of one search. So 1 a month is still conservative.
+# The docs example that returned 5 pages for a range touching 3 months shows one search can return
+# more, so the $1 sample measures the real count before any large pull, and settlement always uses
+# the provider's own cost field.
+HISTORICAL_SERPS_SNAPSHOTS_PER_MONTH_ESTIMATE = 1
+# What the free history samples showed (see above): 53,091 pages / 11,691 searches / 12 months.
+HISTORICAL_SERPS_SAMPLE_PAGES = 53_091
+HISTORICAL_SERPS_SAMPLE_SEARCHES = 11_691
+HISTORICAL_SERPS_SAMPLE_MONTHS = 12
+HISTORICAL_SERPS_SAMPLE_MEDIAN_GAP_DAYS = 62
+HISTORICAL_SERPS_PAGES_PER_MONTH_SAMPLES = (
+    Decimal(HISTORICAL_SERPS_SAMPLE_PAGES) / HISTORICAL_SERPS_SAMPLE_SEARCHES / HISTORICAL_SERPS_SAMPLE_MONTHS
+)  # about 0.378
+
+# The command a person runs to record an approval. Every refusal names it.
+APPROVE_COMMAND = "python -m aeo.ranksim forecast budget approve --amount <USD> --by <name> --note <why>"
 
 # Ledger kinds. A kind is the unit of the $1 sample gate.
 KIND_SERP_STANDARD_NORMAL = "dataforseo.serp.standard_normal"
@@ -217,9 +233,34 @@ def historical_serps_cost(searches: int, snapshots_per_search: int) -> Decimal:
 
 
 def historical_serps_estimate(months: int, searches: int = 1) -> Decimal:
-    """Upper estimate for Historical SERPs over `months` months, using the snapshots-per-month assumption."""
+    """The reservation estimate for Historical SERPs over `months` months: HISTORICAL_SERPS_SNAPSHOTS_PER_MONTH_ESTIMATE
+    pages per search per month (1, the plan's rate). The budget guard reserves this amount."""
     _check_counts(months, searches)
     return historical_serps_cost(searches, months * HISTORICAL_SERPS_SNAPSHOTS_PER_MONTH_ESTIMATE)
+
+
+def historical_serps_sample_rate_estimate(months: int, searches: int = 1) -> Decimal:
+    """What Historical SERPs would cost at the page rate measured on the free history samples (about 0.38
+    pages per search per month), rounded to the micro-dollar. Printed beside the plan-rate estimate. Never
+    used to reserve money: the reservation uses the higher plan rate."""
+    _check_counts(months, searches)
+    usd = price("labs_historical_serps_snapshot") * searches * months * HISTORICAL_SERPS_PAGES_PER_MONTH_SAMPLES
+    return usd.quantize(Decimal("0.000001"), rounding=ROUND_HALF_UP)
+
+
+def historical_serps_estimate_lines(months: int, searches: int = 1) -> list[str]:
+    """Both estimates for a Historical SERPs pull, in short plain sentences, for dry runs."""
+    plan = historical_serps_estimate(months, searches)
+    measured = historical_serps_sample_rate_estimate(months, searches)
+    rate = HISTORICAL_SERPS_PAGES_PER_MONTH_SAMPLES.quantize(Decimal("0.01"))
+    return [
+        f"Plan rate, {HISTORICAL_SERPS_SNAPSHOTS_PER_MONTH_ESTIMATE} page per search per month: {usd_text(plan)}. "
+        "The budget guard reserves this amount.",
+        f"Sample rate, {rate} pages per search per month as measured on the free history samples "
+        f"({HISTORICAL_SERPS_SAMPLE_PAGES:,} pages, {HISTORICAL_SERPS_SAMPLE_SEARCHES:,} searches, "
+        f"{HISTORICAL_SERPS_SAMPLE_MONTHS} months): {usd_text(measured)}.",
+        "The $1 sample measures the real count before any large pull. The provider's cost field is what gets charged.",
+    ]
 
 
 def historical_traffic_cost(sites: int, *, per_task: int = LABS_MAX_TARGETS_PER_TASK) -> Decimal:
@@ -425,7 +466,8 @@ class SpendLedger:
                 raise BudgetError(
                     f"Refused: {item} needs an estimated {usd_text(micros)}, but only {usd_text(state.remaining)} "
                     f"of the {usd_text(state.approved)} approved is left in {self.path}. "
-                    f"To approve more, run in Python: SpendLedger(\"{self.path}\").approve(Decimal(\"<amount in USD>\"), "
+                    f"To approve more, run: {APPROVE_COMMAND}. "
+                    f"Or in Python: SpendLedger(\"{self.path}\").approve(Decimal(\"<amount in USD>\"), "
                     f"by=\"<your name>\", note=\"<what it is for>\")"
                 )
             kind_after = state.kind_spent.get(kind, 0) + micros

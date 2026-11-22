@@ -19,6 +19,10 @@ REAL = "REAL"
 PREDICTED = "PREDICTED"
 SYNTHETIC = "SYNTHETIC"
 
+# Provider names whose pulls come from the simulated world (synth.PROVIDER).
+# A reading built from any such pull is SYNTHETIC, never REAL.
+SYNTHETIC_PROVIDERS: frozenset[str] = frozenset({"synthetic"})
+
 
 def clamp_position(value: int | float | None) -> int:
     """A position as stored: 1 to 50, or NT50 for anything deeper. None is not a position."""
@@ -116,7 +120,15 @@ class SitePosition:
 
 @dataclass(frozen=True)
 class CleanReading:
-    """The middle position per site over the kept pulls of one reading. REAL."""
+    """The middle position per site over the kept pulls of one reading. REAL (SYNTHETIC from the simulated world).
+
+    Provenance, both None when not known (a reading stored before these fields
+    existed, or one built by hand): `reader_version` names the reader rule that
+    built it (for example "reader-v2"), and `degraded_reason` says in one line
+    why a degraded reading is degraded (a cluster tie, too few kept pulls, the
+    only cluster altered against history, no pulls at all). It is None for a
+    reading that is not degraded.
+    """
 
     reading_id: str
     search: str
@@ -131,6 +143,8 @@ class CleanReading:
     positions: tuple[SitePosition, ...]
     pull_ids: tuple[str, ...] = ()
     label: str = REAL
+    reader_version: str | None = None
+    degraded_reason: str | None = None
 
     def position_of(self, site: str) -> int:
         """The site's clean position, or NT50 when it is not in the reading's top 50."""

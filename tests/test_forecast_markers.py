@@ -179,7 +179,9 @@ def test_marker_5_refuses_backtest_data_and_prints_the_site_cluster_interval():
     assert refused["passed"] is False
     assert any("Backtest data cannot pass it" in note for note in refused["notes"])
     synthetic = stage_report_like(graded, source="synthetic", stage="d60", as_of="2027-03-19")
-    assert evaluate_marker(5, synthetic)["passed"] is False
+    synthetic_verdict = evaluate_marker(5, synthetic)
+    assert synthetic_verdict["passed"] is None and synthetic_verdict["label"] == "SYNTHETIC"
+    assert synthetic_verdict["synthetic_check_passed"] is False  # the source bar fails, kept apart from passed
 
 
 def test_marker_5_with_zero_outcomes_is_not_measurable_and_names_sources():
@@ -231,3 +233,25 @@ def test_plan_schedule_problems_are_stated_as_checks():
     assert m4["ok"] is False and "day 53" in m4["note"] and "2026-10-24" in m4["note"]
     week1 = checks["seed launch week"]
     assert week1["value"] == "2027-02-21" and week1["ok"] is False
+
+
+def test_a_synthetic_report_gets_a_synthetic_verdict_that_never_passes():
+    block = {"count": 300, "right": 290, "rate": 0.97, "cluster_interval": [0.95, 0.98]}
+    verdict = evaluate_marker(1, {"label": "SYNTHETIC", "headline": block})
+    assert verdict["label"] == "SYNTHETIC" and verdict["passed"] is None
+    assert verdict["synthetic_check_passed"] is True  # the bars were met, kept apart from passed
+    assert any("cannot pass a marker" in note for note in verdict["notes"])
+    text = render_marker_text(verdict)
+    assert "NOT A MARKER RESULT (SYNTHETIC)" in text and "Synthetic code check: PASSED (SYNTHETIC)" in text
+    assert "—" not in text and "–" not in text
+    real = evaluate_marker(1, {"label": "REAL", "headline": block})
+    assert real["label"] == "REAL" and real["passed"] is True and "synthetic_check_passed" not in real
+
+
+def test_shared_constants_live_in_config():
+    from aeo.ranksim.forecast import config, markers, report, scoreboard, synth
+
+    assert config.DIFFICULTY_TERCILES == ("easy", "medium", "hard")
+    assert scoreboard.DIFFICULTY_TERCILES is config.DIFFICULTY_TERCILES and synth.TERCILES is config.DIFFICULTY_TERCILES
+    assert report.REPORT_MIN_COUNT == markers.MARKER_MIN_COUNT == config.MIN_COUNT_TO_PRINT_RATE == 30
+    assert config.MIN_COUNT_PRECISION_RECALL == config.MIN_COUNT_TO_PRINT_RATE

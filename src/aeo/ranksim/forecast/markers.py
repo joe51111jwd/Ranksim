@@ -16,6 +16,11 @@ Pass rules (docs/plan/IMPLEMENTATION_SPEC.md section 7):
   5  Confirmed hit rate 0.90 or more, precision 0.85 or more, recall 0.80 or more, on REAL
      day-90 outcomes only. Backtest data can never pass it. The site-cluster interval is printed.
 
+A report on synthetic data (its label is SYNTHETIC or its source is
+synthetic) gets a SYNTHETIC verdict: `passed` is None, never True, and the
+value the bars would give is kept under `synthetic_check_passed`, so the code
+can still be tested end to end.
+
 The plan's schedule is checked here too, with date arithmetic only.
 """
 
@@ -27,11 +32,11 @@ from datetime import date, timedelta
 from typing import Any, Mapping, Sequence
 
 from .chain import canonical_json, sha256_text
-from .config import CONFIRMED_STAGE, MIN_COUNT_PRECISION_RECALL, OUTCOME_DAY, STAGE_DAYS
+from .config import CONFIRMED_STAGE, MIN_COUNT_TO_PRINT_RATE, OUTCOME_DAY, STAGE_DAYS
 from .report import plain_date
-from .types import REAL
+from .types import REAL, SYNTHETIC
 
-MARKER_MIN_COUNT = MIN_COUNT_PRECISION_RECALL
+MARKER_MIN_COUNT = MIN_COUNT_TO_PRINT_RATE
 _ISO_DATE = re.compile(r"\b\d{4}-\d{2}-\d{2}\b")
 SCHEDULE_DAYS = (7, 14, 30, 60, 90)
 
@@ -185,8 +190,17 @@ def _verdict(checks: Sequence[Mapping[str, Any]]) -> bool | None:
     return True
 
 
+def is_synthetic_report(report: Mapping[str, Any]) -> bool:
+    """True when the report holds synthetic data: its label is SYNTHETIC or its source is synthetic."""
+    return report.get("label") == SYNTHETIC or report.get("source") == "synthetic"
+
+
 def evaluate_marker(number: int, report: Mapping[str, Any]) -> dict[str, Any]:
-    """Judge one marker on one report. passed is True, False, or None when it is not measurable yet."""
+    """Judge one marker on one report. passed is True, False, or None when it is not measurable yet.
+
+    On a synthetic report the verdict is labeled SYNTHETIC and passed is None.
+    The computed value is kept under synthetic_check_passed.
+    """
     item = marker(number)
     notes: list[str] = []
     checks: list[dict[str, Any]] = []
@@ -212,16 +226,21 @@ def evaluate_marker(number: int, report: Mapping[str, Any]) -> dict[str, Any]:
     passed = _verdict(checks)
     if passed is None and not notes:
         notes.append("Not measurable yet.")
+    synthetic = is_synthetic_report(report)
+    if synthetic:
+        notes.append("Synthetic results test the code. They cannot pass a marker.")
     result = {
         "marker": number,
         "name": item.name,
         "date": item.date.isoformat(),
         "markers_hash": markers_hash(),
-        "label": REAL,
-        "passed": passed,
+        "label": SYNTHETIC if synthetic else REAL,
+        "passed": None if synthetic else passed,
         "checks": checks,
         "notes": notes,
     }
+    if synthetic:
+        result["synthetic_check_passed"] = passed
     result.update(extra)
     return result
 
@@ -255,8 +274,6 @@ def _stage_marker(
         notes.append(f"The report is as of {report.get('as_of')}. The marker date is {item.date.isoformat()}.")
 
     checks.append(_check("source may pass this marker", source, list(item.sources), source in item.sources))
-    if source == "synthetic":
-        notes.append("Synthetic results are never accuracy, so they cannot pass a marker.")
     if item.number == 5 and source == "backtest":
         notes.append("Marker 5 needs REAL day 90 outcomes. Backtest data cannot pass it.")
     if item.number == 4 and source == "seed":
@@ -300,8 +317,15 @@ def _stage_marker(
 
 def render_marker_text(result: Mapping[str, Any]) -> str:
     """A marker verdict in short plain sentences."""
-    verdict = {True: "PASSED", False: "NOT PASSED", None: "NOT MEASURABLE YET"}[result["passed"]]
-    lines = [f"Marker {result['marker']}, {result['name']}: {verdict} ({result['label']})."]
+    words = {True: "PASSED", False: "NOT PASSED", None: "NOT MEASURABLE YET"}
+    if result.get("label") == SYNTHETIC:
+        check = words[result.get("synthetic_check_passed")]
+        lines = [
+            f"Marker {result['marker']}, {result['name']}: NOT A MARKER RESULT ({SYNTHETIC}). "
+            f"Synthetic code check: {check} ({SYNTHETIC})."
+        ]
+    else:
+        lines = [f"Marker {result['marker']}, {result['name']}: {words[result['passed']]} ({result['label']})."]
     for check in result["checks"]:
         state = {True: "met", False: "not met", None: "not measurable"}[check["ok"]]
         lines.append(

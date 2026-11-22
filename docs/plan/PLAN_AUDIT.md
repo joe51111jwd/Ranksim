@@ -34,6 +34,7 @@ Status words: **Fixed in code** means the software refuses or corrects it. **Rep
 | B7 | The backtest would grade the sites the trust model trained on. | Fixed in code. Only held-out sites are graded |
 | B8 | Past result pages are one snapshot per month. One snapshot is noisier than a clean reading, and "month 1" can be anywhere from about 1 to 60 days after launch. | Reported. Each backtest cell stores the real days since launch. Backtest results are labeled single snapshot and are never pooled with real outcomes |
 | B9 | The plan takes sites that started 12 to 30 months ago but buys 24 months of past result pages. Sites that started 24 to 30 months ago have no launch-month page. | **Needs James**: buy 30 months (about $3.60 more), or use sites 12 to 24 months old. The code handles either |
+| B10 | "Take 20,000 sites and keep the ones with real content" keeps very few. We ran the filter for real on 1,120 .com domains registered 27 October to 9 November 2025: 814 resolve, 54 show real content in Common Crawl, 49 are kept, and many of those are spam pages. That is about 4%. | Reported. 20,000 registrations would leave about 900 sites. The cohort builder keeps the dead and empty sites with flags and prints this funnel every run. **Needs James**: screen more registrations (the lookups are free but slow, about half an hour per thousand), or let the paid traffic history pick the sites that got traction, as the plan's own first check suggests. A spam filter is still to be added |
 
 ## C. Terms the plan leaves open
 

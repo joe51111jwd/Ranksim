@@ -49,9 +49,10 @@ import os
 import sys
 import threading
 from collections import Counter
-from dataclasses import dataclass, field
+from collections.abc import Callable, Iterable, Mapping, Sequence
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Iterable, Mapping, Protocol, Sequence
+from typing import Any, Protocol
 
 import numpy as np
 
@@ -84,6 +85,7 @@ MAX_PASSAGES = 12
 # length stays under this many tokens (the r3 numbers).
 MAX_BATCH_TOKENS = 8192
 MAX_BATCH_SIZE = 64
+ENCODE_CHUNK = 2048
 
 # Which part becomes ContentScore.value.
 VALUE_HEAD = "head"  # the default: the validated input
@@ -138,9 +140,18 @@ class PageText:
         return head_text(self.title, self.h1, self.meta_description)
 
 
+def as_text(value: object) -> str:
+    """A text field as a string. None and NaN (a missing pandas cell) become ""."""
+    if value is None:
+        return ""
+    if isinstance(value, float) and math.isnan(value):
+        return ""
+    return str(value)
+
+
 def head_text(title: str | None, h1: str | None, meta: str | None) -> str:
     """Join the non-empty parts with " . " and cut to HEAD_MAX_CHARS, exactly as r3 did."""
-    parts = [title or "", h1 or "", meta or ""]
+    parts = [as_text(title), as_text(h1), as_text(meta)]
     return HEAD_JOINER.join(part.strip() for part in parts if part and part.strip())[:HEAD_MAX_CHARS]
 
 
@@ -182,11 +193,7 @@ def page_text_from_fields(
     """A PageText from already extracted fields. Missing fields become empty strings."""
 
     def clean(value: str | None) -> str:
-        if value is None:
-            return ""
-        if isinstance(value, float) and math.isnan(value):
-            return ""
-        return " ".join(str(value).split())
+        return " ".join(as_text(value).split())
 
     return PageText(
         title=clean(title),
@@ -288,7 +295,7 @@ class DfTable:
         return math.log(1.0 + (self.n_docs - d + 0.5) / (d + 0.5))
 
     @classmethod
-    def from_texts(cls, texts: Iterable[str]) -> "DfTable":
+    def from_texts(cls, texts: Iterable[str]) -> DfTable:
         """Document frequencies over a corpus of texts (one text per document). Uses no labels."""
         counts: Counter[str] = Counter()
         n = 0
@@ -301,7 +308,7 @@ class DfTable:
         return {"n_docs": self.n_docs, "df": dict(sorted(self.df.items()))}
 
     @classmethod
-    def from_dict(cls, data: Mapping[str, Any]) -> "DfTable":
+    def from_dict(cls, data: Mapping[str, Any]) -> DfTable:
         return cls(n_docs=int(data["n_docs"]), df={str(k): int(v) for k, v in dict(data["df"]).items()})
 
 
@@ -450,6 +457,7 @@ def ensure_model(
                 "Use mode 'lexical' to score without model files."
             )
         mdir.mkdir(parents=True, exist_ok=True)
+        path.unlink(missing_ok=True)  # a wrong or partial file is never trusted or resumed
         got = fetcher(pin["repo_id"], spec["name"], pin["revision"], mdir)
         got = Path(got)
         if got.resolve() != path.resolve():
@@ -534,7 +542,7 @@ class CrossEncoderBackend:
         manifest_path: str | Path = MODELS_MANIFEST,
         fetch: Fetcher | None = None,
         threads: int | None = None,
-    ) -> "CrossEncoderBackend":
+    ) -> CrossEncoderBackend:
         """Verify (and if allowed download) the pinned model, then open it with onnxruntime on CPU."""
         if name not in CROSS_ENCODER_MODELS:
             raise ValueError(f"{name!r} is not a pinned cross-encoder; use one of {CROSS_ENCODER_MODELS}")
@@ -563,8 +571,12 @@ class CrossEncoderBackend:
         if not pairs:
             return np.empty((0,), dtype=np.float32)
         unique = list(dict.fromkeys(pairs))
-        encodings = self._encode(unique)
-        lengths = np.array([len(e.ids) for e in encodings])
+        # Tokenize in chunks and keep only the id arrays: tokenizer Encoding objects are large.
+        encodings: list[tuple[np.ndarray, np.ndarray]] = []
+        for start in range(0, len(unique), ENCODE_CHUNK):
+            for e in self._encode(unique[start : start + ENCODE_CHUNK]):
+                encodings.append((np.asarray(e.ids, dtype=np.int64), np.asarray(e.type_ids, dtype=np.int64)))
+        lengths = np.array([len(ids) for ids, _ in encodings])
         # Stable sort by length, then by the pair text, so the batch layout is a pure function of the input set.
         order = sorted(range(len(unique)), key=lambda k: (int(lengths[k]), unique[k]))
         values = np.empty(len(unique), dtype=np.float32)
@@ -580,11 +592,11 @@ class CrossEncoderBackend:
             mask = np.zeros((len(idx), width), dtype=np.int64)
             types = np.zeros((len(idx), width), dtype=np.int64)
             for r, k in enumerate(idx):
-                e = encodings[k]
-                size = len(e.ids)
-                ids[r, :size] = e.ids
+                row_ids, row_types = encodings[k]
+                size = len(row_ids)
+                ids[r, :size] = row_ids
                 mask[r, :size] = 1
-                types[r, :size] = e.type_ids
+                types[r, :size] = row_types
             feeds = {"input_ids": ids, "attention_mask": mask, "token_type_ids": types}
             feeds = {k: v for k, v in feeds.items() if k in self.input_names}
             out = self.session.run([self.output_name], feeds)[0]
@@ -707,7 +719,7 @@ class ContentScorer:
         the scorer and are not page content scores.
         """
         if self.mode == MODE_LEXICAL:
-            return [self._make({"head": self.lexical.score_snippet(s, t or "", d or ""), "best_passage": None}, INPUT_SNIPPET) for s, t, d in items]
+            return [self._make({"head": self.lexical.score_snippet(s, as_text(t), as_text(d)), "best_passage": None}, INPUT_SNIPPET) for s, t, d in items]
         assert self.cross is not None
         texts = [head_text(t, None, d) for _, t, d in items]
         pairs = [(s, text) for (s, _, _), text in zip(items, texts) if text]

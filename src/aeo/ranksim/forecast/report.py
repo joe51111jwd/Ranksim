@@ -9,7 +9,7 @@ sit on 15). A synthetic source is labeled SYNTHETIC and is never accuracy.
 Every report verifies the hash chains first and refuses on a break. Seed,
 pilot, backtest and synthetic results are never pooled: there is one report
 per source and a combined view refuses to exist. Rates on fewer than
-MIN_COUNT_PRECISION_RECALL (30) forecasts are printed as NOT MEASURABLE.
+config.MIN_COUNT_TO_PRINT_RATE (30) forecasts are printed as NOT MEASURABLE.
 """
 
 from __future__ import annotations
@@ -18,12 +18,12 @@ from collections import defaultdict
 from datetime import date
 from typing import Any, Callable, Mapping, Sequence
 
-from .config import CONFIRMED_STAGE, LEAD_FLOOR_DAYS, MIN_COUNT_PRECISION_RECALL, SOURCES, STAGE_DAYS
+from .config import CONFIRMED_STAGE, DIFFICULTY_TERCILES, LEAD_FLOOR_DAYS, MIN_COUNT_TO_PRINT_RATE, SOURCES, STAGE_DAYS
 from .grading import GradedCell, headline
 from .scoreboard import GradedRecord, PoolingRefused, Scoreboard, ScoreboardRefusal, mapping_points
 from .types import REAL, SYNTHETIC
 
-REPORT_MIN_COUNT = MIN_COUNT_PRECISION_RECALL
+REPORT_MIN_COUNT = MIN_COUNT_TO_PRINT_RATE
 RESERVED_BASELINES = ("always_nt50", "persistence")
 BaselineSpec = Mapping[str, int] | Callable[[GradedCell], int]
 
@@ -39,11 +39,16 @@ def _block(records: Sequence[GradedRecord], hits: Sequence[bool] | None = None) 
     return {"count": count, "right": right, "rate": _rate(right, count), "measurable": count >= REPORT_MIN_COUNT}
 
 
-def _group(records: Sequence[GradedRecord], key: Callable[[GradedRecord], str]) -> dict[str, Any]:
+def _group(
+    records: Sequence[GradedRecord], key: Callable[[GradedRecord], str], order: Sequence[str] = ()
+) -> dict[str, Any]:
+    """Blocks per group. Names in `order` come first in that order, the rest alphabetically."""
     groups: dict[str, list[GradedRecord]] = defaultdict(list)
     for record in records:
         groups[key(record)].append(record)
-    return {name: _block(groups[name]) for name in sorted(groups)}
+    rank = {name: index for index, name in enumerate(order)}
+    names = sorted(groups, key=lambda name: (rank.get(name, len(rank)), name))
+    return {name: _block(groups[name]) for name in names}
 
 
 def combined_report(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
@@ -139,7 +144,7 @@ def stage_report(
         "headline": head,
         "eligibility": eligibility,
         "eligibility_this": eligibility[source][stage],
-        "by_difficulty": _group(main, lambda r: r.cell.difficulty or "unknown"),
+        "by_difficulty": _group(main, lambda r: r.cell.difficulty or "unknown", DIFFICULTY_TERCILES),
         "by_niche": _group(main, lambda r: r.cell.niche or "unknown"),
         "by_lead_days": by_lead,
         "built_by": _count(main, lambda r: r.built_by),

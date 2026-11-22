@@ -38,10 +38,11 @@ import json
 import sys
 import time
 import zipfile
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Iterable, Sequence
+from typing import Any
 
 import httpx
 import numpy as np
@@ -152,14 +153,14 @@ def accuracy(
     clusters = part[cluster_col].to_numpy()
     n_scored = int(scored.sum())
     if n_scored == 0:
-        return Accuracy(score, subset, int(len(part)), int(pd.Series(clusters).nunique()), int(len(part)), None, None, None)
+        return Accuracy(score, subset, len(part), int(pd.Series(clusters).nunique()), len(part), None, None, None)
     sums = pd.DataFrame({"c": clusters[scored], "h": hits[scored]}).groupby("c", sort=True)["h"].agg(["sum", "count"])
     low, high = cluster_bootstrap_ratio(sums["sum"].tolist(), sums["count"].tolist(), sums.index.tolist(), draws=draws, seed=seed)
     return Accuracy(
         scorer=score,
         subset=subset,
         pairs=n_scored,
-        searches=int(len(sums)),
+        searches=len(sums),
         unscored_pairs=int(len(part) - n_scored),
         accuracy=float(hits[scored].mean()),
         ci_low=low,
@@ -189,7 +190,7 @@ def accuracy_table(pairs: pd.DataFrame, scores: Sequence[str], *, cluster_col: s
 
 
 def _now() -> str:
-    return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    return datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
 def sha256_path(path: Path) -> str:
@@ -249,8 +250,7 @@ def download_flights(dest_dir: Path | None = None, *, client: httpx.Client | Non
                 raise RuntimeError(f"storage answered {resp.status_code}")
             mode = "ab" if resp.status_code == 206 else "wb"
             with open(part, mode) as fh:
-                for chunk in resp.iter_bytes(1 << 16):
-                    fh.write(chunk)
+                fh.writelines(resp.iter_bytes(1 << 16))
     finally:
         if owns:
             http.close()
@@ -270,7 +270,7 @@ def _record_flights(folder: Path, target: Path, *, fetched_at: str | None) -> No
         entries = json.loads(sources.read_text(encoding="utf-8")).get("entries", [])
         if any(e.get("file") == FLIGHTS_ZIP and e.get("sha256") == FLIGHTS_ZIP_SHA256 for e in entries):
             return
-    when = fetched_at or datetime.fromtimestamp(target.stat().st_mtime, tz=timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    when = fetched_at or datetime.fromtimestamp(target.stat().st_mtime, tz=UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
     record_source(
         folder,
         {
@@ -304,9 +304,8 @@ def load_flights(path: Path | None = None) -> pd.DataFrame:
     if not path.is_file():
         raise FileNotFoundError(f"{path} is missing. Run `python -m aeo.ranksim.forecast.content_eval download-flights`.")
     if path.suffix == ".zip":
-        with zipfile.ZipFile(path) as archive:
-            with archive.open(FLIGHTS_FILE) as fh:
-                raw = pd.read_csv(io.TextIOWrapper(fh, encoding="utf-8"), low_memory=False)
+        with zipfile.ZipFile(path) as archive, archive.open(FLIGHTS_FILE) as fh:
+            raw = pd.read_csv(io.TextIOWrapper(fh, encoding="utf-8"), low_memory=False)
     else:
         raw = pd.read_csv(path, low_memory=False)
     out = pd.DataFrame(
@@ -343,17 +342,22 @@ def flights_pages(frame: pd.DataFrame) -> list[PageText]:
 
 def score_frame_pages(frame: pd.DataFrame, pages: Sequence[PageText], scorer: ContentScorer, prefix: str) -> pd.DataFrame:
     """Adds <prefix>_head, <prefix>_passage and <prefix>_page columns (NaN where missing)."""
-    results = scorer.score_many([(s, p) for s, p in zip(frame["search"], pages)])
+    def nan(value: float | None) -> float:
+        return np.nan if value is None else float(value)
+
     out = frame.copy()
-    head = [np.nan if r.parts["head"] is None else r.parts["head"] for r in results]
-    passage = [np.nan if r.parts["best_passage"] is None else r.parts["best_passage"] for r in results]
+    if scorer.mode == MODE_LEXICAL:
+        parts = [scorer.lexical.score_page(s, p) for s, p in zip(frame["search"], pages)]
+        out[f"{prefix}_head"] = [nan(x["head"]) for x in parts]
+        out[f"{prefix}_passage"] = [nan(x["best_passage"]) for x in parts]
+        out[f"{prefix}_page"] = [nan(x["page"]) for x in parts]
+        return out
+    results = scorer.score_many([(s, p) for s, p in zip(frame["search"], pages)])
+    head = [nan(r.parts["head"]) for r in results]
+    passage = [nan(r.parts["best_passage"]) for r in results]
     out[f"{prefix}_head"] = head
     out[f"{prefix}_passage"] = passage
-    if scorer.mode == MODE_LEXICAL:
-        page_values = [np.nan if v is None else v for v in (scorer.lexical.score_page(s, p)["page"] for s, p in zip(frame["search"], pages))]
-    else:
-        page_values = [np.nan if (np.isnan(h) and np.isnan(b)) else np.nanmax([h, b]) for h, b in zip(head, passage)]
-    out[f"{prefix}_page"] = page_values
+    out[f"{prefix}_page"] = [np.nan if (np.isnan(h) and np.isnan(b)) else float(np.nanmax([h, b])) for h, b in zip(head, passage)]
     return out
 
 
@@ -414,8 +418,8 @@ def eval_flights(
     header = [
         LABEL,
         "(a) Flights result pages with scraped landing pages.",
-        f"Data: Kaggle {FLIGHTS_DATASET} ({FLIGHTS_LICENCE}). Google Custom Search API result pages of {sorted(frame['serp_date'].unique())},",
-        f"landing pages scraped on {sorted(frame['scrape_date'].unique())}. One niche (flights), top 10 only, 2020 data, gl=us and gl=uk.",
+        f"Data: Kaggle {FLIGHTS_DATASET} ({FLIGHTS_LICENCE}). Google Custom Search API result pages of {', '.join(sorted(frame['serp_date'].unique()))},",
+        f"landing pages scraped on {', '.join(sorted(frame['scrape_date'].unique()))}. One niche (flights), top 10 only, 2020 data, gl=us and gl=uk.",
         f"Rows {len(frame)}, usable pages {len(usable)} (status 200 with some text), result pages {frame['search_id'].nunique()}, searches {frame['search'].nunique()}.",
         f"Pairs {len(pairs)} (cross-site {int((~pairs['same_site']).sum())}, same-site {int(pairs['same_site'].sum())}). Intervals resample searches ({BOOTSTRAP_DRAWS} draws, seed {BOOTSTRAP_SEED}).",
         "Scores: ce = cross-encoder minilm-l6 (untrained), lex = BM25F. head = title . H1 . meta, passage = best 200-word body window,",
@@ -498,15 +502,15 @@ def _snippet_report(rows: pd.DataFrame, scores: Sequence[str], name: str) -> tup
         known = ~np.isnan(mdr_hi) & ~np.isnan(mdr_lo)
         cross_site = ~pairs["same_site"].to_numpy(dtype=bool)
         diff = np.abs(mdr_hi - mdr_lo)
-        pairs["strength_hi"] = mdr_hi
-        pairs["strength_lo"] = mdr_lo
-        strength_rows = [accuracy(pairs, "strength", cluster_col="search_id", subset="cross-site, rank known", mask=known & cross_site)]
+        pairs["domain_rank_hi"] = mdr_hi
+        pairs["domain_rank_lo"] = mdr_lo
+        strength_rows = [accuracy(pairs, "domain_rank", cluster_col="search_id", subset="cross-site, domain rank known", mask=known & cross_site)]
         for score in scores:
-            table.append(accuracy(pairs, score, cluster_col="search_id", subset="cross-site, rank known", mask=known & cross_site))
+            table.append(accuracy(pairs, score, cluster_col="search_id", subset="cross-site, domain rank known", mask=known & cross_site))
             for t in DOMAIN_RANK_THRESHOLDS:
-                table.append(accuracy(pairs, score, cluster_col="search_id", subset=f"cross-site, rank diff < {t}", mask=known & cross_site & (diff < t)))
+                table.append(accuracy(pairs, score, cluster_col="search_id", subset=f"cross-site, domain rank diff < {t}", mask=known & cross_site & (diff < t)))
         for t in DOMAIN_RANK_THRESHOLDS:
-            strength_rows.append(accuracy(pairs, "strength", cluster_col="search_id", subset=f"cross-site, rank diff < {t}", mask=known & cross_site & (diff < t)))
+            strength_rows.append(accuracy(pairs, "domain_rank", cluster_col="search_id", subset=f"cross-site, domain rank diff < {t}", mask=known & cross_site & (diff < t)))
         table.extend(strength_rows)
         lines.extend(a.line() for a in table)
         out.extend({"locales": name, "top_k": k, **a.__dict__} for a in table)

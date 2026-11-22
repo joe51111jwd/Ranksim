@@ -129,6 +129,13 @@ one round, `round_suspects` reads the suspects of a round, and
 `assemble_readings` builds one reading per request from the pulls whose
 completed times fall inside one window of `window_hours`. `read_clean` uses
 them inside.
+
+Provenance on every reading: `reader_version` (READER_VERSION, or the name
+with "-filter-off" for the ablation) and, for a degraded reading,
+`degraded_reason`, one line that starts with one of DEGRADED_REASONS. The
+label is set here: a reading holding any pull of a synthetic provider
+(`types.SYNTHETIC_PROVIDERS`) is SYNTHETIC, every other reading is REAL. A
+history reading must carry the same label as the pulls it judges.
 """
 
 from __future__ import annotations
@@ -161,7 +168,7 @@ from .config import (
     POISON_TOP_N,
     TOP_DEPTH,
 )
-from .types import REAL, CleanReading, OrganicHit, Pull, PullSpec, SerpSource, SitePosition
+from .types import REAL, SYNTHETIC, SYNTHETIC_PROVIDERS, CleanReading, OrganicHit, Pull, PullSpec, SerpSource, SitePosition
 
 READER_VERSION_V1 = "reader-v1"
 READER_VERSION_V2 = "reader-v2"
@@ -200,6 +207,17 @@ DROP_REASONS = (
     DROP_NOT_OK, DROP_PARTIAL, DROP_SPELL, DROP_LOW_OVERLAP, DROP_OTHER_CLUSTER, DROP_CLUSTER_TIE,
     DROP_ALTERED_VS_HISTORY,
 )
+
+# Why a reading is degraded (`CleanReading.degraded_reason` starts with one of these).
+DEGRADED_CLUSTER_TIE = DROP_CLUSTER_TIE
+DEGRADED_ALTERED_VS_HISTORY = DROP_ALTERED_VS_HISTORY
+DEGRADED_TOO_FEW_KEPT = "too_few_kept_pulls"
+DEGRADED_NO_PULLS = "no_pulls"
+DEGRADED_INVALID_PULLS = "invalid_pulls"
+DEGRADED_REASONS = (
+    DEGRADED_CLUSTER_TIE, DEGRADED_ALTERED_VS_HISTORY, DEGRADED_TOO_FEW_KEPT, DEGRADED_NO_PULLS, DEGRADED_INVALID_PULLS,
+)
+FILTER_OFF_SUFFIX = "-filter-off"
 
 SIGNAL_REPAIRED = "provider repair"
 SIGNAL_HISTORY = "history"
@@ -244,6 +262,21 @@ def _version_name(version: int) -> str:
         return READER_VERSIONS[int(version)]
     except (KeyError, TypeError, ValueError):
         raise ValueError(f"there is no reader version {version!r}. Known versions: {sorted(READER_VERSIONS)}") from None
+
+
+def reader_version_name(version: int = DEFAULT_RULE_VERSION, *, overlap_rule: bool = True) -> str:
+    """The name stored on a reading: "reader-v2", or "reader-v2-filter-off" for the ablation with the filter off."""
+    name = _version_name(version)
+    return name if overlap_rule else name + FILTER_OFF_SUFFIX
+
+
+def reading_label(pulls: Iterable[Pull]) -> str:
+    """SYNTHETIC when any pull comes from a synthetic provider (types.SYNTHETIC_PROVIDERS), else REAL.
+
+    A reading that holds even one simulated pull is not an observation of
+    Google, so it is never labeled REAL.
+    """
+    return SYNTHETIC if any(pull.provider in SYNTHETIC_PROVIDERS for pull in pulls) else REAL
 
 
 def new_reading_id(spec: PullSpec, pull_ids: Sequence[str], *, version: int = DEFAULT_RULE_VERSION) -> str:
@@ -729,6 +762,11 @@ def _check_history(history: CleanReading | None, spec: PullSpec, pulls: Sequence
         )
     if history.degraded:
         raise ValueError("history must be a non-degraded clean reading. This one is degraded.")
+    if history.label != reading_label(pulls):
+        raise ValueError(
+            f"history is {history.label} but the pulls make a {reading_label(pulls)} reading. "
+            "Real and synthetic readings never judge each other."
+        )
     earliest = min(parse_utc(pull.completed_at) for pull in pulls)
     if parse_utc(history.taken_at) >= earliest:
         raise ValueError(
@@ -995,6 +1033,7 @@ def clean_reading_with_verdict(
         pulls_look_dependent(kept[i], kept[j]) for i in range(len(kept)) for j in range(i + 1, len(kept))
     )
     stamps = [parse_utc(pull.completed_at) for pull in (kept or list(pulls))]
+    degraded = len(kept) < MIN_KEPT_PULLS
     reading = CleanReading(
         reading_id=reading_id or new_reading_id(spec, [pull.pull_id for pull in pulls], version=version),
         search=spec.search,
@@ -1004,13 +1043,29 @@ def clean_reading_with_verdict(
         pulls_total=len(pulls),
         pulls_kept=len(kept),
         dropped=tuple(dropped),
-        degraded=len(kept) < MIN_KEPT_PULLS,
+        degraded=degraded,
         pulls_not_independent=dependent,
         positions=tuple(positions),
         pull_ids=tuple(pull.pull_id for pull in kept),
-        label=REAL,
+        label=reading_label(pulls),
+        reader_version=reader_version_name(version, overlap_rule=overlap_rule),
+        degraded_reason=_degraded_reason(len(pulls), len(kept), dropped, verdict) if degraded else None,
     )
     return reading, verdict
+
+
+def _degraded_reason(
+    total: int, kept: int, dropped: Sequence[tuple[str, str]], verdict: ClusterVerdict | None
+) -> str:
+    """One line on why a reading with too few kept pulls is degraded. Starts with one of DEGRADED_REASONS."""
+    if verdict is not None and verdict.tie:
+        return next((note for note in verdict.notes if note.startswith(DROP_CLUSTER_TIE)), DROP_CLUSTER_TIE)
+    if verdict is not None and verdict.kept_cluster is None and verdict.decided_by == SIGNAL_HISTORY:
+        return next((note for note in verdict.notes if note.startswith(DROP_ALTERED_VS_HISTORY)), DROP_ALTERED_VS_HISTORY)
+    counts = Counter(str(reason).split(":")[0] for _pull_id, reason in dropped)
+    detail = ", ".join(f"{name} {count}" for name, count in sorted(counts.items()))
+    text = f"{DEGRADED_TOO_FEW_KEPT}: {kept} of {total} pulls kept, {MIN_KEPT_PULLS} needed"
+    return f"{text}. Dropped: {detail}" if detail else text
 
 
 def drop_rate(reading: CleanReading) -> float | None:
@@ -1074,7 +1129,16 @@ class RoundFailed(RuntimeError):
         self.started_at = started_at
 
 
-def _empty_reading(spec: PullSpec, reasons: Sequence[tuple[str, str]], taken_at: str, *, version: int = DEFAULT_RULE_VERSION) -> CleanReading:
+def _empty_reading(
+    spec: PullSpec,
+    reasons: Sequence[tuple[str, str]],
+    taken_at: str,
+    *,
+    version: int = DEFAULT_RULE_VERSION,
+    label: str = REAL,
+    overlap_rule: bool = True,
+    why: str | None = None,
+) -> CleanReading:
     return CleanReading(
         reading_id=new_reading_id(spec, [], version=version),
         search=spec.search,
@@ -1088,7 +1152,9 @@ def _empty_reading(spec: PullSpec, reasons: Sequence[tuple[str, str]], taken_at:
         pulls_not_independent=False,
         positions=(),
         pull_ids=(),
-        label=REAL,
+        label=label,
+        reader_version=reader_version_name(version, overlap_rule=overlap_rule),
+        degraded_reason=why or f"{DEGRADED_NO_PULLS}: no pull of this search came back",
     )
 
 
@@ -1261,11 +1327,14 @@ def read_clean(
     joined = _merge_suspects(rounds) if rounds else None
     past = list(history or ())
     round_reasons = [(f"round-{index}", f"{DROP_NO_RESULT}: {text}") for index, text in failed]
+    label = SYNTHETIC if getattr(source, "name", None) in SYNTHETIC_PROVIDERS else REAL
     readings: list[CleanReading] = []
     for spec in specs:
         mine = collected[spec]
         if not mine:
-            readings.append(_empty_reading(spec, round_reasons, utc_iso(now()), version=version))
+            why = f"{DEGRADED_NO_PULLS}: every round failed" + (f" ({failed[0][1]})" if failed else "")
+            readings.append(_empty_reading(spec, round_reasons, utc_iso(now()), version=version, label=label,
+                                           overlap_rule=overlap_rule, why=why))
             continue
         try:
             _check_one_request(mine)
@@ -1273,8 +1342,10 @@ def read_clean(
                 mine, history=past, suspects=joined, window_hours=None, overlap_rule=overlap_rule, version=version,
             )
         except ValueError as error:  # the source broke the contract for this spec; keep the other readings
-            reasons = round_reasons + [("reading", f"invalid_pulls: {error}")]
-            readings.append(_empty_reading(spec, reasons, utc_iso(now()), version=version))
+            reasons = round_reasons + [("reading", f"{DEGRADED_INVALID_PULLS}: {error}")]
+            readings.append(_empty_reading(spec, reasons, utc_iso(now()), version=version,
+                                           label=reading_label(mine) if label == REAL else label,
+                                           overlap_rule=overlap_rule, why=f"{DEGRADED_INVALID_PULLS}: {error}"))
             continue
         if round_reasons:
             reading = replace(reading, dropped=reading.dropped + tuple(round_reasons))

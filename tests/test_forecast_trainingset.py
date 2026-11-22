@@ -451,6 +451,9 @@ def test_plan_pulls_uses_budget_prices_and_flags_the_30_month_need():
     assert lines[(None, "Traffic curves")] == budget.historical_traffic_cost(20000) == Decimal("26.40000")
     assert lines[(None, "Exact positions")] == budget.ranked_keywords_cost(20000, 100)
     assert ts.plan_pulls(10, 2000).lines[-2].usd == budget.ranked_keywords_cost(2000, 100) == Decimal("48.00000")
+    plan_scale = ts.plan_pulls(5000, 20000, position_sites=2000)
+    assert [l.usd for l in plan_scale.lines if l.item == "Exact positions"] == [Decimal("48.00000")]
+    assert plan_scale.totals_plan_reading[24] == Decimal("14.40000") + Decimal("26.40000") + Decimal("48.00000") + Decimal(3)
     today = date(2026, 11, 22)
     rows = [{"site": "a.com", "launch_date": date(2024, 9, 15)}, {"site": "b.com", "launch_date": date(2025, 6, 1)},
             {"site": "c.com", "launch_date": None, "registered_on": date(2024, 3, 1)}, {"site": "d.com", "launch_date": None}]
@@ -739,3 +742,32 @@ def test_a_bad_warc_record_is_missing_not_a_crash(tmp_path):
                             home={"url": "https://a.com/", "captured_at": "2025-12-10T00:00:00Z", "filename": "f", "offset": 0, "length": 20})
     assert fetcher.fetch(summary) is None
     assert not fetcher.cache.path.exists(), "a failed fetch is not cached, so the next run asks again"
+
+
+def test_a_capture_before_registration_inside_a_later_crawl_is_older_evidence():
+    straddle = {"CC-X": ns.Crawl("CC-X", datetime(2025, 10, 20, tzinfo=timezone.utc), datetime(2025, 11, 3, tzinfo=timezone.utc))}
+    summary = ns.CdxSummary(crawl="CC-X", site="a.com", captures=3, html_200=3, pages_200=3, first_capture="2025-10-21T00:00:00Z",
+                            first_html_200="2025-10-21T00:00:00Z")
+    row = ns.assess(ns.Registration("a.com", date(2025, 10, 27), "t", "com"), rdap=None, dns=None, crawls=straddle,
+                    plan=ns.CrawlPlan((), ("CC-X",)), cdx={"CC-X": summary}, pages={})
+    assert row.possibly_re_registered and not row.kept and row.launch_date is None
+
+
+def test_seed_terms_with_spaces_match_any_run_of_spaces_and_plurals():
+    """re.escape escapes spaces on this Python. The pattern must not depend on that."""
+    import pyarrow.compute as pc
+
+    pattern = uv.seed_pattern(["water heater", "plumber"])
+    found = pc.match_substring_regex(pa.array(["water  heater repair", "Plumbers near me", "waterheater", "plumbery"]), pattern)
+    assert found.to_pylist() == [True, True, False, False]
+    assert uv._matched_seed("cheap water heaters", ["plumber", "water heater"]) == "water heater"
+
+
+def test_tied_difficulty_values_share_one_third():
+    rows = [{"difficulty_proxy": v, "difficulty_proxy_source": "competition", "keyword_id": f"{i:02d}", "stratum": None}
+            for i, v in enumerate([0.1, 0.2, 0.3, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0])]
+    uv._terciles(rows)
+    by_value = {}
+    for row in rows:
+        by_value.setdefault(row["difficulty_proxy"], set()).add(row["stratum"])
+    assert by_value[1.0] == {"medium"} and all(len(v) == 1 for v in by_value.values())

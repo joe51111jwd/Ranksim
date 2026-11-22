@@ -1033,3 +1033,71 @@ def test_read_clean_passes_the_latest_earlier_clean_reading_as_history():
     assert with_history.pull_ids == ("pull-ok",) and with_history.degraded
     without = read_clean(ReplaySource(stored), [search], pulls=4, gap_seconds=0, sleep=clock.sleep, now=clock.now).readings[0]
     assert without.position_of("spam0.com") == 1 and not without.degraded
+
+
+# ---------------------------------------------------------------------------
+# Provenance: reader version, degraded reason and the SYNTHETIC label are set by the reader itself
+
+from aeo.ranksim.forecast.reader import (  # noqa: E402
+    DEGRADED_NO_PULLS,
+    DEGRADED_TOO_FEW_KEPT,
+    READER_VERSION_V1,
+    READER_VERSION_V2,
+    reader_version_name,
+    reading_label,
+)
+from aeo.ranksim.forecast.types import REAL, SYNTHETIC  # noqa: E402
+
+
+def test_every_reading_names_its_reader_and_a_clean_one_has_no_degraded_reason():
+    pulls = [make_pull(str(i), good_sites()) for i in range(3)]
+    reading = build_clean_reading(pulls)
+    assert reading.reader_version == READER_VERSION_V2 and reading.degraded_reason is None and reading.label == REAL
+    assert build_clean_reading(pulls, version=1).reader_version == READER_VERSION_V1
+    assert build_clean_reading(pulls, overlap_rule=False).reader_version == READER_VERSION_V2 + "-filter-off"
+    assert reader_version_name(2) == READER_VERSION_V2
+
+
+def test_the_degraded_reason_says_why():
+    few = [make_pull(str(i), good_sites()) for i in range(2)] + [make_pull(f"f{i}", [], ok=False) for i in range(3)]
+    reading = build_clean_reading(few)
+    assert reading.degraded and reading.degraded_reason.startswith(DEGRADED_TOO_FEW_KEPT)
+    assert "2 of 5 pulls kept, 3 needed" in reading.degraded_reason and "not_ok 3" in reading.degraded_reason
+    search = top10("site survey app")
+    first, second = [f"x{i}.com" for i in range(10)], [f"y{i}.com" for i in range(10)]
+    tie = build_clean_reading([
+        slots_pull("a", first, spec=search), slots_pull("b", second, spec=search, completed="2026-11-19T19:41:00Z"),
+        slots_pull("c", first, spec=search, completed="2026-11-19T19:42:00Z"),
+        slots_pull("d", second, spec=search, completed="2026-11-19T19:43:00Z"),
+    ])
+    assert tie.degraded and tie.degraded_reason.startswith(DROP_CLUSTER_TIE)
+    altered = [slots_pull(f"a{i}", ALTERED_ASSIGNAR, spec=ASSIGNAR, completed=f"2026-11-19T19:4{i}:00Z") for i in range(3)]
+    against = build_clean_reading(altered, history=history_reading(CLEAN_ASSIGNAR, ASSIGNAR))
+    assert against.degraded and against.degraded_reason.startswith(DROP_ALTERED_VS_HISTORY)
+
+
+def test_read_clean_gives_failed_specs_a_no_pulls_reason_and_the_source_label():
+    class Broken:
+        name = "synthetic"
+
+        def fetch(self, specs):
+            raise RuntimeError("down")
+
+        def estimate_cost(self, count, depth=50):
+            return 0.0
+
+    result = read_clean(Broken(), [SPEC], pulls=2, gap_seconds=0, sleep=lambda s: None)
+    (reading,) = result.readings
+    assert reading.degraded and reading.degraded_reason.startswith(DEGRADED_NO_PULLS)
+    assert reading.label == SYNTHETIC and reading.reader_version == READER_VERSION_V2
+
+
+def test_a_reading_from_synthetic_pulls_is_labeled_synthetic_and_history_must_match():
+    synthetic = [replace(make_pull(str(i), good_sites()), provider="synthetic") for i in range(3)]
+    reading = build_clean_reading(synthetic)
+    assert reading.label == SYNTHETIC and reading_label(synthetic) == SYNTHETIC
+    mixed = synthetic[:2] + [make_pull("real", good_sites())]
+    assert build_clean_reading(mixed).label == SYNTHETIC  # one simulated pull is enough to make it not REAL
+    real_history = build_clean_reading([make_pull(f"h{i}", good_sites(), completed="2026-11-20T10:00:00Z") for i in range(3)])
+    with pytest.raises(ValueError, match="never judge each other"):
+        build_clean_reading(synthetic, history=real_history)

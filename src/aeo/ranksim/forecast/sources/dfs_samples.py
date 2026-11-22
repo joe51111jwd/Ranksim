@@ -56,11 +56,19 @@ DATASET_HISTORY = "dfs_history"
 DATASET_SNAPSHOT = "dfs_serp"
 DATASET_LABS = "dfs_labs_historical"
 
-# Google served altered result pages to scrapers from about 20 September to mid
-# October 2026 (DataForSEO blog 16.11.2026; docs/plan/PLAN_AUDIT.md E3). Pages
-# dated in this window are flagged and left out of training.
-POISON_WINDOW_START = date(2026, 9, 20)
-POISON_WINDOW_END = date(2026, 10, 15)
+# Google has served altered result pages to scrapers since about 13 September
+# 2026, and one public tracker still measured about 30% of pages altered on
+# 3 November 2026, so there is no end date yet (docs/plan/IMPLEMENTATION_SPEC.md
+# section 8, docs/plan/PLAN_AUDIT.md E3). A page dated on or after
+# POISON_RISK_START that was not collected with the provider's repair option
+# (resolve_poisoned_results) is flagged `poison_risk` and left out of training.
+POISON_RISK_START = date(2026, 9, 13)
+POISON_RISK_COLUMN = "poison_risk"
+LEGACY_POISON_COLUMN = "poison_window"  # the column name before the rename; old parquet files still carry it
+# Older names, kept so every import still works. The risk has no end date, so the
+# old end is None: compare with poison_risk(), never with these two.
+POISON_WINDOW_START = POISON_RISK_START
+POISON_WINDOW_END: date | None = None
 
 LABS_OK_STATUS = 20000
 
@@ -90,7 +98,7 @@ PANEL_ROW_FIELDS: tuple[str, ...] = (
     "intent",
     "items_count",
     "se_results_count",
-    "poison_window",
+    POISON_RISK_COLUMN,
 )
 
 KEYWORD_FIELDS: tuple[str, ...] = (
@@ -279,9 +287,15 @@ def _time(value: Any) -> datetime | None:
         return None
 
 
-def in_poison_window(day: date) -> bool:
-    """True when a result page dated `day` falls in the altered-pages window."""
-    return POISON_WINDOW_START <= day <= POISON_WINDOW_END
+def poison_risk(day: date, *, repaired: bool = False) -> bool:
+    """True when a result page dated `day` may be an altered page: dated on or after
+    POISON_RISK_START and not collected with the provider's repair option."""
+    return day >= POISON_RISK_START and not repaired
+
+
+def in_poison_window(day: date, *, repaired: bool = False) -> bool:
+    """The older name of `poison_risk`. Kept so other modules do not break."""
+    return poison_risk(day, repaired=repaired)
 
 
 def _month_key(day: date) -> str:
@@ -332,8 +346,13 @@ def organic_row(
     items_count: int | None,
     se_results_count: int | None,
     stats: ParseStats | None = None,
+    repaired: bool = False,
 ) -> dict[str, Any] | None:
-    """One panel row from one organic item, or None when the item cannot be placed (counted in `stats`)."""
+    """One panel row from one organic item, or None when the item cannot be placed (counted in `stats`).
+
+    `repaired` says the page was collected with the provider's repair option.
+    The free samples and the Labs historical pages never are.
+    """
     rank = _rank(item.get("rank_group"))
     if rank is None:
         if stats is not None:
@@ -379,7 +398,7 @@ def organic_row(
         "intent": intent,
         "items_count": items_count,
         "se_results_count": se_results_count,
-        "poison_window": in_poison_window(day),
+        POISON_RISK_COLUMN: poison_risk(day, repaired=repaired),
     }
     if stats is not None:
         stats.rows += 1
@@ -742,14 +761,18 @@ __all__ = [
     "DATASET_LABS",
     "DATASET_SNAPSHOT",
     "KEYWORD_FIELDS",
+    "LEGACY_POISON_COLUMN",
     "LocaleInfo",
     "PANEL_ROW_FIELDS",
+    "POISON_RISK_COLUMN",
+    "POISON_RISK_START",
     "POISON_WINDOW_END",
     "POISON_WINDOW_START",
     "ParseStats",
     "WHOIS_FIELDS",
     "file_sha256",
     "in_poison_window",
+    "poison_risk",
     "iter_history_rows",
     "iter_jsonl",
     "iter_keyword_rows",

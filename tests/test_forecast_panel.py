@@ -82,9 +82,9 @@ def test_history_parser_reads_real_layout(sample_root: Path):
     assert alpha["search_volume"] == 40  # May 2025 is the last full month before a June page
     assert alpha["main_domain_rank"] == 300 and alpha["page_rank"] == 0
     assert alpha["intent"] == "commercial" and alpha["location_code"] == 2840
-    assert alpha["poison_window"] is False
+    assert alpha["poison_risk"] is False
     poisoned = [row for row in rows if row["keyword"] == "poisoned page"]
-    assert len(poisoned) == 1 and poisoned[0]["poison_window"] is True
+    assert len(poisoned) == 1 and poisoned[0]["poison_risk"] is True
     assert poisoned[0]["search_volume"] is None and poisoned[0]["kd"] is None
     assert set(rows[0]) == set(dfs.PANEL_ROW_FIELDS)
 
@@ -115,7 +115,7 @@ def test_labs_response_gives_the_same_rows_as_the_sample():
     assert alpha["is_new"] is True and alpha["previous_rank_absolute"] is None
     assert rows[1]["previous_rank_absolute"] == 7 and rows[1]["is_new"] is False
     assert alpha["kd"] is None and alpha["search_volume"] is None
-    assert rows[2]["poison_window"] is True
+    assert rows[2]["poison_risk"] is True
     sample = next(r for r in dfs.iter_history_rows(_tmp_history(), dfs.ParseStats(), locale="US_en") if r["rank"] == 1)
     for name in ("locale", "keyword", "keyword_id", "rank", "rank_absolute", "domain", "site", "url", "title", "is_new", "main_domain_rank", "page_rank", "etv"):
         assert alpha[name] == sample[name], name
@@ -199,7 +199,7 @@ def test_summary_counts_and_gaps(sample_root: Path, tmp_path: Path):
     result = pn.summary(panel)
     hist = result["datasets"]["dfs_history"]["overall"]
     assert hist["keywords"] == 2 and hist["snapshots"] == 5 and hist["rows"] == 14
-    assert hist["poison_window_pages"] == 1
+    assert hist["poison_risk_pages"] == 1 and hist["poison_window_pages"] == 1
     assert hist["date_first"] == "2025-06-01" and hist["date_last"] == "2026-09-25"
     assert hist["gap_bins_consecutive"]["0.5-3"] == 1
     assert hist["gap_bins_consecutive"]["30-60"] == 2
@@ -212,7 +212,7 @@ def test_summary_counts_and_gaps(sample_root: Path, tmp_path: Path):
 def test_site_positions_clamps_and_keeps_the_raw_rank(sample_root: Path, tmp_path: Path):
     panel = pn.load_panel(panel_dir=_build(sample_root, tmp_path), datasets=["dfs_history"])
     sp = pn.site_positions(panel)
-    assert not sp["poison_window"].any()
+    assert not sp["poison_risk"].any()
     first = sp[sp["snapshot_time"] == sp["snapshot_time"].min()].set_index("site")
     assert first.loc["alpha.com", "rank100"] == 1 and first.loc["alpha.com", "best_url"] == "https://www.alpha.com/a"
     assert first.loc["deep.net", "rank100"] == 60 and first.loc["deep.net", "position"] == NT50
@@ -368,3 +368,69 @@ def test_cli_build_and_summary(sample_root: Path, tmp_path: Path, capsys: pytest
     payload = json.loads(capsys.readouterr().out)
     assert payload["datasets"]["dfs_history"]["overall"]["snapshots"] == 5
     assert "new_sites_history" in payload
+
+
+# ---------------------------------------------------------------------------
+# poison_risk: no end date, the repair option clears it, old parquet still loads
+
+
+def test_poison_risk_has_no_end_date_and_the_repair_option_clears_it():
+    assert dfs.POISON_RISK_START == date(2026, 9, 13) and dfs.POISON_WINDOW_START == dfs.POISON_RISK_START
+    assert dfs.poison_risk(date(2026, 9, 12)) is False
+    assert dfs.poison_risk(date(2026, 9, 13)) is True
+    assert dfs.poison_risk(date(2026, 11, 3)) is True  # a tracker still saw about 30% altered that day
+    assert dfs.poison_risk(date(2027, 6, 1)) is True
+    assert dfs.poison_risk(date(2026, 11, 3), repaired=True) is False
+    assert dfs.in_poison_window(date(2026, 10, 20)) is True  # the old alias, now without the old end date
+    assert "poison_risk" in dfs.PANEL_ROW_FIELDS and "poison_window" not in dfs.PANEL_ROW_FIELDS
+
+
+def _old_panel(folder: Path) -> Path:
+    """A panel part written before the rename: the column is poison_window and the old window was 20 Sep to 15 Oct."""
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
+    names = [name for name in pn.PANEL_COLUMNS if name != "poison_risk"]
+    fields = [pn.PANEL_SCHEMA.field(name) for name in names] + [pa.field("poison_window", pa.bool_(), nullable=False)]
+    rows = []
+    for day, flag in ((date(2026, 9, 1), False), (date(2026, 9, 15), False), (date(2026, 10, 1), True), (date(2026, 11, 3), False)):
+        row = {name: None for name in names}
+        row.update(dataset="dfs_history", locale="US_en", keyword="old page", keyword_id="k-old",
+                   snapshot_time=datetime(day.year, day.month, day.day, tzinfo=timezone.utc), snapshot_date=day,
+                   rank=1, site="alpha.com", poison_window=flag)
+        rows.append(row)
+    target = folder / "dataset=dfs_history" / "locale=US_en"
+    target.mkdir(parents=True)
+    pq.write_table(pa.Table.from_pylist(rows, schema=pa.schema(fields)), target / "part-old.parquet")
+    return folder
+
+
+def test_a_panel_written_with_the_old_column_name_still_loads(tmp_path: Path):
+    folder = _old_panel(tmp_path / "panel")
+    frame = pn.load_panel(["snapshot_date", "poison_risk"], panel_dir=folder).sort_values("snapshot_date")
+    # 15 Sep and 3 Nov were outside the old window but are at risk under the new rule.
+    assert list(frame["poison_risk"]) == [False, True, True, True]
+    both = pn.load_panel(["keyword_id", "poison_window"], panel_dir=folder)
+    assert list(both.columns) == ["keyword_id", "poison_window"] and both["poison_window"].sum() == 3
+    full = pn.load_panel(panel_dir=folder)
+    assert tuple(full.columns) == pn.PANEL_COLUMNS and full["poison_risk"].dtype == bool
+    assert len(pn.site_positions(full)) == 1 and len(pn.site_positions(full, drop_poison_risk=False)) == 4
+    assert len(pn.site_positions(full, drop_poison_window=False)) == 4  # the older argument name still works
+
+
+def test_a_part_with_poison_risk_left_unset_is_filled_from_the_date(tmp_path: Path):
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
+    rows = []
+    for day in (date(2026, 9, 1), date(2026, 12, 1)):
+        row = {name: None for name in pn.PANEL_COLUMNS}
+        row.update(dataset="dfs_history", locale="US_en", keyword="k", keyword_id="k1",
+                   snapshot_time=datetime(day.year, day.month, day.day, tzinfo=timezone.utc), snapshot_date=day,
+                   rank=1, site="alpha.com", poison_window=False)  # a writer that still sets the old key only
+        rows.append(row)
+    target = tmp_path / "panel" / "dataset=dfs_history" / "locale=US_en"
+    target.mkdir(parents=True)
+    pq.write_table(pa.Table.from_pylist(rows, schema=pn.PANEL_SCHEMA), target / "part-new.parquet")
+    frame = pn.load_panel(["snapshot_date", "poison_risk"], panel_dir=tmp_path / "panel").sort_values("snapshot_date")
+    assert list(frame["poison_risk"]) == [False, True] and not frame["poison_risk"].isna().any()

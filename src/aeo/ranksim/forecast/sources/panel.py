@@ -14,11 +14,16 @@ Layout (docs/plan/IMPLEMENTATION_SPEC.md section 8): parquet under
 `data/forecast/cache/panel/dataset=<dataset>/locale=<locale>/part-<source>.parquet`,
 with the columns of `PANEL_SCHEMA`. `rank` is the organic rank (`rank_group`).
 `site` is `site_history.site_key(main_domain or domain)`. `keyword_id` is the
-first 16 hex characters of sha256 of `locale|keyword`. `poison_window` is True
-for pages dated 2026-09-20 to 2026-10-15 (Google served altered pages to
-scrapers then); those pages are kept on disk and left out of training by the
-helpers here. Rows for `config.EXCLUDED_SITES` are dropped when the panel is
-built and again when it is loaded.
+first 16 hex characters of sha256 of `locale|keyword`. `poison_risk` is True
+for a page dated on or after 13 September 2026 that was not collected with the
+provider's repair option (Google has served altered pages to scrapers since
+then, with no end date yet; spec section 8). Those pages are kept on disk and
+left out of training by the helpers here. Parquet written before the rename
+carries `poison_window` instead: `load_panel` maps it to `poison_risk` (and
+applies the date rule), so no rebuild is needed. A caller that asks for the
+old column name gets the same values under that name. Rows for
+`config.EXCLUDED_SITES` are dropped when the panel is built and again when it
+is loaded.
 
 CLI: python -m aeo.ranksim.forecast.sources.panel build|summary|noise|keywords|whois|dobbs-download
 """
@@ -73,9 +78,13 @@ PANEL_SCHEMA: pa.Schema = pa.schema(
         pa.field("intent", pa.string()),  # main intent label, dated by the source's last_updated_time
         pa.field("items_count", pa.int32()),  # elements on the page, all types
         pa.field("se_results_count", pa.int64()),
-        pa.field("poison_window", pa.bool_(), nullable=False),
+        # True: dated on or after dfs.POISON_RISK_START and not repaired. Null only when a writer left it
+        # unset; load_panel then fills it from the date rule, so it never comes back null.
+        pa.field(dfs.POISON_RISK_COLUMN, pa.bool_()),
     ]
 )
+POISON_RISK_COLUMN = dfs.POISON_RISK_COLUMN
+LEGACY_POISON_COLUMN = dfs.LEGACY_POISON_COLUMN
 PANEL_COLUMNS: tuple[str, ...] = tuple(PANEL_SCHEMA.names)
 assert PANEL_COLUMNS == dfs.PANEL_ROW_FIELDS, "the parser and the panel schema must list the same columns"
 
@@ -397,6 +406,44 @@ def _load(folder: Path, schema: pa.Schema, columns: Sequence[str] | None, datase
     return frame
 
 
+def _risk_from_dates(table: pa.Table) -> pa.ChunkedArray:
+    import pyarrow.compute as pc
+
+    start = pa.scalar(dfs.POISON_RISK_START, type=pa.date32())
+    return pc.fill_null(pc.greater_equal(table["snapshot_date"].cast(pa.date32()), start), False)
+
+
+def _read_panel_part(part: Path, read: Sequence[str]) -> pa.Table:
+    """One panel part with the columns `read`, `poison_risk` always filled (old files carry `poison_window`)."""
+    import pyarrow.compute as pc
+
+    names = set(pq.read_schema(part).names)
+    need_risk = POISON_RISK_COLUMN in read
+    from_file = [name for name in read if name != POISON_RISK_COLUMN or name in names]
+    extra: list[str] = []
+    if need_risk:
+        extra.append("snapshot_date")
+        if POISON_RISK_COLUMN not in names and LEGACY_POISON_COLUMN in names:
+            extra.append(LEGACY_POISON_COLUMN)
+    table = pq.read_table(part, columns=list(dict.fromkeys(from_file + extra)))
+    if need_risk:
+        by_date = _risk_from_dates(table)
+        if POISON_RISK_COLUMN in names:
+            risk = pc.fill_null(table[POISON_RISK_COLUMN], by_date)  # a value written at build time wins
+        elif LEGACY_POISON_COLUMN in names:
+            # The old flag had a wrong end date, and old pages never used the repair option,
+            # so the risk is the old flag or the date rule.
+            risk = pc.or_(pc.fill_null(table[LEGACY_POISON_COLUMN], False), by_date)
+        else:
+            risk = by_date
+        if POISON_RISK_COLUMN in table.column_names:
+            table = table.set_column(table.column_names.index(POISON_RISK_COLUMN), POISON_RISK_COLUMN, risk)
+        else:
+            table = table.append_column(POISON_RISK_COLUMN, risk)
+    target = pa.schema([PANEL_SCHEMA.field(name).with_nullable(True) for name in read])
+    return table.select(list(read)).cast(target)
+
+
 def load_panel(
     columns: Sequence[str] | None = None,
     locales: Sequence[str] | None = None,
@@ -407,9 +454,32 @@ def load_panel(
     """The panel as a DataFrame. Read only the columns you need: the text columns are large.
 
     Excluded sites are dropped again here. Integer columns with missing values
-    come back as float with NaN, never 0.
+    come back as float with NaN, never 0. `poison_risk` is always filled: from
+    the file, or from the old `poison_window` column and the date rule for a
+    part written before the rename. Asking for "poison_window" returns the same
+    values under that older name.
     """
-    return _load(Path(panel_dir) if panel_dir else default_panel_dir(), PANEL_SCHEMA, columns, datasets, locales)
+    folder = Path(panel_dir) if panel_dir else default_panel_dir()
+    asked = list(columns) if columns is not None else list(PANEL_SCHEMA.names)
+    wanted = list(dict.fromkeys(POISON_RISK_COLUMN if name == LEGACY_POISON_COLUMN else name for name in asked))
+    unknown = [name for name in wanted if name not in PANEL_SCHEMA.names]
+    if unknown:
+        raise ValueError(f"unknown columns {unknown}")
+    read = list(dict.fromkeys(wanted + ["site"]))
+    tables = [_read_panel_part(part, read) for part in _parts(folder, datasets, locales)]
+    if not tables:
+        frame = PANEL_SCHEMA.empty_table().select(wanted).to_pandas()
+    else:
+        table = pa.concat_tables(tables)
+        if EXCLUDED_SITES:
+            import pyarrow.compute as pc
+
+            mask = pc.invert(pc.is_in(table["site"], value_set=pa.array(sorted(EXCLUDED_SITES))))
+            table = table.filter(pc.fill_null(mask, True))
+        frame = table.select(wanted).to_pandas()
+    if LEGACY_POISON_COLUMN in asked:
+        frame[LEGACY_POISON_COLUMN] = frame[POISON_RISK_COLUMN]
+    return frame[list(dict.fromkeys(asked))]
 
 
 def load_keywords(
@@ -470,7 +540,7 @@ def snapshot_table(panel: pd.DataFrame) -> pd.DataFrame:
     """One row per dated page: keyword, time, depth (deepest organic rank), organic rows, index within the keyword (0 = first)."""
     _require(panel, ["keyword_id", "snapshot_time", "rank"])
     keys = ["keyword_id", "snapshot_time"]
-    extra = [name for name in ("dataset", "locale", "poison_window") if name in panel.columns]
+    extra = [name for name in ("dataset", "locale", POISON_RISK_COLUMN, LEGACY_POISON_COLUMN) if name in panel.columns]
     grouped = panel.groupby(keys, sort=False)
     table = grouped["rank"].agg(depth="max", organic_rows="size").reset_index()
     if extra:
@@ -481,22 +551,38 @@ def snapshot_table(panel: pd.DataFrame) -> pd.DataFrame:
     return table
 
 
-def site_positions(panel: pd.DataFrame, *, drop_poison_window: bool = True) -> pd.DataFrame:
+def _poison_flag_column(frame: pd.DataFrame) -> str | None:
+    """The column that flags poison-risk pages: poison_risk, or the older poison_window. None when neither is there."""
+    for name in (POISON_RISK_COLUMN, LEGACY_POISON_COLUMN):
+        if name in frame.columns:
+            return name
+    return None
+
+
+def site_positions(
+    panel: pd.DataFrame, *, drop_poison_window: bool = True, drop_poison_risk: bool | None = None
+) -> pd.DataFrame:
     """One row per (keyword_id, snapshot_time, site) with the site's best organic rank on that page.
 
     `position` is that rank clamped to 1..50, or NT50 (51) when it is deeper.
     `rank100` is the best rank kept as is. `snapshot_depth` is the deepest
     organic rank on the page: when it is under 50, a site missing from the page
-    is not known to be outside the top 50. Pages in the poison window are left
-    out unless `drop_poison_window` is False.
+    is not known to be outside the top 50. Pages flagged `poison_risk` are left
+    out unless `drop_poison_risk` is False. `drop_poison_window` is its older
+    name and is used when `drop_poison_risk` is not given.
     """
     _require(panel, ["keyword_id", "snapshot_time", "site", "rank"])
     frame = panel
-    if drop_poison_window and "poison_window" in frame.columns:
-        frame = frame[~frame["poison_window"].astype(bool)]
+    drop = drop_poison_window if drop_poison_risk is None else drop_poison_risk
+    flag = _poison_flag_column(frame)
+    if drop and flag is not None:
+        frame = frame[~frame[flag].fillna(False).astype(bool)]
     frame = frame[~frame["site"].isin(EXCLUDED_SITES)]
     depth = frame.groupby(["keyword_id", "snapshot_time"], sort=False)["rank"].transform("max")
-    keep = [name for name in ("dataset", "locale", "keyword", "snapshot_date", "url", "poison_window") if name in frame.columns]
+    keep = [
+        name for name in ("dataset", "locale", "keyword", "snapshot_date", "url", POISON_RISK_COLUMN, LEGACY_POISON_COLUMN)
+        if name in frame.columns
+    ]
     work = frame[["keyword_id", "snapshot_time", "site", "rank"] + keep].copy()
     work["snapshot_depth"] = depth.astype("int16")
     work = work.sort_values(["keyword_id", "snapshot_time", "rank"], kind="mergesort")
@@ -514,6 +600,7 @@ def transitions(
     *,
     positions: pd.DataFrame | None = None,
     drop_poison_window: bool = True,
+    drop_poison_risk: bool | None = None,
 ) -> pd.DataFrame:
     """Site moves between two pages of the same keyword whose gap is inside [min_gap_days, max_gap_days].
 
@@ -532,7 +619,9 @@ def transitions(
     """
     if not min_gap_days <= max_gap_days:
         raise ValueError("min_gap_days must not exceed max_gap_days")
-    sp = positions if positions is not None else site_positions(panel, drop_poison_window=drop_poison_window)
+    sp = positions if positions is not None else site_positions(
+        panel, drop_poison_window=drop_poison_window, drop_poison_risk=drop_poison_risk
+    )
     sp = sp[sp["rank100"] <= TOP100]
     snaps = (
         sp[["keyword_id", "snapshot_time", "snapshot_depth"] + [c for c in ("dataset", "locale") if c in sp.columns]]
@@ -652,6 +741,11 @@ def _pair_window_counts(snaps: pd.DataFrame, windows: Mapping[str, tuple[float, 
     return out
 
 
+def _flag_count(snaps: pd.DataFrame) -> int | None:
+    flag = _poison_flag_column(snaps)
+    return int(snaps[flag].fillna(False).astype(bool).sum()) if flag is not None else None
+
+
 def _summary_block(frame: pd.DataFrame) -> dict[str, Any]:
     snaps = snapshot_table(frame)
     ordered = snaps.sort_values(["keyword_id", "snapshot_time"])
@@ -666,7 +760,8 @@ def _summary_block(frame: pd.DataFrame) -> dict[str, Any]:
         "sites": int(frame["site"].nunique()) if "site" in frame.columns else None,
         "date_first": str(frame["snapshot_date"].min()) if "snapshot_date" in frame.columns and len(frame) else None,
         "date_last": str(frame["snapshot_date"].max()) if "snapshot_date" in frame.columns and len(frame) else None,
-        "poison_window_pages": int(snaps["poison_window"].sum()) if "poison_window" in snaps.columns else None,
+        "poison_risk_pages": _flag_count(snaps),
+        "poison_window_pages": _flag_count(snaps),  # the older key, same count
         "pages_per_keyword": _quantiles(per_keyword.to_numpy()),
         "depth_deepest_rank_per_page": _quantiles(depth),
         "depth_bins": _bin_counts(depth, DEPTH_BINS, closed_right=True),
@@ -681,7 +776,7 @@ def summary(panel: pd.DataFrame) -> dict[str, Any]:
     """Counts by locale and overall: keywords, pages, rows, depth, date range, and gaps between pages of a keyword.
 
     Pass a panel with at least keyword_id, snapshot_time, rank and locale
-    (site, snapshot_date and poison_window add more lines). Each dataset is
+    (site, snapshot_date and poison_risk add more lines). Each dataset is
     summarized apart, because a history page and a single-snapshot page are not
     the same kind of record.
     """
@@ -722,7 +817,7 @@ def new_site_report(panel: pd.DataFrame, *, positions: pd.DataFrame | None = Non
     first page, on a page reaching rank 100 or less. "Later" uses the month 1
     (30 to 60 days) and month 3 (75 to 110 days) windows from the entry page;
     when several later pages fall in a window, the nearest to its middle is used.
-    Pages in the poison window are left out. Only pairs where both pages reach
+    Pages flagged poison_risk are left out. Only pairs where both pages reach
     rank 50 are counted for the later bands, so absent means outside the top 50.
     """
     sp = positions if positions is not None else site_positions(panel)
@@ -830,7 +925,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         folder = Path(args.panel_dir) if args.panel_dir else default_panel_dir()
         names = sorted({part.parent.parent.name.split("=", 1)[1] for part in _parts(folder, None, None)})
         payload = {"label": "REAL DataForSEO result pages, country level, single pulls", "datasets": {}}
-        summary_columns = ["dataset", "locale", "keyword_id", "snapshot_time", "snapshot_date", "rank", "site", "poison_window"]
+        summary_columns = ["dataset", "locale", "keyword_id", "snapshot_time", "snapshot_date", "rank", "site", POISON_RISK_COLUMN]
         for name in names:  # one dataset at a time keeps memory down
             panel = load_panel(summary_columns, datasets=[name], panel_dir=folder)
             payload["datasets"].update(summary(panel)["datasets"])

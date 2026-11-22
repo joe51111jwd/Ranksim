@@ -272,18 +272,23 @@ class Universe:
         return frame
 
 
+def _term_pattern(term: str) -> str:
+    """A seed term as a pattern: each word escaped, words joined by any run of spaces."""
+    return r"\s+".join(re.escape(word) for word in term.split())
+
+
 def seed_pattern(seed_terms: Sequence[str]) -> str:
     """A case-blind RE2 pattern: any seed term as whole words, with an optional plural s or es."""
     terms = sorted({normalise(term) for term in seed_terms if normalise(term)}, key=lambda t: (-len(t), t))
     if not terms:
         raise ValueError("give at least one seed term")
-    escaped = [re.escape(term).replace("\\ ", r"\s+") for term in terms]
+    escaped = [_term_pattern(term) for term in terms]
     return r"(?i)\b(?:" + "|".join(escaped) + r")(?:s|es)?\b"
 
 
 def _matched_seed(text: str, seed_terms: Sequence[str]) -> str:
     for term in sorted({normalise(t) for t in seed_terms}, key=lambda t: (-len(t), t)):
-        if re.search(r"(?<![a-z0-9])" + re.escape(term).replace("\\ ", r"\s+") + r"(?:s|es)?(?![a-z0-9])", text):
+        if re.search(r"(?<![a-z0-9])" + _term_pattern(term) + r"(?:s|es)?(?![a-z0-9])", text):
             return term
     return ""
 
@@ -325,7 +330,13 @@ def _read_dfs(paths: Sequence[Path], locale: str, pattern: str) -> tuple[list[di
 
 
 def _terciles(rows: list[dict[str, Any]]) -> None:
-    """Cut thirds inside each proxy source by rank, ties broken by keyword_id. Deterministic."""
+    """Cut thirds inside each proxy source by rank. Equal values always share a third.
+
+    A row's third comes from the average rank of all rows with the same value
+    (the usual "average" rule for ties), so a value held by many rows (Ads
+    competition is often exactly 1.0) is never split across two thirds. The
+    thirds can then differ in size; the counts report it.
+    """
     groups: dict[str, list[dict[str, Any]]] = {}
     for row in rows:
         if row["difficulty_proxy"] is not None:
@@ -333,8 +344,12 @@ def _terciles(rows: list[dict[str, Any]]) -> None:
     for members in groups.values():
         members.sort(key=lambda r: (r["difficulty_proxy"], r["keyword_id"]))
         total = len(members)
+        span: dict[float, list[int]] = {}
         for index, row in enumerate(members):
-            row["stratum"] = STRATA[min(2, index * 3 // total)]
+            span.setdefault(row["difficulty_proxy"], [index, index])[1] = index
+        for row in members:
+            first, last = span[row["difficulty_proxy"]]
+            row["stratum"] = STRATA[min(2, int((first + last) / 2 * 3 // total))]
 
 
 def build_universe(
@@ -527,8 +542,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(argv)
     country = args.country.upper()
     kaggle: list[Path] = []
-    if not args.no_download:
-        for name in KAGGLE_SHARDS.get(country, ()):
+    for name in KAGGLE_SHARDS.get(country, ()):
+        local = default_public("kaggle_google_keywords") / name
+        if local.is_file():
+            kaggle.append(local)
+        elif args.no_download:
+            raise SystemExit(f"{local} is missing and --no-download was given.")
+        else:
             kaggle.append(download_kaggle_shard(name))
     dfs_file = default_public("dataforseo_samples") / "google" / "keywords" / f"{COUNTRY_LOCALE[country]}.json.gz"
     universe = build_universe(args.seed_term or EXAMPLE_SEEDS, country=country, n=args.n, niche=args.niche,

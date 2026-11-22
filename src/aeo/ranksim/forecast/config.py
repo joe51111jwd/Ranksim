@@ -16,7 +16,14 @@ NT50 = 51  # "not in the top 50": not ranked, not indexed, or beyond position 50
 OUTCOME_DAY = 90
 OUTCOME_WINDOW_DAYS = 3
 LEAD_FLOOR_DAYS = 28
-MIN_COUNT_PRECISION_RECALL = 30
+# Fewest forecasts (or units) a rate needs before it is printed as a number or
+# can pass a marker. Below it the reports print NOT MEASURABLE with the count.
+MIN_COUNT_TO_PRINT_RATE = 30
+MIN_COUNT_PRECISION_RECALL = MIN_COUNT_TO_PRINT_RATE  # the older name, kept so every import works
+
+# Search difficulty terciles, easiest first. Seed searches, the synthetic world
+# and the scoreboard all use these three names.
+DIFFICULTY_TERCILES: tuple[str, ...] = ("easy", "medium", "hard")
 
 # Stages of a forecast and the day after launch each one is issued on.
 STAGE_DAYS: dict[str, int] = {"upload": 0, "d7": 7, "d14": 14, "d30": 30, "d60": 60}
@@ -35,6 +42,18 @@ POISON_TOP_N = 20
 POISON_MIN_OVERLAP = 0.5
 DEFAULT_LANGUAGE = "en"
 DEFAULT_DEVICE = "desktop"
+# How old an earlier clean reading may be and still be passed to reader version
+# 2 as history. OUR READING, not calibrated. Seed searches are read weekly, so
+# 21 days still finds a history after two missed weekly readings. Altered-page
+# spells mostly end within 3 days, so a reading that old is very unlikely to be
+# altered the same way as today's pulls. Older readings are left out because the
+# usual set of sites on a page drifts over weeks, and a stale history could make
+# a clean page look altered (history overlap below one half).
+HISTORY_MAX_AGE_DAYS = 21
+# Pulls of one search requested less than this far apart belong to one round
+# when no round record says otherwise (`forecast assemble`). Rounds are hours
+# apart; one round of a few hundred searches is posted within minutes.
+ROUND_GAP_MINUTES = 60
 
 # Placement labels (section 6).
 LOCKED_MIN_PROB = 0.80
@@ -73,6 +92,11 @@ class ForecastPaths:
     @property
     def models(self) -> Path:
         return self.root / "models"
+
+    @property
+    def imports(self) -> Path:
+        """Copies of imported files (Search Console exports, agency forms), each frozen by sha256 in the scoreboard."""
+        return self.root / "imports"
 
 
 def forecast_paths(root: str | Path | None = None) -> ForecastPaths:

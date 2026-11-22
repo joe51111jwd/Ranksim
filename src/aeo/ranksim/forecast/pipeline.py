@@ -59,6 +59,7 @@ from .budget import (
     SAMPLE_MAX_USD,
     SpendLedger,
     historical_serps_estimate,
+    historical_serps_estimate_lines,
     historical_traffic_cost,
     ranked_keywords_cost,
     serp_cost,
@@ -72,8 +73,10 @@ from .config import (
     DEFAULT_LANGUAGE,
     DEFAULT_PULLS,
     EXCLUDED_SITES,
+    HISTORY_MAX_AGE_DAYS,
     MIN_PULL_GAP_SECONDS,
     NT50,
+    ROUND_GAP_MINUTES,
     STAGE_DAYS,
     TOP_DEPTH,
     ForecastPaths,
@@ -88,9 +91,21 @@ from .noise import (
     marker1_report_from_pulls,
     sample_marker1_searches,
 )
-from .reader import read_clean
+from .reader import (
+    DEFAULT_RULE_VERSION,
+    RoundFailed,
+    RoundSuspects,
+    assemble_readings,
+    fetch_round,
+    read_clean,
+    reader_settings,
+    reader_version_name,
+    reading_label,
+    round_suspects,
+)
 from .scoreboard import (
     EXPORT_FILES,
+    READING_PROVENANCE_COLUMNS,
     ChainStatus,
     CoreUpdateRow,
     ForecastRow,
@@ -108,7 +123,7 @@ from .scoreboard import (
     search_key,
 )
 from .seeds import SeedManifest, SeedSearch, SeedSite
-from .types import REAL, SYNTHETIC, CleanReading, Forecast, Pull, PullSpec, SerpSource
+from .types import REAL, SYNTHETIC, SYNTHETIC_PROVIDERS, CleanReading, Forecast, Pull, PullSpec, SerpSource
 
 PROVIDERS = ("dataforseo", "serper", "synthetic")
 PAID_PROVIDERS = ("dataforseo", "serper")
@@ -118,7 +133,8 @@ DATAFORSEO_MODE = "standard_normal"
 DATAFORSEO_POSTS_PER_CALL = 100  # dataforseo.MAX_TASKS_PER_POST
 MARKER1_FREEZE_NAME = "marker1.sample"
 STAGE_MARKERS: dict[str, int] = {"upload": 3, "d30": 4, "d60": 5}
-IMPORTS_DIR = "imports"
+IMPORTS_DIR = "imports"  # kept for older imports; the folder is ForecastPaths.imports
+ROUND_FREEZE_PREFIX = "read_round."
 APPROVE_HINT = (
     "To approve an amount, run: python -m aeo.ranksim forecast budget approve "
     "--amount <USD> --by <your name> --note <what it is for>"
@@ -420,12 +436,18 @@ def _plan(
 
 
 def plan_reading_cost(
-    ledger: SpendLedger | None, provider: str, searches: int, *, pulls: int = DEFAULT_PULLS, depth: int = TOP_DEPTH
+    ledger: SpendLedger | None,
+    provider: str,
+    searches: int,
+    *,
+    pulls: int = DEFAULT_PULLS,
+    depth: int = TOP_DEPTH,
+    item: str | None = None,
 ) -> CostPlan:
     """The cost of one reading run: `searches` searches read `pulls` times at `depth`."""
     if searches < 0 or pulls < 1 or depth < 1:
         raise ValueError("searches must be 0 or more, pulls and depth at least 1")
-    item = f"a reading of {searches} searches, {pulls} pulls each, depth {depth}"
+    item = item or f"a reading of {searches} searches, {pulls} pulls each, depth {depth}"
     if provider == "dataforseo":
         tasks = searches * pulls
         posts = pulls * math.ceil(searches / DATAFORSEO_POSTS_PER_CALL) if searches else 0
@@ -449,6 +471,12 @@ def plan_reading_cost(
         return _plan(None, provider=provider, item=item, kind=None, calls=searches * pulls, call_unit="synthetic pulls",
                      usd=Decimal(0), notes=("SYNTHETIC. Free.",))
     raise ValueError(f"Unknown provider {provider!r}. Choose one of {', '.join(PROVIDERS)}.")
+
+
+def plan_round_cost(ledger: SpendLedger | None, provider: str, searches: int, *, depth: int = TOP_DEPTH) -> CostPlan:
+    """The cost of ONE round of pulls (round mode): one pull of each of `searches` searches at `depth`."""
+    return plan_reading_cost(ledger, provider, searches, pulls=1, depth=depth,
+                             item=f"one round of {searches} searches, one pull each, depth {depth}")
 
 
 def plan_sample_serp(ledger: SpendLedger | None, provider: str, searches: int, *, depth: int = TOP_DEPTH) -> CostPlan:
@@ -476,8 +504,9 @@ def plan_sample_historical_serps(ledger: SpendLedger | None, keywords: int, *, m
     per_call = historical_serps_estimate(months_back + 1)
     fit = _fit_under_cap(keywords, per_call)
     notes = (
-        "Billing is per snapshot returned. The estimate assumes "
-        "budget.HISTORICAL_SERPS_SNAPSHOTS_PER_MONTH_ESTIMATE snapshots a month. The provider's cost field settles it.",
+        "Billing is per page (snapshot) returned. The provider's cost field settles it.",
+        *(f"This sample at the {line[0].lower()}{line[1:]}" if index < 2 else line
+          for index, line in enumerate(historical_serps_estimate_lines(months_back + 1, fit))),
         f"A refused start date is retried once with the default window, still under the {usd_text(SAMPLE_MAX_USD)} cap.",
     )
     return _plan(ledger, provider="dataforseo", item=f"the Historical SERPs sample ({fit} keywords, {months_back} months)",
@@ -704,6 +733,8 @@ class ReadingRunSummary:
     budget_refused: bool
     started_at: str
     finished_at: str
+    history_used: int = 0
+    reader_version: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         out = dict(self.__dict__)
@@ -711,6 +742,39 @@ class ReadingRunSummary:
         out["reading_ids"] = list(self.reading_ids)
         out["spent_usd"] = None if self.spent_usd is None else str(self.spent_usd)
         return out
+
+
+def source_label(source: SerpSource) -> str:
+    """SYNTHETIC for a source of the simulated world, REAL for a provider of Google results."""
+    return SYNTHETIC if getattr(source, "name", None) in SYNTHETIC_PROVIDERS else REAL
+
+
+def history_for(
+    scoreboard: Scoreboard,
+    specs: Sequence[PullSpec],
+    *,
+    before: datetime,
+    label: str = REAL,
+    max_age_days: int = HISTORY_MAX_AGE_DAYS,
+) -> list[CleanReading]:
+    """For each spec, the latest non-degraded stored reading of the same search, location and device.
+
+    It must be taken before `before` and no more than `max_age_days` days
+    earlier (config.HISTORY_MAX_AGE_DAYS), and carry `label`: real readings
+    are judged only by real history, synthetic only by synthetic. Specs with
+    no such reading are left out. REAL (or SYNTHETIC) stored readings.
+    """
+    floor = before - timedelta(days=max_age_days)
+    out: list[CleanReading] = []
+    seen: set[tuple[str, int, str]] = set()
+    for spec in specs:
+        key = (search_key(spec.search), int(spec.location_code), spec.device)
+        if key in seen:
+            continue
+        seen.add(key)
+        out.extend(scoreboard.readings_for(spec.search, spec.location_code, spec.device, before=before,
+                                           not_before=floor, non_degraded_only=True, limit=1, label=label))
+    return out
 
 
 def take_readings(
@@ -723,28 +787,31 @@ def take_readings(
     clock: Clock | None = None,
     ledger: SpendLedger | None = None,
     overlap_rule: bool = True,
+    version: int = DEFAULT_RULE_VERSION,
+    use_history: bool = True,
 ) -> ReadingRunSummary:
     """Run the clean reader once over `specs`, store every pull and every reading, and summarise.
+
+    Every round of pulls runs in this one process (round mode spreads them over a day instead, see
+    `read_round` and `assemble`). For each search the latest earlier non-degraded reading of the same
+    search, location and device, at most HISTORY_MAX_AGE_DAYS old and with the same label, is passed
+    to the reader as history, and the round suspects are read from each round. All pulls and readings
+    are stored in one transaction. The reader labels the readings (SYNTHETIC for the synthetic source).
 
     The money spent is the ledger's spent total after the run minus before it (settled charges
     plus open reservations, as budget.py counts them). It is None when no ledger is given.
     """
     chosen = clock or SystemClock()
     before = ledger.spent_total if ledger is not None else None
-    started = utc_iso(chosen.now())
+    started_at = chosen.now()
+    started = utc_iso(started_at)
+    label = source_label(source)
+    past = history_for(scoreboard, specs, before=started_at, label=label) if use_history and overlap_rule else []
     result = read_clean(source, list(specs), pulls=pulls, gap_seconds=gap_seconds, sleep=chosen.sleep, now=chosen.now,
-                        overlap_rule=overlap_rule)
-    synthetic = getattr(source, "name", "") == "synthetic" or (
-        bool(result.pulls) and all(pull.provider == "synthetic" for pull in result.pulls)
-    )
-    for pull in result.pulls:
-        scoreboard.add_pull(pull)
-    readings: list[CleanReading] = []
-    for reading in result.readings:
-        if synthetic and reading.label != SYNTHETIC:
-            reading = replace(reading, label=SYNTHETIC)
-        scoreboard.add_reading(reading)
-        readings.append(reading)
+                        overlap_rule=overlap_rule, version=version, history=past)
+    readings = list(result.readings)
+    scoreboard.store_batch(pulls=result.pulls, readings=readings)
+    synthetic = label == SYNTHETIC or any(reading.label == SYNTHETIC for reading in readings)
     reasons: Counter[str] = Counter()
     for reading in readings:
         for _pull_id, reason in reading.dropped:
@@ -768,6 +835,228 @@ def take_readings(
         budget_refused=any("BudgetError" in message for _index, message in result.failed_rounds),
         started_at=started,
         finished_at=utc_iso(chosen.now()),
+        history_used=len(past),
+        reader_version=reader_version_name(version, overlap_rule=overlap_rule),
+    )
+
+
+# ----------------------------------------------------------------------------------------------
+# Round mode: one round of pulls at a time, readings assembled later from the stored pulls
+# ----------------------------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class RoundRunSummary:
+    """What one round of pulls stored. The pulls are REAL, or SYNTHETIC for the synthetic source."""
+
+    provider: str
+    label: str
+    searches: int
+    pulls_returned: int
+    pulls_ok: int
+    failed: str | None
+    freeze_name: str | None
+    spent_usd: Decimal | None
+    started_at: str
+    finished_at: str
+
+    def to_dict(self) -> dict[str, Any]:
+        out = dict(self.__dict__)
+        out["spent_usd"] = None if self.spent_usd is None else str(self.spent_usd)
+        return out
+
+
+def read_round(
+    scoreboard: Scoreboard,
+    source: SerpSource,
+    specs: Sequence[PullSpec],
+    *,
+    clock: Clock | None = None,
+    ledger: SpendLedger | None = None,
+) -> RoundRunSummary:
+    """Take ONE round of pulls (one pull per spec) and store them with a record of the round.
+
+    No reading is built here: `assemble` builds the readings of a UTC date from the stored pulls of
+    its rounds. The record is a scoreboard freeze named read_round.<start time>.<hash> that lists the
+    round's pull ids, so `assemble` reads the round suspects of each round from exactly its pulls.
+    A round that fails as a whole stores nothing and says why.
+    """
+    chosen = clock or SystemClock()
+    before = ledger.spent_total if ledger is not None else None
+    started = utc_iso(chosen.now())
+    label = source_label(source)
+    failed: str | None = None
+    got: list[Pull] = []
+    freeze_name: str | None = None
+    try:
+        got = fetch_round(source, list(specs), now=chosen.now)
+    except RoundFailed as error:
+        failed = error.message
+    if got:
+        scoreboard.store_batch(pulls=got)
+        ids = sorted(pull.pull_id for pull in got)
+        stamp = started.replace("-", "").replace(":", "")
+        freeze_name = f"{ROUND_FREEZE_PREFIX}{stamp}.{sha256_text(canonical_json(ids))[:12]}"
+        scoreboard.freeze(freeze_name, {
+            "kind": "read_round",
+            "provider": getattr(source, "name", "unknown"),
+            "label": label,
+            "started_at": started,
+            "pull_ids": ids,
+            "searches": len(specs),
+        })
+    spent = (ledger.spent_total - before) if ledger is not None and before is not None else None
+    return RoundRunSummary(
+        provider=getattr(source, "name", "unknown"),
+        label=label,
+        searches=len(specs),
+        pulls_returned=len(got),
+        pulls_ok=sum(1 for pull in got if pull.ok),
+        failed=failed,
+        freeze_name=freeze_name,
+        spent_usd=spent,
+        started_at=started,
+        finished_at=utc_iso(chosen.now()),
+    )
+
+
+def _round_groups(scoreboard: Scoreboard, pulls: Sequence[Pull]) -> list[list[Pull]]:
+    """The rounds the pulls belong to, each with ALL of its stored pulls (other searches too).
+
+    A pull listed in a read_round record belongs to that round. Other pulls are put in rounds by
+    their requested time: a gap of more than ROUND_GAP_MINUTES starts a new round.
+    """
+    wanted = {pull.pull_id for pull in pulls}
+    groups: list[list[Pull]] = []
+    placed: set[str] = set()
+    for row in scoreboard.freezes():
+        if not str(row["name"]).startswith(ROUND_FREEZE_PREFIX):
+            continue
+        ids = [str(item) for item in (row["payload"] or {}).get("pull_ids", [])]
+        if not wanted.intersection(ids):
+            continue
+        members: list[Pull] = []
+        for pull_id in ids:
+            try:
+                members.append(scoreboard.pull(pull_id))
+            except ScoreboardRefusal:
+                continue  # a pull of the record that is not stored adds nothing
+        placed.update(ids)
+        groups.append(members)
+    loose = sorted((pull for pull in pulls if pull.pull_id not in placed), key=lambda p: (parse_utc(p.requested_at), p.pull_id))
+    gap = timedelta(minutes=ROUND_GAP_MINUTES)
+    current: list[Pull] = []
+    last: datetime | None = None
+    for pull in loose:
+        moment = parse_utc(pull.requested_at)
+        if last is not None and moment - last > gap:
+            groups.append(current)
+            current = []
+        current.append(pull)
+        last = moment
+    if current:
+        groups.append(current)
+    return groups
+
+
+@dataclass(frozen=True)
+class AssembleSummary:
+    """What `assemble` built and stored for one UTC date. REAL readings (SYNTHETIC from the simulated world)."""
+
+    day: str
+    pulls_found: int
+    rounds: int
+    readings_built: int
+    readings_stored: int
+    readings_already_stored: int
+    degraded: int
+    history_used: int
+    reading_ids: tuple[str, ...]
+    degraded_reasons: dict[str, int]
+    skipped: tuple[dict[str, str], ...]
+    labels: dict[str, int]
+    reader_version: str
+
+    def to_dict(self) -> dict[str, Any]:
+        out = dict(self.__dict__)
+        out["reading_ids"] = list(self.reading_ids)
+        out["skipped"] = [dict(item) for item in self.skipped]
+        return out
+
+
+def assemble(
+    scoreboard: Scoreboard,
+    day: date,
+    *,
+    specs: Sequence[PullSpec] | None = None,
+    version: int = DEFAULT_RULE_VERSION,
+    overlap_rule: bool = True,
+    use_history: bool = True,
+) -> AssembleSummary:
+    """Build and store one clean reading per search for the UTC date `day` from its stored pulls.
+
+    The pulls used are those completed on that UTC day (with `specs`, only pulls of exactly those
+    requests). Each reading gets the latest earlier non-degraded reading of its search, location
+    and device as history (at most HISTORY_MAX_AGE_DAYS old, same label) and the round suspects
+    of every round its pulls came from. A reading already stored with the same id is left as it
+    is. Free: nothing is sent and nothing is spent.
+    """
+    start = datetime.combine(day, time(0, 0), tzinfo=timezone.utc)
+    end = start + timedelta(days=1)
+    wanted = set(specs) if specs is not None else None
+    found = scoreboard.pulls_completed_between(start, end, search_keys=[spec.search for spec in specs] if specs else None)
+    if wanted is not None:
+        found = [pull for pull in found if pull.spec in wanted]
+    rounds = _round_groups(scoreboard, found)
+    suspects: list[RoundSuspects] = [round_suspects(group) for group in rounds if group]
+    groups: dict[tuple[str, int, str], list[Pull]] = {}
+    for pull in found:
+        groups.setdefault((search_key(pull.spec.search), int(pull.spec.location_code), pull.spec.device), []).append(pull)
+    built: list[CleanReading] = []
+    skipped: list[dict[str, str]] = []
+    history_used = 0
+    for key in sorted(groups):
+        mine = groups[key]
+        first = min(parse_utc(pull.completed_at) for pull in mine)
+        label = reading_label(mine)
+        past: list[CleanReading] = []
+        if use_history and overlap_rule:
+            spec = mine[0].spec
+            past = history_for(scoreboard, [spec], before=first, label=label)
+            past = [item for item in past if item.search == spec.search]  # the reader matches the exact search text
+        try:
+            made = assemble_readings(mine, history=past, suspects=suspects or None, window_hours=None,
+                                     overlap_rule=overlap_rule, version=version)
+        except ValueError as error:
+            skipped.append({"search": mine[0].spec.search, "reason": str(error)})
+            continue
+        history_used += 1 if past else 0
+        built.extend(made)
+    new: list[CleanReading] = []
+    already = 0
+    for reading in built:
+        try:
+            scoreboard.reading(reading.reading_id)
+        except ScoreboardRefusal:
+            new.append(reading)
+        else:
+            already += 1
+    scoreboard.store_batch(readings=new)
+    reasons: Counter[str] = Counter(str(r.degraded_reason).split(":")[0] for r in built if r.degraded)
+    return AssembleSummary(
+        day=day.isoformat(),
+        pulls_found=len(found),
+        rounds=len(suspects),
+        readings_built=len(built),
+        readings_stored=len(new),
+        readings_already_stored=already,
+        degraded=sum(1 for reading in built if reading.degraded),
+        history_used=history_used,
+        reading_ids=tuple(reading.reading_id for reading in built),
+        degraded_reasons=dict(sorted(reasons.items())),
+        skipped=tuple(skipped),
+        labels=dict(sorted(Counter(reading.label for reading in built).items())),
+        reader_version=reader_version_name(version, overlap_rule=overlap_rule),
     )
 
 
@@ -781,26 +1070,28 @@ class StoredReading:
 
 def stored_readings(scoreboard: Scoreboard, search: str, *, location_code: int, device: str = DEFAULT_DEVICE) -> list[StoredReading]:
     """Every stored reading of one search at one location and device, oldest first."""
-    with Session(scoreboard.engine) as session:
-        rows = session.scalars(
-            select(ReadingRow)
-            .where(ReadingRow.search_key == search_key(search), ReadingRow.location_code == location_code, ReadingRow.device == device)
-            .order_by(ReadingRow.taken_at, ReadingRow.reading_id)
-        ).all()
-        return [StoredReading(row.reading_id, row.taken_at, bool(row.degraded), row.label) for row in rows]
+    found = scoreboard.readings_for(search, location_code, device, non_degraded_only=False)
+    return [StoredReading(r.reading_id, r.taken_at, bool(r.degraded), r.label) for r in reversed(found)]
 
 
 def latest_reading(
-    scoreboard: Scoreboard, search: str, *, location_code: int, device: str, as_of: date, not_after: datetime
+    scoreboard: Scoreboard,
+    search: str,
+    *,
+    location_code: int,
+    device: str,
+    as_of: date,
+    not_after: datetime,
+    label: str | None = None,
 ) -> CleanReading | None:
-    """The latest non-degraded reading taken on or before `as_of` and not after `not_after`. None when there is none."""
-    chosen: StoredReading | None = None
-    for item in stored_readings(scoreboard, search, location_code=location_code, device=device):
-        taken = parse_utc(item.taken_at)
-        if item.degraded or taken.date() > as_of or taken > not_after:
-            continue
-        chosen = item
-    return scoreboard.reading(chosen.reading_id) if chosen is not None else None
+    """The latest non-degraded reading taken on or before `as_of` and not after `not_after`. None when there is none.
+
+    `label` keeps only REAL or only SYNTHETIC readings.
+    """
+    for reading in scoreboard.readings_for(search, location_code, device, on_or_before=as_of, label=label):
+        if parse_utc(reading.taken_at) <= parse_utc(utc_iso(not_after)):
+            return reading
+    return None
 
 
 # ----------------------------------------------------------------------------------------------
@@ -904,15 +1195,20 @@ def marker1(
     device: str = DEFAULT_DEVICE,
     a_date: date | None = None,
     b_date: date | None = None,
+    reader_version: int = DEFAULT_RULE_VERSION,
 ) -> dict[str, Any]:
     """The marker 1 report and its evaluation, from readings already in the scoreboard.
 
     When every pull of every paired reading is stored, the report rebuilds the readings from their
-    pulls (so it also carries the raw single-pull baseline and the filter ablation). Otherwise it
-    reports on the stored clean readings alone and says so.
+    pulls with reader `reader_version` (so it also carries the raw single-pull baseline and the
+    filter ablation). Each search's history is the latest earlier non-degraded reading taken before
+    reading A's first pull (at most HISTORY_MAX_AGE_DAYS old), passed to both A and B, so reading A
+    is never the history of reading B. Otherwise it reports on the stored clean readings alone and
+    says so. The report always names the reader settings. The marker module labels the verdict.
     """
     if not searches:
         raise ValueError("marker 1 needs the frozen list of searches")
+    settings = reader_settings(version=reader_version)
     pair_ids, unpaired = pair_marker1_readings(
         scoreboard, searches, location_code=location_code, device=device, a_date=a_date, b_date=b_date
     )
@@ -928,20 +1224,25 @@ def marker1(
             break
         pulls.append((first_pulls, second_pulls))
     if from_pulls:
-        report = marker1_report_from_pulls(pulls)
+        history: dict[str, CleanReading] = {}
+        for (first, _second), (first_pulls, _) in zip(readings, pulls):
+            earliest = min(parse_utc(pull.completed_at) for pull in first_pulls)
+            spec = first_pulls[0].spec
+            found = history_for(scoreboard, [spec], before=earliest, label=reading_label(first_pulls))
+            found = [item for item in found if item.search == spec.search]
+            if found:
+                history[spec.search] = found[0]
+        report = marker1_report_from_pulls(pulls, version=reader_version, history=history)
     else:
-        report = agreement_report(readings)
+        stored = sorted({str(r.reader_version or "unknown") for pair in readings for r in pair})
+        report = agreement_report(readings, reader={**settings, "history_used": None, "stored_reader_versions": stored})
     notes = [] if from_pulls else ["The report uses the stored clean readings. Their pulls are not all stored, so there is no raw pull baseline."]
+    if synthetic:
+        report["label"] = SYNTHETIC
     report["searches_requested"] = len(searches)
     report["searches_unpaired"] = unpaired
     report["built_from_pulls"] = from_pulls
     evaluation = markers_module.evaluate_marker(1, report)
-    if synthetic:
-        report["label"] = SYNTHETIC
-        evaluation["synthetic_check_passed"] = evaluation["passed"]
-        evaluation["passed"] = None
-        evaluation["label"] = SYNTHETIC
-        evaluation["notes"] = list(evaluation["notes"]) + ["Synthetic results test the code. They cannot pass a marker."]
     if unpaired:
         notes.append(f"{len(unpaired)} of {len(searches)} searches have no pair of readings 20 to 28 hours apart.")
     report["pipeline_notes"] = notes
@@ -989,8 +1290,6 @@ def stage_marker(
     report = report_module.stage_report(scoreboard, source=source, stage=stage, as_of=as_of, model_version=model_version)
     number = STAGE_MARKERS.get(stage)
     evaluation = markers_module.evaluate_marker(number, report) if number is not None else None
-    if evaluation is not None and source == "synthetic":
-        evaluation["label"] = SYNTHETIC  # markers.evaluate_marker labels every verdict REAL
     return {"report": report, "evaluation": evaluation, "marker": number}
 
 
@@ -1150,16 +1449,23 @@ def verify_against_export(scoreboard: Scoreboard, directory: str | Path) -> Expo
                 {"site": p.site, "position": p.position, "pull_positions": list(p.pull_positions or ()), "best_url": p.best_url}
                 for p in positions
             ]
-            stored_readings_by_id[row.reading_id] = canonical_json(entry)
+            stored_readings_by_id[row.reading_id] = entry
         counts["readings"] = {"export": len(reading_lines), "database": len(stored_readings_by_id)}
         gone_readings: list[str] = []
         reading_differs: str | None = None
         for line in reading_lines:
-            reading_id = str(json.loads(line)["reading_id"])
-            stored_text = stored_readings_by_id.get(reading_id)
-            if stored_text is None:
+            exported_row = json.loads(line)
+            reading_id = str(exported_row["reading_id"])
+            stored_entry = stored_readings_by_id.get(reading_id)
+            if stored_entry is None:
                 gone_readings.append(reading_id)
-            elif stored_text != line and reading_differs is None:
+                continue
+            # An export written before the provenance columns existed has no such keys. The database
+            # added them empty on open, so an empty value there matches a missing key.
+            trimmed = {key: value for key, value in stored_entry.items()
+                       if not (key in READING_PROVENANCE_COLUMNS and key not in exported_row and value is None)}
+            stored_text = canonical_json(trimmed)
+            if stored_text != line and reading_differs is None:
                 reading_differs = f"The reading {reading_id} differs from the export in {_changed_fields(line, stored_text)}."
         if gone_readings:
             problems.append(f"{len(gone_readings)} exported readings are missing from the database, for example {gone_readings[0]}.")
@@ -1251,7 +1557,7 @@ def _file_digest(path: Path) -> str:
 
 
 def _store_copy(paths: ForecastPaths, section: str, site: str, source: Path, digest: str) -> Path:
-    folder = paths.root / IMPORTS_DIR / section / site
+    folder = paths.imports / section / site
     folder.mkdir(parents=True, exist_ok=True)
     suffix = "" if source.is_dir() else "".join(source.suffixes[-2:]) or ".dat"
     target = folder / f"{digest[:16]}{suffix}"

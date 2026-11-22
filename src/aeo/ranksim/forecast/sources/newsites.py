@@ -33,6 +33,13 @@ each handled in code and not only in a comment:
   2024-01-31, but it is a 10,000-domain sample that is mostly .se, .sk, .ee and
   .nu from July 2024 on, and those TLDs have no free RDAP. `REPOS` records the
   first day each list covers, and a request outside it is refused.
+- Page counts near launch. The Common Crawl host index stops at CC-MAIN-2025-18
+  (April 2025), so it says nothing about sites registered after that. The page
+  count near launch is the number of distinct HTML pages captured in the first
+  crawl with content, read from the page index (`cc_pages_first_content_crawl`).
+- Crawl coverage. Small new sites are often missing from a given crawl. A site
+  with no capture in the checked crawls has no_content_evidence, which means
+  "not seen", not "no content". The crawls checked are stored per row.
 - Current versus past. RDAP and DNS describe the domain TODAY. They are stored
   with the UTC time they were read, used only for flags and the funnel, and
   never as launch-month features.
@@ -1340,6 +1347,10 @@ def assess(
         summary = cdx[crawl_id]
         assert summary is not None
         if crawls[crawl_id].end < reg_moment:
+            continue
+        if summary.first_capture and parse_utc(summary.first_capture) < reg_moment:
+            # A crawl that straddles the registration day captured the domain before it was registered: older evidence.
+            pre_captures = (pre_captures or 0) + 1
             continue
         if summary.first_capture and (first_seen is None or summary.first_capture < first_seen):
             first_seen = summary.first_capture

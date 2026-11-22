@@ -57,6 +57,7 @@ from .asof import as_date, parse_utc, utc_iso
 from .chain import GENESIS, canonical_json, row_hash, sha256_text, verify_chain
 from .config import (
     DEFAULT_DEVICE,
+    DIFFICULTY_TERCILES,
     EXCLUDED_SITES,
     LABELS,
     MIN_KEPT_PULLS,
@@ -73,7 +74,10 @@ from .types import PREDICTED, REAL, SYNTHETIC, CleanReading, Forecast, OrganicHi
 
 GRADE_KINDS = ("original", "regrade")
 RECORD_KINDS = ("original", "regrade", "latest")
-DIFFICULTY_TERCILES = ("easy", "medium", "hard")
+# Columns added to `readings` after the first databases were made. Opening an
+# older database adds them (empty). Readings are not hash chained, so this
+# changes no forecast or grade hash.
+READING_PROVENANCE_COLUMNS: dict[str, str] = {"reader_version": "VARCHAR(64)", "degraded_reason": "TEXT"}
 WINDOW_FIRST_DAY = OUTCOME_DAY - OUTCOME_WINDOW_DAYS  # 87
 WINDOW_LAST_DAY = OUTCOME_DAY + OUTCOME_WINDOW_DAYS  # 93
 APPEND_RETRIES = 5
@@ -230,6 +234,8 @@ class ReadingRow(ScoreboardBase):
     label: Mapped[str] = mapped_column(String(16))
     excluded_positions_dropped: Mapped[int] = mapped_column(Integer)
     stored_at: Mapped[str] = mapped_column(String(20))
+    reader_version: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    degraded_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
 class ReadingPositionRow(ScoreboardBase):
@@ -618,6 +624,7 @@ class Scoreboard:
         self.code_commit = code_commit
         self._lock = threading.RLock()
         ScoreboardBase.metadata.create_all(self.engine)
+        self.add_missing_columns()
         self.install_triggers()
         self._sessions = sessionmaker(self.engine, expire_on_commit=False)
 
@@ -631,6 +638,21 @@ class Scoreboard:
         with self.engine.begin() as connection:
             for _table, sql in TRIGGERS.values():
                 connection.execute(text(sql))
+
+    def add_missing_columns(self) -> list[str]:
+        """Add the reading provenance columns to a database made before they existed. Returns the columns added.
+
+        The new columns start empty (None) for the readings already stored.
+        Readings are not hash chained, so no chain changes.
+        """
+        added: list[str] = []
+        with self.engine.begin() as connection:
+            present = {str(row[1]) for row in connection.execute(text("PRAGMA table_info(readings)")).all()}
+            for name, kind in READING_PROVENANCE_COLUMNS.items():
+                if name not in present:
+                    connection.execute(text(f"ALTER TABLE readings ADD COLUMN {name} {kind}"))
+                    added.append(name)
+        return added
 
     def triggers_present(self) -> list[str]:
         with self.engine.connect() as connection:
@@ -769,6 +791,31 @@ class Scoreboard:
 
     def add_pull(self, pull: Pull) -> None:
         """Store one pull. REAL. Hits for excluded sites are dropped and counted."""
+        self.store_batch(pulls=(pull,))
+
+    def add_reading(self, reading: CleanReading) -> None:
+        """Store one clean reading and its positions. REAL (or SYNTHETIC when its label says so)."""
+        self.store_batch(readings=(reading,))
+
+    def store_batch(self, pulls: Sequence[Pull] = (), readings: Sequence[CleanReading] = ()) -> None:
+        """Store many pulls and readings in ONE transaction: all of them, or none when one is refused.
+
+        Each row is checked exactly as add_pull and add_reading check it. A row
+        already stored with the same content is skipped. Pulls are written
+        before readings.
+        """
+        pull_values = [self._pull_values(pull) for pull in pulls]
+        reading_values = [self._reading_values(reading) for reading in readings]
+        with self._lock, self._session() as session, session.begin():
+            stamp = utc_iso(self._now())
+            for values in pull_values:
+                self._put_pull(session, values, stamp)
+                session.flush()  # a pull id given twice in one batch is then checked like any stored pull
+            for values, positions in reading_values:
+                self._put_reading(session, values, positions, stamp)
+
+    @staticmethod
+    def _pull_values(pull: Pull) -> dict[str, Any]:
         hits = [hit for hit in pull.hits if site_key(hit.site or hit.domain) not in EXCLUDED_SITES]
         values = {
             "pull_id": pull.pull_id,
@@ -797,16 +844,19 @@ class Scoreboard:
             "raw_sha256": pull.raw_sha256,
             "excluded_hits_dropped": len(pull.hits) - len(hits),
         }
-        with self._lock, self._session() as session, session.begin():
-            existing = session.get(PullRow, pull.pull_id)
-            if existing is not None:
-                if all(getattr(existing, key) == value for key, value in values.items()):
-                    return
-                raise ScoreboardRefusal(f"Pull {pull.pull_id} is already stored with different content.")
-            session.add(PullRow(stored_at=utc_iso(self._now()), **values))
+        return values
 
-    def add_reading(self, reading: CleanReading) -> None:
-        """Store one clean reading and its positions. REAL (or SYNTHETIC when its label says so)."""
+    @staticmethod
+    def _put_pull(session: Session, values: dict[str, Any], stamp: str) -> None:
+        existing = session.get(PullRow, values["pull_id"])
+        if existing is not None:
+            if all(getattr(existing, key) == value for key, value in values.items()):
+                return
+            raise ScoreboardRefusal(f"Pull {values['pull_id']} is already stored with different content.")
+        session.add(PullRow(stored_at=stamp, **values))
+
+    @staticmethod
+    def _reading_values(reading: CleanReading) -> tuple[dict[str, Any], list[dict[str, Any]]]:
         try:
             taken = utc_iso(parse_utc(reading.taken_at))
         except ValueError as error:
@@ -839,6 +889,8 @@ class Scoreboard:
             "pull_ids": list(reading.pull_ids),
             "label": reading.label,
             "excluded_positions_dropped": len(reading.positions) - len(positions),
+            "reader_version": reading.reader_version,
+            "degraded_reason": reading.degraded_reason,
         }
         position_values = sorted(
             (
@@ -852,21 +904,24 @@ class Scoreboard:
             ),
             key=lambda item: (item["position"], item["site"]),
         )
-        with self._lock, self._session() as session, session.begin():
-            existing = session.get(ReadingRow, reading.reading_id)
-            if existing is not None:
-                stored = self._positions(session, reading.reading_id)
-                same_positions = [
-                    {"site": p.site, "position": p.position, "pull_positions": list(p.pull_positions), "best_url": p.best_url}
-                    for p in stored
-                ] == position_values
-                if same_positions and all(getattr(existing, key) == value for key, value in values.items()):
-                    return
-                raise ScoreboardRefusal(f"Reading {reading.reading_id} is already stored with different content.")
-            session.add(ReadingRow(stored_at=utc_iso(self._now()), **values))
-            session.flush()
-            for item in position_values:
-                session.add(ReadingPositionRow(reading_id=reading.reading_id, **item))
+        return values, position_values
+
+    def _put_reading(self, session: Session, values: dict[str, Any], position_values: list[dict[str, Any]], stamp: str) -> None:
+        reading_id = values["reading_id"]
+        existing = session.get(ReadingRow, reading_id)
+        if existing is not None:
+            stored = self._positions(session, reading_id)
+            same_positions = [
+                {"site": p.site, "position": p.position, "pull_positions": list(p.pull_positions), "best_url": p.best_url}
+                for p in stored
+            ] == position_values
+            if same_positions and all(getattr(existing, key) == value for key, value in values.items()):
+                return
+            raise ScoreboardRefusal(f"Reading {reading_id} is already stored with different content.")
+        session.add(ReadingRow(stored_at=stamp, **values))
+        session.flush()
+        for item in position_values:
+            session.add(ReadingPositionRow(reading_id=reading_id, **item))
 
     @staticmethod
     def _positions(session: Session, reading_id: str) -> list[SitePosition]:
@@ -899,7 +954,60 @@ class Scoreboard:
             positions=tuple(self._positions(session, row.reading_id)),
             pull_ids=tuple(row.pull_ids or ()),
             label=row.label,
+            reader_version=row.reader_version,
+            degraded_reason=row.degraded_reason,
         )
+
+    def readings_for(
+        self,
+        search: str,
+        location_code: int,
+        device: str,
+        *,
+        before: datetime | None = None,
+        on_or_before: date | datetime | None = None,
+        non_degraded_only: bool = True,
+        limit: int | None = None,
+        label: str | None = None,
+        not_before: datetime | None = None,
+    ) -> list[CleanReading]:
+        """Stored readings of one search, location and device, newest first (ties by reading id, last first).
+
+        `before`: taken strictly before this UTC moment. `on_or_before`: a date
+        keeps readings taken on or before that UTC day, a datetime keeps those
+        taken at or before it. `not_before`: taken at or after this moment.
+        `non_degraded_only` (the default) leaves degraded readings out. `label`
+        keeps only REAL or only SYNTHETIC readings. `limit` caps the count.
+        """
+        if limit is not None and limit < 0:
+            raise ValueError("limit cannot be negative")
+        with self._session() as session:
+            query = select(ReadingRow).where(
+                ReadingRow.search_key == search_key(search),
+                ReadingRow.location_code == int(location_code),
+                ReadingRow.device == device,
+            )
+            if non_degraded_only:
+                query = query.where(ReadingRow.degraded.is_(False))
+            if label is not None:
+                query = query.where(ReadingRow.label == label)
+            rows = session.scalars(query.order_by(ReadingRow.taken_at.desc(), ReadingRow.reading_id.desc())).all()
+            out: list[CleanReading] = []
+            for row in rows:
+                taken = parse_utc(row.taken_at)
+                if before is not None and not taken < parse_utc(utc_iso(before)):
+                    continue
+                if not_before is not None and taken < parse_utc(utc_iso(not_before)):
+                    continue
+                if isinstance(on_or_before, datetime):
+                    if taken > parse_utc(utc_iso(on_or_before)):
+                        continue
+                elif isinstance(on_or_before, date) and taken.date() > on_or_before:
+                    continue
+                out.append(self._reading_from_row(session, row))
+                if limit is not None and len(out) >= limit:
+                    break
+            return out
 
     def pull(self, pull_id: str) -> Pull:
         with self._session() as session:
@@ -907,6 +1015,25 @@ class Scoreboard:
             if row is None:
                 raise ScoreboardRefusal(f"Pull {pull_id} is not stored.")
             return _pull_from_row(row)
+
+    def pulls_completed_between(
+        self, start: datetime, end: datetime, *, search_keys: Sequence[str] | None = None
+    ) -> list[Pull]:
+        """Stored pulls whose completed time is at or after `start` and before `end` (UTC), oldest first.
+
+        `search_keys` (matching forms, see search_key) keeps only those searches.
+        """
+        low, high = parse_utc(utc_iso(start)), parse_utc(utc_iso(end))
+        with self._session() as session:
+            query = select(PullRow)
+            if search_keys is not None:
+                query = query.where(PullRow.search_key.in_(sorted({search_key(key) for key in search_keys})))
+            out = []
+            for row in session.scalars(query).all():
+                moment = parse_utc(row.completed_at)
+                if low <= moment < high:
+                    out.append((moment, row.pull_id, _pull_from_row(row)))
+        return [pull for _moment, _id, pull in sorted(out, key=lambda item: (item[0], item[1]))]
 
     # -- forecasts -----------------------------------------------------------------------------
 
@@ -1483,12 +1610,17 @@ class Scoreboard:
 
     def persistence_points(self, items: Sequence[str | GradedRecord | GradedCell]) -> list[int]:
         """The persistence baseline per forecast: the site's clean position in the latest non-degraded
-        reading of the same search, location and device taken on or before the forecast's as_of. NT50 when none."""
+        reading of the same search, location and device taken on or before the forecast's as_of. NT50 when none.
+
+        Only REAL readings count for a forecast whose source is not synthetic, and
+        only SYNTHETIC readings for a synthetic forecast, as the grading job does
+        for outcomes."""
         with self._session() as session:
             out: list[int] = []
             for item in items:
                 row = self._forecast_for_item(session, item)
                 as_of = date.fromisoformat(row.as_of)
+                wanted = SYNTHETIC if row.source == "synthetic" else REAL
                 readings = session.scalars(
                     select(ReadingRow)
                     .where(
@@ -1496,6 +1628,7 @@ class Scoreboard:
                         ReadingRow.location_code == row.location_code,
                         ReadingRow.device == row.device,
                         ReadingRow.degraded.is_(False),
+                        ReadingRow.label == wanted,
                     )
                     .order_by(ReadingRow.taken_at.desc(), ReadingRow.reading_id.desc())
                 ).all()

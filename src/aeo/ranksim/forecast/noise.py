@@ -79,7 +79,7 @@ from .reader import (
     ubiquity_slots,
 )
 from .stats import cluster_bootstrap_ratio, wilson
-from .types import REAL, CleanReading, OrganicHit, Pull, PullSpec
+from .types import REAL, SYNTHETIC, CleanReading, OrganicHit, Pull, PullSpec
 
 AGREE_WITHIN = 2
 HEADLINE_DEPTH = 10
@@ -360,8 +360,9 @@ def agreement_report(
             "note": "Same readings with the filter after the structural drops switched off.",
         }
 
+    synthetic = any(reading.label == SYNTHETIC for pair in pairs for reading in pair)
     return {
-        "label": REAL,
+        "label": SYNTHETIC if synthetic else REAL,
         "what": "Agreement of two clean readings of each search. Repeatability of the reader, not its accuracy.",
         "headline": summary["headline"],
         "top50": summary["top50"],
@@ -405,16 +406,18 @@ def marker1_report_from_pulls(
     version: int = DEFAULT_RULE_VERSION,
     suspects_a: RoundSuspects | Iterable[RoundSuspects] | None = None,
     suspects_b: RoundSuspects | Iterable[RoundSuspects] | None = None,
+    history: Mapping[str, CleanReading] | None = None,
 ) -> dict[str, Any]:
     """Build both readings of each search from their pulls, with and without the filter, and report.
 
     `version` is the reader version. `suspects_a` and `suspects_b` are the
     round suspects of the rounds of reading A and of reading B (version 2,
     signal c). When they are None they are computed from the pulls given, one
-    set per side. No history is passed: reading A is never the history of
-    reading B. The raw baseline pairs the i-th OK pull of reading A with the
-    i-th OK pull of reading B (in requested order), so every single pull is
-    used once.
+    set per side. `history` maps a search to an earlier clean reading taken
+    before reading A's first pull. The same history is passed to both A and B,
+    so reading A is never the history of reading B. The raw baseline pairs the
+    i-th OK pull of reading A with the i-th OK pull of reading B (in requested
+    order), so every single pull is used once.
     """
     if suspects_a is None:
         suspects_a = round_suspects([pull for first, _ in reading_pulls for pull in first])
@@ -423,10 +426,13 @@ def marker1_report_from_pulls(
     pairs: list[tuple[CleanReading, CleanReading]] = []
     plain: list[tuple[CleanReading, CleanReading]] = []
     raw: list[tuple[Pull, Pull]] = []
+    used_history = 0
     for first, second in reading_pulls:
+        earlier = (history or {}).get(first[0].spec.search) if first and int(version) != 1 else None
+        used_history += earlier is not None
         pairs.append((
-            build_clean_reading(first, version=version, suspects=suspects_a),
-            build_clean_reading(second, version=version, suspects=suspects_b),
+            build_clean_reading(first, version=version, suspects=suspects_a, history=earlier),
+            build_clean_reading(second, version=version, suspects=suspects_b, history=earlier),
         ))
         plain.append((
             build_clean_reading(first, overlap_rule=False, version=version),
@@ -434,7 +440,8 @@ def marker1_report_from_pulls(
         ))
         raw.extend(zip(_ok_in_order(first), _ok_in_order(second)))
     settings = reader_settings(version=version)
-    settings["history_used"] = False
+    settings["history_used"] = used_history > 0
+    settings["searches_with_history"] = used_history
     settings["ablation"] = reader_settings(version=version, overlap_rule=False)
     return agreement_report(
         pairs,

@@ -227,13 +227,16 @@ def plan_pulls(
     months: Sequence[int] = DEFAULT_WINDOWS,
     rows_per_site: int = DEFAULT_ROWS_PER_SITE,
     *,
+    position_sites: int | None = None,
     today: date | None = None,
 ) -> PullPlan:
     """The cost table for past result pages (each window in `months`), traffic curves, exact positions and the $1 samples.
 
     `sites` may be a count or cohort rows. With rows that carry launch_date (or
     registered_on when no launch date is known) the plan also counts how many
-    sites each window leaves without a launch-month page.
+    sites each window leaves without a launch-month page. `position_sites` is
+    how many sites get exact positions (the plan pulls 2,000 of the 20,000);
+    it defaults to all sites.
     """
     n_searches = _count(searches)
     n_sites = _count(sites)
@@ -244,20 +247,22 @@ def plan_pulls(
     upper: dict[int, Decimal] = {}
     reading: dict[int, Decimal] = {}
     traffic = historical_traffic_cost(n_sites)
-    positions = ranked_keywords_cost(n_sites, rows_per_site)
+    n_position_sites = n_sites if position_sites is None else int(position_sites)
+    positions = ranked_keywords_cost(n_position_sites, rows_per_site)
     samples = SAMPLE_MAX_USD * 3
     for window in windows:
         one = historical_serps_cost(n_searches, window)
         high = historical_serps_estimate(window, n_searches)
         lines.append(CostLine(window, "Past result pages, one page per month (the plan's reading)", KIND_HISTORICAL_SERPS,
                               f"{n_searches} searches x {window} pages", one, "budget.historical_serps_cost"))
-        lines.append(CostLine(window, f"Past result pages, upper estimate at {HISTORICAL_SERPS_SNAPSHOTS_PER_MONTH_ESTIMATE} pages per month",
-                              KIND_HISTORICAL_SERPS, f"{n_searches} searches x {window * HISTORICAL_SERPS_SNAPSHOTS_PER_MONTH_ESTIMATE} pages",
-                              high, "budget.historical_serps_estimate"))
+        if high != one:
+            lines.append(CostLine(window, f"Past result pages, upper estimate at {HISTORICAL_SERPS_SNAPSHOTS_PER_MONTH_ESTIMATE} pages per month",
+                                  KIND_HISTORICAL_SERPS, f"{n_searches} searches x {window * HISTORICAL_SERPS_SNAPSHOTS_PER_MONTH_ESTIMATE} pages",
+                                  high, "budget.historical_serps_estimate"))
         upper[window] = high + traffic + positions + samples
         reading[window] = one + traffic + positions + samples
     lines.append(CostLine(None, "Traffic curves", KIND_HISTORICAL_TRAFFIC, f"{n_sites} sites", traffic, "budget.historical_traffic_cost"))
-    lines.append(CostLine(None, "Exact positions", KIND_RANKED_KEYWORDS, f"{n_sites} sites x {rows_per_site} rows", positions,
+    lines.append(CostLine(None, "Exact positions", KIND_RANKED_KEYWORDS, f"{n_position_sites} sites x {rows_per_site} rows", positions,
                           "budget.ranked_keywords_cost"))
     lines.append(CostLine(None, "The three $1 samples (caps, not estimates)", "samples", "3 samples", samples, "budget.SAMPLE_MAX_USD"))
     day = today or _utcnow().date()

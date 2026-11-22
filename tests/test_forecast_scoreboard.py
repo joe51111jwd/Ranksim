@@ -758,6 +758,7 @@ def test_stage_report_numbers_and_brand_split(board: Scoreboard, clock: Clock):
     assert set(head["baselines"]) == {"always_nt50", "persistence"}
     assert rep["eligibility_this"]["graded"] == 48
     assert rep["by_difficulty"]["easy"]["count"] == 16
+    assert list(rep["by_difficulty"]) == ["easy", "medium", "hard"]  # tercile order, not alphabetical
     assert set(rep["by_niche"]) == {"plumbing", "roofing"}
     assert rep["by_lead_days"]["30"]["count"] == 40
     assert rep["built_by"] == {"ranksim": 40}
@@ -875,3 +876,140 @@ def test_reading_stored_twice_is_idempotent_but_a_changed_one_is_refused(board: 
     board.add_reading(reading("r10", 10, {"alpha.com": 6}))
     with pytest.raises(ScoreboardRefusal, match="different content"):
         board.add_reading(reading("r10", 10, {"alpha.com": 7}))
+
+
+# ---------------------------------------------------------------------------------------------
+# reading provenance, reading access and batch writes
+
+
+def test_reading_provenance_is_stored_returned_and_exported(board: Scoreboard, clock: Clock, tmp_path: Path):
+    made = dataclasses.replace(reading("rp", 5, {"alpha.com": 4}, degraded=True), reader_version="reader-v2",
+                               degraded_reason="too_few_kept_pulls: 2 of 5 pulls kept, 3 needed")
+    board.add_reading(made)
+    back = board.reading("rp")
+    assert back == made and back.reader_version == "reader-v2" and back.degraded_reason.startswith("too_few")
+    board.add_reading(made)  # the same content again is a no-op
+    with pytest.raises(ScoreboardRefusal, match="different content"):
+        board.add_reading(dataclasses.replace(made, degraded_reason="cluster_tie: other"))
+    board.add_reading(reading("plain", 6, {"alpha.com": 4}))
+    assert board.reading("plain").reader_version is None and board.reading("plain").degraded_reason is None
+    board.export(tmp_path / "export")
+    rows = [__import__("json").loads(line) for line in (tmp_path / "export" / "readings.jsonl").read_text().splitlines()]
+    by_id = {row["reading_id"]: row for row in rows}
+    assert by_id["rp"]["reader_version"] == "reader-v2" and by_id["rp"]["degraded_reason"].startswith("too_few")
+    assert by_id["plain"]["reader_version"] is None
+
+
+def test_an_older_database_without_the_provenance_columns_still_opens(tmp_path: Path, clock: Clock):
+    path = tmp_path / "old.db"
+    first = Scoreboard(f"sqlite:///{path}", clock=clock)
+    first.add_reading(reading("before", 3, {"alpha.com": 2}))
+    first.close()
+    import sqlite3
+
+    with sqlite3.connect(path) as connection:  # make it look like a database from before the columns existed
+        connection.execute("DROP TRIGGER readings_no_update")
+        connection.execute("ALTER TABLE readings DROP COLUMN reader_version")
+        connection.execute("ALTER TABLE readings DROP COLUMN degraded_reason")
+        names = {row[1] for row in connection.execute("PRAGMA table_info(readings)")}
+        assert "reader_version" not in names
+    again = Scoreboard(f"sqlite:///{path}", clock=clock)
+    try:
+        assert again.reading("before").reader_version is None
+        again.add_reading(dataclasses.replace(reading("after", 4, {"alpha.com": 2}), reader_version="reader-v2"))
+        assert again.reading("after").reader_version == "reader-v2"
+        assert again.add_missing_columns() == []
+        assert again.verify().ok  # the dropped trigger was put back on open
+    finally:
+        again.close()
+
+
+def test_an_export_made_before_the_provenance_columns_still_compares_and_imports(board: Scoreboard, clock: Clock, tmp_path: Path):
+    import json
+
+    from aeo.ranksim.forecast.chain import sha256_text
+    from aeo.ranksim.forecast.pipeline import verify_against_export
+
+    board.add_reading(reading("r1", 3, {"alpha.com": 2}))
+    folder = tmp_path / "export"
+    board.export(folder)
+    path = folder / "readings.jsonl"
+    old_rows = []
+    for line in path.read_text().splitlines():
+        row = json.loads(line)
+        row.pop("reader_version")
+        row.pop("degraded_reason")
+        old_rows.append(json.dumps(row, sort_keys=True, separators=(",", ":"), ensure_ascii=False))
+    body = "".join(item + "\n" for item in old_rows)
+    path.write_text(body, encoding="utf-8")
+    heads = json.loads((folder / "HEADS.json").read_text())
+    heads["files"]["readings.jsonl"] = sha256_text(body)
+    (folder / "HEADS.json").write_text(json.dumps(heads, sort_keys=True, indent=2) + "\n")
+    comparison = verify_against_export(board, folder)
+    assert comparison.ok, comparison.problems
+    fresh = Scoreboard(f"sqlite:///{tmp_path / 'fresh.db'}", clock=clock)
+    try:
+        assert fresh.import_export(folder).ok
+        assert fresh.reading("r1").reader_version is None
+    finally:
+        fresh.close()
+
+
+def test_readings_for_returns_newest_first_with_its_filters(board: Scoreboard, clock: Clock):
+    board.add_reading(reading("d1", 1, {"alpha.com": 3}))
+    board.add_reading(reading("d2", 2, {"alpha.com": 4}, degraded=True))
+    board.add_reading(reading("d3", 3, {"alpha.com": 5}))
+    board.add_reading(reading("d3s", 3, {"alpha.com": 6}, label="SYNTHETIC", hour=11))
+    board.add_reading(reading("other", 3, {"alpha.com": 6}, location=2840))
+    ids = lambda found: [item.reading_id for item in found]  # noqa: E731
+    assert ids(board.readings_for(SEARCH, LOC, "desktop")) == ["d3s", "d3", "d1"]
+    assert ids(board.readings_for(SEARCH.upper(), LOC, "desktop", non_degraded_only=False)) == ["d3s", "d3", "d2", "d1"]
+    assert ids(board.readings_for(SEARCH, LOC, "desktop", label="REAL", limit=1)) == ["d3"]
+    moment = datetime.fromisoformat(utc_day(3).replace("Z", "+00:00"))
+    assert ids(board.readings_for(SEARCH, LOC, "desktop", before=moment)) == ["d1"]
+    assert ids(board.readings_for(SEARCH, LOC, "desktop", on_or_before=moment)) == ["d3", "d1"]
+    assert ids(board.readings_for(SEARCH, LOC, "desktop", on_or_before=moment.date())) == ["d3s", "d3", "d1"]
+    assert ids(board.readings_for(SEARCH, LOC, "desktop", not_before=moment)) == ["d3s", "d3"]
+    assert board.readings_for(SEARCH, LOC, "mobile") == []
+
+
+def test_persistence_uses_only_readings_of_the_forecast_label(board: Scoreboard, clock: Clock):
+    board.add_reading(reading("real", 50, {"alpha.com": 9}))
+    board.add_reading(reading("synth", 55, {"alpha.com": 2}, label="SYNTHETIC"))
+    fid = made_at(board, clock, forecast(), 62)
+    assert board.persistence_points([fid]) == [9]  # a seed forecast never copies a synthetic reading
+    board.add_site("synthsite.example", source="synthetic", launch_date=LAUNCH, launch_date_source="test", built_by="test")
+    board.add_search("synthsite.example", SEARCH, location_code=LOC)
+    synthetic = forecast(site="synthsite.example")
+    sid = made_at(board, clock, synthetic, 62)
+    board.add_reading(reading("synth2", 56, {"synthsite.example": 7}, label="SYNTHETIC"))
+    assert board.persistence_points([sid]) == [7]
+
+
+def test_store_batch_writes_everything_in_one_transaction_or_nothing(board: Scoreboard, clock: Clock):
+    pulls = [_pull(f"bp{i}", [("https://alpha.com/x", 1)]) for i in range(3)]
+    good = reading("batch-ok", 7, {"alpha.com": 1}, pull_ids=tuple(p.pull_id for p in pulls))
+    board.store_batch(pulls=pulls, readings=[good])
+    assert board.pull("bp0").pull_id == "bp0" and board.reading("batch-ok") == good
+    board.store_batch(pulls=pulls, readings=[good])  # the same rows again change nothing
+    bad = dataclasses.replace(reading("batch-bad", 8, {"alpha.com": 1}), pulls_kept=1)  # not degraded with 1 kept
+    with pytest.raises(ScoreboardRefusal):
+        board.store_batch(pulls=[_pull("bp-new", [("https://alpha.com/x", 2)])], readings=[bad])
+    with pytest.raises(ScoreboardRefusal):
+        board.pull("bp-new")  # the pull of the refused batch was not stored either
+    changed = dataclasses.replace(good, positions=())
+    with pytest.raises(ScoreboardRefusal, match="different content"):
+        board.store_batch(pulls=[_pull("bp-late", [("https://alpha.com/x", 2)])], readings=[changed])
+    with pytest.raises(ScoreboardRefusal):
+        board.pull("bp-late")
+
+
+def test_pulls_completed_between_filters_by_time_and_search(board: Scoreboard):
+    early = dataclasses.replace(_pull("t1", [("https://alpha.com/x", 1)]), completed_at="2026-12-01T01:00:00Z")
+    late = dataclasses.replace(_pull("t2", [("https://alpha.com/x", 1)]), completed_at="2026-12-01T23:00:00Z")
+    next_day = dataclasses.replace(_pull("t3", [("https://alpha.com/x", 1)]), completed_at="2026-12-02T00:00:00Z")
+    board.store_batch(pulls=[late, next_day, early])
+    start = datetime(2026, 12, 1, tzinfo=timezone.utc)
+    found = board.pulls_completed_between(start, start + timedelta(days=1))
+    assert [pull.pull_id for pull in found] == ["t1", "t2"]
+    assert board.pulls_completed_between(start, start + timedelta(days=1), search_keys=["no such search"]) == []

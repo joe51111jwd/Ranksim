@@ -517,3 +517,153 @@ def test_import_gsc_reads_api_json_and_index_tables_with_their_dates(tmp_path):
     index = pipeline.import_gsc(paths, board, site="seedsite.example", file=FIXTURES / "forecast_gsc" / "index_status.csv", kind="index")
     assert index.rows > 0 and index.first_date is not None and index.last_date is not None
     board.close()
+
+
+# ---------------------------------------------------------------------------------------------
+# History, batch writes and round mode
+
+
+def test_take_readings_passes_recent_history_and_writes_one_transaction(tmp_path):
+    from sqlalchemy import event
+
+    clock = pipeline.VirtualClock(START)
+    board = _board(tmp_path, clock)
+    spec = PullSpec("plumber prices", 1026201)
+    second = START + timedelta(days=1)
+    stale = START + timedelta(days=1 + 22)  # more than HISTORY_MAX_AGE_DAYS after the second reading
+    source = ReplaySource(_replay(spec, START, SITES) + _replay(spec, second, SITES) + _replay(spec, stale, SITES))
+    commits: list[int] = []
+    event.listen(board.engine, "commit", lambda _connection: commits.append(1))
+    first = pipeline.take_readings(board, source, [spec], clock=clock)
+    assert first.history_used == 0 and first.reader_version == "reader-v2"
+    assert len(commits) == 1  # five pulls and one reading in one transaction
+    clock.set(second)
+    assert pipeline.take_readings(board, source, [spec], clock=clock).history_used == 1
+    clock.set(stale)
+    assert pipeline.take_readings(board, source, [spec], clock=clock).history_used == 0  # the last one is 22 days old
+    assert pipeline.HISTORY_MAX_AGE_DAYS == 21
+    assert len(pipeline.history_for(board, [spec], before=stale + timedelta(days=21))) == 1
+    assert pipeline.history_for(board, [spec], before=stale + timedelta(days=21, minutes=5)) == []
+    assert pipeline.history_for(board, [spec], before=stale + timedelta(days=1), label=SYNTHETIC) == []
+    stored = board.reading(first.reading_ids[0])
+    assert stored.reader_version == "reader-v2" and stored.degraded_reason is None
+    board.close()
+
+
+def test_the_second_reading_benefits_from_the_first_under_correlated_poisoning(tmp_path):
+    """SYNTHETIC. Five pulls a minute apart share an altered spell. Without history such a reading is kept
+    whole and wrong. With yesterday's reading passed in by take_readings, it is degraded instead."""
+    from dataclasses import replace as dc_replace
+
+    from aeo.ranksim.forecast.synth import DEFAULT_KNOBS, SyntheticSource
+
+    knobs = dc_replace(DEFAULT_KNOBS, poison_spell_minutes=90.0, poison_rate=0.3, poison_spell_share=0.9,
+                       fail_rate=0.0, partial_rate=0.0, spell_rate=0.0, repaired_rate=0.0)
+    world = World(1, niches=2, searches_per_niche=30, established_sites=200, new_sites=0, months=12, knobs=knobs)
+    clean_world = World(1, niches=2, searches_per_niche=30, established_sites=200, new_sites=0, months=12,
+                        knobs=dc_replace(knobs, poison_rate=0.0))
+    specs = [PullSpec(info.text, world.location_code) for info in world.searches]
+    day_one = datetime(2025, 8, 31, 10, tzinfo=timezone.utc)
+    day_two = day_one + timedelta(days=1)
+    known = {info.site for info in world.sites}
+
+    def wrong(readings) -> int:
+        return sum(1 for r in readings if not r.degraded and any(e.site not in known for e in r.positions if e.position <= 10))
+
+    results = {}
+    for name in ("with history", "alone"):
+        clock = pipeline.VirtualClock(day_one)
+        board = Scoreboard(f"sqlite:///{tmp_path / (name.replace(' ', '_') + '.db')}", clock=clock.now)
+        if name == "with history":  # yesterday's clean reading of every search
+            pipeline.take_readings(board, SyntheticSource(clean_world, clock.now), specs, pulls=5, gap_seconds=60, clock=clock)
+        clock.set(day_two)
+        summary = pipeline.take_readings(board, SyntheticSource(world, clock.now), specs, pulls=5, gap_seconds=60, clock=clock)
+        readings = [board.reading(rid) for rid in summary.reading_ids]
+        results[name] = (summary, readings)
+        board.close()
+    with_history, alone = results["with history"], results["alone"]
+    assert with_history[0].history_used == len(specs) and alone[0].history_used == 0
+    assert wrong(alone[1]) >= 1, "the synthetic world must give at least one wholly altered reading"
+    assert wrong(with_history[1]) == 0 and wrong(with_history[1]) < wrong(alone[1])
+    reasons = [r.degraded_reason for r in with_history[1] if r.degraded]
+    assert any(reason.startswith("altered_vs_history") for reason in reasons)
+    assert all(r.label == SYNTHETIC for r in with_history[1])
+
+
+def test_read_round_and_assemble_build_readings_from_rounds_hours_apart(tmp_path):
+    world = World(3, niches=1, searches_per_niche=12, established_sites=40, new_sites=1)
+    day = world.start + timedelta(days=200)
+    clock = pipeline.VirtualClock(datetime(day.year, day.month, day.day, 1, tzinfo=timezone.utc))
+    board = _board(tmp_path, clock)
+    source = pipeline.make_source("synthetic", None, None, tmp_path, world=world, clock=clock)
+    specs = pipeline.search_specs(world.searches_in(world.niches[0])[:4], world.location_code)
+    for hour in (1, 5, 9, 13, 17):
+        clock.set(datetime(day.year, day.month, day.day, hour, tzinfo=timezone.utc))
+        summary = pipeline.read_round(board, source, specs, clock=clock)
+        assert summary.pulls_returned == 4 and summary.failed is None and summary.label == SYNTHETIC
+        assert summary.freeze_name.startswith(pipeline.ROUND_FREEZE_PREFIX)
+    assert pipeline.scoreboard_counts(board)["readings"] == 0  # a round builds no reading
+    clock.set(datetime(day.year, day.month, day.day, 23, tzinfo=timezone.utc))
+    result = pipeline.assemble(board, day)
+    assert result.pulls_found == 20 and result.rounds == 5 and result.readings_built == 4 and result.readings_stored == 4
+    assert result.labels == {SYNTHETIC: 4} and result.history_used == 0
+    for reading_id in result.reading_ids:
+        stored = board.reading(reading_id)
+        assert stored.pulls_total == 5 and stored.reader_version == "reader-v2"
+    again = pipeline.assemble(board, day)
+    assert again.readings_stored == 0 and again.readings_already_stored == 4  # running it twice changes nothing
+    # The next day's readings get the first day's readings as history.
+    next_day = day + timedelta(days=1)
+    for hour in (2, 8):
+        clock.set(datetime(next_day.year, next_day.month, next_day.day, hour, tzinfo=timezone.utc))
+        pipeline.read_round(board, source, specs, clock=clock)
+    clock.set(datetime(next_day.year, next_day.month, next_day.day, 23, tzinfo=timezone.utc))
+    second = pipeline.assemble(board, next_day, specs=specs[:2])
+    assert second.readings_built == 2 and second.history_used == 2 and second.degraded == 2  # two rounds are too few
+    assert second.degraded_reasons == {"too_few_kept_pulls": 2}
+    assert pipeline.assemble(board, day + timedelta(days=5)).pulls_found == 0
+    board.close()
+
+
+def test_assemble_groups_unrecorded_pulls_into_rounds_by_time(tmp_path):
+    clock = pipeline.VirtualClock(START)
+    board = _board(tmp_path, clock)
+    spec = PullSpec("plumber prices", 1026201)
+    pulls = [_pull(spec, START + timedelta(hours=3 * index), SITES, tag=f"-{index}") for index in range(5)]
+    board.store_batch(pulls=pulls)
+    clock.set(START + timedelta(hours=20))
+    result = pipeline.assemble(board, START.date())
+    assert result.rounds == 5 and result.readings_built == 1 and result.degraded == 0
+    assert result.labels == {"REAL": 1}
+    board.close()
+
+
+def test_marker1_reports_always_name_the_reader(tmp_path):
+    clock = pipeline.VirtualClock(START)
+    board = _board(tmp_path, clock)
+    spec = PullSpec("plumber prices", 1026201)
+    day_b = START + timedelta(hours=24)
+    source = ReplaySource(_replay(spec, START, SITES) + _replay(spec, day_b, SITES))
+    pipeline.take_readings(board, source, [spec], clock=clock)
+    clock.set(day_b)
+    pipeline.take_readings(board, source, [spec], clock=clock)
+    rebuilt = pipeline.marker1(board, ["plumber prices"], location_code=1026201, reader_version=1)
+    assert rebuilt["report"]["built_from_pulls"] is True
+    assert rebuilt["report"]["reader"]["reader_version"] == "reader-v1"
+    assert rebuilt["report"]["headline_beside_ablation"]["filter_off"] is not None
+    # Without stored pulls the report reads the stored readings and still names the reader settings.
+    bare = Scoreboard(f"sqlite:///{tmp_path / 'bare.db'}", clock=clock.now)
+    for reading_id in rebuilt["pairs"][0]:
+        bare.add_reading(board.reading(reading_id))
+    stored = pipeline.marker1(bare, ["plumber prices"], location_code=1026201)
+    assert stored["report"]["built_from_pulls"] is False
+    assert stored["report"]["reader"]["reader_version"] == "reader-v2"
+    assert stored["report"]["reader"]["stored_reader_versions"] == ["reader-v2"]
+    assert stored["evaluation"]["label"] == "REAL"
+    bare.close()
+    board.close()
+
+
+def test_imports_live_under_the_imports_folder(tmp_path):
+    paths = forecast_paths(tmp_path / "data")
+    assert paths.imports == tmp_path / "data" / "imports"

@@ -82,6 +82,7 @@ def paid_commands(tmp_path: Path) -> list[list[str]]:
     sites.write_text("tinynew.com\nother.com\n", encoding="utf-8")
     return [
         ["read", "--searches", searches, "--location-code", "1026201"],
+        ["read-round", "--searches", searches, "--location-code", "1026201"],
         ["read", "--searches", searches, "--location-code", "1026201", "--provider", "serper", "--serper-location", "Austin,Texas,United States"],
         ["sample", "serp", "--searches", searches, "--location-code", "1026201"],
         ["sample", "serp", "--searches", searches, "--location-code", "1026201", "--provider", "serper"],
@@ -464,3 +465,71 @@ def test_marker1_sample_refuses_to_overwrite_before_freezing(tmp_path):
     assert code == 2 and "Nothing was frozen" in err
     code, status, _ = run(["status", "--json"], data)
     assert json.loads(status)["counts"]["freezes"] == 0
+
+
+# ---------------------------------------------------------------------------------------------
+# Round mode, the reader version and the two estimates for past result pages
+
+
+def test_read_round_dry_run_costs_one_pull_per_search(tmp_path):
+    code, out, _ = run(["read-round", "--searches", str(searches_file(tmp_path, 3)), "--location-code", "1026201", "--json"],
+                       tmp_path / "data")
+    plan = json.loads(out)["plan"]
+    assert code == 0 and plan["calls"] == 3 and Decimal(plan["usd"]) == serp_cost(50, pulls=3)
+    assert "one round of 3 searches" in plan["item"]
+
+
+def test_five_rounds_across_a_day_then_assemble(tmp_path, fake_credentials):
+    data = tmp_path / "data"
+    run(["budget", "approve", "--amount", "1", "--by", "James", "--note", "round mode"], data)
+    calls: list[dict] = []
+    client = httpx.Client(transport=httpx.MockTransport(_serper_handler(calls)))
+    clock = pipeline.VirtualClock(START)
+    argv = ["read-round", "--searches", str(searches_file(tmp_path, 2)), "--location-code", "1026201", "--provider", "serper",
+            "--serper-location", "Austin,Texas,United States", "--execute", "--json"]
+    for hour in (9, 12, 15, 18, 21):
+        clock.set(START.replace(hour=hour))
+        code, out, err = run(argv, data, client=client, clock=clock)
+        assert code == 0, err
+        summary = json.loads(out)
+        assert summary["pulls_returned"] == 2 and summary["label"] == "REAL" and summary["freeze_name"]
+    code, out, _ = run(["status", "--json"], data, clock=clock)
+    assert json.loads(out)["counts"]["readings"] == 0 and json.loads(out)["counts"]["pulls"] == 10
+    clock.set(START.replace(hour=23))
+    code, out, err = run(["assemble", "--date", START.date().isoformat(), "--json"], data, client=client, clock=clock)
+    assert code == 0, err
+    built = json.loads(out)
+    assert built["rounds"] == 5 and built["readings_built"] == 2 and built["readings_stored"] == 2 and built["degraded"] == 0
+    assert built["labels"] == {"REAL": 2} and built["reader_version"] == "reader-v2"
+    code, out, _ = run(["assemble", "--date", START.date().isoformat()], data, clock=clock)
+    assert code == 0 and "Already stored 2." in out and not any(dash in out for dash in ("\u2014", "\u2013"))
+    code, out, _ = run(["assemble", "--date", "2026-12-25"], data, clock=clock)
+    assert code == 1 and "No stored pull completed" in out
+
+
+def test_marker1_report_takes_a_reader_version(tmp_path):
+    data = tmp_path / "data"
+    searches, location, _day = _synthetic_readings(data)
+    code, out, _ = run(["marker1", "report", "--searches", str(_write(tmp_path, searches)), "--location-code", str(location),
+                        "--reader-version", "1", "--json"], data)
+    result = json.loads(out)
+    assert result["report"]["reader"]["reader_version"] == "reader-v1"
+    assert result["evaluation"]["label"] == "SYNTHETIC" and "synthetic_check_passed" in result["evaluation"]
+    code, _, err = run(["marker1", "report", "--location-code", str(location), "--reader-version", "7"], data)
+    assert code == 2
+
+
+def _write(tmp_path: Path, searches: list[str]) -> Path:
+    path = tmp_path / "m1_searches.txt"
+    path.write_text("\n".join(searches) + "\n", encoding="utf-8")
+    return path
+
+
+def test_budget_prices_show_the_plan_rate_and_the_sample_rate_for_past_pages(tmp_path):
+    code, out, _ = run(["budget", "prices", "--json"], tmp_path / "data")
+    items = json.loads(out)["plan_items"]
+    plan = next(value for name, value in items.items() if "plan rate" in name)
+    seen = next(value for name, value in items.items() if "free history samples" in name)
+    assert Decimal(plan) == Decimal("14.40") and Decimal("5") < Decimal(seen) < Decimal("6")
+    code, out, _ = run(["sample", "historical-serps", "--searches", str(searches_file(tmp_path, 2))], tmp_path / "data")
+    assert code == 0 and "plan rate, 1 page per search per month" in out and "sample rate, 0.38 pages" in out

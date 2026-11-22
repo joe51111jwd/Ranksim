@@ -298,6 +298,7 @@ def download_resumable(
     A complete `dest` is never fetched again. A server that ignores Range makes the
     download start over (the partial file is discarded).
     """
+    dest = Path(dest).resolve()
     dest.parent.mkdir(parents=True, exist_ok=True)
     meta_path = dest.with_name(dest.name + ".meta.json")
     if dest.exists():

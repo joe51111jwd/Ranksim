@@ -1,0 +1,185 @@
+{
+ "version": "0.1.20220216",
+ "status_code": 20000,
+ "status_message": "Ok.",
+ "cost": 0.00024,
+ "tasks_count": 2,
+ "tasks_error": 1,
+ "tasks": [
+  {
+   "id": "t-ok",
+   "status_code": 20000,
+   "status_message": "Ok.",
+   "cost": 0.00024,
+   "result_count": 1,
+   "path": [
+    "v3",
+    "dataforseo_labs",
+    "google",
+    "historical_serps",
+    "live"
+   ],
+   "data": {
+    "keyword": "best widget"
+   },
+   "result": [
+    {
+     "se_type": "google",
+     "keyword": "best widget",
+     "location_code": 2840,
+     "language_code": "en",
+     "total_count": 2,
+     "items_count": 2,
+     "items": [
+      {
+       "se_type": "google",
+       "keyword": "best widget",
+       "type": "organic",
+       "se_domain": "google.com",
+       "location_code": 2840,
+       "language_code": "en",
+       "check_url": "https://www.google.com/search?q=best+widget",
+       "datetime": "2025-06-01 10:00:00 +00:00",
+       "spell": null,
+       "se_results_count": 1000,
+       "items_count": 3,
+       "item_types": [
+        "organic",
+        "people_also_ask"
+       ],
+       "items": [
+        {
+         "se_type": "google",
+         "type": "organic",
+         "rank_group": 1,
+         "rank_absolute": 1,
+         "position": "left",
+         "xpath": "/x",
+         "domain": "www.alpha.com",
+         "title": "Alpha",
+         "url": "https://www.alpha.com/a",
+         "breadcrumb": "https://www.alpha.com",
+         "is_image": false,
+         "is_video": false,
+         "is_featured_snippet": false,
+         "is_malicious": false,
+         "description": "d Alpha",
+         "main_domain": "alpha.com",
+         "relative_url": "/a",
+         "etv": 1.5,
+         "estimated_paid_traffic_cost": 2.0,
+         "rank_changes": {
+          "previous_rank_absolute": null,
+          "is_new": true,
+          "is_up": false,
+          "is_down": false
+         },
+         "backlinks_info": null,
+         "rank_info": {
+          "page_rank": 0,
+          "main_domain_rank": 300
+         }
+        },
+        {
+         "type": "people_also_ask",
+         "rank_group": 1,
+         "rank_absolute": 2
+        },
+        {
+         "se_type": "google",
+         "type": "organic",
+         "rank_group": 2,
+         "rank_absolute": 3,
+         "position": "left",
+         "xpath": "/x",
+         "domain": "gamma.org",
+         "title": "Gamma",
+         "url": "https://gamma.org/g",
+         "breadcrumb": "https://www.alpha.com",
+         "is_image": false,
+         "is_video": false,
+         "is_featured_snippet": false,
+         "is_malicious": false,
+         "description": "d Alpha",
+         "main_domain": "gamma.org",
+         "relative_url": "/a",
+         "etv": 1.5,
+         "estimated_paid_traffic_cost": 2.0,
+         "rank_changes": {
+          "previous_rank_absolute": 7,
+          "is_new": false,
+          "is_up": true,
+          "is_down": false
+         },
+         "backlinks_info": null,
+         "rank_info": {
+          "page_rank": 0,
+          "main_domain_rank": 300
+         }
+        }
+       ]
+      },
+      {
+       "se_type": "google",
+       "keyword": "best widget",
+       "type": "organic",
+       "se_domain": "google.com",
+       "location_code": 2840,
+       "language_code": "en",
+       "check_url": "https://www.google.com/search?q=best+widget",
+       "datetime": "2026-10-01 10:00:00 +00:00",
+       "spell": null,
+       "se_results_count": 900,
+       "items_count": 1,
+       "item_types": [
+        "organic"
+       ],
+       "items": [
+        {
+         "se_type": "google",
+         "type": "organic",
+         "rank_group": 1,
+         "rank_absolute": 1,
+         "position": "left",
+         "xpath": "/x",
+         "domain": "www.alpha.com",
+         "title": "Alpha",
+         "url": "https://www.alpha.com/a",
+         "breadcrumb": "https://www.alpha.com",
+         "is_image": false,
+         "is_video": false,
+         "is_featured_snippet": false,
+         "is_malicious": false,
+         "description": "d Alpha",
+         "main_domain": "alpha.com",
+         "relative_url": "/a",
+         "etv": 1.5,
+         "estimated_paid_traffic_cost": 2.0,
+         "rank_changes": {
+          "previous_rank_absolute": null,
+          "is_new": true,
+          "is_up": false,
+          "is_down": false
+         },
+         "backlinks_info": null,
+         "rank_info": {
+          "page_rank": 0,
+          "main_domain_rank": 300
+         }
+        }
+       ]
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "t-bad",
+   "status_code": 40501,
+   "status_message": "Invalid Field: 'keyword'.",
+   "cost": 0,
+   "result_count": 0,
+   "result": null
+  }
+ ]
+}

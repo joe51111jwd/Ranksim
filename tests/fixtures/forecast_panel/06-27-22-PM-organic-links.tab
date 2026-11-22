@@ -1,0 +1,7 @@
+state	city	query	domain	link	position
+"GA"	"Camilla"	"abortion law"	"https://www.b.com"	"https://www.b.com/1"	1
+"GA"	"Camilla"	"abortion law"	"https://www.a.gov"	"https://www.a.gov/1"	2
+"GA"	"Camilla"	"abortion law"	"https://www.e.net"	"https://www.e.net/1"	3
+"GA"	"Camilla"	"roe v wade"	"https://www.d.com"	"https://www.d.com/2"	1
+"GA"	"Camilla"	"roe v wade"	"https://www.a.gov"	"https://www.a.gov/2"	2
+"GA"	"Camilla"	"roe v wade"	"https://www.a.gov"	"https://www.a.gov/3"	4

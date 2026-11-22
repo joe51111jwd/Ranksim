@@ -16,7 +16,7 @@ James's instruction of 22 November: licence terms do not limit which public data
 
 | Use | Source | What it holds | Dates | Limits |
 | --- | --- | --- | --- | --- |
-| Backtest panel (parts 3, 6, 7) | DataForSEO sample databases, `data.dataforseo.com/examples/databases/google_history/serp_advanced/<CC>_<lang>.json.gz` | 117 locales, 100 searches each, a dated result page about every 46 days, organic results about 96 deep, each with the site's DataForSEO rank, plus search volume, difficulty and intent | May 2025 to Apr 2026 | Country level. 100 searches per locale. No licence stated. Pages dated late Sep to mid Oct 2026 would be poisoned, but the sample ends before that |
+| Backtest panel (parts 3, 6, 7) | DataForSEO sample databases, `data.dataforseo.com/examples/databases/google_history/serp_advanced/<CC>_<lang>.json.gz` | 117 locales, 100 searches each, a dated result page about every 46 days, organic results about 96 deep, each with the site's DataForSEO rank, plus search volume, difficulty and intent | May 2025 to Apr 2026 | Country level. 100 searches per locale. No licence stated. Google began serving altered pages to scrapers in mid Sep 2026. The sample ends before that |
 | Mechanics at depth (parts 3, 6) | Same host, `google/serp_advanced/<CC>_<lang>.json.gz` | 1,000 searches per locale, one result page each, about 76 deep | Mar to Apr 2026 | One date per search |
 | Search metadata | Same host, `google/keywords` and `google_history/keywords` | 1,000 searches per locale with volume, cost per click, competition, difficulty, intent, and 12 months of volume | Apr 2025 to Apr 2026 | Sample size |
 | Trust model examples (part 5) | Same host, `whois/full/data.json.gz` | 1,000 domains with creation date, counts of ranked searches by position bucket, estimated traffic, referring domains. 274 were created in 2023 or later, 99 of those rank | Metrics about Mar 2026 | 1,000 rows. Metrics are one snapshot, so not usable as launch-month features |
@@ -31,10 +31,10 @@ James's instruction of 22 November: licence terms do not limit which public data
 | Start dates | Kaggle `wotschofsky/171-million-domain-names-whois-dns-dnssec` | 171 million domains with registration date and name servers | Snapshot Oct 2024 | 26 GB. 16% have no date. About 9% of 2023 to 2024 registrations sit on parking name servers |
 | New-site cohort with launch-day pages | Kaggle `hopehaowang/nrd2024` | 1.5 million domains registered 10 to 16 Aug 2024, with launch-day home page HTML for the 10 Aug cohort and abuse labels for about 2,000 | Aug 2024 | Labels mark abuse, not how Google treated the site |
 | Launch lists | Show HN posts through the Hacker News search API. Product Hunt launch lists on Hugging Face | Sites with a public launch day | 2023 to 2025 | Median domain age at launch was 281 days, so launch day is not registration day. User names are dropped |
-| Reader noise (part 1) | Repeated pulls inside the DataForSEO history samples | The same search read again within 3 days, about 2,900 pairs | 2025 to 2026 | Country level, single pulls |
+| Reader noise (part 1) | Repeated pulls inside the DataForSEO history samples | The same search read again, about 2,900 pairs. About 2,700 of them are less than a day apart | 2025 to 2026 | Country level, single pulls. Mostly a same-day measure, not a day-apart one |
 | Reader noise | Wellesley Dobbs study, Harvard Dataverse `doi:10.7910/DVN/YFAH9X` | About 1,000 to 1,700 searches read in 65 US cities, mornings for 6 days and evenings for 20 | Jun to Jul 2022 | About 8 organic results per page. One topic. The tweets file is left out (personal data) |
 | Google updates (part 2) | Google Search Status Dashboard history | 41 dated ranking updates with start and end | Dec 2021 to Nov 2026 | None |
-| Poisoned-page rates | Nozzle public study files | Daily share of altered result pages by country and device | Aug to Oct 2026 | One vendor's measure |
+| Poisoned-page rates | Nozzle public study files | Daily share of altered result pages by country and device | Aug to 3 Nov 2026 | One vendor's measure |
 | Content match checks (part 4) | Kaggle `eliasdabbas/flights-serps-and-landing-pages` | Top 10 for 200 searches in two countries with the landing pages' text | Mar 2020 | Google's search API, one niche, old |
 | Early-signal examples (part 7) | Search Console exports their owners published: a site launched Sep 2026 (`github.com/thanhnt1910/gsc-data`), a young site's 13 months of daily data (Kaggle Tuscany bike route), a 2021 site (Dataverse `LJOAKJ`), a large shop's daily 2022 export (Zenodo 7687893) | Daily clicks, impressions, position | 2021 to 2026 | One site each. See the note below |
 
@@ -51,9 +51,9 @@ These are other people's measurements. They set priors. They are not Ranksim res
 | 2.03% of top-10 domains are under two years old. Those young top-10 domains have a median of 45 referring domains | SE Ranking, 2026 |
 | Of 28,000 new domains that already ranked somewhere, 7.65% stayed in the top 100 for 13 months. The often-quoted 41% and 19% are shares of that surviving 7.65%, not of all new domains | Semrush, 2023, corrected by our skeptic |
 | 14% of pages are indexed within 7 days, 65% within 30, 77% within 90. 62% of submitted pages are never indexed | IndexCheckr, 2025 |
-| Altered result pages for scrapers: about 8% of pages since 13 Sep 2026, peaking at 27% on 29 Sep. 78% recover within 3 days. A retry returns a normal page about 3 times in 4 | Nozzle and AccuRanker, 2026 |
+| Altered result pages for scrapers: about 8% of pages since 13 Sep 2026, near 28% on 29 Sep, 9% on 9 Oct, and back to 30% on 3 Nov. It is ongoing, not a closed episode. 78% of spells recover within 3 days. A retry returns a normal page about 3 times in 4 | Nozzle and AccuRanker, 2026 |
 | Same search, same city, morning against evening: 83% of results within 2 places. Two cities in the same pull: 64% at the same position | Measured here on the Wellesley Dobbs data, 2022 |
-| Same search read again within 3 days: 93.6% of top-10 domains still present | Measured here on the DataForSEO samples |
+| Same search read again, mostly within the same day: 92 to 94% of top-10 domains still present | Measured here on the DataForSEO samples |
 | 3.15% of sites launched on Show HN in 2023 entered the Tranco top million within 12 months | Measured here |
 
 ## Looked for and not found

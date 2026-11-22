@@ -133,6 +133,51 @@ def stable_share(key: str, seed: int) -> float:
 
 
 # ---------------------------------------------------------------------------
+# preregistration
+
+
+def evals_dir(name: str) -> Path:
+    """evals/forecast/<name>/ under the repository root (small evidence files, committed)."""
+    return Path(__file__).resolve().parents[4] / "evals" / "forecast" / name
+
+
+def freeze_prereg(path: str | Path, payload: Mapping[str, Any]) -> str:
+    """Write a preregistration JSON with its sha256, or check an existing one is identical.
+
+    The sha256 covers the canonical JSON of `payload`. An existing file with a
+    different payload raises ValueError: a frozen design is never edited in place.
+    A new design needs a new version name. Returns the sha256.
+    """
+    target = Path(path)
+    body = json.loads(json.dumps(payload, default=str))
+    digest = sha256_text(canonical_json(body))
+    if target.is_file():
+        old = json.loads(target.read_text(encoding="utf-8"))
+        if old.get("sha256") != digest:
+            raise ValueError(f"{target} is frozen with sha256 {old.get('sha256')} and the design now hashes to {digest}. "
+                             "Make a new version instead of editing a frozen preregistration.")
+        return digest
+    target.parent.mkdir(parents=True, exist_ok=True)
+    stamped = {"payload": body, "sha256": digest,
+               "frozen_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")}
+    target.write_text(json.dumps(stamped, indent=2, sort_keys=True), encoding="utf-8")
+    return digest
+
+
+def require_prereg(path: str | Path, payload: Mapping[str, Any]) -> str:
+    """The sha256 of a frozen preregistration that matches `payload`. Raises when it is missing or differs."""
+    target = Path(path)
+    if not target.is_file():
+        raise FileNotFoundError(f"{target} is missing. Freeze the design (the prereg command) before scoring anything.")
+    body = json.loads(json.dumps(payload, default=str))
+    digest = sha256_text(canonical_json(body))
+    old = json.loads(target.read_text(encoding="utf-8"))
+    if old.get("sha256") != digest:
+        raise ValueError(f"the frozen design {target} does not match the code's design. Refusing to score.")
+    return digest
+
+
+# ---------------------------------------------------------------------------
 # strength values
 
 
@@ -224,10 +269,11 @@ def strength_for_dates(
     group_start: dict[tuple[str, ...], date] = {}
     for day in unique_days:
         group_start.setdefault(key_of[day], day)
-    frame["_key"] = [key_of[d] for d in frame["as_of"]]
+    code_of = {key: n for n, key in enumerate(group_start)}
+    frame["_key"] = np.array([code_of[key_of[d]] for d in frame["as_of"]], dtype=np.int32)
     results: list[pd.DataFrame] = []
     for key, start in sorted(group_start.items(), key=lambda kv: kv[1]):
-        part = frame[frame["_key"] == key]
+        part = frame[frame["_key"] == code_of[key]]
         sites = sorted(set(part["site"]))
         guard = AsOfGuard(start)
         found = sl.strength_features(sites, start, guard, sources=chosen)
@@ -280,6 +326,48 @@ def add_strength_values(frame: pd.DataFrame) -> pd.DataFrame:
             out[name] = np.where(here == 0.0, -TOPLIST_ABSENT_LOG10, value)
     out["s_opr"] = col("opr_opr")
     return out
+
+
+def default_strength_cache() -> Path:
+    return forecast_paths().cache / "features" / "strength_by_site_date.parquet"
+
+
+def cached_strength(
+    site_dates: pd.DataFrame,
+    *,
+    cache_path: str | Path | None = None,
+    sources: Sequence[Any] | None = None,
+    root: str | Path | None = None,
+    log: Callable[[str], None] | None = None,
+) -> pd.DataFrame:
+    """`strength_for_dates` with a parquet cache keyed by (site, as_of). Only missing pairs are looked up.
+
+    The cache holds REAL list values as published, each already passed through the
+    guard for its own as_of. A cached row is only ever reused for the same
+    (site, as_of), so the guard's answer cannot change.
+    """
+    path = Path(cache_path) if cache_path else default_strength_cache()
+    want = site_dates[["site", "as_of"]].drop_duplicates().copy()
+    want["as_of"] = [as_date(d) for d in want["as_of"]]
+    have = pd.read_parquet(path) if path.is_file() else None
+    if have is not None:
+        have["as_of"] = [as_date(d) for d in have["as_of"]]
+        known = want.merge(have[["site", "as_of"]], on=["site", "as_of"], how="left", indicator=True)
+        missing = known[known["_merge"] == "left_only"][["site", "as_of"]]
+    else:
+        missing = want
+    if len(missing):
+        if log:
+            log(f"strength: {len(missing)} new (site, date) pairs to look up")
+        fresh = strength_for_dates(missing, sources=sources, root=root, log=log)
+        keep = ["site", "as_of", *RAW_STRENGTH_KEYS, *MEASURES]
+        have = fresh[keep] if have is None else pd.concat([have[keep], fresh[keep]], ignore_index=True)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(".tmp.parquet")
+        have.to_parquet(tmp, index=False)
+        tmp.replace(path)
+    assert have is not None
+    return want.merge(have, on=["site", "as_of"], how="left")
 
 
 # ---------------------------------------------------------------------------
@@ -675,6 +763,49 @@ def leave_one_out_quantile(values: np.ndarray, others_sorted: np.ndarray, own_in
     return (less + 0.5 * max(ties, 0.0)) / total
 
 
+def _loo_quantile_and_gap(
+    values: np.ndarray, arr: np.ndarray, inside: np.ndarray, page_values: np.ndarray | None = None
+) -> tuple[np.ndarray, np.ndarray]:
+    """Vectorised leave-one-out quantile and gap to the others' median. `arr` is sorted and finite.
+
+    `inside` marks cells whose site holds a slot counted in `arr`; for those, one
+    copy of the site's own on-page value (`page_values`, default `values`) is
+    removed before comparing. The site is compared with the OTHER sites only.
+    """
+    n = len(arr)
+    values = np.asarray(values, dtype=float)
+    pv = values if page_values is None else np.asarray(page_values, dtype=float)
+    inside = np.asarray(inside, dtype=bool) & np.isfinite(pv)
+    finite = np.isfinite(values)
+    less = np.searchsorted(arr, values, side="left").astype(float)
+    leq = np.searchsorted(arr, values, side="right").astype(float)
+    ties = leq - less
+    with np.errstate(invalid="ignore"):
+        less = less - (inside & (pv < values)).astype(float)
+        ties = ties - (inside & (pv == values)).astype(float)
+    total = n - inside.astype(float)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        q = np.where(finite & (total > 0), (less + 0.5 * np.maximum(ties, 0.0)) / total, np.nan)
+    gap = np.full(len(values), np.nan)
+    if n == 0:
+        return q, gap
+    full_median = float(np.median(arr))
+    gap = np.where(finite & ~inside, values - full_median, gap)
+    m = n - 1
+    if m > 0:
+        pos = np.clip(np.searchsorted(arr, np.where(np.isfinite(pv), pv, 0.0), side="left"), 0, n - 1)
+
+        def pick(k: np.ndarray) -> np.ndarray:
+            return np.where(k < pos, arr[np.clip(k, 0, n - 1)], arr[np.clip(k + 1, 0, n - 1)])
+
+        if m % 2 == 1:
+            med = pick(np.full(len(values), m // 2))
+        else:
+            med = 0.5 * (pick(np.full(len(values), m // 2 - 1)) + pick(np.full(len(values), m // 2)))
+        gap = np.where(finite & inside, values - med, gap)
+    return q, gap
+
+
 def cell_strength_quantiles(
     cells: pd.DataFrame,
     page_rows: pd.DataFrame,
@@ -710,25 +841,21 @@ def cell_strength_quantiles(
         sub = cells.iloc[idx]
         own_rank = pd.to_numeric(sub["cell_rank_in"], errors="coerce").to_numpy(dtype=float)
         sub_sites = sub["site"].to_numpy()
+        first_row = {}
+        for j, site_name in enumerate(page_sites):
+            first_row.setdefault(site_name, j)
+        where = np.array([first_row.get(x, -1) for x in sub_sites])
         for measure in measures:
             vals = page[measure].to_numpy(dtype=float)
             own_vals = pd.to_numeric(sub[names.get(measure, measure)], errors="coerce").to_numpy(dtype=float)
+            on_page = np.where(where >= 0, vals[np.clip(where, 0, None)], np.nan) if len(vals) else np.full(len(sub), np.nan)
             for top, depth in CELL_TOPS:
                 mask = (ranks <= depth) & np.isfinite(vals)
                 arr = np.sort(vals[mask])
-                in_sites = set(page_sites[mask])
-                qcol = columns[f"cl_{measure}_q_{top}"]
-                gcol = columns[f"cl_{measure}_gap_{top}"]
-                for j, row in enumerate(idx):
-                    inside = bool(own_rank[j] <= depth) and sub_sites[j] in in_sites
-                    value = own_vals[j]
-                    qcol[row] = leave_one_out_quantile(value, arr, inside)
-                    if math.isfinite(value):
-                        others = arr
-                        if inside:
-                            pos = int(np.searchsorted(arr, value, side="left"))
-                            others = np.delete(arr, min(pos, len(arr) - 1)) if len(arr) else arr
-                        gcol[row] = value - float(np.median(others)) if len(others) else math.nan
+                inside = (own_rank <= depth) & np.isin(sub_sites, page_sites[mask])
+                q, gap = _loo_quantile_and_gap(own_vals, arr, inside, on_page)
+                columns[f"cl_{measure}_q_{top}"][idx] = q
+                columns[f"cl_{measure}_gap_{top}"][idx] = gap
     for name, values in columns.items():
         out[name] = values
     return out
@@ -934,14 +1061,14 @@ def assemble_frame(
         sd["as_of"] = site_dates["as_of"].to_numpy()
         frame = frame.merge(sd, on=["site", "as_of"], how="left")
     else:
-        for col in START_COLUMNS:
-            frame[col] = np.nan
+        frame = frame.join(pd.DataFrame(np.nan, index=frame.index, columns=list(START_COLUMNS)))
 
     positions = rows[["locale", "keyword_id", "site", "snapshot_date", "rank100"]] if "locale" in rows else None
     if positions is not None:
         hist = history_features(frame[["site", "locale", "keyword_id", "as_of"]], positions)
         frame = pd.concat([frame, hist], axis=1)
 
+    frame = frame.copy()
     frame["cell_rank_in"] = frame["rank100_in"]
     quant = cell_strength_quantiles(frame, rows, value_cols={m: f"st_{m}" for m in MODEL_MEASURES})
     frame = pd.concat([frame, quant], axis=1)
@@ -959,7 +1086,8 @@ def assemble_frame(
         frame["cl_title_content"] = np.nan
         frame["content_backend"] = None
         frame["content_model"] = None
-    frame["search_group"] = [search_group(k) for k in frame["keyword"].astype(str)]
+    groups = {k: search_group(k) for k in set(frame["keyword"].astype(str))}
+    frame["search_group"] = frame["keyword"].astype(str).map(groups)
     frame["label"] = label
     frame["features_version"] = FEATURES_VERSION
     return frame.drop(columns=["_page"]).reset_index(drop=True)
@@ -1002,7 +1130,11 @@ def build_panel_frame(
     scorer = ContentScorer(spec.content_backend) if spec.content_backend else None
 
     def strength(site_dates: pd.DataFrame) -> pd.DataFrame:
-        return strength_for_dates(site_dates, sources=sources, root=root, log=log)
+        if sources is not None:  # injected sources (tests) bypass the shared cache
+            return strength_for_dates(site_dates, sources=sources, root=root, log=log)
+        out = cached_strength(site_dates, root=root, log=log)
+        out["as_of"] = [as_date(d) for d in out["as_of"]]
+        return out
 
     frame = assemble_frame(site_rows, meta, window_days=spec.window_days, strength=strength, evidence=evidence,
                            scorer=scorer, label=REAL)
@@ -1078,24 +1210,26 @@ def synthetic_strength(world: Any) -> Callable[[pd.DataFrame], pd.DataFrame]:
     days = sorted(published)
 
     def strength(site_dates: pd.DataFrame) -> pd.DataFrame:
+        import bisect
+
         out = site_dates[["site", "as_of"]].copy()
         values = np.full(len(out), np.nan)
-        for i, (site, when) in enumerate(zip(out["site"], out["as_of"])):
-            day = as_date(when)
-            eligible = [d for d in days if d <= day]
-            if not eligible:
+        whens = [as_date(d) for d in out["as_of"]]
+        by_day: dict[date, list[int]] = {}
+        for i, day in enumerate(whens):
+            by_day.setdefault(day, []).append(i)
+        sites = out["site"].to_numpy()
+        for day, index in by_day.items():
+            k = bisect.bisect_right(days, day)
+            if k == 0:
                 continue
-            lists = published[eligible[-1]]
+            lists = published[days[k - 1]]
             guard = AsOfGuard(day)
-            dated = lists.get(site)
-            if dated is None:
-                values[i] = -CC_ABSENT_POS_LOG10
-            else:
-                values[i] = float(guard.take(dated))
-        for col in RAW_STRENGTH_KEYS:
-            out[col] = np.nan
-        for name in MEASURES:
-            out[name] = np.nan
+            for i in index:
+                dated = lists.get(sites[i])
+                values[i] = -CC_ABSENT_POS_LOG10 if dated is None else float(guard.take(dated))
+        extra = pd.DataFrame(np.nan, index=out.index, columns=list(RAW_STRENGTH_KEYS) + list(MEASURES))
+        out = pd.concat([out, extra], axis=1)
         out["s_cc_hc"] = values
         out["s_cc_pr"] = values
         out["s_cc_hosts"] = values

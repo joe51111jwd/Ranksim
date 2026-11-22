@@ -28,6 +28,17 @@ DIFFICULTY_TERCILES: tuple[str, ...] = ("easy", "medium", "hard")
 # Stages of a forecast and the day after launch each one is issued on.
 STAGE_DAYS: dict[str, int] = {"upload": 0, "d7": 7, "d14": 14, "d30": 30, "d60": 60}
 CONFIRMED_STAGE = "d60"
+# A seed or pilot forecast must be written within this many days of its as_of
+# date. A row written later could have been shaped by readings after as_of that
+# its input list does not name. Backtest is exempt: its as_of is the launch
+# month by design. OUR READING of "frozen at day 60" (plan-audit-math M5).
+FORECAST_FROZEN_GAP_DAYS = 1
+
+# Baselines every stage report prints on the same forecasts (spec section 2):
+# always NT50; persistence; band prior by search difficulty tercile, fitted on
+# training data only; site strength only. Markers 3 to 5 are never passed on a
+# report that lacks one of them.
+SPEC_BASELINES: tuple[str, ...] = ("always_nt50", "persistence", "band_prior", "site_strength")
 
 # Intervals.
 BOOTSTRAP_DRAWS = 2000

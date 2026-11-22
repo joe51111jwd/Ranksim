@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import json
 import math
+import re
 import threading
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -131,7 +132,15 @@ SERP_MODE_KINDS: dict[str, str] = {
 
 
 class BudgetError(AeoError):
-    """A paid call was refused by the budget guard, or the ledger is not usable."""
+    """A paid call was refused by the budget guard, or the ledger is not usable.
+
+    A client that had already posted paid work in the same batch attaches it before re-raising:
+    `posted_tasks` (the client's task records) and `pulls` (one Pull per requested spec, the paid
+    ones collected), so nothing that was paid for is lost.
+    """
+
+    posted_tasks: tuple[Any, ...] = ()
+    pulls: tuple[Any, ...] | None = None
 
 
 class ProviderError(AeoError):
@@ -139,8 +148,12 @@ class ProviderError(AeoError):
 
     It stops the batch. `status_code` is the provider's own code when it gave
     one, else the HTTP status. `posted_task_ids` lists queued tasks that were
-    already paid for, so their results can still be collected later.
+    already paid for, so their results can still be collected later. `posted_tasks` and `pulls`
+    work as on BudgetError.
     """
+
+    posted_tasks: tuple[Any, ...] = ()
+    pulls: tuple[Any, ...] | None = None
 
     def __init__(
         self,
@@ -209,20 +222,45 @@ def serp_pages(depth: int) -> int:
     return math.ceil(depth / SERP_PAGE_SIZE)
 
 
+# DataForSEO multiplies the page cost by 5 when the keyword holds a Google search operator
+# (provider map 3.1 and 3.6: "Operators site:, inurl:, intitle:, allinurl: etc multiply cost x5").
+# The docs list four and say "etc", so every common Google operator is matched here. Matching too
+# many only reserves more than is charged (settlement uses the provider's own cost); too few would
+# let a call past the approval.
+SERP_OPERATOR_MULTIPLIER = 5
+SERP_OPERATORS = (
+    "site", "inurl", "allinurl", "intitle", "allintitle", "intext", "allintext", "inanchor", "allinanchor",
+    "filetype", "ext", "related", "cache", "info", "link", "define", "before", "after", "source", "loc", "location",
+)
+_OPERATOR_PATTERN = re.compile(r"(?:^|[\s(\"'])-?(?:" + "|".join(SERP_OPERATORS) + r"):", re.IGNORECASE)
+
+
+def has_search_operator(keyword: str | None) -> bool:
+    """True when the keyword holds a Google search operator such as site: or intitle: (billed x5)."""
+    return bool(keyword) and _OPERATOR_PATTERN.search(str(keyword)) is not None
+
+
 def serp_cost(
     depth: int,
     *,
     mode: str = "standard_normal",
     resolve_poisoned_results: bool = True,
     pulls: int = 1,
+    keyword: str | None = None,
 ) -> Decimal:
-    """Price of `pulls` SERP tasks at `depth`. resolve_poisoned_results adds one page price per task."""
+    """Price of `pulls` SERP tasks at `depth`, by the provider's billing formula (map 3.6).
+
+    base x ceil(depth/10), times 5 when `keyword` holds a search operator, plus one base price per
+    task for resolve_poisoned_results. Without a keyword the operator charge is not known and is
+    not added.
+    """
     if mode not in SERP_MODES:
         raise ValueError(f"unknown SERP mode {mode!r}. Choose one of {sorted(SERP_MODES)}.")
     if pulls < 0:
         raise ValueError("pulls cannot be negative")
     base = price(SERP_MODES[mode])
-    pages = serp_pages(depth) + (1 if resolve_poisoned_results else 0)
+    pages = serp_pages(depth) * (SERP_OPERATOR_MULTIPLIER if has_search_operator(keyword) else 1)
+    pages += 1 if resolve_poisoned_results else 0
     return base * pages * pulls
 
 
@@ -303,7 +341,7 @@ def _check_counts(*values: int) -> None:
 # The spend ledger.
 # ----------------------------------------------------------------------------------------------
 
-EVENTS = ("approve", "reserve", "settle", "release", "sample")
+EVENTS = ("approve", "reserve", "settle", "release", "sample", "sample_failed")
 
 
 def _utcnow() -> datetime:
@@ -332,6 +370,7 @@ class LedgerState:
     closed: set[str] = field(default_factory=set)
     kind_spent: dict[str, int] = field(default_factory=dict)
     samples: dict[str, dict[str, Any]] = field(default_factory=dict)
+    failed_samples: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
     problem: str | None = None
 
     @property
@@ -453,6 +492,37 @@ class SpendLedger:
             self._append(state, {"event": "approve", "amount_micros": micros, "by": str(by).strip(), "note": str(note or "")})
             return from_micros(state.approved + micros)
 
+    def _refuse_if_over(self, state: LedgerState, item: str, kind: str, micros: int) -> None:
+        """Raise BudgetError when `micros` more for `kind` does not fit the approval or the sample cap."""
+        if micros > state.remaining:
+            raise BudgetError(
+                f"Refused: {item} needs an estimated {usd_text(micros)}, but only {usd_text(state.remaining)} "
+                f"of the {usd_text(state.approved)} approved is left in {self.path}. "
+                f"To approve more, run: {APPROVE_COMMAND}. "
+                f"Or in Python: SpendLedger(\"{self.path}\").approve(Decimal(\"<amount in USD>\"), "
+                f"by=\"<your name>\", note=\"<what it is for>\")"
+            )
+        kind_after = state.kind_spent.get(kind, 0) + micros
+        if kind not in state.samples and kind_after > to_micros(SAMPLE_MAX_USD):
+            raise BudgetError(
+                f"Refused: {kind} has no recorded $1 sample yet, and {item} would bring its spend to "
+                f"{usd_text(kind_after)}, above the {usd_text(SAMPLE_MAX_USD)} sample cap. Run the sample helper "
+                f"for this kind first, or record what a sample found with SpendLedger(\"{self.path}\")"
+                f".record_sample(\"{kind}\", findings)."
+            )
+
+    def check(self, item: str, kind: str, estimate_usd: Decimal | int | float | str) -> None:
+        """Raise BudgetError when `reserve(item, kind, estimate_usd)` would be refused now. Writes nothing.
+
+        A client calls this for a whole batch before its first paid call, so a batch that cannot be
+        paid for in full is refused before any of it is sent. Each call still reserves for itself.
+        """
+        micros = to_micros(estimate_usd)
+        if micros <= 0:
+            return
+        with self._lock:
+            self._refuse_if_over(self._usable(), item, kind, micros)
+
     def reserve(self, item: str, kind: str, estimate_usd: Decimal | int | float | str, *, sample: bool = False) -> str:
         """Hold `estimate_usd` for one paid call. Returns the reservation id, or raises BudgetError."""
         micros = to_micros(estimate_usd)
@@ -462,22 +532,7 @@ class SpendLedger:
             raise ValueError("a reservation needs a kind")
         with self._lock:
             state = self._usable()
-            if micros > state.remaining:
-                raise BudgetError(
-                    f"Refused: {item} needs an estimated {usd_text(micros)}, but only {usd_text(state.remaining)} "
-                    f"of the {usd_text(state.approved)} approved is left in {self.path}. "
-                    f"To approve more, run: {APPROVE_COMMAND}. "
-                    f"Or in Python: SpendLedger(\"{self.path}\").approve(Decimal(\"<amount in USD>\"), "
-                    f"by=\"<your name>\", note=\"<what it is for>\")"
-                )
-            kind_after = state.kind_spent.get(kind, 0) + micros
-            if kind not in state.samples and kind_after > to_micros(SAMPLE_MAX_USD):
-                raise BudgetError(
-                    f"Refused: {kind} has no recorded $1 sample yet, and {item} would bring its spend to "
-                    f"{usd_text(kind_after)}, above the {usd_text(SAMPLE_MAX_USD)} sample cap. Run the sample helper "
-                    f"for this kind first, or record what a sample found with SpendLedger(\"{self.path}\")"
-                    f".record_sample(\"{kind}\", findings)."
-                )
+            self._refuse_if_over(state, item, kind, micros)
             row = self._append(
                 state,
                 {"event": "reserve", "item": str(item), "kind": str(kind), "estimate_micros": micros, "sample": bool(sample)},
@@ -516,6 +571,23 @@ class SpendLedger:
         with self._lock:
             state = self._usable()
             self._append(state, {"event": "sample", "kind": str(kind), "findings": findings})
+
+    def record_failed_sample(self, kind: str, findings: dict[str, Any]) -> None:
+        """Record a sample attempt that learned nothing (every call failed or came back empty).
+
+        It does NOT open the gate: big pulls of `kind` stay refused, the sample can be run again,
+        and the money it spent still counts toward the kind's sample cap.
+        """
+        if not str(kind or "").strip():
+            raise ValueError("a sample needs a kind")
+        canonical_json(findings)
+        with self._lock:
+            state = self._usable()
+            self._append(state, {"event": "sample_failed", "kind": str(kind), "findings": findings})
+
+    def failed_samples(self, kind: str) -> list[dict[str, Any]]:
+        """Findings of every failed sample attempt of `kind`, oldest first."""
+        return list(self._usable().failed_samples.get(kind, []))
 
     def _open_reservation(self, state: LedgerState, reservation_id: str) -> Reservation:
         if reservation_id in state.closed:
@@ -612,6 +684,8 @@ def _apply(state: LedgerState, row: dict[str, Any], expected_seq: int) -> str | 
             state.kind_spent[reservation.kind] -= reservation.estimate_micros
         elif event == "sample":
             state.samples[str(row["kind"])] = dict(row["findings"])
+        elif event == "sample_failed":
+            state.failed_samples.setdefault(str(row["kind"]), []).append(dict(row["findings"]))
         else:
             return f"row {seq} has an unknown event {event!r}"
     except (KeyError, TypeError, ValueError):

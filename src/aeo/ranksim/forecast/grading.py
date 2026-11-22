@@ -225,6 +225,39 @@ def always_nt50(cells: Sequence[GradedCell]) -> list[int]:
     return [NT50] * len(cells)
 
 
+BAND_PRIOR_ALL = "all"  # the key of the point used for a cell whose tercile had no training cell
+
+
+def fit_band_prior(training: Sequence[GradedCell], rule: GradingRule = RULE_V1) -> dict[str, int]:
+    """The band prior baseline (spec section 2), fitted on TRAINING cells only.
+
+    For each search difficulty tercile the single point (1 to 50, or NT50) that is a hit most
+    often on the training cells of that tercile, under `rule`. Ties go to the smaller point, so
+    the fit does not depend on the order of the cells. Key BAND_PRIOR_ALL holds the same fit
+    over every training cell, used for a tercile with no training cell or an unknown one.
+    Brand searches are left out of the fit, as they are left out of the headline. Raises
+    ValueError when there is no training cell to fit on.
+    """
+    usable = [c for c in training if not c.is_brand]
+    if not usable:
+        raise ValueError("the band prior needs training cells to be fitted on")
+
+    def best_point(group: Sequence[GradedCell]) -> int:
+        candidates = list(range(1, TOP_DEPTH + 1)) + [NT50]
+        return min(candidates, key=lambda p: (-sum(1 for c in group if rule.is_hit(p, c.actual)), p))
+
+    prior = {BAND_PRIOR_ALL: best_point(usable)}
+    for tercile in sorted({c.difficulty for c in usable if c.difficulty is not None}):
+        prior[str(tercile)] = best_point([c for c in usable if c.difficulty == tercile])
+    return prior
+
+
+def band_prior_points(prior: dict[str, int], cells: Sequence[GradedCell]) -> list[int]:
+    """One band prior point per cell: the point fitted for its tercile, else the overall one."""
+    return [prior.get(str(c.difficulty), prior[BAND_PRIOR_ALL]) if c.difficulty is not None else prior[BAND_PRIOR_ALL]
+            for c in cells]
+
+
 def compare_to_baseline(
     cells: Sequence[GradedCell],
     baseline_points: Sequence[int],

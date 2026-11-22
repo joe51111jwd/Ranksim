@@ -61,19 +61,27 @@ def reading(
     degraded: bool = False,
     location: int = LOC,
     device: str = "desktop",
-    pull_ids: tuple[str, ...] = (),
+    pull_ids: tuple[str, ...] | None = None,
     dropped: tuple[tuple[str, str], ...] = (),
     label: str = "REAL",
     hour: int = 10,
 ) -> CleanReading:
+    """A hand-built reading. Without pull_ids it names one id per kept pull (not stored here),
+    as a REAL reading that is not degraded must name the pulls it kept."""
+    kept = 2 if degraded else 5
+    if pull_ids is None:
+        pull_ids = tuple(f"{rid}-p{i}" for i in range(kept))
+    else:
+        dropped_ids = {item[0] for item in dropped}
+        kept = len([pid for pid in pull_ids if pid not in dropped_ids])
     return CleanReading(
         reading_id=rid,
         search=search,
         location_code=location,
         device=device,
         taken_at=utc_day(day, hour),
-        pulls_total=5,
-        pulls_kept=2 if degraded else 5,
+        pulls_total=max(5, len(pull_ids)),
+        pulls_kept=kept,
         dropped=dropped,
         degraded=degraded,
         pulls_not_independent=False,
@@ -199,7 +207,7 @@ def test_forecast_dated_after_the_day_it_is_made_is_refused(board: Scoreboard, c
 def test_forecast_using_a_reading_taken_after_its_date_is_refused(board: Scoreboard, clock: Clock):
     board.add_reading(reading("r59", 59, {"alpha.com": 9}))
     board.add_reading(reading("r61", 61, {"alpha.com": 7}))
-    clock.at_day(62)
+    clock.at_day(61)
     with pytest.raises(ScoreboardRefusal, match="after the forecast date"):
         board.record_forecast(forecast(day=60), input_reading_ids=["r59", "r61"])
     with pytest.raises(ScoreboardRefusal, match="not stored"):
@@ -457,14 +465,22 @@ def test_search_match_ignores_case_and_spacing(board: Scoreboard, clock: Clock):
     assert board.grade(fid, "caps").outcome_position == 6
 
 
+def _backtest_site(board: Scoreboard, site: str = "late.example") -> str:
+    """A backtest site on the same search. Backtest rows may be written long after their as_of."""
+    board.add_site(site, source="backtest", launch_date=LAUNCH, launch_date_source="estimate", built_by="other")
+    board.add_search(site, SEARCH, location_code=LOC, difficulty="easy")
+    return site
+
+
 def test_grade_refuses_a_forecast_made_at_or_after_the_reading(board: Scoreboard, clock: Clock):
+    site = _backtest_site(board)
     board.add_reading(reading("early", 88, {"alpha.com": 6}, hour=10))
     board.add_reading(reading("same-second", 89, {"alpha.com": 6}, hour=12))
     clock.at_day(88, hour=11)
-    late = board.record_forecast(forecast(day=88))
+    late = board.record_forecast(forecast(day=60, site=site))
     clock.at_day(89, hour=12)
     board.register_model_version("m2", description="x")
-    same = board.record_forecast(forecast(day=89, model="m2"))
+    same = board.record_forecast(forecast(day=60, site=site, model="m2"))
     clock.at_day(95)
     with pytest.raises(ScoreboardRefusal, match="at or after"):
         board.grade(late.forecast_id, "early")
@@ -504,22 +520,37 @@ def _pull(pid: str, hits: list[tuple[str, int]], *, ok: bool = True) -> Pull:
     )
 
 
-def test_target_url_position_is_its_best_rank_over_kept_pulls(board: Scoreboard, clock: Clock):
+def test_target_url_position_is_its_clean_median_over_kept_pulls(board: Scoreboard, clock: Clock):
     fid = made_at(board, clock, forecast(point=4), 60)
     board.add_pull(_pull("p1", [("https://alpha.com/", 2), ("https://alpha.com/roof-repair/", 6)]))
-    board.add_pull(_pull("p2", [("https://alpha.com/roof-repair", 4)]))
-    board.add_pull(_pull("p3", [("https://alpha.com/roof-repair", 1)]))
-    board.add_reading(reading("r90", 90, {"alpha.com": 2}, pull_ids=("p1", "p2", "p3"), dropped=(("p3", "poisoned"),)))
+    board.add_pull(_pull("p2", [("https://alpha.com/", 2), ("https://alpha.com/roof-repair", 4)]))
+    board.add_pull(_pull("p3", [("https://alpha.com/", 2), ("https://alpha.com/roof-repair", 3)]))
+    board.add_pull(_pull("p4", [("https://alpha.com/roof-repair", 1)]))
+    board.add_reading(reading("r90", 90, {"alpha.com": 2}, pull_ids=("p1", "p2", "p3", "p4"), dropped=(("p4", "poisoned"),)))
     clock.at_day(91)
     grade = board.grade(fid, "r90")
     assert grade.outcome_position == 2  # the site's clean position grades the forecast
-    assert grade.target_url_position == 4  # p3 was dropped, so its rank 1 does not count
+    assert grade.target_url_position == 4  # median of 6, 4, 3; p4 was dropped, so its rank 1 does not count
     assert grade.target_url_hit is True
+
+
+def test_target_url_position_is_never_better_than_the_sites_clean_position(board: Scoreboard, clock: Clock):
+    """Spec section 3: the clean value is the median over kept pulls with absent counted as 51."""
+    fid = made_at(board, clock, forecast(point=3), 60)
+    pulls = [_pull("q0", [("https://alpha.com/roof-repair", 3)])] + [
+        _pull(f"q{i}", [("https://other.example/", 1)]) for i in range(1, 5)
+    ]
+    seen_once = reading("r90", 90, {"other.example": 1}, pull_ids=tuple(p.pull_id for p in pulls))
+    board.store_batch(pulls=pulls, readings=[seen_once])
+    clock.at_day(91)
+    grade = board.grade(fid, "r90")
+    assert grade.outcome_position == NT50 and grade.hit is False
+    assert grade.target_url_position == NT50 and grade.target_url_hit is False
 
 
 def test_target_url_position_is_none_when_pulls_are_missing(board: Scoreboard, clock: Clock):
     fid = made_at(board, clock, forecast(point=4), 60)
-    board.add_reading(reading("r90", 90, {"alpha.com": 2}, pull_ids=("not-stored",)))
+    board.add_reading(reading("r90", 90, {"alpha.com": 2}, pull_ids=("not-stored-1", "not-stored-2", "not-stored-3")))
     clock.at_day(91)
     grade = board.grade(fid, "r90")
     assert grade.target_url_position is None and grade.target_url_hit is None
@@ -527,15 +558,15 @@ def test_target_url_position_is_none_when_pulls_are_missing(board: Scoreboard, c
 
 def test_target_url_absent_from_every_kept_pull_is_nt50(board: Scoreboard, clock: Clock):
     fid = made_at(board, clock, forecast(point=4), 60)
-    board.add_pull(_pull("p1", [("https://alpha.com/", 2)]))
-    board.add_reading(reading("r90", 90, {"alpha.com": 2}, pull_ids=("p1",)))
+    pulls = [_pull(f"p{i}", [("https://alpha.com/", 2)]) for i in range(3)]
+    board.store_batch(pulls=pulls, readings=[reading("r90", 90, {"alpha.com": 2}, pull_ids=tuple(p.pull_id for p in pulls))])
     clock.at_day(91)
     assert board.grade(fid, "r90").target_url_position == NT50
 
 
 def test_regrade_needs_a_reason_and_sits_beside_the_original(board: Scoreboard, clock: Clock):
+    other = made_at(board, clock, forecast(stage="d30", day=30), 30)
     fid = made_at(board, clock, forecast(point=10), 60)
-    other = board.record_forecast(forecast(stage="d30", day=30)).forecast_id
     board.add_reading(reading("r89", 89, {"alpha.com": 16}))
     board.add_reading(reading("r92", 92, {"alpha.com": 11}))
     clock.at_day(94)
@@ -593,7 +624,7 @@ def test_persistence_uses_the_latest_good_reading_on_or_before_as_of(board: Scor
     board.add_reading(reading("r60", 60, {"alpha.com": 9}, hour=23))  # same day as as_of: allowed
     board.add_reading(reading("r61", 61, {"alpha.com": 1}))  # after as_of: never used
     board.add_reading(reading("r59-city", 59, {"alpha.com": 3}, location=2840))
-    fid = made_at(board, clock, forecast(), 62)
+    fid = made_at(board, clock, forecast(), 61)
     assert board.persistence_points([fid]) == [9]
 
 
@@ -677,10 +708,10 @@ def test_job_is_idempotent_and_reports_every_reason(board: Scoreboard, clock: Cl
     board.add_search("alpha.com", "gutter repair", location_code=LOC)
     board.add_search("alpha.com", "siding repair", location_code=LOC)
     board.add_search("alpha.com", "storm damage", location_code=LOC)
+    no_window = made_at(board, clock, forecast(stage="d30", day=30, search="storm damage"), 30)
     graded = made_at(board, clock, forecast(), 60)
     degraded = made_at(board, clock, forecast(search="gutter repair"), 60)
     empty = made_at(board, clock, forecast(search="siding repair"), 60)
-    no_window = made_at(board, clock, forecast(stage="d30", day=30, search="storm damage"), 60)
     board.add_reading(reading("r90", 90, {"alpha.com": 6}))
     board.add_reading(reading("g90", 90, {"alpha.com": 6}, search="gutter repair", degraded=True))
     today = LAUNCH + timedelta(days=95)
@@ -698,8 +729,9 @@ def test_job_is_idempotent_and_reports_every_reason(board: Scoreboard, clock: Cl
 
 
 def test_job_skips_readings_taken_before_the_forecast(board: Scoreboard, clock: Clock):
+    site = _backtest_site(board)
     board.add_reading(reading("r88", 88, {"alpha.com": 6}, hour=1))
-    fid = made_at(board, clock, forecast(day=88), 88)
+    fid = made_at(board, clock, forecast(day=60, site=site), 88)
     clock.at_day(95)
     summary = grade_job.run(board, LAUNCH + timedelta(days=95))
     assert summary["due_only_readings_before_forecast"] == [fid]
@@ -768,11 +800,13 @@ def test_stage_report_numbers_and_brand_split(board: Scoreboard, clock: Clock):
 def test_stage_report_accepts_extra_baselines_and_refuses_reserved_names(board: Scoreboard, clock: Clock):
     _many(board, clock, sites=4, searches=2, brand=False)
     rep = stage_report(board, source="seed", stage="d60", as_of=date(2027, 3, 19),
-                       extra_baselines={"band_prior": lambda cell: NT50})
-    assert "band_prior" in rep["headline"]["baselines"]
-    with pytest.raises(ScoreboardRefusal, match="reserved"):
-        stage_report(board, source="seed", stage="d60", as_of=date(2027, 3, 19),
-                     extra_baselines={"persistence": lambda cell: 1})
+                       extra_baselines={"site_strength": lambda cell: NT50})
+    assert "site_strength" in rep["headline"]["baselines"]
+    assert rep["baselines_missing"] == ["band_prior"]
+    for name in ("persistence", "band_prior", "always_nt50"):
+        with pytest.raises(ScoreboardRefusal, match="reserved"):
+            stage_report(board, source="seed", stage="d60", as_of=date(2027, 3, 19),
+                         extra_baselines={name: lambda cell: 1})
     with pytest.raises(ScoreboardRefusal, match="no point"):
         stage_report(board, source="seed", stage="d60", as_of=date(2027, 3, 19), extra_baselines={"strength": {}})
 
@@ -812,14 +846,37 @@ def test_report_with_zero_outcomes_says_not_measurable(board: Scoreboard, clock:
     assert any("zero eligible real outcomes" in note for note in verdict["notes"])
 
 
-def test_report_keeps_short_lead_rows_out_of_the_headline(board: Scoreboard, clock: Clock):
-    clock.at_day(70)
-    fid = board.record_forecast(forecast(day=70)).forecast_id  # a d60 forecast made late: lead 20 days
-    board.add_reading(reading("r90", 90, {"alpha.com": 5}))
-    clock.at_day(91)
-    board.grade(fid, "r90")
+def test_lead_days_is_the_outcome_reading_date_minus_as_of(board: Scoreboard, clock: Clock):
+    """Spec section 2: lead_days = outcome_date - as_of. A d60 graded on the day-87 reading has a lead of 27."""
+    fid = made_at(board, clock, forecast(day=60), 60)
+    assert board.forecast(fid).lead_days == 30  # the stored nominal lead to the day-90 due date, as hashed
+    board.add_reading(reading("r87", 87, {"alpha.com": 5}))
+    clock.at_day(94)
+    board.grade(fid, "r87")
+    [record] = board.graded_records("seed", "d60")
+    assert record.cell.lead_days == 27
     rep = stage_report(board, source="seed", stage="d60", as_of=date(2027, 3, 19))
     assert rep["excluded_short_lead"] == 1 and rep["headline"]["forecasts"] == 0
+    assert rep["by_lead_days"] == {}
+
+
+def test_a_stage_forecast_dated_after_its_stage_day_is_refused(board: Scoreboard, clock: Clock):
+    """Spec section 2: Confirmed later than day 60 is a shorter lead, never the same marker."""
+    clock.at_day(61)
+    with pytest.raises(ScoreboardRefusal, match="on or before day 60"):
+        board.record_forecast(forecast(stage="d60", day=61))
+    with pytest.raises(ScoreboardRefusal, match="on or before day 30"):
+        board.record_forecast(forecast(stage="d30", day=60))
+    assert board.record_forecast(forecast(stage="d60", day=60)).as_of == LAUNCH + timedelta(days=60)
+
+
+def test_a_seed_forecast_written_long_after_its_as_of_is_refused(board: Scoreboard, clock: Clock):
+    """A Confirmed forecast written on day 85 and dated day 60 could have seen days 61 to 84."""
+    clock.at_day(85)
+    with pytest.raises(ScoreboardRefusal, match="more than 1 day after its date"):
+        board.record_forecast(forecast(stage="d60", day=60))
+    site = _backtest_site(board)
+    assert board.record_forecast(forecast(stage="d60", day=60, site=site)).source == "backtest"  # backtest is exempt
 
 
 def test_report_shows_regrades_beside_originals_and_core_updates(board: Scoreboard, clock: Clock):
@@ -919,7 +976,10 @@ def test_an_older_database_without_the_provenance_columns_still_opens(tmp_path: 
         again.add_reading(dataclasses.replace(reading("after", 4, {"alpha.com": 2}), reader_version="reader-v2"))
         assert again.reading("after").reader_version == "reader-v2"
         assert again.add_missing_columns() == []
-        assert again.verify().ok  # the dropped trigger was put back on open
+        status = again.verify()  # a dropped trigger is never put back quietly on open
+        assert status.ok is False and status.triggers_ok is False
+        assert again.install_triggers() == ["readings_no_update"]  # the explicit repair names what it made
+        assert again.verify().ok
     finally:
         again.close()
 
@@ -976,19 +1036,19 @@ def test_readings_for_returns_newest_first_with_its_filters(board: Scoreboard, c
 def test_persistence_uses_only_readings_of_the_forecast_label(board: Scoreboard, clock: Clock):
     board.add_reading(reading("real", 50, {"alpha.com": 9}))
     board.add_reading(reading("synth", 55, {"alpha.com": 2}, label="SYNTHETIC"))
-    fid = made_at(board, clock, forecast(), 62)
+    fid = made_at(board, clock, forecast(), 61)
     assert board.persistence_points([fid]) == [9]  # a seed forecast never copies a synthetic reading
     board.add_site("synthsite.example", source="synthetic", launch_date=LAUNCH, launch_date_source="test", built_by="test")
     board.add_search("synthsite.example", SEARCH, location_code=LOC)
     synthetic = forecast(site="synthsite.example")
-    sid = made_at(board, clock, synthetic, 62)
+    sid = made_at(board, clock, synthetic, 61)
     board.add_reading(reading("synth2", 56, {"synthsite.example": 7}, label="SYNTHETIC"))
     assert board.persistence_points([sid]) == [7]
 
 
 def test_store_batch_writes_everything_in_one_transaction_or_nothing(board: Scoreboard, clock: Clock):
     pulls = [_pull(f"bp{i}", [("https://alpha.com/x", 1)]) for i in range(3)]
-    good = reading("batch-ok", 7, {"alpha.com": 1}, pull_ids=tuple(p.pull_id for p in pulls))
+    good = reading("batch-ok", 90, {"alpha.com": 1}, pull_ids=tuple(p.pull_id for p in pulls))
     board.store_batch(pulls=pulls, readings=[good])
     assert board.pull("bp0").pull_id == "bp0" and board.reading("batch-ok") == good
     board.store_batch(pulls=pulls, readings=[good])  # the same rows again change nothing
@@ -1027,3 +1087,138 @@ def test_a_real_reading_never_grades_a_synthetic_forecast(board: Scoreboard, clo
     assert fid in summary["due_no_reading_in_window"]  # the job does not even offer the real reading
     board.add_reading(reading("synth90", 90, {"synthsite.example": 4}, label="SYNTHETIC", hour=11))
     assert fid in grade_job.run(board, LAUNCH + timedelta(days=95))["graded"]
+
+
+# ---------------------------------------------------------------------------------------------
+# safeguards the review found missing
+
+
+def test_deleting_the_last_grade_with_triggers_dropped_is_still_caught_after_reopen(
+    board: Scoreboard, clock: Clock, tmp_path: Path
+):
+    fid = made_at(board, clock, forecast(point=5), 60)
+    board.add_reading(reading("r90", 90, {"alpha.com": 30}))
+    clock.at_day(91)
+    assert board.grade(fid, "r90").hit is False
+    with board.engine.begin() as connection:
+        connection.execute(text("DROP TRIGGER grades_no_delete"))
+        connection.execute(text("DELETE FROM grades"))
+    board.close()
+    again = Scoreboard(f"sqlite:///{tmp_path / 'scoreboard.db'}", clock=clock)
+    try:
+        status = again.verify()  # reopening never puts the trigger back quietly
+        assert status.ok is False and status.triggers_ok is False
+        assert any("grades_no_delete" in problem for problem in status.problems)
+        with pytest.raises(ChainBroken):
+            stage_report(again, source="seed", stage="d60", as_of=date(2027, 3, 19))
+    finally:
+        again.close()
+
+
+def test_a_committed_export_anchor_catches_a_deleted_tail_after_repair(board: Scoreboard, clock: Clock, tmp_path: Path):
+    fid = made_at(board, clock, forecast(point=5), 60)
+    board.add_reading(reading("r90", 90, {"alpha.com": 30}))
+    clock.at_day(91)
+    board.grade(fid, "r90")
+    export = tmp_path / "export"
+    board.export(export)
+    anchored = Scoreboard(f"sqlite:///{tmp_path / 'scoreboard.db'}", clock=clock, heads_anchor=export)
+    try:
+        assert anchored.verify().ok and anchored.verify().anchor_ok is True
+        with anchored.engine.begin() as connection:
+            connection.execute(text("DROP TRIGGER grades_no_delete"))
+            connection.execute(text("DELETE FROM grades"))
+        assert anchored.install_triggers() == ["grades_no_delete"]
+        status = anchored.verify()
+        assert status.ok is False and status.anchor_ok is False and status.triggers_ok is True
+        assert any("committed export holds 1 grades" in problem for problem in status.problems)
+    finally:
+        anchored.close()
+
+
+def _dfs_pull(pid: str, day: int, hour: int, *, provider: str = "dataforseo") -> Pull:
+    return Pull(
+        pull_id=pid,
+        provider=provider,
+        endpoint="task_get/advanced",
+        spec=PullSpec(search=SEARCH, location_code=LOC),
+        requested_at=utc_day(day, hour - 1),
+        completed_at=utc_day(day, hour),
+        ok=True,
+        hits=(OrganicHit(rank=4, url="https://alpha.com/", domain="alpha.com", site="alpha.com"),),
+    )
+
+
+def test_a_reading_built_from_synthetic_pulls_cannot_be_stored_as_real(board: Scoreboard):
+    pulls = [_dfs_pull(f"syn{i}", 90, 9, provider="synthetic") for i in range(5)]
+    fake = reading("r90", 90, {"alpha.com": 4}, pull_ids=tuple(p.pull_id for p in pulls))
+    with pytest.raises(ScoreboardRefusal, match="synthetic provider"):
+        board.store_batch(pulls=pulls, readings=[fake])
+    labeled = dataclasses.replace(fake, label="SYNTHETIC")
+    board.store_batch(pulls=pulls, readings=[labeled])
+    assert board.reading("r90").label == "SYNTHETIC"
+
+
+def test_a_reading_older_than_its_pulls_is_refused_so_it_cannot_feed_an_earlier_forecast(board: Scoreboard, clock: Clock):
+    clock.at_day(61)
+    pulls = [_dfs_pull(f"p{i}", 70, 9 + i) for i in range(5)]
+    backdated = reading("r50", 50, {"alpha.com": 4}, pull_ids=tuple(p.pull_id for p in pulls))
+    with pytest.raises(ScoreboardRefusal, match="never older than its pulls"):
+        board.store_batch(pulls=pulls, readings=[backdated])
+    with pytest.raises(ScoreboardRefusal, match="not stored"):
+        board.record_forecast(forecast("d60", 60, point=4), input_reading_ids=["r50"])
+    honest = dataclasses.replace(backdated, reading_id="r70", taken_at=utc_day(70, 13))
+    board.store_batch(pulls=pulls, readings=[honest])  # taken_at is the latest pull time: accepted
+
+
+def test_a_real_reading_must_name_as_many_kept_pulls_as_it_claims(board: Scoreboard, clock: Clock):
+    hollow = dataclasses.replace(reading("r90", 90, {"alpha.com": 5}), pull_ids=())
+    with pytest.raises(ScoreboardRefusal, match="names 0 kept pulls"):
+        board.add_reading(hollow)
+    pulls = [_dfs_pull(f"k{i}", 90, 8) for i in range(3)] + [dataclasses.replace(_dfs_pull("bad", 90, 8), ok=False)]
+    failed_kept = reading("r90b", 90, {"alpha.com": 5}, pull_ids=tuple(p.pull_id for p in pulls))
+    with pytest.raises(ScoreboardRefusal, match="which failed"):
+        board.store_batch(pulls=pulls, readings=[failed_kept])
+    # A degraded or SYNTHETIC reading is never a real outcome and may name fewer pulls.
+    board.add_reading(dataclasses.replace(hollow, reading_id="thin", degraded=True, pulls_kept=0))
+    board.add_reading(dataclasses.replace(hollow, reading_id="synth", label="SYNTHETIC"))
+
+
+def test_original_grade_refuses_a_reading_that_is_not_the_closest_to_day_90(board: Scoreboard, clock: Clock):
+    fid = made_at(board, clock, forecast(point=5), 60)
+    board.add_reading(reading("r87", 87, {"alpha.com": 5}))  # a hit
+    board.add_reading(reading("r90", 90, {"alpha.com": 30}))  # a miss, and closer to day 90
+    board.add_reading(reading("r90-bad", 90, {"alpha.com": 5}, degraded=True, hour=9))
+    clock.at_day(94)
+    with pytest.raises(ScoreboardRefusal, match="closest to day 90"):
+        board.grade(fid, "r87")
+    assert board.grade(fid, "r90").hit is False
+    assert board.grade(fid, "r87", kind="regrade", reason="checking the early reading").hit is True  # regrades may
+
+
+def test_a_search_with_a_registered_brand_term_cannot_be_marked_not_brand(board: Scoreboard):
+    with pytest.raises(ScoreboardRefusal, match="brand term"):
+        board.add_search("alpha.com", "Alpha Roofing prices", location_code=LOC, is_brand=False)
+    board.add_search("alpha.com", "alpha roofing prices", location_code=LOC)
+    board.add_search("alpha.com", "roof leak help", location_code=LOC, is_brand=True)  # True may always add the flag
+    board.add_site("roofrepairaustin.com", source="seed", launch_date=LAUNCH, launch_date_source="seed manifest",
+                   built_by="ranksim")
+    board.add_search("roofrepairaustin.com", SEARCH, location_code=LOC, is_brand=False)  # exact-match domain, no terms
+
+
+def test_stage_report_fits_the_band_prior_on_training_cells_and_lists_missing_baselines(board: Scoreboard, clock: Clock):
+    from aeo.ranksim.forecast.grading import GradedCell
+
+    _many(board, clock, sites=4, searches=3, brand=False)
+    as_of = date(2027, 3, 19)
+    bare = stage_report(board, source="seed", stage="d60", as_of=as_of)
+    assert bare["baselines_missing"] == ["band_prior", "site_strength"] and bare["band_prior"] is None
+    assert "band prior, site strength" in render_text(bare)
+    training = [GradedCell(f"train{i}.example", "q", NT50, NT50, difficulty=d) for i, d in enumerate(("easy", "medium", "hard"))]
+    full = stage_report(board, source="seed", stage="d60", as_of=as_of, band_prior_training=training,
+                        extra_baselines={"site_strength": lambda cell: NT50})
+    assert full["baselines_missing"] == [] and full["band_prior"]["easy"] == NT50
+    assert set(full["headline"]["baselines"]) == {"always_nt50", "persistence", "band_prior", "site_strength"}
+    with pytest.raises(ScoreboardRefusal, match="training data only"):
+        stage_report(board, source="seed", stage="d60", as_of=as_of,
+                     band_prior_training=[GradedCell("site0.example", "q", NT50, NT50)])

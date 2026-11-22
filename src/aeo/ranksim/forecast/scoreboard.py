@@ -11,8 +11,13 @@ Forecasts and grades are append-only. Each row is hash-chained with
 `chain.row_hash` over its canonical payload, the chain cannot fork because
 `prev_hash` is unique, and SQLite triggers made with the tables refuse any
 UPDATE or DELETE. `verify()` recomputes both chains from the stored columns,
-so an edit made with the triggers dropped is still caught. Every report calls
-`require_verified()` first.
+so an edit made with the triggers dropped is still caught. Opening an existing
+database never puts a dropped trigger back: a missing trigger keeps `verify()`
+failing until a person calls `install_triggers()` on purpose, because the chain
+alone cannot see its newest rows being deleted. When the scoreboard is given the
+committed export folder (`heads_anchor`), `verify()` also checks that the counts
+and heads in its HEADS.json are still a prefix of the chains, which catches a
+deleted tail. Every report calls `require_verified()` first.
 
 The refusals of docs/plan/IMPLEMENTATION_SPEC.md section 4 are enforced at
 write time and each raises `ScoreboardRefusal` with a plain sentence.
@@ -51,6 +56,7 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sess
 from sqlalchemy.pool import StaticPool
 
 from aeo.crawl.urls import normalize_url
+from aeo.ranksim.consensus import median_position
 from aeo.ranksim.site_history import site_key
 
 from .asof import as_date, parse_utc, utc_iso
@@ -59,6 +65,7 @@ from .config import (
     DEFAULT_DEVICE,
     DIFFICULTY_TERCILES,
     EXCLUDED_SITES,
+    FORECAST_FROZEN_GAP_DAYS,
     LABELS,
     MIN_KEPT_PULLS,
     NT50,
@@ -70,7 +77,7 @@ from .config import (
     forecast_paths,
 )
 from .grading import RULE_V1, GradedCell, GradingRule
-from .types import PREDICTED, REAL, SYNTHETIC, CleanReading, Forecast, OrganicHit, Pull, PullSpec, SitePosition
+from .types import PREDICTED, REAL, SYNTHETIC, SYNTHETIC_PROVIDERS, CleanReading, Forecast, OrganicHit, Pull, PullSpec, SitePosition
 
 GRADE_KINDS = ("original", "regrade")
 RECORD_KINDS = ("original", "regrade", "latest")
@@ -481,6 +488,7 @@ class GradedRecord:
     model_version: str
     built_by: str
     split: str | None
+    launch_date: date | None = None
 
 
 @dataclass(frozen=True)
@@ -499,6 +507,8 @@ class ChainStatus:
     forecasts_total: int
     grades_total: int
     problems: tuple[str, ...]
+    # None when no committed export was compared; False when the chains are not an extension of it.
+    anchor_ok: bool | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -512,6 +522,7 @@ class ChainStatus:
             "forecasts_total": self.forecasts_total,
             "grades_total": self.grades_total,
             "problems": list(self.problems),
+            "anchor_ok": self.anchor_ok,
         }
 
 
@@ -616,16 +627,19 @@ class Scoreboard:
         clock: Callable[[], datetime] | None = None,
         rule: GradingRule = RULE_V1,
         code_commit: str | None = None,
+        heads_anchor: str | Path | None = None,
     ) -> None:
         self.url = url or forecast_paths().scoreboard_url
         self.engine = _make_engine(self.url)
         self._clock = clock or _default_clock
         self.rule = rule
         self.code_commit = code_commit
+        self.heads_anchor = Path(heads_anchor) if heads_anchor is not None else None
         self._lock = threading.RLock()
+        # Tables made now get their triggers from create_all. A trigger missing from a table that
+        # already existed is NOT put back here: that would hide a deleted newest row from verify().
         ScoreboardBase.metadata.create_all(self.engine)
         self.add_missing_columns()
-        self.install_triggers()
         self._sessions = sessionmaker(self.engine, expire_on_commit=False)
 
     # -- plumbing ------------------------------------------------------------------------------
@@ -633,11 +647,17 @@ class Scoreboard:
     def close(self) -> None:
         self.engine.dispose()
 
-    def install_triggers(self) -> None:
-        """Create any missing append-only trigger. The tables get them when they are created; this repairs a dropped one."""
+    def install_triggers(self) -> list[str]:
+        """Explicit repair: create any missing append-only trigger and return the names created.
+
+        The tables get their triggers when they are created. Opening a database never calls
+        this, so a dropped trigger keeps verify() failing until a person repairs it on purpose.
+        """
+        missing = sorted(set(TRIGGERS) - set(self.triggers_present()))
         with self.engine.begin() as connection:
             for _table, sql in TRIGGERS.values():
                 connection.execute(text(sql))
+        return missing
 
     def add_missing_columns(self) -> list[str]:
         """Add the reading provenance columns to a database made before they existed. Returns the columns added.
@@ -740,10 +760,19 @@ class Scoreboard:
             site_row = session.get(SiteRow, str(site).strip().lower())
             if site_row is None:
                 raise ScoreboardRefusal(f"The site {site!r} is not registered.")
+            compact = _compact(key)
+            registered = [term for term in (site_row.brand_terms or []) if _compact(term)]
+            term_match = next((term for term in registered if _compact(term) in compact), None)
             if is_brand is None:
-                terms = list(site_row.brand_terms or []) or [site_row.site.split(".")[0]]
-                compact = _compact(key)
+                terms = registered or [site_row.site.split(".")[0]]
                 brand = any(_compact(term) and _compact(term) in compact for term in terms)
+            elif not is_brand and term_match is not None:
+                # An explicit False may never clear the flag a registered brand term sets: brand
+                # searches are the easiest hits and are kept out of the headline (spec section 2).
+                raise ScoreboardRefusal(
+                    f"The search {search!r} contains the brand term {term_match!r} of {site_row.site}, so it is a brand "
+                    "search. is_brand=False is refused."
+                )
             else:
                 brand = bool(is_brand)
             dup = session.scalar(select(SearchRow).where(SearchRow.site == site_row.site, SearchRow.search_key == key))
@@ -918,10 +947,69 @@ class Scoreboard:
             if same_positions and all(getattr(existing, key) == value for key, value in values.items()):
                 return
             raise ScoreboardRefusal(f"Reading {reading_id} is already stored with different content.")
+        self._check_reading_pulls(session, values)
         session.add(ReadingRow(stored_at=stamp, **values))
         session.flush()
         for item in position_values:
             session.add(ReadingPositionRow(reading_id=reading_id, **item))
+
+    @staticmethod
+    def _check_reading_pulls(session: Session, values: dict[str, Any]) -> None:
+        """Check a new reading against the stored pulls it names. Refuses with a plain sentence.
+
+        - No kept pull may have completed after the reading's taken_at: a reading is never older
+          than the pulls behind it, so a backdated reading cannot pass the as_of check.
+        - A REAL reading names no pull from a synthetic provider (types.SYNTHETIC_PROVIDERS).
+        - A REAL reading that is not degraded must name its kept pulls: pull_ids minus the dropped
+          ids is exactly pulls_kept pulls, and each of them that is stored here is ok and of the
+          reading's search, location and device. A SYNTHETIC or a degraded reading is never an
+          outcome of a real forecast and may name fewer.
+        Pulls stored earlier in the same batch are visible here. A named pull that is not stored in
+        this database is not refused yet (a reading copied from another scoreboard names pulls kept
+        there); the target URL position of such a reading stays None.
+        """
+        reading_id = values["reading_id"]
+        taken = parse_utc(values["taken_at"])
+        dropped_ids = {str(item[0]) for item in (values.get("dropped") or []) if item}
+        listed = [str(pid) for pid in (values.get("pull_ids") or [])]
+        kept = sorted({pid for pid in listed if pid not in dropped_ids})
+        stored = {pid: session.get(PullRow, pid) for pid in set(listed)}
+        real = values["label"] == REAL
+        for pid in listed:
+            pull = stored[pid]
+            if pull is None:
+                continue
+            if real and pull.provider in SYNTHETIC_PROVIDERS:
+                raise ScoreboardRefusal(
+                    f"Reading {reading_id} is labeled REAL but pull {pid} comes from the synthetic provider "
+                    f"{pull.provider!r}. A reading built from any synthetic pull is SYNTHETIC."
+                )
+            if pid in kept and parse_utc(pull.completed_at) > taken:
+                raise ScoreboardRefusal(
+                    f"Reading {reading_id} says it was taken at {values['taken_at']}, but its pull {pid} completed at "
+                    f"{pull.completed_at}. A reading is never older than its pulls."
+                )
+        if not real or values["degraded"]:
+            return
+        if len(kept) != int(values["pulls_kept"]):
+            raise ScoreboardRefusal(
+                f"Reading {reading_id} says it kept {values['pulls_kept']} pulls but names {len(kept)} kept pulls. "
+                "A REAL reading must show the pulls it was built from."
+            )
+        for pid in kept:
+            pull = stored[pid]
+            if pull is None:
+                continue
+            if not pull.ok:
+                raise ScoreboardRefusal(f"Reading {reading_id} keeps pull {pid}, which failed. A failed pull is never kept.")
+            if (pull.search_key, pull.location_code, pull.device) != (
+                values["search_key"],
+                values["location_code"],
+                values["device"],
+            ):
+                raise ScoreboardRefusal(
+                    f"Reading {reading_id} keeps pull {pid}, which is for another search, location or device."
+                )
 
     @staticmethod
     def _positions(session: Session, reading_id: str) -> list[SitePosition]:
@@ -1120,6 +1208,17 @@ class Scoreboard:
         launch = date.fromisoformat(site_row.launch_date)
         if forecast.stage == "upload" and as_of > launch:
             raise ScoreboardRefusal(f"An upload forecast must be made on or before launch ({launch}). Its date is {as_of}.")
+        stage_day = launch + timedelta(days=STAGE_DAYS[forecast.stage])
+        if forecast.stage != "upload" and as_of > stage_day:
+            raise ScoreboardRefusal(
+                f"A {forecast.stage} forecast must be dated on or before day {STAGE_DAYS[forecast.stage]} ({stage_day}). "
+                f"Its date is {as_of}. A later forecast is a shorter lead, never the same marker."
+            )
+        if site_row.source in ("seed", "pilot") and (created.date() - as_of).days > FORECAST_FROZEN_GAP_DAYS:
+            raise ScoreboardRefusal(
+                f"This {site_row.source} forecast is dated {as_of} but is written on {created.date()}, more than "
+                f"{FORECAST_FROZEN_GAP_DAYS} day after its date. Later readings could have shaped it."
+            )
         for reading_id in reading_ids:
             reading = session.get(ReadingRow, reading_id)
             if reading is None:
@@ -1322,6 +1421,12 @@ class Scoreboard:
                 raise ScoreboardRefusal(f"Forecast {forecast_id} already has its original grade. Use a regrade with a reason.")
             if rule.rule_hash() != forecast.grading_rule_hash:
                 raise ScoreboardRefusal("The original grade must use the grading rule frozen on the forecast.")
+            closer = self._closest_usable_reading(session, forecast)
+            if closer is not None and closer != reading_id:
+                raise ScoreboardRefusal(
+                    f"Reading {closer} is the usable reading closest to day {OUTCOME_DAY} (ties go to the earlier one). "
+                    f"The original grade must use it, not {reading_id}."
+                )
         else:
             if not reason or not str(reason).strip():
                 raise ScoreboardRefusal("A regrade needs a reason.")
@@ -1367,8 +1472,41 @@ class Scoreboard:
         }
         return _json_safe(payload)
 
+    def _closest_usable_reading(self, session: Session, forecast: ForecastRow) -> str | None:
+        """The stored reading an original grade must use: of the forecast's search, location and device,
+        inside days 87 to 93, not degraded, of the label that may grade it, taken after the forecast was
+        made and not after now, the one closest to day 90 (closest_reading_key)."""
+        launch = date.fromisoformat(forecast.launch_date)
+        created = parse_utc(forecast.created_at_utc)
+        now = self._now()
+        wanted = SYNTHETIC if forecast.source == "synthetic" else REAL
+        rows = session.scalars(
+            select(ReadingRow).where(
+                ReadingRow.search_key == forecast.search_key,
+                ReadingRow.location_code == forecast.location_code,
+                ReadingRow.device == forecast.device,
+                ReadingRow.degraded.is_(False),
+                ReadingRow.label == wanted,
+            )
+        ).all()
+        best: tuple[tuple[int, datetime, str], str] | None = None
+        for row in rows:
+            taken = parse_utc(row.taken_at)
+            day = (taken.date() - launch).days
+            if not WINDOW_FIRST_DAY <= day <= WINDOW_LAST_DAY or taken <= created or taken > now:
+                continue
+            key = closest_reading_key(day, row.taken_at, row.reading_id)
+            if best is None or key < best[0]:
+                best = (key, row.reading_id)
+        return best[1] if best is not None else None
+
     def _target_url_position(self, session: Session, reading: ReadingRow, target_url: str) -> int | None:
-        """Best rank of the exact target URL over the reading's kept pulls. None when the pulls cannot show it."""
+        """The exact target URL's clean position over the reading's kept pulls. None when the pulls cannot show it.
+
+        The same rule as the site's clean position (spec section 3): its best rank in each kept
+        pull, 51 when absent, then the median rounded half up. A median above 50 is NT50. So
+        a URL seen in one pull of five is NT50, and it can never beat the site's own position.
+        """
         target = _norm_url(target_url)
         if target is None:
             return None
@@ -1376,16 +1514,19 @@ class Scoreboard:
         kept = [pull_id for pull_id in (reading.pull_ids or []) if pull_id not in dropped]
         if not kept:
             return None
-        best: int | None = None
+        values: list[int] = []
         for pull_id in kept:
             pull = session.get(PullRow, pull_id)
             if pull is None or not pull.ok:
                 return None
+            best = NT50
             for hit in pull.hits or []:
                 rank = int(hit.get("rank", 0))
                 if 1 <= rank <= TOP_DEPTH and _norm_url(str(hit.get("url", ""))) == target:
-                    best = rank if best is None else min(best, rank)
-        return best if best is not None else NT50
+                    best = min(best, rank)
+            values.append(best)
+        middle = median_position(values)
+        return middle if middle <= TOP_DEPTH else NT50
 
     # -- core updates and freezes --------------------------------------------------------------
 
@@ -1480,13 +1621,18 @@ class Scoreboard:
                     links_ok = False
                     problems.append(f"Grade {grade.grade_id} points at a forecast row that is missing or changed.")
                     break
+            anchor_ok = self._check_anchor(forecasts, grades, problems)
         present = set(self.triggers_present())
         missing = sorted(set(TRIGGERS) - present)
         if missing:
-            problems.append("Append-only triggers are missing: " + ", ".join(missing) + ".")
+            problems.append(
+                "Append-only triggers are missing: " + ", ".join(missing) + ". "
+                "Rows may have been deleted while they were gone. Check against the committed export, "
+                "then repair them on purpose with install_triggers()."
+            )
         triggers_ok = not missing
         return ChainStatus(
-            ok=f_ok and g_ok and links_ok and triggers_ok,
+            ok=f_ok and g_ok and links_ok and triggers_ok and anchor_ok is not False,
             forecasts_ok=f_ok,
             grades_ok=g_ok,
             links_ok=links_ok,
@@ -1498,7 +1644,35 @@ class Scoreboard:
             forecasts_total=len(forecasts),
             grades_total=len(grades),
             problems=tuple(problems),
+            anchor_ok=anchor_ok,
         )
+
+    def _check_anchor(self, forecasts: Sequence[ForecastRow], grades: Sequence[GradeRow], problems: list[str]) -> bool | None:
+        """The committed HEADS.json must still be a prefix of both chains. None when there is no anchor to compare."""
+        if self.heads_anchor is None:
+            return None
+        heads_path = self.heads_anchor / "HEADS.json"
+        if not heads_path.exists():
+            return None
+        try:
+            heads = json.loads(heads_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as error:
+            problems.append(f"The committed {heads_path} cannot be read: {error}.")
+            return False
+        ok = True
+        for noun, rows in (("forecasts", forecasts), ("grades", grades)):
+            entry = heads.get(noun) or {}
+            count = int(entry.get("count") or 0)
+            head = entry.get("head")
+            if len(rows) < count:
+                problems.append(
+                    f"The committed export holds {count} {noun} but the database holds {len(rows)}. Rows were deleted."
+                )
+                ok = False
+            elif count and rows[count - 1].row_hash != head:
+                problems.append(f"The {noun} row at position {count} is not the head the committed export names.")
+                ok = False
+        return ok
 
     def require_verified(self) -> ChainStatus:
         status = self.verify()
@@ -1560,6 +1734,9 @@ class Scoreboard:
                 if chosen is None:
                     continue
                 outcome_date = parse_utc(chosen.reading_taken_at).date()
+                # Spec section 2: lead_days = outcome_date - as_of, from the reading actually used.
+                # The stored forecast lead is to the nominal day-90 due date and stays as hashed.
+                lead = (outcome_date - date.fromisoformat(row.as_of)).days
                 notes = row.notes or {}
                 split = notes.get("split") if isinstance(notes, dict) else None
                 cell = GradedCell(
@@ -1572,7 +1749,7 @@ class Scoreboard:
                     label=row.label,
                     source=row.source,
                     stage=row.stage,
-                    lead_days=row.lead_days,
+                    lead_days=lead,
                     range_low=row.range_low,
                     range_high=row.range_high,
                     niche=row.niche,
@@ -1595,6 +1772,7 @@ class Scoreboard:
                         model_version=row.model_version,
                         built_by=row.built_by,
                         split=str(split) if split is not None else None,
+                        launch_date=date.fromisoformat(row.launch_date),
                     )
                 )
         out.sort(key=lambda item: (item.cell.site, search_key(item.cell.search), item.forecast_id))
@@ -1818,6 +1996,14 @@ class Scoreboard:
             except (TypeError, IntegrityError) as error:
                 raise ScoreboardError(f"The export could not be loaded: {error}") from error
         return self.require_verified()
+
+
+def closest_reading_key(day_after_launch: int, taken_at: str, reading_id: str) -> tuple[int, datetime, str]:
+    """Sort key of the outcome reading rule: closest to day 90 first, ties to the earlier reading, then the id.
+
+    The grading job and the scoreboard's own check both use it, so they cannot disagree.
+    """
+    return (abs(day_after_launch - OUTCOME_DAY), parse_utc(taken_at), reading_id)
 
 
 def _choose_grade(grades: list[GradeRow], kind: str) -> GradeRow | None:

@@ -18,7 +18,18 @@ Definitions (docs/plan/IMPLEMENTATION_SPEC.md section 3, OUR READING):
 - Entry and exit: the share of top-10 units present in only one reading's top
   10 (and the same for the top 50).
 - Grading rule agreement: reading A's position taken as the forecast of
-  reading B under grading.RULE_V1, over top-50 units, both directions averaged.
+  reading B under grading.RULE_V1, over top-50 units (spec s3: one direction,
+  A as the forecast of B; rule v1 is not symmetric). The reverse direction and
+  the average of both are printed beside it under their own names.
+- Each (search, location, device) is one search of the frozen list and is
+  counted once: a second pair for it is refused.
+- Measured share (OUR READING): the headline counts only when at least
+  MARKER1_MIN_MEASURED_SHARE of the requested searches gave a usable pair. A
+  pair is skipped when a reading is degraded, and version 2 degrades exactly
+  the searches whose pulls disagree (a cluster tie), so without this bar the
+  headline could be measured on the few searches the reader agrees with
+  itself on. Below the bar the headline rate is withheld (None, NOT
+  MEASURABLE) and the rate on the measured searches is kept beside it.
 - Pairs whose readings are degraded, more than 28 or less than 20 hours apart,
   or from a different location or device are skipped and listed with the reason.
 - Intervals: bootstrap over searches (whole searches resampled). The Wilson
@@ -85,6 +96,10 @@ AGREE_WITHIN = 2
 HEADLINE_DEPTH = 10
 MARKER1_SEARCHES = 300
 MARKER1_SAMPLE_SEED = 20261130
+# OUR READING, not in the spec: the share of the frozen list that must give a usable pair before the
+# headline counts. It equals the headline bar (0.92): a reader that cannot read more than 8% of the
+# frozen searches twice has failed repeatability at the level of searches by the same margin.
+MARKER1_MIN_MEASURED_SHARE = 0.92
 MIN_GAP_HOURS = 20.0
 MAX_GAP_HOURS = 28.0
 AGREEMENT_BANDS = ("1-3", "4-10", "11-20", "21-50")
@@ -97,6 +112,9 @@ SKIP_NOT_OK = "raw pull not ok"
 
 COMMITTED_DAY = "2026-11-19"
 COMMITTED_LABELS = ("pull-a", "pull-b", "pull-c")
+# The committed Serper pulls asked for the top 10. The dry run reads them at that depth on purpose
+# (its label says "Top 10 only"); the reader would otherwise mark every such reading shallow_depth.
+COMMITTED_DEPTH = HEADLINE_DEPTH
 DRY_RUN_LABEL = (
     "DRY RUN ON COMMITTED PULLS. NOT MARKER 1. Top 10 only. No pinned city and no device. "
     "Same day, three Serper pulls about 35 to 40 minutes apart, not a day apart. "
@@ -211,9 +229,10 @@ def summarize_rows(rows: Sequence[AgreementRow]) -> dict[str, Any]:
     by_band = {band: _agree_block([row for row in top50 if row.band == band]) for band in AGREEMENT_BANDS}
     moved10 = sum(1 for row in top10 if row.entry_exit_top10)
     moved50 = sum(1 for row in top50 if row.entry_exit_top50)
-    grading = [
-        (float(row.grading_hit_a_as_forecast) + float(row.grading_hit_b_as_forecast)) / 2.0 for row in top50
-    ]
+    clusters50 = [row.search for row in top50]
+    grading = [1.0 if row.grading_hit_a_as_forecast else 0.0 for row in top50]
+    reverse = [1.0 if row.grading_hit_b_as_forecast else 0.0 for row in top50]
+    both = [(a + b) / 2.0 for a, b in zip(grading, reverse)]
     return {
         "headline": _agree_block(top10),
         "top50": _agree_block(top50),
@@ -225,7 +244,18 @@ def summarize_rows(rows: Sequence[AgreementRow]) -> dict[str, Any]:
         "grading_rule_agreement": {
             "rule": RULE_V1.version,
             "rule_hash": RULE_V1.rule_hash(),
-            **_ratio_block(grading, [row.search for row in top50]),
+            "direction": "reading A taken as the forecast of reading B",
+            **_ratio_block(grading, clusters50),
+        },
+        "grading_rule_agreement_b_as_forecast_of_a": {
+            "rule": RULE_V1.version,
+            "direction": "reading B taken as the forecast of reading A (extra, not the spec's figure)",
+            **_ratio_block(reverse, clusters50),
+        },
+        "grading_rule_agreement_both_directions_averaged": {
+            "rule": RULE_V1.version,
+            "direction": "mean of both directions (extra, not the spec's figure)",
+            **_ratio_block(both, clusters50),
         },
         "present_in_both_top10": _agree_block([row for row in top10 if not row.entry_exit_top10]),
         "searches": len({row.search for row in rows}),
@@ -266,7 +296,15 @@ def _reading_pairs_rows(
     rows: list[AgreementRow] = []
     used = 0
     skipped: list[dict[str, str]] = []
+    seen: set[tuple[str, int, str]] = set()
     for a, b in pairs:
+        key = (a.search, int(a.location_code), a.device)
+        if key in seen:
+            raise ValueError(
+                f"a second pair of readings for {a.search!r} ({a.location_code}, {a.device}). Each search of the frozen "
+                "list is counted once: a unit is one (search, site)."
+            )
+        seen.add(key)
         if a.degraded or b.degraded:
             skipped.append(_skip_entry(a.search, SKIP_DEGRADED))
             continue
@@ -315,8 +353,17 @@ def agreement_report(
     max_gap_hours: float = MAX_GAP_HOURS,
     enforce_gap: bool = True,
     reader: Mapping[str, Any] | None = None,
+    searches_requested: int | None = None,
 ) -> dict[str, Any]:
     """The marker 1 report for pairs of clean readings (A, B) of the same searches.
+
+    `searches_requested` is the size of the frozen list (300 for marker 1); by
+    default the number of pairs given. A caller whose frozen list holds searches
+    with no pair at all must pass it, so they count as not measured. When fewer
+    than MARKER1_MIN_MEASURED_SHARE of them gave a usable pair, `headline.rate`
+    is None (NOT MEASURABLE) and the rate on the measured searches is kept as
+    `headline.rate_on_measured_searches_only`. A second pair for one search
+    raises ValueError.
 
     `raw_pairs` are single raw pulls of the same searches: the measured
     baseline. `no_overlap_pairs` are the same readings rebuilt with the
@@ -330,6 +377,21 @@ def agreement_report(
     window = {"min_gap_hours": min_gap_hours, "max_gap_hours": max_gap_hours, "enforce_gap": enforce_gap}
     rows, used, skipped = _reading_pairs_rows(pairs, **window)
     summary = summarize_rows(rows)
+    requested = len(pairs) if searches_requested is None else int(searches_requested)
+    if requested < len(pairs):
+        raise ValueError(f"searches_requested {requested} is below the {len(pairs)} pairs given")
+    measured_share = used / requested if requested else None
+    headline = dict(summary["headline"])
+    withheld: str | None = None
+    if measured_share is None or measured_share < MARKER1_MIN_MEASURED_SHARE:
+        withheld = (
+            f"NOT MEASURABLE: {used} of {requested} searches gave a usable pair, below the "
+            f"{MARKER1_MIN_MEASURED_SHARE:g} share needed. Skipped searches (degraded readings, gaps, no pair) "
+            "are the ones the reader could not read twice, so a rate on the rest would flatter it."
+        )
+        headline["rate_on_measured_searches_only"] = headline["rate"]
+        headline["rate"] = None
+        headline["not_measurable"] = withheld
 
     raw_block: dict[str, Any] | None = None
     if raw_pairs is not None:
@@ -364,16 +426,18 @@ def agreement_report(
     return {
         "label": SYNTHETIC if synthetic else REAL,
         "what": "Agreement of two clean readings of each search. Repeatability of the reader, not its accuracy.",
-        "headline": summary["headline"],
+        "headline": headline,
         "top50": summary["top50"],
         "by_band": summary["by_band"],
         "entry_exit": summary["entry_exit"],
         "grading_rule_agreement": summary["grading_rule_agreement"],
+        "grading_rule_agreement_b_as_forecast_of_a": summary["grading_rule_agreement_b_as_forecast_of_a"],
+        "grading_rule_agreement_both_directions_averaged": summary["grading_rule_agreement_both_directions_averaged"],
         "present_in_both_top10": summary["present_in_both_top10"],
         "raw_single_pull_baseline": raw_block,
         "ablation_no_overlap_rule": ablation,
         "headline_beside_ablation": {
-            "filter_on": summary["headline"]["rate"],
+            "filter_on": headline["rate"],
             "filter_off": ablation["headline"]["rate"] if ablation else None,
             "raw_single_pull": raw_block["headline"]["rate"] if raw_block else None,
         },
@@ -382,6 +446,11 @@ def agreement_report(
         "pairs_skipped": skipped,
         "pairs_skipped_by_reason": _skip_counts(skipped),
         "searches": summary["searches"],
+        "searches_measured": used,
+        "searches_requested_for_share": requested,
+        "measured_share": measured_share,
+        "min_measured_share": MARKER1_MIN_MEASURED_SHARE,
+        "measured_line": f"measured {used} of {requested} searches",
         "definitions": {
             "unit": "(search, site) in the top 10 of either reading; also reported over the top 50",
             "absent": NT50,
@@ -407,22 +476,26 @@ def marker1_report_from_pulls(
     suspects_a: RoundSuspects | Iterable[RoundSuspects] | None = None,
     suspects_b: RoundSuspects | Iterable[RoundSuspects] | None = None,
     history: Mapping[str, CleanReading] | None = None,
+    searches_requested: int | None = None,
 ) -> dict[str, Any]:
     """Build both readings of each search from their pulls, with and without the filter, and report.
 
     `version` is the reader version. `suspects_a` and `suspects_b` are the
     round suspects of the rounds of reading A and of reading B (version 2,
-    signal c). When they are None they are computed from the pulls given, one
-    set per side. `history` maps a search to an earlier clean reading taken
+    signal c), one RoundSuspects per round. When they are None they are read
+    from the pulls given, per round: a reading's k-th pull (in requested
+    order) of every search was taken in round k, as `read_clean` takes them,
+    and each pull is judged against its own round only (spec s3, "the same
+    round"). `searches_requested` is passed to `agreement_report`. `history` maps a search to an earlier clean reading taken
     before reading A's first pull. The same history is passed to both A and B,
     so reading A is never the history of reading B. The raw baseline pairs the
     i-th OK pull of reading A with the i-th OK pull of reading B (in requested
     order), so every single pull is used once.
     """
     if suspects_a is None:
-        suspects_a = round_suspects([pull for first, _ in reading_pulls for pull in first])
+        suspects_a = _suspects_by_round([first for first, _ in reading_pulls])
     if suspects_b is None:
-        suspects_b = round_suspects([pull for _, second in reading_pulls for pull in second])
+        suspects_b = _suspects_by_round([second for _, second in reading_pulls])
     pairs: list[tuple[CleanReading, CleanReading]] = []
     plain: list[tuple[CleanReading, CleanReading]] = []
     raw: list[tuple[Pull, Pull]] = []
@@ -451,7 +524,18 @@ def marker1_report_from_pulls(
         max_gap_hours=max_gap_hours,
         enforce_gap=enforce_gap,
         reader=settings,
+        searches_requested=searches_requested,
     )
+
+
+def _suspects_by_round(readings_pulls: Sequence[Sequence[Pull]]) -> list[RoundSuspects]:
+    """Round suspects per round, where a reading's k-th pull (requested order) belongs to round k."""
+    rounds: dict[int, list[Pull]] = defaultdict(list)
+    for pulls in readings_pulls:
+        ordered = sorted(pulls, key=lambda pull: (parse_utc(pull.requested_at), pull.pull_id))
+        for index, pull in enumerate(ordered):
+            rounds[index].append(pull)
+    return [round_suspects(rounds[index]) for index in sorted(rounds)]
 
 
 # ---------------------------------------------------------------------------
@@ -586,7 +670,8 @@ def dry_run_on_committed_pulls(
     - how many pulls the poisoned-page filter dropped.
 
     Readings are built with reader `version`. Each label is one pull round, so
-    for version 2 the round suspects are read per label and joined.
+    for version 2 the round suspects are read per label, and each pull is
+    judged against the suspects of its own label.
     """
     base, sets, indexed, searches = _load_committed(root, day, labels)
     failed = {label: sum(1 for pull in pulls if not pull.ok) for label, pulls in sets.items()}
@@ -620,15 +705,16 @@ def dry_run_on_committed_pulls(
     dropped_plain: Counter[str] = Counter()
     for search in searches:
         group = [indexed[label][search] for label in labels]
-        full = build_clean_reading(group, version=version, suspects=suspects)
+        full = build_clean_reading(group, version=version, suspects=suspects, min_depth=COMMITTED_DEPTH)
         degraded_three += int(full.degraded)
         drops.update(reason.split(":")[0] for _, reason in full.dropped)
-        plain = build_clean_reading(group, overlap_rule=False, version=version)
+        plain = build_clean_reading(group, overlap_rule=False, version=version, min_depth=COMMITTED_DEPTH)
         dropped_plain.update(reason.split(":")[0] for _, reason in plain.dropped)
         for held in range(len(group)):
             if not group[held].ok:
                 continue
-            rest = build_clean_reading([pull for i, pull in enumerate(group) if i != held], version=version, suspects=suspects)
+            rest = build_clean_reading([pull for i, pull in enumerate(group) if i != held], version=version, suspects=suspects,
+                                       min_depth=COMMITTED_DEPTH)
             empty_rest += int(rest.pulls_kept == 0)
             held_rows = _rows(search, pull_site_positions(group[held]), _reading_positions(rest))
             loo_rows.extend(held_rows)
@@ -708,8 +794,8 @@ def compare_versions_on_committed_pulls(
     same_choice = 0
     for search in searches:
         group = [indexed[label][search] for label in labels]
-        first = build_clean_reading(group, version=1)
-        second, verdict = clean_reading_with_verdict(group, version=2, suspects=suspects)
+        first = build_clean_reading(group, version=1, min_depth=COMMITTED_DEPTH)
+        second, verdict = clean_reading_with_verdict(group, version=2, suspects=suspects, min_depth=COMMITTED_DEPTH)
         if (verdict is None or len(verdict.clusters) < 2) and first.pulls_kept == first.pulls_total:
             continue
         kept_v1 = [names[pid] for pid in first.pull_ids]

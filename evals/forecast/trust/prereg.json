@@ -1,0 +1,149 @@
+{
+  "frozen_at": "2026-11-22T18:24:51Z",
+  "payload": {
+    "baselines_on_identical_pairs": [
+      "st_s_cc_hc",
+      "st_s_cc_pr",
+      "st_s_cc_hosts",
+      "st_s_crux",
+      "st_s_tranco",
+      "st_s_opr",
+      "within-page shuffle"
+    ],
+    "feature_sets": {
+      "free": [
+        "st_s_cc_hc",
+        "st_s_cc_pr",
+        "st_s_cc_hosts",
+        "st_s_crux",
+        "st_s_tranco",
+        "st_cc_present",
+        "st_crux_present",
+        "st_tranco_present",
+        "sd_age_days",
+        "sd_uncertainty_days",
+        "sd_left_censored",
+        "sd_age_lower_bound_days",
+        "sd_no_evidence",
+        "sd_registration_known",
+        "sd_possibly_reregistered",
+        "tld_code",
+        "fp_referring_domains",
+        "fp_brand_search_volume",
+        "fp_review_count",
+        "fp_review_rating",
+        "fp_links_planned",
+        "fp_press_planned",
+        "fp_pages_at_launch"
+      ],
+      "free_plus_mdr": [
+        "st_s_cc_hc",
+        "st_s_cc_pr",
+        "st_s_cc_hosts",
+        "st_s_crux",
+        "st_s_tranco",
+        "st_cc_present",
+        "st_crux_present",
+        "st_tranco_present",
+        "sd_age_days",
+        "sd_uncertainty_days",
+        "sd_left_censored",
+        "sd_age_lower_bound_days",
+        "sd_no_evidence",
+        "sd_registration_known",
+        "sd_possibly_reregistered",
+        "tld_code",
+        "fp_referring_domains",
+        "fp_brand_search_volume",
+        "fp_review_count",
+        "fp_review_rating",
+        "fp_links_planned",
+        "fp_press_planned",
+        "fp_pages_at_launch",
+        "mdr_before"
+      ]
+    },
+    "intervals": {
+      "draws": 2000,
+      "one_way": "cluster bootstrap by search, and by site",
+      "seed": 20261122,
+      "two_way": "Poisson pigeonhole bootstrap over searches and sites"
+    },
+    "label": {
+      "content_input": "the site's best result title only",
+      "definition": "content-expected place minus real place among the page's top 50 sites with a title",
+      "min_page_depth": 50,
+      "top": 50
+    },
+    "marker_gain": "model minus the best free single measure on the same pairs (chosen on the test pairs, which favours the baseline)",
+    "mdr_rule": "main_domain_rank from the site's newest panel row dated strictly before the page; 0 is missing; higher is stronger",
+    "models": {
+      "baseline": "ridge",
+      "cv": "3 folds grouped by search group inside train",
+      "gbt_fixed": {
+        "colsample_bytree": 0.8,
+        "early_stopping_rounds": 30,
+        "learning_rate": 0.05,
+        "max_rounds": 600,
+        "reg_lambda": 1.0,
+        "subsample": 0.8,
+        "subsample_freq": 1
+      },
+      "gbt_grid": [
+        {
+          "min_child_samples": 200,
+          "num_leaves": 7
+        },
+        {
+          "min_child_samples": 200,
+          "num_leaves": 15
+        },
+        {
+          "min_child_samples": 400,
+          "num_leaves": 31
+        },
+        {
+          "min_child_samples": 50,
+          "num_leaves": 15
+        }
+      ],
+      "primary": "gradient-boosted trees (LightGBM)",
+      "ridge_alphas": [
+        1.0,
+        10.0,
+        100.0,
+        1000.0
+      ]
+    },
+    "name": "trust",
+    "pair_threshold_places": 10.0,
+    "primary": {
+      "backend": "cross_encoder",
+      "language": "en"
+    },
+    "secondary": [
+      {
+        "backend": "lexical",
+        "language": "en"
+      },
+      {
+        "backend": "lexical",
+        "language": null
+      }
+    ],
+    "split": {
+      "search_test_share": 0.3,
+      "seed": 20261122,
+      "site_test_share": 0.3,
+      "time_cutoff": "2026-01-01",
+      "version": "strength-split-v1"
+    },
+    "split_rule": "searches by search group (share to test by sha256), sites by sha256(seed|site|name) share to test, train pages dated before the cutoff on train searches with train sites only; test pages on or after the cutoff on test searches; pairs only between two test sites",
+    "ties": "0.5",
+    "train_row_sampling": "whole pages in sha256(seed|page) order",
+    "train_rows_max": 400000,
+    "version": "trust-v1",
+    "young": "both sites have a start estimate (not left censored) under 730 days before the page date"
+  },
+  "sha256": "3adfaf6311711b036779ca0fe4fb91f46dd8964949e9e72ef94c3a883d2f9cce"
+}

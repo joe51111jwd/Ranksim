@@ -15,16 +15,26 @@ config.MIN_COUNT_TO_PRINT_RATE (30) forecasts are printed as NOT MEASURABLE.
 from __future__ import annotations
 
 from collections import defaultdict
-from datetime import date
+from datetime import date, timedelta
 from typing import Any, Callable, Mapping, Sequence
 
-from .config import CONFIRMED_STAGE, DIFFICULTY_TERCILES, LEAD_FLOOR_DAYS, MIN_COUNT_TO_PRINT_RATE, SOURCES, STAGE_DAYS
-from .grading import GradedCell, headline
+from .config import (
+    CONFIRMED_STAGE,
+    DIFFICULTY_TERCILES,
+    LEAD_FLOOR_DAYS,
+    MIN_COUNT_TO_PRINT_RATE,
+    SOURCES,
+    SPEC_BASELINES,
+    STAGE_DAYS,
+)
+from .grading import GradedCell, band_prior_points, fit_band_prior, headline
 from .scoreboard import GradedRecord, PoolingRefused, Scoreboard, ScoreboardRefusal, mapping_points
 from .types import REAL, SYNTHETIC
 
 REPORT_MIN_COUNT = MIN_COUNT_TO_PRINT_RATE
-RESERVED_BASELINES = ("always_nt50", "persistence")
+# Computed here and nowhere else. band_prior is fitted here from `band_prior_training`, so it is
+# known to come from training data only; a caller cannot hand in a band prior of its own.
+RESERVED_BASELINES = ("always_nt50", "persistence", "band_prior")
 BaselineSpec = Mapping[str, int] | Callable[[GradedCell], int]
 
 
@@ -70,11 +80,16 @@ def stage_report(
     as_of: date,
     extra_baselines: Mapping[str, BaselineSpec] | None = None,
     model_version: str | None = None,
+    band_prior_training: Sequence[GradedCell] | None = None,
 ) -> dict[str, Any]:
     """Every number for one source and one stage as of a date, on the original grades.
 
     `extra_baselines` maps a name to either forecast id -> point, or a function of the cell.
-    always_nt50 and persistence are always added.
+    The site strength only baseline comes in here as "site_strength".
+    always_nt50 and persistence are always added. The band prior is fitted here on
+    `band_prior_training`, graded cells of the TRAINING split; a training cell on a site
+    that is in the headline is refused. The report lists the spec baselines it lacks under
+    `baselines_missing`, and markers 3 to 5 are never passed while one is missing.
     """
     if source not in SOURCES:
         raise PoolingRefused(f"Pick one source of {', '.join(SOURCES)}. A combined view is refused.")
@@ -83,9 +98,17 @@ def stage_report(
     status = scoreboard.require_verified()
 
     all_records = scoreboard.graded_records(source, stage, as_of, "original", model_version=model_version)
-    short = [r for r in all_records if r.cell.lead_days is None or r.cell.lead_days < LEAD_FLOOR_DAYS]
+    # A forecast dated after its stage day is a shorter lead, never that stage's marker (spec section 2).
+    # The scoreboard refuses such rows now; this keeps any stored before that out of the headline.
+    late = [r for r in all_records if _after_stage_day(r, stage)]
+    late_ids = {r.grade_id for r in late}
+    # lead_days on the cell is the outcome reading date minus as_of (spec section 2).
+    short = [
+        r for r in all_records
+        if r.grade_id not in late_ids and (r.cell.lead_days is None or r.cell.lead_days < LEAD_FLOOR_DAYS)
+    ]
     short_ids = {r.grade_id for r in short}
-    records = [r for r in all_records if r.grade_id not in short_ids]
+    records = [r for r in all_records if r.grade_id not in short_ids and r.grade_id not in late_ids]
     cells = [r.cell for r in records]
 
     baselines: dict[str, list[int]] = {"persistence": scoreboard.persistence_points(records)}
@@ -93,7 +116,22 @@ def stage_report(
         if name in RESERVED_BASELINES:
             raise ScoreboardRefusal(f"The baseline name {name} is reserved. It is always computed here.")
         baselines[name] = _baseline_points(name, spec, records)
+    band_prior: dict[str, int] | None = None
+    if band_prior_training is not None:
+        training = list(band_prior_training)
+        overlap = sorted({c.site for c in training} & {r.cell.site for r in records})
+        if overlap:
+            raise ScoreboardRefusal(
+                f"The band prior training cells include {len(overlap)} site(s) that are graded here "
+                f"({', '.join(overlap[:3])}). It is fitted on training data only."
+            )
+        try:
+            band_prior = fit_band_prior(training, scoreboard.rule)
+        except ValueError as error:
+            raise ScoreboardRefusal(f"The band prior cannot be fitted: {error}.") from error
+        baselines["band_prior"] = band_prior_points(band_prior, cells)
     head = headline(cells, baselines, scoreboard.rule)
+    missing_baselines = [name for name in SPEC_BASELINES if name not in head["baselines"]]
 
     main = [r for r in records if not r.cell.is_brand]
     main_index = [i for i, r in enumerate(records) if not r.cell.is_brand]
@@ -122,6 +160,11 @@ def stage_report(
         notes.append(
             f"{len(short)} graded rows have a lead under {LEAD_FLOOR_DAYS} days and are not called forecasts here (REAL)."
         )
+    if late:
+        notes.append(
+            f"{len(late)} graded rows were dated after day {STAGE_DAYS[stage]} and are not {stage} forecasts. "
+            "They are a shorter lead, never this marker (REAL)."
+        )
     if source == "backtest":
         notes.append("Backtest labels are single monthly snapshots, not clean readings.")
     if source == "synthetic":
@@ -140,6 +183,10 @@ def stage_report(
         "grading_rule_hash": scoreboard.rule.rule_hash(),
         "lead_floor_days": LEAD_FLOOR_DAYS,
         "excluded_short_lead": len(short),
+        "excluded_after_stage_day": len(late),
+        "baselines_required": list(SPEC_BASELINES),
+        "baselines_missing": missing_baselines,
+        "band_prior": band_prior,
         "minimum_count": REPORT_MIN_COUNT,
         "headline": head,
         "eligibility": eligibility,
@@ -155,6 +202,13 @@ def stage_report(
         "notes": notes,
     }
     return report
+
+
+def _after_stage_day(record: GradedRecord, stage: str) -> bool:
+    """True when a non-upload forecast is dated after launch plus its stage day."""
+    if stage == "upload" or record.launch_date is None:
+        return False
+    return record.as_of > record.launch_date + timedelta(days=STAGE_DAYS[stage])
 
 
 def _count(records: Sequence[GradedRecord], key: Callable[[GradedRecord], str]) -> dict[str, int]:
@@ -238,8 +292,14 @@ def _regrade_block(
         )
     main = [p for p in pairs if not p["is_brand"]]
     latest = scoreboard.graded_records(source, stage, as_of, "latest", model_version=model_version)
-    main_original = [r for r in originals.values() if not r.cell.is_brand and (r.cell.lead_days or 0) >= LEAD_FLOOR_DAYS]
-    main_latest = [r for r in latest if not r.cell.is_brand and (r.cell.lead_days or 0) >= LEAD_FLOOR_DAYS]
+    main_original = [
+        r for r in originals.values()
+        if not r.cell.is_brand and (r.cell.lead_days or 0) >= LEAD_FLOOR_DAYS and not _after_stage_day(r, stage)
+    ]
+    main_latest = [
+        r for r in latest
+        if not r.cell.is_brand and (r.cell.lead_days or 0) >= LEAD_FLOOR_DAYS and not _after_stage_day(r, stage)
+    ]
     return {
         "count": len(pairs),
         "pairs": pairs,
@@ -304,6 +364,14 @@ def render_text(report: Mapping[str, Any]) -> str:
     if report["excluded_short_lead"]:
         lines.append(
             f"Rows with a lead under {report['lead_floor_days']} days left out: {report['excluded_short_lead']} ({real})."
+        )
+    if report.get("excluded_after_stage_day"):
+        lines.append(f"Rows dated after the stage day left out: {report['excluded_after_stage_day']} ({real}).")
+    if report.get("baselines_missing"):
+        lines.append(
+            "Baselines the spec requires that are missing here: "
+            + ", ".join(name.replace("_", " ") for name in report["baselines_missing"])
+            + f". Markers 3 to 5 are not passed on this report ({real})."
         )
     if head["forecasts"] == 0:
         lines.append(f"There are zero graded outcomes, so no rate is measurable yet ({real}).")

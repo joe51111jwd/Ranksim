@@ -103,6 +103,9 @@ __all__ = [
 ]
 
 PROVIDER = "dataforseo"
+# Pulls from the sandbox carry this provider name. The sandbox answers with dummy data (provider map
+# section 7), so a reading built from them is SYNTHETIC, never REAL (reader.NOT_REAL_PROVIDERS).
+PROVIDER_SANDBOX = "dataforseo-sandbox"
 DFS_BASE = "https://api.dataforseo.com/v3"
 DFS_SANDBOX = "https://sandbox.dataforseo.com/v3"
 
@@ -406,6 +409,7 @@ class SampleReport:
     kind: str
     findings: dict[str, Any]
     calls: int
+    recorded: bool = True  # False: the sample learned nothing, the gate stays closed and it may be run again
 
 
 # ----------------------------------------------------------------------------------------------
@@ -590,6 +594,11 @@ class DataForSeoClient:
         self._owns = client is None
         self._http = client or httpx.Client(timeout=timeout_seconds)
         self.base_url = base_url.rstrip("/")
+        # The sandbox is free and answers with dummy data: its calls skip the ledger, its pulls carry
+        # PROVIDER_SANDBOX (so readings from them are SYNTHETIC), its raw files go under their own
+        # folder (so no dummy answer is ever read back as a paid one), and it runs no $1 sample.
+        self.sandbox = self.base_url == DFS_SANDBOX.rstrip("/")
+        self.provider = PROVIDER_SANDBOX if self.sandbox else PROVIDER
         self.ledger = ledger
         self.raw_dir = Path(raw_dir) if raw_dir is not None else forecast_paths().raw
         self._sleep = sleep
@@ -686,7 +695,16 @@ class DataForSeoClient:
         raw_path: Path,
         sample: bool = False,
     ) -> tuple[dict[str, Any], RawFile, httpx.Response]:
-        """Reserve, POST, save the raw response, settle with the provider's cost. Returns the parsed JSON (not yet checked)."""
+        """Reserve, POST, save the raw response, settle with the provider's cost. Returns the parsed JSON (not yet checked).
+
+        On the sandbox (free, dummy data) nothing is reserved or settled.
+        """
+        if self.sandbox:
+            try:
+                response = self._http.post(self._url(path), json=body, auth=self._auth)
+            except httpx.TransportError as error:
+                raise ProviderError(f"The DataForSEO sandbox did not answer {item} ({type(error).__name__}).", provider=PROVIDER) from error
+            return self._json_or_none(response), write_raw(raw_path, response.content), response
         ledger = self._require_ledger(item)
         with ledger.metered(item, kind, estimate, sample=sample) as meter:
             total = Decimal(0)
@@ -772,15 +790,34 @@ class DataForSeoClient:
         ids = list(pull_ids) if pull_ids is not None else self.new_pull_ids(specs)
         if len(ids) != len(specs):
             raise ValueError("pull_ids must have one id per spec")
+        if not self.sandbox and specs:
+            # The whole batch must fit before the first chunk is posted, so a batch the approval
+            # cannot cover is refused with nothing spent, not cut off after some chunks were paid.
+            total = sum((self._serp_estimate(spec, mode, resolve_poisoned_results) for spec in specs), Decimal(0))
+            self._require_ledger("SERP task_post").check(
+                f"SERP task_post of {len(specs)} task(s) in {math.ceil(len(specs) / MAX_TASKS_PER_POST)} call(s), {mode}",
+                SERP_MODE_KINDS[mode],
+                total,
+            )
         posted: list[PostedTask] = []
         for start in range(0, len(specs), MAX_TASKS_PER_POST):
             chunk = list(zip(ids[start : start + MAX_TASKS_PER_POST], specs[start : start + MAX_TASKS_PER_POST], strict=True))
-            posted.extend(
-                self._post_chunk(
-                    chunk, mode=mode, resolve_poisoned_results=resolve_poisoned_results, attempt=attempt, already=posted, sample=sample
+            try:
+                posted.extend(
+                    self._post_chunk(
+                        chunk, mode=mode, resolve_poisoned_results=resolve_poisoned_results, attempt=attempt, already=posted, sample=sample
+                    )
                 )
-            )
+            except (BudgetError, ProviderError) as error:
+                # Chunks already posted were paid for. Hand their records up with the error.
+                error.posted_tasks = tuple(posted) + tuple(getattr(error, "posted_tasks", ()) or ())
+                raise
         return posted
+
+    @staticmethod
+    def _serp_estimate(spec: PullSpec, mode: str, resolve_poisoned_results: bool) -> Decimal:
+        """The provider's billing formula for one task, with the x5 for a keyword holding a search operator."""
+        return serp_cost(spec.depth, mode=mode, resolve_poisoned_results=resolve_poisoned_results, keyword=spec.search)
 
     def _post_chunk(
         self,
@@ -801,12 +838,9 @@ class DataForSeoClient:
             self._serp_task_body(spec, tag, priority=PRIORITY_BY_MODE[mode], resolve_poisoned_results=resolve_poisoned_results)
             for (pull_id, spec), tag in zip(chunk, tags, strict=True)
         ]
-        estimate = sum(
-            (serp_cost(spec.depth, mode=mode, resolve_poisoned_results=resolve_poisoned_results) for _, spec in chunk),
-            Decimal(0),
-        )
+        estimate = sum((self._serp_estimate(spec, mode, resolve_poisoned_results) for _, spec in chunk), Decimal(0))
         batch = sha256_text("|".join(tags))[:12]
-        raw_path = self.raw_dir / PROVIDER / requested_at[:10] / f"task_post_{batch}.json.gz"
+        raw_path = self.raw_dir / self.provider / requested_at[:10] / f"task_post_{batch}.json.gz"
         previous = tuple(task.task_id for task in already if task.created and task.task_id)
         payload, _raw, response = self._paid_post(
             PATH_TASK_POST,
@@ -824,6 +858,7 @@ class DataForSeoClient:
             str(task["id"]) for task in tasks if task.get("id") and _int_or_none(task.get("status_code")) == STATUS_TASK_CREATED
         )
         result: list[PostedTask] = []
+        fatal: tuple[int, Any] | None = None
         for index, ((pull_id, spec), tag) in enumerate(zip(chunk, tags, strict=True)):
             task = by_tag.get(tag)
             if task is None and not by_tag and len(tasks) == len(chunk):
@@ -832,18 +867,23 @@ class DataForSeoClient:
                 result.append(PostedTask(pull_id, spec, tag, requested_at, None, None, "No task came back for this pull.", None, attempt))
                 continue
             code = _int_or_none(task.get("status_code"))
-            if code in FATAL_CODES:
-                raise ProviderError(
-                    f"DataForSEO refused a SERP task: status {code} ({task.get('status_message')}). {FATAL_HINTS.get(code, '')}".strip(),
-                    provider=PROVIDER,
-                    status_code=code,
-                    http_status=response.status_code,
-                    posted_task_ids=previous + created_ids,
-                )
+            if code in FATAL_CODES and fatal is None:
+                fatal = (code, task.get("status_message"))
             task_id = str(task["id"]) if task.get("id") and code == STATUS_TASK_CREATED else None
             result.append(
                 PostedTask(pull_id, spec, tag, requested_at, task_id, code, task.get("status_message"), _float_or_none(task.get("cost")), attempt)
             )
+        if fatal is not None:
+            code, message = fatal
+            error = ProviderError(
+                f"DataForSEO refused a SERP task: status {code} ({message}). {FATAL_HINTS.get(code, '')}".strip(),
+                provider=PROVIDER,
+                status_code=code,
+                http_status=response.status_code,
+                posted_task_ids=previous + created_ids,
+            )
+            error.posted_tasks = tuple(result)  # what this call answered; the created ones were paid for
+            raise error
         return result
 
     def tasks_ready(self) -> list[ReadyTask]:
@@ -860,7 +900,7 @@ class DataForSeoClient:
 
     def get_serp_task(self, task_id: str, *, posted_day: str) -> TaskOutcome | None:
         """task_get/advanced for one task (free). None while the task is still queued. The raw JSON is saved first."""
-        raw_path = self.raw_dir / PROVIDER / posted_day / f"{task_id}.json.gz"
+        raw_path = self.raw_dir / self.provider / posted_day / f"{task_id}.json.gz"
         envelope, raw = self._free_get(f"{PATH_TASK_GET_ADVANCED}/{task_id}", raw_path=raw_path, what=f"task_get for {task_id}")
         assert raw is not None
         tasks = [task for task in envelope.get("tasks") or [] if isinstance(task, dict)]
@@ -921,7 +961,7 @@ class DataForSeoClient:
         if not posted.created:
             return Pull(
                 pull_id=posted.pull_id,
-                provider=PROVIDER,
+                provider=self.provider,
                 endpoint=endpoint,
                 spec=posted.spec,
                 requested_at=posted.requested_at,
@@ -935,7 +975,7 @@ class DataForSeoClient:
         if outcome is None:
             return Pull(
                 pull_id=posted.pull_id,
-                provider=PROVIDER,
+                provider=self.provider,
                 endpoint=endpoint,
                 spec=posted.spec,
                 requested_at=posted.requested_at,
@@ -961,6 +1001,7 @@ class DataForSeoClient:
             task_id=posted.task_id,
             cost=posted.cost,
             raw=outcome.raw,
+            provider=self.provider,
         )
 
     def collect(self, posted: Sequence[PostedTask], *, timeout_seconds: float | None = None) -> list[Pull]:
@@ -992,6 +1033,8 @@ class DataForSeoClient:
             raise ValueError(f"unknown SERP mode {mode!r}. Choose standard_normal, standard_high or live.")
         pull_ids = self.new_pull_ids(specs)
         posted_all: list[PostedTask] = []
+        pulls: list[Pull] | None = None
+        again: list[int] = []
         try:
             posted = self.post_serp_tasks(
                 specs, mode=mode, resolve_poisoned_results=resolve_poisoned_results, pull_ids=pull_ids, sample=sample
@@ -1015,10 +1058,64 @@ class DataForSeoClient:
                 for index, pull in zip(again, self.collect(reposted), strict=True):
                     pulls[index] = pull
             return pulls
-        except ProviderError as error:
-            if not error.posted_task_ids:
-                error.posted_task_ids = tuple(task.task_id for task in posted_all if task.created and task.task_id)
+        except (BudgetError, ProviderError) as error:
+            refused = tuple(getattr(error, "posted_tasks", ()) or ())
+            if pulls is None and not refused:
+                refused = tuple(posted_all)  # everything was posted, then collecting failed
+            if isinstance(error, ProviderError) and not error.posted_task_ids:
+                error.posted_task_ids = tuple(
+                    task.task_id for task in posted_all + list(refused) if task.created and task.task_id
+                )
+            self._attach_paid_pulls(error, specs, pull_ids, pulls, again, refused)
             raise
+
+    def _attach_paid_pulls(
+        self,
+        error: BudgetError | ProviderError,
+        specs: Sequence[PullSpec],
+        pull_ids: Sequence[str],
+        pulls: list[Pull] | None,
+        again: list[int],
+        refused: tuple[PostedTask, ...],
+    ) -> None:
+        """When a batch stops after some tasks were paid for, put one Pull per spec on the error (`error.pulls`).
+
+        Paid tasks are collected (free). A paid task that cannot be collected now is a failed Pull with
+        its task id, so it can be collected later. A spec that was never posted is a failed Pull that
+        says why. Nothing is attached when nothing was paid for in this batch.
+        """
+        created = [task for task in refused if task.created]
+        if not created and pulls is None:
+            return
+        collected: dict[str, Pull] = {}
+        if created:
+            try:
+                for task, pull in zip(created, self.collect(created), strict=True):
+                    collected[task.pull_id] = pull
+            except ProviderError:
+                for task in created:
+                    collected[task.pull_id] = self._pull_from(task, None, endpoint=ENDPOINT_STANDARD, timeout=0.0)
+        stamp = utc_iso(self._now())
+        reason = f"Not sent: the batch stopped before this task was posted. {type(error).__name__}: {error}"
+        if pulls is None:  # the first posting stopped part way
+            by_id = {task.pull_id: task for task in refused}
+            out: list[Pull] = []
+            for pull_id, spec in zip(pull_ids, specs, strict=True):
+                if pull_id in collected:
+                    out.append(collected[pull_id])
+                elif pull_id in by_id:
+                    out.append(self._pull_from(by_id[pull_id], None, endpoint=ENDPOINT_STANDARD, timeout=0.0))
+                else:
+                    out.append(Pull(pull_id=pull_id, provider=self.provider, endpoint=ENDPOINT_STANDARD, spec=spec,
+                                    requested_at=stamp, completed_at=stamp, ok=False, status_message=reason))
+            error.pulls = tuple(out)
+            return
+        merged = list(pulls)  # a resubmission stopped: keep every collected pull, swap in what the resubmission got
+        for index in again:
+            if merged[index].pull_id in collected:
+                merged[index] = collected[merged[index].pull_id]
+        error.pulls = tuple(merged)
+
 
     # -- SERP: Live (by name only) -------------------------------------------------------------
 
@@ -1028,13 +1125,13 @@ class DataForSeoClient:
         tag = f"rs:{pull_id}"
         requested_at = utc_iso(self._now())
         body = [self._serp_task_body(spec, tag, priority=None, resolve_poisoned_results=resolve_poisoned_results)]
-        raw_path = self.raw_dir / PROVIDER / requested_at[:10] / f"live_{pull_id}.json.gz"
+        raw_path = self.raw_dir / self.provider / requested_at[:10] / f"live_{pull_id}.json.gz"
         payload, raw, response = self._paid_post(
             PATH_LIVE_ADVANCED,
             body,
             item=f"SERP live/advanced for one search ({spec.search[:40]})",
             kind=SERP_MODE_KINDS["live"],
-            estimate=serp_cost(spec.depth, mode="live", resolve_poisoned_results=resolve_poisoned_results),
+            estimate=self._serp_estimate(spec, "live", resolve_poisoned_results),
             raw_path=raw_path,
             sample=sample,
         )
@@ -1042,7 +1139,7 @@ class DataForSeoClient:
         tasks = [task for task in envelope.get("tasks") or [] if isinstance(task, dict)]
         completed_at = utc_iso(self._now())
         if not tasks:
-            return Pull(pull_id, PROVIDER, ENDPOINT_LIVE, spec, requested_at, completed_at, ok=False,
+            return Pull(pull_id, self.provider, ENDPOINT_LIVE, spec, requested_at, completed_at, ok=False,
                         status_message="The live call returned no task.", raw_path=raw.path, raw_sha256=raw.sha256)
         task = tasks[0]
         code = _int_or_none(task.get("status_code"))
@@ -1064,6 +1161,7 @@ class DataForSeoClient:
             task_id=str(task["id"]) if task.get("id") else None,
             cost=_float_or_none(task.get("cost")),
             raw=raw,
+            provider=self.provider,
         )
 
     # -- Labs ----------------------------------------------------------------------------------
@@ -1081,7 +1179,7 @@ class DataForSeoClient:
         """One Labs call, or its saved answer when the same request was already paid for."""
         function = path.split("/")[-2]
         key = request_key(path, task)
-        raw_path = self.raw_dir / PROVIDER / "labs" / function / f"{key}.json.gz"
+        raw_path = self.raw_dir / self.provider / "labs" / function / f"{key}.json.gz"
         if raw_path.exists():
             content = read_raw(raw_path)
             payload = json.loads(content)
@@ -1334,7 +1432,7 @@ class DataForSeoClient:
     def user_data(self) -> Balance:
         """The account balance (free). The raw answer is saved, the login is not copied into the record."""
         stamp = self._next_stamp()
-        raw_path = self.raw_dir / PROVIDER / _day(stamp) / f"user_data_{stamp}.json.gz"
+        raw_path = self.raw_dir / self.provider / _day(stamp) / f"user_data_{stamp}.json.gz"
         envelope, raw = self._free_get(PATH_USER_DATA, raw_path=raw_path, what="user_data")
         assert raw is not None
         result = next(iter(_first_task(envelope).get("result") or []), None) or {}
@@ -1354,7 +1452,7 @@ class DataForSeoClient:
         if not code.isalpha() or len(code) != 2:
             raise ValueError("country_iso_code is a two-letter code such as us")
         stamp = self._next_stamp()
-        raw_path = self.raw_dir / PROVIDER / _day(stamp) / f"locations_{code}_{stamp}.json.gz"
+        raw_path = self.raw_dir / self.provider / _day(stamp) / f"locations_{code}_{stamp}.json.gz"
         envelope, _ = self._free_get(f"{PATH_SERP_LOCATIONS}/{code}", raw_path=raw_path, what="the locations list")
         found: list[Location] = []
         for item in _first_task(envelope).get("result") or []:
@@ -1365,10 +1463,25 @@ class DataForSeoClient:
     # -- the $1 samples ---------------------------------------------------------------------------
 
     def _sample_ledger(self, kind: str) -> SpendLedger:
+        if self.sandbox:
+            raise BudgetError(
+                f"The {kind} sample cannot run on the DataForSEO sandbox: its answers are dummy data, and a sample "
+                "opens the gate for real big pulls."
+            )
         ledger = self._require_ledger(f"the {kind} sample")
         if ledger.sample_recorded(kind):
             raise BudgetError(f"The sample for {kind} is already recorded. Read it with ledger.sample_findings({kind!r}).")
         return ledger
+
+    @staticmethod
+    def _finish_sample(ledger: SpendLedger, kind: str, findings: dict[str, Any], calls: int, *, learned: bool, why: str) -> SampleReport:
+        """Record the sample only when it learned something. Otherwise record a failed attempt that keeps the gate closed."""
+        if learned:
+            ledger.record_sample(kind, findings)
+            return SampleReport(kind, findings, calls)
+        findings = {**findings, "not_recorded_because": why}
+        ledger.record_failed_sample(kind, findings)
+        return SampleReport(kind, findings, calls, recorded=False)
 
     def sample_serp(self, specs: Sequence[PullSpec], *, mode: str = "standard_normal", cap_usd: Decimal = SAMPLE_MAX_USD) -> SampleReport:
         """A SERP sample capped at `cap_usd`: as many of `specs` as fit, then record what came back."""
@@ -1377,7 +1490,7 @@ class DataForSeoClient:
         chosen: list[PullSpec] = []
         spend = Decimal(0)
         for spec in specs:
-            cost = serp_cost(spec.depth, mode=mode)
+            cost = self._serp_estimate(spec, mode, True)
             if spend + cost > cap_usd:
                 break
             chosen.append(spec)
@@ -1397,8 +1510,8 @@ class DataForSeoClient:
             "most_organic": max(organic_counts) if organic_counts else None,
             "spent_usd": str(ledger.spent_for_kind(kind)),
         }
-        ledger.record_sample(kind, findings)
-        return SampleReport(kind, findings, len(pulls))
+        return self._finish_sample(ledger, kind, findings, len(pulls), learned=any(pull.ok and pull.hits for pull in pulls),
+                                   why="no SERP pull came back ok with organic results")
 
     def sample_historical_serps(
         self,
@@ -1452,8 +1565,8 @@ class DataForSeoClient:
             "shallowest_organic_rank": min(depths) if depths else None,
             "spent_usd": str(ledger.spent_for_kind(KIND_HISTORICAL_SERPS)),
         }
-        ledger.record_sample(KIND_HISTORICAL_SERPS, findings)
-        return SampleReport(KIND_HISTORICAL_SERPS, findings, len(results) + len(refusals))
+        return self._finish_sample(ledger, KIND_HISTORICAL_SERPS, findings, len(results) + len(refusals), learned=bool(dates),
+                                   why="no call returned a dated snapshot, so how far back the data goes is still unknown")
 
     def sample_historical_traffic(
         self, small_sites: Sequence[str], *, cap_usd: Decimal = SAMPLE_MAX_USD, **options: Any
@@ -1477,8 +1590,8 @@ class DataForSeoClient:
             "months_seen": len({(row.year, row.month) for row in result.rows}),
             "spent_usd": str(ledger.spent_for_kind(KIND_HISTORICAL_TRAFFIC)),
         }
-        ledger.record_sample(KIND_HISTORICAL_TRAFFIC, findings)
-        return SampleReport(KIND_HISTORICAL_TRAFFIC, findings, 1)
+        return self._finish_sample(ledger, KIND_HISTORICAL_TRAFFIC, findings, 1, learned=result.ok,
+                                   why=f"the call failed (status {result.call.status_code}), so whether small sites have data is unknown")
 
     def sample_bulk_traffic(self, small_sites: Sequence[str], *, cap_usd: Decimal = SAMPLE_MAX_USD, **options: Any) -> SampleReport:
         """How many of the given small sites have a current traffic estimate. At most `cap_usd`."""
@@ -1499,8 +1612,8 @@ class DataForSeoClient:
             "status_code": result.call.status_code,
             "spent_usd": str(ledger.spent_for_kind(KIND_BULK_TRAFFIC)),
         }
-        ledger.record_sample(KIND_BULK_TRAFFIC, findings)
-        return SampleReport(KIND_BULK_TRAFFIC, findings, 1)
+        return self._finish_sample(ledger, KIND_BULK_TRAFFIC, findings, 1, learned=result.ok,
+                                   why=f"the call failed (status {result.call.status_code}), so whether small sites have data is unknown")
 
     def sample_ranked_keywords(
         self, targets: Sequence[str], *, limit: int = 100, cap_usd: Decimal = SAMPLE_MAX_USD, **options: Any
@@ -1526,8 +1639,8 @@ class DataForSeoClient:
             "failed": [{"target": r.target, "status_code": r.call.status_code} for r in results if not r.ok],
             "spent_usd": str(ledger.spent_for_kind(KIND_RANKED_KEYWORDS)),
         }
-        ledger.record_sample(KIND_RANKED_KEYWORDS, findings)
-        return SampleReport(KIND_RANKED_KEYWORDS, findings, len(results))
+        return self._finish_sample(ledger, KIND_RANKED_KEYWORDS, findings, len(results), learned=any(r.ok for r in results),
+                                   why="every ranked keywords call failed")
 
 
 # ----------------------------------------------------------------------------------------------
@@ -1552,7 +1665,8 @@ class DataForSeoSerpSource:
         self.mode = mode
         self.resolve_poisoned_results = resolve_poisoned_results
         self.max_resubmits = max_resubmits
-        self.name = PROVIDER if mode == "standard_normal" else f"{PROVIDER}-{mode}"
+        provider = getattr(client, "provider", PROVIDER)
+        self.name = provider if mode == "standard_normal" else f"{provider}-{mode}"
 
     def fetch(self, specs: Sequence[PullSpec]) -> list[Pull]:
         return self.client.serp_fetch(
@@ -1560,7 +1674,13 @@ class DataForSeoSerpSource:
         )
 
     def estimate_cost(self, count: int, depth: int = TOP_DEPTH) -> float:
-        """USD for `count` pulls at `depth`, before any resubmission. Exact to the micro-dollar."""
+        """USD for `count` pulls at `depth`, before any resubmission. Exact to the micro-dollar.
+
+        Without the keywords the x5 operator charge cannot be known here; the client's own reservation adds it.
+        The sandbox is free.
+        """
+        if getattr(self.client, "sandbox", False):
+            return 0.0
         return float(serp_cost(depth, mode=self.mode, resolve_poisoned_results=self.resolve_poisoned_results, pulls=count))
 
 
@@ -1582,10 +1702,11 @@ def _pull_from_task(
     task_id: str | None,
     cost: float | None,
     raw: RawFile,
+    provider: str = PROVIDER,
 ) -> Pull:
     common = dict(
         pull_id=pull_id,
-        provider=PROVIDER,
+        provider=provider,
         endpoint=endpoint,
         spec=spec,
         requested_at=requested_at,

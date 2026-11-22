@@ -88,13 +88,20 @@ def test_agreement_refuses_different_searches_and_drops_excluded_sites():
     assert [row.site for row in rows] == ["x.com"]
 
 
-def test_grading_rule_agreement_counts_both_directions():
+def test_grading_rule_agreement_takes_reading_a_as_the_forecast_of_reading_b():
+    """Spec s3 marker 1: "the agreement under grading rule v1 (reading A taken as the forecast of reading B)"."""
     rows = agreement(reading("q", {"s.com": 21}), reading("q", {"s.com": 20}))
     assert rows[0].grading_hit_a_as_forecast is True  # real 20 tolerates 5 places
     assert rows[0].grading_hit_b_as_forecast is False  # real 21 needs a point in 21 to 50
     summary = summarize_rows(rows)
-    assert summary["grading_rule_agreement"]["rate"] == pytest.approx(0.5)
-    assert summary["grading_rule_agreement"]["right"] == pytest.approx(0.5)
+    assert summary["grading_rule_agreement"]["rate"] == 1.0 and summary["grading_rule_agreement"]["right"] == 1
+    # The other direction and the average are extras under their own names, never the spec's figure.
+    assert summary["grading_rule_agreement_b_as_forecast_of_a"]["rate"] == 0.0
+    assert summary["grading_rule_agreement_both_directions_averaged"]["rate"] == pytest.approx(0.5)
+    # Forecast 20 for real 21 is a miss under rule v1, so A=20, B=21 gives 0 of 1.
+    report = agreement_report([(reading("q", {"s.com": 20}), reading("q", {"s.com": 21}, taken_at="2026-11-24T10:00:00Z"))],
+                              enforce_gap=False)
+    assert report["grading_rule_agreement"]["count"] == 1 and report["grading_rule_agreement"]["rate"] == 0.0
 
 
 def test_gap_window_and_skip_reasons():

@@ -15,6 +15,8 @@ from aeo.ranksim.forecast.grading import (
     GradingRule,
     always_nt50,
     band_of,
+    band_prior_points,
+    fit_band_prior,
     compare_to_baseline,
     fine_band_of,
     headline,
@@ -189,3 +191,31 @@ def test_hash_chain_breaks_on_any_edit():
     assert ok is False and checked == 1
     with pytest.raises(ValueError):
         chain.canonical_json({"x": float("nan")})
+
+
+def test_as_date_of_text_with_an_offset_is_the_utc_date():
+    from datetime import datetime, timedelta, timezone
+
+    moment = datetime(2026, 11, 22, 23, 30, tzinfo=timezone(timedelta(hours=-5)))
+    assert as_date(moment) == date(2026, 11, 23)
+    assert as_date("2026-11-22T23:30:00-05:00") == date(2026, 11, 23)
+    assert as_date("2026-11-23T01:00:00+05:00") == date(2026, 11, 22)
+    assert as_date("2026-11-22T10:00:00Z") == date(2026, 11, 22)
+    assert as_date("2026-11-22 23:59:59") == date(2026, 11, 22)  # naive text means UTC
+    assert as_date("2026-11-22") == date(2026, 11, 22) and as_date("2026-11") == date(2026, 11, 1)
+
+
+def test_band_prior_is_fitted_per_tercile_on_training_cells_only():
+    training = (
+        [GradedCell(f"t{i}.example", "q", 1, 5, difficulty="easy") for i in range(4)]
+        + [GradedCell(f"t{i}.example", "q2", 1, 14, difficulty="medium") for i in range(4)]
+        + [GradedCell(f"t{i}.example", "q3", 1, NT50, difficulty="hard") for i in range(4)]
+        + [GradedCell("brand.example", "brand", 1, 1, difficulty="hard", is_brand=True)]
+    )
+    prior = fit_band_prior(training)
+    assert RULE_V1.is_hit(prior["easy"], 5) and RULE_V1.is_hit(prior["medium"], 14) and prior["hard"] == NT50
+    assert prior["easy"] == 3 and prior["medium"] == 9  # the smallest point that hits every training cell
+    held_out = [GradedCell("h.example", "x", 9, 9, difficulty="hard"), GradedCell("h.example", "y", 9, 9)]
+    assert band_prior_points(prior, held_out) == [NT50, prior["all"]]
+    with pytest.raises(ValueError):
+        fit_band_prior([])

@@ -304,10 +304,15 @@ def test_401_raises_provider_error_and_charges_nothing(tmp_path):
 
 def test_balance_error_on_a_task_stops_the_batch(tmp_path):
     clock = Clock()
-    queue = FakeQueue({}, post_status={"alpha": 40210})
+    beta_items = [organic(1, "b.com", "https://b.com/", 1)]
+    queue = FakeQueue({"beta": [("ok", beta_items)]}, post_status={"alpha": 40210})
     client = dfs_client(tmp_path, queue, clock, ledger_for(tmp_path, clock))
-    with pytest.raises(ProviderError, match="balance"):
+    with pytest.raises(ProviderError, match="balance") as raised:
         client.serp_fetch([spec("alpha"), spec("beta")])
+    # beta was created, so it was paid for: it comes back on the error, collected, with its task id.
+    alpha, beta = raised.value.pulls
+    assert alpha.ok is False and alpha.status_code == 40210 and alpha.spec.search == "alpha"
+    assert beta.ok is True and beta.task_id in raised.value.posted_task_ids and beta.hits[0].site == "b.com"
 
 
 def test_fresh_ledger_refuses_before_any_request(tmp_path):
@@ -712,3 +717,178 @@ def test_serp_sample_marks_its_reservations_and_records_findings(tmp_path):
     rows = [json.loads(line)["row"] for line in ledger.path.read_text().splitlines()]
     assert [row["sample"] for row in rows if row["event"] == "reserve"] == [True]
     assert ledger.sample_recorded(budget.KIND_SERP_STANDARD_NORMAL)
+
+
+# -- paid work is never thrown away, refusals come before spending ------------------------------
+
+from aeo.ranksim.forecast.dataforseo import DFS_SANDBOX, PROVIDER_SANDBOX  # noqa: E402
+from aeo.ranksim.forecast.reader import build_clean_reading, read_clean  # noqa: E402
+from aeo.ranksim.forecast.types import REAL, SYNTHETIC  # noqa: E402
+
+
+def many_specs(count: int) -> list[PullSpec]:
+    return [spec(f"search {index:03d}") for index in range(count)]
+
+
+def test_a_round_the_approval_cannot_cover_is_refused_before_any_task_is_posted(tmp_path):
+    """$0.50 approved, 150 searches at depth 50 ($0.54 in two task_post calls): nothing is posted, nothing spent."""
+    clock = Clock()
+    ledger = ledger_for(tmp_path, clock, approve="0.50")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise AssertionError("no request may be sent when the batch does not fit the approval")
+
+    source = DataForSeoSerpSource(dfs_client(tmp_path, handler, clock, ledger))
+    result = read_clean(source, many_specs(150), pulls=1, sleep=clock.sleep, now=clock.now)
+    assert ledger.spent_total == Decimal("0") and ledger.open_reservations() == []
+    assert result.pulls == () and len(result.failed_rounds) == 1 and "BudgetError" in result.failed_rounds[0][1]
+
+
+def test_tasks_already_paid_for_come_back_as_pulls_when_a_later_chunk_is_refused(tmp_path):
+    """Chunk 1 (100 tasks) is posted and paid. DataForSEO refuses a task of chunk 2 (40210): every created task
+    still comes back from read_clean as a Pull with its task id, and the unsent ones are failed pulls that say why."""
+    clock = Clock()
+    ledger = ledger_for(tmp_path, clock)
+    specs = many_specs(150)
+    items = [organic(1, "a.com", "https://a.com/", 1)]
+    queue = FakeQueue({item.search: [("ok", items)] for item in specs}, post_status={"search 120": 40210})
+    source = DataForSeoSerpSource(dfs_client(tmp_path, queue, clock, ledger))
+
+    result = read_clean(source, specs, pulls=1, sleep=clock.sleep, now=clock.now)
+
+    assert [len(batch) for batch in queue.posts] == [100, 50]
+    paid = set(queue.tasks)  # every task the fake queue created, chunk 1 and the rest of chunk 2
+    assert len(paid) == 149 and ledger.spent_total > 0
+    returned = {pull.task_id for pull in result.pulls if pull.task_id}
+    assert paid <= returned
+    assert len(result.pulls) == 150 and sum(pull.ok for pull in result.pulls) == 149
+    (refused,) = [pull for pull in result.pulls if not pull.ok]
+    assert refused.spec.search == "search 120" and refused.status_code == 40210
+    assert len(result.failed_rounds) == 1 and "40210" in result.failed_rounds[0][1]
+    # The readings are built from the kept pulls (one pull each here, so degraded, but not empty of pulls).
+    assert all(reading.pulls_total == 1 for reading in result.readings)
+
+
+# -- the sandbox is dummy data ------------------------------------------------------------------
+
+
+def test_sandbox_pulls_are_not_real_cost_nothing_and_keep_their_own_raw_folder(tmp_path):
+    clock = Clock()
+    ledger = ledger_for(tmp_path, clock)
+    queue = FakeQueue({"emergency plumber": [("ok", [organic(1, "a.com", "https://a.com/", 1)])]})
+    client = DataForSeoClient("test-login", SECRET, client=httpx.Client(transport=httpx.MockTransport(queue)), ledger=ledger,
+                              raw_dir=tmp_path / "raw", sleep=clock.sleep, now=clock.now, base_url=DFS_SANDBOX)
+    pulls = []
+    for _ in range(3):
+        pulls += client.serp_fetch([spec("emergency plumber")], max_resubmits=0)
+        clock.sleep(3600)
+    assert all(pull.ok and pull.provider == PROVIDER_SANDBOX for pull in pulls)
+    assert all("/dataforseo-sandbox/" in str(pull.raw_path) for pull in pulls)
+    assert build_clean_reading(pulls).label == SYNTHETIC
+    assert ledger.spent_total == Decimal("0") and ledger.state().rows == 1  # only the approval
+    assert DataForSeoSerpSource(client).estimate_cost(5) == 0.0 and DataForSeoSerpSource(client).name == PROVIDER_SANDBOX
+    with pytest.raises(BudgetError, match="sandbox"):
+        client.sample_serp([spec("emergency plumber")])
+
+
+def test_production_pulls_stay_real(tmp_path):
+    clock = Clock()
+    queue = FakeQueue({"emergency plumber": [("ok", [organic(1, "a.com", "https://a.com/", 1)])]})
+    client = dfs_client(tmp_path, queue, clock, ledger_for(tmp_path, clock))
+    pulls = []
+    for _ in range(3):
+        pulls += client.serp_fetch([spec("emergency plumber")], max_resubmits=0)
+        clock.sleep(3600)
+    assert all(pull.provider == "dataforseo" for pull in pulls) and build_clean_reading(pulls).label == REAL
+
+
+# -- the x5 operator charge ---------------------------------------------------------------------
+
+
+def test_reservation_for_an_operator_keyword_follows_the_x5_billing_rule(tmp_path):
+    """Provider map 3.6: base x pages, x5 for a search operator, + base for resolve_poisoned_results."""
+    clock = Clock()
+    ledger = ledger_for(tmp_path, clock)
+    queue = FakeQueue({})
+    client = dfs_client(tmp_path, queue, clock, ledger)
+    client.post_serp_tasks([spec("site:example.com plumber"), spec("plumber austin")])
+    rows = [json.loads(line)["row"] for line in ledger.path.read_text().splitlines()]
+    (reserve,) = [row for row in rows if row["event"] == "reserve"]
+    assert reserve["estimate_micros"] == 15600 + 3600  # 0.0006 x 5 x 5 + 0.0006, and 0.0006 x 5 + 0.0006
+
+
+# -- a $1 sample that learned nothing keeps the gate closed ------------------------------------
+
+
+def test_a_historical_serps_sample_where_every_call_failed_does_not_unlock_the_big_pull(tmp_path):
+    clock = Clock()
+    ledger = ledger_for(tmp_path, clock, approve="20.00")
+    log: list[dict] = []
+
+    def failing(task: dict) -> dict:
+        body = load("dfs_historical_serps.json")
+        body["tasks"][0].update({"status_code": 50000, "status_message": "Internal Error.", "result": None, "cost": 0})
+        return body
+
+    client = dfs_client(tmp_path, labs_handler(log, {"historical_serps": failing}), clock, ledger)
+    report = client.sample_historical_serps(["plumber austin", "roofer austin"], 2840, "en")
+    assert report.recorded is False and report.findings["earliest_snapshot"] is None
+    assert not ledger.sample_recorded(budget.KIND_HISTORICAL_SERPS)
+    assert ledger.failed_samples(budget.KIND_HISTORICAL_SERPS)[0]["not_recorded_because"]
+    with pytest.raises(BudgetError, match="no recorded"):
+        ledger.reserve("Historical SERPs, 5,000 searches x 24 months", budget.KIND_HISTORICAL_SERPS, Decimal("14.40"))
+    # The sample may be run again (no "already recorded"), and a successful run opens the gate.
+    client = dfs_client(tmp_path, labs_handler(log, {"historical_serps": lambda task: load("dfs_historical_serps.json")}), clock, ledger)
+    assert client.sample_historical_serps(["plumber austin"], 2840, "en").recorded is True
+    ledger.reserve("Historical SERPs, 5,000 searches x 24 months", budget.KIND_HISTORICAL_SERPS, Decimal("14.40"))
+
+
+def test_big_traffic_pull_is_refused_after_a_sample_whose_only_task_failed(tmp_path):
+    clock = Clock()
+    ledger = ledger_for(tmp_path, clock)
+
+    def failing(task: dict) -> dict:
+        body = load("dfs_historical_bulk_traffic.json")
+        body["tasks"][0].update({"status_code": 40501, "status_message": "Invalid Field: 'item_types'.", "result": None, "cost": 0})
+        body["cost"] = 0
+        return body
+
+    client = dfs_client(tmp_path, labs_handler([], {"historical_bulk_traffic_estimation": failing}), clock, ledger)
+    report = client.sample_historical_traffic([f"tiny{index}.com" for index in range(1000)])
+    assert report.recorded is False and report.findings["share_with_data"] is None
+    with pytest.raises(BudgetError, match="no recorded"):
+        client.historical_bulk_traffic_estimation([f"big{index}.com" for index in range(1000)])
+
+
+def test_a_serper_sample_with_no_usable_pull_is_not_recorded(tmp_path):
+    clock = Clock()
+    ledger = ledger_for(tmp_path, clock)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(500, json={"message": "server error"})
+
+    report = serper_source(tmp_path, handler, clock, ledger).sample([spec("water heater repair", depth=10)])
+    assert report.recorded is False and not ledger.sample_recorded(budget.KIND_SERPER_SEARCH)
+
+
+# -- Serper: a short pull is partial ------------------------------------------------------------
+
+
+def test_serper_pull_with_10_of_50_results_is_marked_partial(tmp_path):
+    clock = Clock()
+    ledger = ledger_for(tmp_path, clock)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        page = json.loads(request.content)["page"]
+        links = [f"https://site{index}.com/" for index in range(10)] if page == 1 else []
+        return httpx.Response(200, json=serper_page(page, links))
+
+    (pull,) = serper_source(tmp_path, handler, clock, ledger).fetch([spec("water heater repair", depth=50)])
+    assert pull.ok and len(pull.hits) == 10 and pull.partial is True
+
+    def full(request: httpx.Request) -> httpx.Response:
+        page = json.loads(request.content)["page"]
+        return httpx.Response(200, json=serper_page(page, [f"https://p{page}s{index}.com/" for index in range(10)], 10 * page - 9))
+
+    (whole,) = serper_source(tmp_path, full, clock, ledger).fetch([spec("water heater repair", depth=50)])
+    assert whole.ok and len(whole.hits) == 50 and whole.partial is False

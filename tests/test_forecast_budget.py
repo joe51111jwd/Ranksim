@@ -281,3 +281,34 @@ def test_past_result_pages_are_reserved_at_one_page_a_month_and_the_sample_rate_
     assert "14.400000 USD" in lines[0] and "reserves" in lines[0]
     assert "5.449423 USD" in lines[1] and "53,091 pages" in lines[1]
     assert not any(chr(0x2014) in line or chr(0x2013) in line for line in lines)
+
+
+def test_serp_cost_applies_the_x5_operator_charge_from_the_billing_formula():
+    # Provider map 3.6: base x ceil(depth/10), x5 when the keyword holds a search operator, + base for the repair option.
+    assert budget.serp_cost(50, keyword="site:example.com plumber") == Decimal("0.0156")
+    assert budget.serp_cost(50, keyword="plumber INTITLE:austin", resolve_poisoned_results=False) == Decimal("0.0150")
+    assert budget.serp_cost(50, keyword="plumber austin") == budget.serp_cost(50) == Decimal("0.0036")
+    assert budget.serp_cost(50, keyword="plumber -inurl:yelp", pulls=2) == Decimal("0.0312")
+    # A colon that is not an operator, or an operator word inside another word, is not charged x5.
+    assert not budget.has_search_operator("hours: 24 plumber") and not budget.has_search_operator("website:design")
+
+
+def test_check_refuses_like_reserve_and_writes_nothing(tmp_path):
+    ledger = ledger_at(tmp_path, approve="0.50")
+    rows = ledger.state().rows
+    ledger.check("fits", budget.KIND_SERP_STANDARD_NORMAL, Decimal("0.50"))
+    with pytest.raises(BudgetError, match="only 0.500000 USD"):
+        ledger.check("too much", budget.KIND_SERP_STANDARD_NORMAL, Decimal("0.54"))
+    assert ledger.state().rows == rows
+
+
+def test_a_failed_sample_is_recorded_but_keeps_the_gate_closed(tmp_path):
+    ledger = ledger_at(tmp_path, approve="20.00")
+    ledger.record_failed_sample(budget.KIND_HISTORICAL_SERPS, {"snapshots": 0, "earliest_snapshot": None})
+    assert not ledger.sample_recorded(budget.KIND_HISTORICAL_SERPS)
+    assert ledger.failed_samples(budget.KIND_HISTORICAL_SERPS) == [{"snapshots": 0, "earliest_snapshot": None}]
+    with pytest.raises(BudgetError, match="no recorded"):
+        ledger.reserve("big pull", budget.KIND_HISTORICAL_SERPS, Decimal("14.40"))
+    ledger.record_sample(budget.KIND_HISTORICAL_SERPS, {"snapshots": 12, "earliest_snapshot": "2024-12-01"})
+    ledger.reserve("big pull", budget.KIND_HISTORICAL_SERPS, Decimal("14.40"))
+    assert ledger.verify()[0]

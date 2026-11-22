@@ -195,8 +195,13 @@ class SerperSerpSource:
             "most_organic": max(counts) if counts else None,
             "spent_usd": str(ledger.spent_for_kind(KIND_SERPER_SEARCH)),
         }
-        ledger.record_sample(KIND_SERPER_SEARCH, findings)
-        return SampleReport(KIND_SERPER_SEARCH, findings, len(pulls))
+        if any(pull.ok and pull.hits for pull in pulls):
+            ledger.record_sample(KIND_SERPER_SEARCH, findings)
+            return SampleReport(KIND_SERPER_SEARCH, findings, len(pulls))
+        # A sample that learned nothing keeps the gate closed and may be run again.
+        findings = {**findings, "not_recorded_because": "no Serper pull came back ok with organic results"}
+        ledger.record_failed_sample(KIND_SERPER_SEARCH, findings)
+        return SampleReport(KIND_SERPER_SEARCH, findings, len(pulls), recorded=False)
 
     # -- internals -----------------------------------------------------------------------------
 
@@ -286,7 +291,9 @@ class SerperSerpSource:
                     **common,
                 )
             parsed.append(payload)
-        return Pull(ok=True, status_code=200, hits=parse_serper_pages(parsed, spec.depth), **common)
+        # Partial follows the rule of reader.load_serper_chunk_pulls: fewer organic rows came back than were asked for.
+        rows = sum(len(payload["organic"]) for payload in parsed)
+        return Pull(ok=True, status_code=200, partial=rows < spec.depth, hits=parse_serper_pages(parsed, spec.depth), **common)
 
     def _send_page(self, spec: PullSpec, page: int, meter: Any) -> httpx.Response:
         body = {

@@ -16,6 +16,13 @@ Pass rules (docs/plan/IMPLEMENTATION_SPEC.md section 7):
   5  Confirmed hit rate 0.90 or more, precision 0.85 or more, recall 0.80 or more, on REAL
      day-90 outcomes only. Backtest data can never pass it. The site-cluster interval is printed.
 
+Markers 3 to 5 are judged on a stage report that prints every baseline the spec
+requires on the same forecasts (config.SPEC_BASELINES: always NT50, persistence,
+the band prior by difficulty tercile fitted on training data, site strength
+only). While one is missing the verdict is None, never a pass: for marker 3 the
+gain over the best baseline is not measurable, since the missing one could be
+the best. The notes name what is missing.
+
 A report on synthetic data (its label is SYNTHETIC or its source is
 synthetic) gets a SYNTHETIC verdict: `passed` is None, never True, and the
 value the bars would give is kept under `synthetic_check_passed`, so the code
@@ -32,7 +39,7 @@ from datetime import date, timedelta
 from typing import Any, Mapping, Sequence
 
 from .chain import canonical_json, sha256_text
-from .config import CONFIRMED_STAGE, MIN_COUNT_TO_PRINT_RATE, OUTCOME_DAY, STAGE_DAYS
+from .config import CONFIRMED_STAGE, MIN_COUNT_TO_PRINT_RATE, OUTCOME_DAY, SPEC_BASELINES, STAGE_DAYS
 from .report import plain_date
 from .types import REAL, SYNTHETIC
 
@@ -284,6 +291,13 @@ def _stage_marker(
     if head["forecasts"] == 0:
         notes.append("Zero eligible real outcomes are graded, so the hit rate cannot be measured.")
     checks.append(_rate_check(item.targets[0], summary["hit"], item.min_count, notes))
+    missing = [name for name in SPEC_BASELINES if name not in (head.get("baselines") or {})]
+    extra["baselines_missing"] = missing
+    if missing:
+        notes.append(
+            "The baselines the spec requires on the same forecasts are missing: " + ", ".join(missing) + ". "
+            f"Marker {item.number} cannot pass without them."
+        )
 
     if item.number == 3:
         held = report.get("held_out") or {}
@@ -291,9 +305,16 @@ def _stage_marker(
         checks.append(_check("only held out launches are graded", not_test, 0, not_test == 0 if head["forecasts"] else None))
         best = head.get("best_baseline")
         interval = head["baselines"][best]["difference_interval"] if best else None
-        checks.append(_bound_check(item.targets[1], interval, int(head["forecasts"]), item.min_count, notes))
+        if missing:
+            # The best baseline cannot be known while a required one was never computed.
+            checks.append(_check(item.targets[1].name, interval[0] if interval else None, item.targets[1].minimum, None))
+        else:
+            checks.append(_bound_check(item.targets[1], interval, int(head["forecasts"]), item.min_count, notes))
         extra["best_baseline"] = best
         extra["skill"] = head.get("skill_over_best_baseline")
+    if item.number in (4, 5):
+        checks.append(_check("spec baselines printed on the same forecasts", len(SPEC_BASELINES) - len(missing),
+                             len(SPEC_BASELINES), None if missing else True))
     page_one = summary["page_one"]
     if item.number in (4, 5):
         checks.append(_rate_check(item.targets[1], page_one["precision"], item.min_count, notes))

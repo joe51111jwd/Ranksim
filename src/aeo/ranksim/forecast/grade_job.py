@@ -27,9 +27,8 @@ import sys
 from datetime import date, datetime, timedelta
 from typing import Any
 
-from .asof import parse_utc
 from .config import OUTCOME_DAY
-from .scoreboard import WINDOW_LAST_DAY, Scoreboard, ScoreboardRefusal, WindowReading
+from .scoreboard import WINDOW_LAST_DAY, Scoreboard, ScoreboardRefusal, WindowReading, closest_reading_key
 from .types import REAL, SYNTHETIC
 
 SUMMARY_KEYS = (
@@ -50,7 +49,7 @@ def choose_reading(readings: list[WindowReading]) -> WindowReading | None:
     usable = [r for r in readings if not r.degraded and not r.before_forecast]
     if not usable:
         return None
-    return min(usable, key=lambda r: (abs(r.day_after_launch - OUTCOME_DAY), parse_utc(r.taken_at), r.reading_id))
+    return min(usable, key=lambda r: closest_reading_key(r.day_after_launch, r.taken_at, r.reading_id))
 
 
 def run(scoreboard: Scoreboard, today: date) -> dict[str, Any]:

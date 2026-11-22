@@ -1,0 +1,154 @@
+{
+  "frozen_at": "2026-11-22T18:10:44Z",
+  "payload": {
+    "absent_from_searched_list": "floor below the last listed value; not searched: missing",
+    "fitted_measures": [
+      "s_cc_hc",
+      "s_cc_pr",
+      "s_cc_hosts",
+      "s_crux",
+      "s_tranco"
+    ],
+    "fitted_score": {
+      "C_grid": [
+        0.01,
+        0.1,
+        1.0,
+        10.0
+      ],
+      "cv": "3 folds grouped by search group, inside train",
+      "form": "pairwise logistic, linear in standardised measures and missing flags",
+      "max_pairs": 300000,
+      "pairs": "top 50 and straddle 50 pairs of training pages"
+    },
+    "forecaster": {
+      "baselines": [
+        "always NT50",
+        "persistence (position on the input page, NT50 when absent)"
+      ],
+      "features": [
+        "own_score",
+        "gap_top10",
+        "gap_top20",
+        "gap_top50",
+        "q_top10",
+        "q_top20",
+        "q_top50",
+        "demand_top10_q50",
+        "demand_t21_50_q50"
+      ],
+      "points": [
+        2,
+        7,
+        15,
+        25,
+        51
+      ],
+      "rows": "site in the top 100 of the input or outcome page, both pages at least 50 deep",
+      "test": "test searches, input page on or after the cutoff",
+      "train": "train searches, outcome before the cutoff",
+      "train_rows_max": 400000,
+      "window_days": [
+        28.0,
+        120.0
+      ]
+    },
+    "gate_test": "rows in 1 to 10 (positive) against 51 to 100 (negative) on test pages of depth at least 90; score = strength minus the median of the page's other top-10 sites; AUC",
+    "grading_rule": "v1",
+    "grading_rule_hash": "6b8797e2ba8ec50aa6ea9a7eafb62eeeefc66f6fe21da497f68b04ba8edc5906",
+    "intervals": {
+      "draws": 2000,
+      "method": "cluster bootstrap over searches",
+      "seed": 20261122
+    },
+    "measures": [
+      "s_cc_hc",
+      "s_cc_pr",
+      "s_cc_hosts",
+      "s_crux",
+      "s_tranco",
+      "s_opr"
+    ],
+    "name": "strength",
+    "pages": {
+      "dataset": "dfs_history",
+      "min_depth_straddle50": 90,
+      "min_depth_top_and_straddle10": 50,
+      "poison_risk_pages": "dropped",
+      "test_pages": "test searches dated on or after the cutoff",
+      "train_pages": "train searches dated before the cutoff"
+    },
+    "pair_kinds": {
+      "straddle10": [
+        [
+          1,
+          10
+        ],
+        [
+          11,
+          50
+        ]
+      ],
+      "straddle50": [
+        [
+          1,
+          50
+        ],
+        [
+          51,
+          100
+        ]
+      ],
+      "top10": [
+        [
+          1,
+          10
+        ],
+        [
+          1,
+          10
+        ]
+      ],
+      "top20": [
+        [
+          1,
+          20
+        ],
+        [
+          1,
+          20
+        ]
+      ],
+      "top50": [
+        [
+          1,
+          50
+        ],
+        [
+          1,
+          50
+        ]
+      ]
+    },
+    "split": {
+      "search_test_share": 0.3,
+      "seed": 20261122,
+      "site_test_share": 0.3,
+      "time_cutoff": "2026-01-01",
+      "version": "strength-split-v1"
+    },
+    "survivorship_limited_not_fitted": [
+      "s_opr"
+    ],
+    "ties": "a missing or equal value scores 0.5; right, wrong and tied are reported apart",
+    "topical": {
+      "combination": "score + beta * topical, beta by pairwise logistic on training pages",
+      "group": "locale",
+      "history": "pages strictly before the page, other searches, same locale; train rows see train searches only",
+      "k": "method of moments on training rows",
+      "test": "top 50 and straddle 10 pairs on test pages, score alone against score plus topical"
+    },
+    "version": "strength-v1"
+  },
+  "sha256": "a55e687a3b154e717f20ccf52341594ba59cf079c4a97f2aab823c78c7c663f3"
+}

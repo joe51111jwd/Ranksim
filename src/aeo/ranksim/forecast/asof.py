@@ -27,6 +27,13 @@ def as_date(value: date | datetime | str) -> date:
     text = str(value).strip()
     if len(text) == 7:  # a month, 2026-11: its first day
         text += "-01"
+    if len(text) > 10:
+        # Text with a time part names a moment. Its date is the UTC date of that moment, the same
+        # as for a datetime, so 2026-11-22T23:30:00-05:00 is 2026-11-23. Naive text means UTC.
+        try:
+            return parse_utc(text).date()
+        except ValueError:
+            pass
     return date.fromisoformat(text[:10])
 
 

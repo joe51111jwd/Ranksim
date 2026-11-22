@@ -640,7 +640,13 @@ from aeo.ranksim.forecast.reader import (  # noqa: E402
 
 
 def top10(search: str) -> PullSpec:
-    return PullSpec(search=search, location_code=2840, device="unspecified", depth=10)
+    """A request whose pulls hold 10 results, like the 19 Nov Serper pulls these cases come from.
+
+    The request asks for depth 50: a reading of depth-10 requests is degraded as shallow_depth (see
+    test_a_reading_of_shallow_pulls_is_degraded_and_does_not_claim_nt50). With at most 10 hits per
+    pull the filter sees exactly the same slots at depth 50 as at depth 10.
+    """
+    return PullSpec(search=search, location_code=2840, device="unspecified", depth=50)
 
 
 def slots_pull(
@@ -766,10 +772,15 @@ def test_round_ubiquity_picks_the_clean_cluster_when_no_single_site_holds_a_run(
     # Without the round suspects nothing but size is left, and size picks the altered pair.
     plain, plain_verdict = clean_reading_with_verdict(pulls)
     assert plain_verdict.decided_by == "cluster size" and plain.pull_ids == ("pull-a", "pull-c")
-    # Several rounds can be passed; they are joined.
-    joined = build_clean_reading(pulls, suspects=[round_suspects(round_of_altered_directories()[:2]),
-                                                  round_suspects(round_of_altered_directories()[2:])])
-    assert joined.pull_ids == ("pull-b",)
+    # Several rounds can be passed: each pull is judged against the round that holds it, never a join of rounds.
+    own_round = round_suspects(round_of_altered_directories() + pulls)
+    other_round = round_suspects([slots_pull("elsewhere", ["x.com"] * 10, spec=top10("unrelated"))])
+    per_round = build_clean_reading(pulls, suspects=[other_round, own_round])
+    assert per_round.pull_ids == ("pull-b",)
+    # Rounds that do not hold these pulls give them no suspects, so signal (c) cannot fire.
+    elsewhere = build_clean_reading(pulls, suspects=[round_suspects(round_of_altered_directories()[:2]),
+                                                     round_suspects(round_of_altered_directories()[2:])])
+    assert elsewhere.pull_ids == ("pull-a", "pull-c")
 
 
 def test_five_pulls_with_three_clean_keep_the_three_and_are_not_degraded():

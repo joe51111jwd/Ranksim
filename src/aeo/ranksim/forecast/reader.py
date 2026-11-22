@@ -214,10 +214,18 @@ DEGRADED_ALTERED_VS_HISTORY = DROP_ALTERED_VS_HISTORY
 DEGRADED_TOO_FEW_KEPT = "too_few_kept_pulls"
 DEGRADED_NO_PULLS = "no_pulls"
 DEGRADED_INVALID_PULLS = "invalid_pulls"
+FILTER_OFF_SUFFIX = "-filter-off"
+DEGRADED_SHALLOW = "shallow_depth"
 DEGRADED_REASONS = (
     DEGRADED_CLUSTER_TIE, DEGRADED_ALTERED_VS_HISTORY, DEGRADED_TOO_FEW_KEPT, DEGRADED_NO_PULLS, DEGRADED_INVALID_PULLS,
+    DEGRADED_SHALLOW,
 )
-FILTER_OFF_SUFFIX = "-filter-off"
+
+# Providers whose pulls are never REAL: the simulated world and the DataForSEO sandbox, whose answers
+# are dummy data ("All the results you receive within Sandbox contain dummy data", provider map s7).
+# A name that starts with one of these and a dash (e.g. "dataforseo-sandbox-live") counts too.
+SANDBOX_PROVIDERS: frozenset[str] = frozenset({"dataforseo-sandbox"})
+NOT_REAL_PROVIDERS: frozenset[str] = frozenset(SYNTHETIC_PROVIDERS) | SANDBOX_PROVIDERS
 
 SIGNAL_REPAIRED = "provider repair"
 SIGNAL_HISTORY = "history"
@@ -270,18 +278,48 @@ def reader_version_name(version: int = DEFAULT_RULE_VERSION, *, overlap_rule: bo
     return name if overlap_rule else name + FILTER_OFF_SUFFIX
 
 
+def provider_is_real(provider: str | None) -> bool:
+    """False for a provider whose answers are not observations of Google: the simulated world
+    (types.SYNTHETIC_PROVIDERS) and the DataForSEO sandbox, which answers with dummy data."""
+    name = str(provider or "")
+    if name in NOT_REAL_PROVIDERS:
+        return False
+    return not any(name.startswith(prefix + "-") for prefix in NOT_REAL_PROVIDERS)
+
+
 def reading_label(pulls: Iterable[Pull]) -> str:
-    """SYNTHETIC when any pull comes from a synthetic provider (types.SYNTHETIC_PROVIDERS), else REAL.
+    """SYNTHETIC when any pull comes from a provider that is not real (`provider_is_real`), else REAL.
 
-    A reading that holds even one simulated pull is not an observation of
-    Google, so it is never labeled REAL.
+    A reading that holds even one simulated or sandbox pull is not an observation
+    of Google, so it is never labeled REAL.
     """
-    return SYNTHETIC if any(pull.provider in SYNTHETIC_PROVIDERS for pull in pulls) else REAL
+    return SYNTHETIC if any(not provider_is_real(pull.provider) for pull in pulls) else REAL
 
 
-def new_reading_id(spec: PullSpec, pull_ids: Sequence[str], *, version: int = DEFAULT_RULE_VERSION) -> str:
-    """A deterministic reading id from the request, the set of pull ids (order does not matter) and the reader version."""
-    payload = {"spec": _spec_payload(spec), "pull_ids": sorted(pull_ids), "reader": _version_name(version)}
+def new_reading_id(
+    spec: PullSpec,
+    pull_ids: Sequence[str],
+    *,
+    version: int = DEFAULT_RULE_VERSION,
+    overlap_rule: bool = True,
+    history_id: str | None = None,
+    extra: Mapping[str, Any] | None = None,
+) -> str:
+    """A deterministic reading id from the request, the set of pull ids (order does not matter) and the reader.
+
+    Everything that can change what the reader makes of the same pulls is in the id, so two
+    different readings never share one: the filter switched off (the ablation), the history
+    reading it was judged against, and `extra` (the round suspect slots that the filter saw, or
+    for a reading with no pulls its time and reasons). The payload of a plain reading (filter on,
+    no history, nothing extra) is the one ids were always made from, so those ids do not change.
+    """
+    payload: dict[str, Any] = {"spec": _spec_payload(spec), "pull_ids": sorted(pull_ids), "reader": _version_name(version)}
+    if not overlap_rule:
+        payload["reader"] = reader_version_name(version, overlap_rule=False)
+    if history_id is not None:
+        payload["history"] = str(history_id)
+    if extra:
+        payload["extra"] = dict(extra)
     return "reading-" + sha256_text(canonical_json(payload))[:ID_HEX_CHARS]
 
 
@@ -606,10 +644,14 @@ class RoundSuspects:
     SUSPECT_MIN_SLOTS or more of the top CONCENTRATION_TOP_N slots while sharing
     no token with the search. A site is a suspect for a search when it did so
     in at least SUSPECT_MIN_SEARCHES OTHER searches.
+
+    `pull_ids` lists every pull of the round it was read from (`round_suspects`
+    fills it), so a pull is judged against the suspects of its own round.
     """
 
     searches_by_site: Mapping[str, frozenset[str]] = field(default_factory=dict)
     rounds: int = 1
+    pull_ids: frozenset[str] = frozenset()
 
     def is_suspect(self, site: str, search: str) -> bool:
         others = self.searches_by_site.get(site, frozenset()) - {search}
@@ -620,13 +662,18 @@ class RoundSuspects:
         return frozenset(site for site, found in self.searches_by_site.items() if len(found) >= SUSPECT_MIN_SEARCHES)
 
     def merged(self, other: "RoundSuspects") -> "RoundSuspects":
-        """The union of two rounds: a site's searches are joined."""
+        """The union of two rounds: a site's searches are joined.
+
+        Not used by the reader: signal (c) judges each pull against its own round only (spec s3:
+        "unrelated searches of the same round"). Kept for reports.
+        """
         joined: dict[str, set[str]] = {site: set(found) for site, found in self.searches_by_site.items()}
         for site, found in other.searches_by_site.items():
             joined.setdefault(site, set()).update(found)
         return RoundSuspects(
             searches_by_site={site: frozenset(found) for site, found in sorted(joined.items())},
             rounds=self.rounds + other.rounds,
+            pull_ids=frozenset(self.pull_ids) | frozenset(other.pull_ids),
         )
 
 
@@ -638,31 +685,59 @@ def round_suspects(pulls_of_a_round: Iterable[Pull]) -> RoundSuspects:
     search's top CONCENTRATION_TOP_N slots and shares no token with it.
     """
     found: dict[str, set[str]] = defaultdict(set)
+    ids: set[str] = set()
     for pull in pulls_of_a_round:
+        ids.add(pull.pull_id)
         if not pull.ok or pull.spell_corrected or (pull.partial and len(pull.hits) < partial_min_organic(pull.spec.depth)):
             continue
         counts = Counter(slot_sites(pull, CONCENTRATION_TOP_N))
         for site, slots in counts.items():
             if slots >= SUSPECT_MIN_SLOTS and not site_shares_token(site, pull.spec.search):
                 found[site].add(pull.spec.search)
-    return RoundSuspects(searches_by_site={site: frozenset(searches) for site, searches in sorted(found.items())})
+    return RoundSuspects(
+        searches_by_site={site: frozenset(searches) for site, searches in sorted(found.items())},
+        pull_ids=frozenset(ids),
+    )
 
 
-def _merge_suspects(suspects: "RoundSuspects | Iterable[RoundSuspects] | None") -> RoundSuspects | None:
-    if suspects is None:
-        return None
-    if isinstance(suspects, RoundSuspects):
+def _round_list(suspects: "RoundSuspects | Iterable[RoundSuspects] | None") -> RoundSuspects | tuple[RoundSuspects, ...] | None:
+    """One RoundSuspects as given, or several as a tuple (one per round). Checks the types."""
+    if suspects is None or isinstance(suspects, RoundSuspects):
         return suspects
-    merged: RoundSuspects | None = None
-    for item in suspects:
+    items = tuple(suspects)
+    for item in items:
         if not isinstance(item, RoundSuspects):
             raise TypeError(f"suspects must be RoundSuspects, not {type(item).__name__}")
-        merged = item if merged is None else merged.merged(item)
-    return merged
+    if not items:
+        return None
+    return items[0] if len(items) == 1 else items
 
 
-def ubiquity_slots(pull: Pull, suspects: RoundSuspects | None) -> int:
-    """Top CONCENTRATION_TOP_N slots held by round suspects that share no token with the search."""
+def suspects_for_pull(pull: Pull, suspects: "RoundSuspects | Iterable[RoundSuspects] | None") -> RoundSuspects | None:
+    """The round suspects a pull is judged against (signal c): those of its own round only.
+
+    One RoundSuspects is taken as the pull's round. With several (one per round), the one whose
+    `pull_ids` holds the pull is used, and a pull in none of them gets no suspects (its round is
+    not known, so signal c cannot fire for it). Several rounds that carry no pull ids at all
+    (built by hand) cannot be told apart and are joined, as before.
+    """
+    rounds = _round_list(suspects)
+    if rounds is None or isinstance(rounds, RoundSuspects):
+        return rounds
+    for item in rounds:
+        if pull.pull_id in item.pull_ids:
+            return item
+    if not any(item.pull_ids for item in rounds):
+        joined = rounds[0]
+        for item in rounds[1:]:
+            joined = joined.merged(item)
+        return joined
+    return None
+
+
+def ubiquity_slots(pull: Pull, suspects: "RoundSuspects | Iterable[RoundSuspects] | None") -> int:
+    """Top CONCENTRATION_TOP_N slots held by suspects of the pull's own round that share no token with the search."""
+    suspects = suspects_for_pull(pull, suspects)
     if suspects is None:
         return 0
     search = pull.spec.search
@@ -672,7 +747,7 @@ def ubiquity_slots(pull: Pull, suspects: RoundSuspects | None) -> int:
     )
 
 
-def ubiquity_flag(pull: Pull, suspects: RoundSuspects | None) -> bool:
+def ubiquity_flag(pull: Pull, suspects: "RoundSuspects | Iterable[RoundSuspects] | None") -> bool:
     """Signal (c) for one pull: UBIQUITY_MIN_SLOTS or more top slots held by unrelated round suspects."""
     return ubiquity_slots(pull, suspects) >= UBIQUITY_MIN_SLOTS
 
@@ -799,9 +874,13 @@ def judge_clusters(
     usable: Sequence[Pull],
     *,
     history: CleanReading | None = None,
-    suspects: RoundSuspects | None = None,
+    suspects: "RoundSuspects | Iterable[RoundSuspects] | None" = None,
 ) -> tuple[ClusterVerdict, dict[str, str]]:
-    """Version 2 on the usable pulls of one reading. Returns the verdict and {pull_id: drop reason}."""
+    """Version 2 on the usable pulls of one reading. Returns the verdict and {pull_id: drop reason}.
+
+    `suspects` is one RoundSuspects or one per round; each pull is judged against its own round's.
+    """
+    suspects = _round_list(suspects)
     clusters = cluster_pulls(usable)
     ids = tuple(tuple(pull.pull_id for pull in group) for group in clusters)
     dropped: dict[str, str] = {}
@@ -940,7 +1019,7 @@ def _filter(
         _low_overlap_v1(usable, dropped)
     elif overlap_rule:
         checked = _check_history(history, spec, pulls)
-        verdict, more = judge_clusters(usable, history=checked, suspects=_merge_suspects(suspects))
+        verdict, more = judge_clusters(usable, history=checked, suspects=suspects)
         dropped.update(more)
     kept = [pull for pull in pulls if pull.pull_id not in dropped]
     reasons = [(pull.pull_id, dropped[pull.pull_id]) for pull in pulls if pull.pull_id in dropped]
@@ -981,6 +1060,7 @@ def build_clean_reading(
     version: int = DEFAULT_RULE_VERSION,
     history: CleanReading | None = None,
     suspects: "RoundSuspects | Iterable[RoundSuspects] | None" = None,
+    min_depth: int = TOP_DEPTH,
 ) -> CleanReading:
     """The clean reading of one request from its pulls. A pure function of its inputs.
 
@@ -988,9 +1068,16 @@ def build_clean_reading(
     version, or a `history` reading that is of another request, degraded, or
     not earlier than the pulls. The result lists only sites whose clean
     position is 1 to 50, best first.
+
+    A reading whose request asked for fewer than `min_depth` results (TOP_DEPTH,
+    50, by default) is degraded (`shallow_depth`): a site it did not see may be
+    at rank 11, so it cannot say NT50 (spec s2 and s3: readings are at depth 50).
+    A report that knowingly reads shallower pulls (the top-10 dry run on the
+    committed Serper pulls) passes its own `min_depth`.
     """
     return clean_reading_with_verdict(
-        pulls, reading_id=reading_id, overlap_rule=overlap_rule, version=version, history=history, suspects=suspects
+        pulls, reading_id=reading_id, overlap_rule=overlap_rule, version=version, history=history, suspects=suspects,
+        min_depth=min_depth,
     )[0]
 
 
@@ -1002,9 +1089,12 @@ def clean_reading_with_verdict(
     version: int = DEFAULT_RULE_VERSION,
     history: CleanReading | None = None,
     suspects: "RoundSuspects | Iterable[RoundSuspects] | None" = None,
+    min_depth: int = TOP_DEPTH,
 ) -> tuple[CleanReading, ClusterVerdict | None]:
     """`build_clean_reading` plus the version 2 cluster verdict (None for version 1 or with the rule off)."""
     spec = _check_one_request(pulls)
+    if int(min_depth) < 1:
+        raise ValueError(f"min_depth {min_depth} is below 1")
     kept, dropped, verdict = _filter(pulls, overlap_rule=overlap_rule, version=version, history=history, suspects=suspects)
     kept = sorted(kept, key=_order_key)
     order = {pull.pull_id: _order_key(pull) for pull in pulls}
@@ -1032,10 +1122,31 @@ def clean_reading_with_verdict(
     dependent = any(
         pulls_look_dependent(kept[i], kept[j]) for i in range(len(kept)) for j in range(i + 1, len(kept))
     )
-    stamps = [parse_utc(pull.completed_at) for pull in (kept or list(pulls))]
-    degraded = len(kept) < MIN_KEPT_PULLS
+    # The reading is dated by the latest pull the filter judged, kept or dropped by the cluster rule:
+    # in version 2 the dropped clusters decide which cluster is kept (and whether the reading is
+    # degraded), so a reading must not be dated before them (no leakage into a forecast made in
+    # between). A pull dropped on its own (failed, short partial, spell corrected) decides nothing
+    # about the others and does not move the date. With no usable pull, every pull dates it.
+    judged = _structural_drops(pulls, spec)[0] or list(pulls)
+    stamps = [parse_utc(pull.completed_at) for pull in judged]
+    shallow = int(spec.depth) < int(min_depth)
+    degraded = len(kept) < MIN_KEPT_PULLS or shallow
+    if shallow:
+        why = (
+            f"{DEGRADED_SHALLOW}: the pulls asked for the top {spec.depth}, fewer than {min_depth}, so a site "
+            f"they did not show is unknown, not NT50"
+        )
+    elif degraded:
+        why = _degraded_reason(len(pulls), len(kept), dropped, verdict)
+    else:
+        why = None
+    checked_history = history if (overlap_rule and int(version) != 1) else None
     reading = CleanReading(
-        reading_id=reading_id or new_reading_id(spec, [pull.pull_id for pull in pulls], version=version),
+        reading_id=reading_id or new_reading_id(
+            spec, [pull.pull_id for pull in pulls], version=version, overlap_rule=overlap_rule,
+            history_id=checked_history.reading_id if checked_history is not None else None,
+            extra=_suspect_extra(pulls, suspects, overlap_rule=overlap_rule, version=version),
+        ),
         search=spec.search,
         location_code=int(spec.location_code),
         device=spec.device,
@@ -1049,9 +1160,25 @@ def clean_reading_with_verdict(
         pull_ids=tuple(pull.pull_id for pull in kept),
         label=reading_label(pulls),
         reader_version=reader_version_name(version, overlap_rule=overlap_rule),
-        degraded_reason=_degraded_reason(len(pulls), len(kept), dropped, verdict) if degraded else None,
+        degraded_reason=why,
     )
     return reading, verdict
+
+
+def _suspect_extra(
+    pulls: Sequence[Pull], suspects: "RoundSuspects | Iterable[RoundSuspects] | None", *, overlap_rule: bool, version: int
+) -> dict[str, Any] | None:
+    """The round suspect slots the filter saw, per pull, for the reading id. None when there are none.
+
+    Only pulls with suspect slots are listed, so a reading whose suspects touched no pull keeps
+    the id it would have without suspects.
+    """
+    if not overlap_rule or int(version) == 1 or suspects is None:
+        return None
+    rounds = _round_list(suspects)
+    slots = {pull.pull_id: ubiquity_slots(pull, rounds) for pull in pulls if pull.ok}
+    seen = {pull_id: count for pull_id, count in sorted(slots.items()) if count}
+    return {"suspect_slots": seen} if seen else None
 
 
 def _degraded_reason(
@@ -1120,13 +1247,20 @@ class ReadResult:
 
 
 class RoundFailed(RuntimeError):
-    """A whole fetch round failed: the source raised or broke its contract. Holds the round index and when it started."""
+    """A whole fetch round failed: the source raised or broke its contract. Holds the round index and when it started.
 
-    def __init__(self, round_index: int, message: str, started_at: str) -> None:
+    `pulls` holds one Pull per spec when the source had already paid for part of the round before
+    it stopped (a later task_post refused by the budget guard or the provider): the paid tasks,
+    collected or with their task ids, and failed pulls for what was never sent. Empty otherwise.
+    The caller must keep them: they were paid for.
+    """
+
+    def __init__(self, round_index: int, message: str, started_at: str, pulls: Sequence[Pull] = ()) -> None:
         super().__init__(message)
         self.round_index = int(round_index)
         self.message = message
         self.started_at = started_at
+        self.pulls: tuple[Pull, ...] = tuple(pulls)
 
 
 def _empty_reading(
@@ -1139,8 +1273,12 @@ def _empty_reading(
     overlap_rule: bool = True,
     why: str | None = None,
 ) -> CleanReading:
+    text = why or f"{DEGRADED_NO_PULLS}: no pull of this search came back"
+    # No pull ids to tell two failures apart, so the time and the reasons go into the id: two failed
+    # readings of one search on two days are two readings, never one id with two contents.
+    extra = {"taken_at": taken_at, "why": text, "reasons": [list(item) for item in reasons]}
     return CleanReading(
-        reading_id=new_reading_id(spec, [], version=version),
+        reading_id=new_reading_id(spec, [], version=version, overlap_rule=overlap_rule, extra=extra),
         search=spec.search,
         location_code=int(spec.location_code),
         device=spec.device,
@@ -1154,7 +1292,7 @@ def _empty_reading(
         pull_ids=(),
         label=label,
         reader_version=reader_version_name(version, overlap_rule=overlap_rule),
-        degraded_reason=why or f"{DEGRADED_NO_PULLS}: no pull of this search came back",
+        degraded_reason=text,
     )
 
 
@@ -1173,8 +1311,10 @@ def fetch_round(
 
     Raises RoundFailed when the source raises, returns the wrong number of
     pulls, or returns pulls for other requests or out of order. A single failed
-    task is a failed Pull inside the round, not a failed round. This function
-    does not check a budget and does not sleep.
+    task is a failed Pull inside the round, not a failed round. When the source
+    raised after paying for part of the round and put one Pull per spec on the
+    error (`error.pulls`), the RoundFailed carries them in `pulls`. This
+    function does not check a budget and does not sleep.
     """
     if not specs:
         raise ValueError("no specs to read")
@@ -1182,13 +1322,27 @@ def fetch_round(
     try:
         got = list(source.fetch(list(specs)))
     except Exception as error:  # a whole round failed: the caller records it and goes on
-        raise RoundFailed(round_index, f"{type(error).__name__}: {error}", started) from error
+        salvaged = _salvaged_pulls(error, specs)
+        raise RoundFailed(round_index, f"{type(error).__name__}: {error}", started, salvaged) from error
     if len(got) != len(specs):
         raise RoundFailed(round_index, f"source returned {len(got)} pulls for {len(specs)} specs", started)
     wrong = [i for i, (spec, pull) in enumerate(zip(specs, got)) if pull.spec != spec]
     if wrong:
         raise RoundFailed(round_index, f"source returned pulls out of order or for other requests at positions {wrong}", started)
     return got
+
+
+def _salvaged_pulls(error: BaseException, specs: Sequence[PullSpec]) -> tuple[Pull, ...]:
+    """The paid pulls a source attached to its error, when they keep the contract (one per spec, in order)."""
+    found = getattr(error, "pulls", None)
+    if not found:
+        return ()
+    pulls = tuple(found)
+    if len(pulls) != len(specs) or not all(isinstance(pull, Pull) for pull in pulls):
+        return ()
+    if any(pull.spec != spec for spec, pull in zip(specs, pulls)):
+        return ()
+    return pulls
 
 
 def _place_key(spec: PullSpec) -> tuple[str, int, str]:
@@ -1218,6 +1372,7 @@ def assemble_readings(
     window_hours: float | None = DEFAULT_WINDOW_HOURS,
     overlap_rule: bool = True,
     version: int = DEFAULT_RULE_VERSION,
+    min_depth: int = TOP_DEPTH,
 ) -> list[CleanReading]:
     """One clean reading per (search, location, device) per window of pulls.
 
@@ -1227,14 +1382,15 @@ def assemble_readings(
     means one window per request. `history` may hold any earlier readings: for
     each window the latest non-degraded reading of the same request taken
     before the window's first pull is used. `suspects` is one RoundSuspects or
-    several (one per round); several are joined. Two requests that share a
+    several (one per round); each pull is judged against the suspects of its own
+    round (`suspects_for_pull`), never a join of rounds. Two requests that share a
     search, location and device but differ in language or depth raise
     ValueError, because a reading needs one request. The result is sorted by
     search, location, device and time.
     """
     if window_hours is not None and not window_hours > 0:
         raise ValueError("window_hours must be above 0, or None for one window per request")
-    joined = _merge_suspects(suspects)
+    rounds = _round_list(suspects)
     past = list(history or ())
     groups: dict[tuple[str, int, str], list[Pull]] = defaultdict(list)
     specs: dict[tuple[str, int, str], PullSpec] = {}
@@ -1263,7 +1419,8 @@ def assemble_readings(
             first = parse_utc(window[0].completed_at)
             earlier = _latest_history(past, specs[key], first) if overlap_rule and int(version) != 1 else None
             readings.append(build_clean_reading(
-                window, overlap_rule=overlap_rule, version=version, history=earlier, suspects=joined,
+                window, overlap_rule=overlap_rule, version=version, history=earlier, suspects=rounds,
+                min_depth=min_depth,
             ))
     readings.sort(key=lambda reading: (reading.search, reading.location_code, reading.device, reading.taken_at))
     return readings
@@ -1280,14 +1437,19 @@ def read_clean(
     overlap_rule: bool = True,
     version: int = DEFAULT_RULE_VERSION,
     history: Iterable[CleanReading] | None = None,
+    min_depth: int = TOP_DEPTH,
 ) -> ReadResult:
     """Read every spec `pulls` times and build one clean reading per spec.
 
     One `fetch_round` per round. Round k+1 starts at least `gap_seconds` after
     round k started (the wait goes through `sleep`, the time through `now`). A
     round that fails is recorded in `failed_rounds`, and the readings are built
-    from the rounds that worked. The suspects of signal (c) are read from each
-    round that worked and joined. All pulls of a spec make one reading, however
+    from the rounds that worked. A round that failed after the source had paid
+    for part of it is recorded in `failed_rounds` too, and the pulls the source
+    handed back (`RoundFailed.pulls`: the paid tasks, and failed pulls for what
+    was not sent) are kept like the pulls of any round. The suspects of signal
+    (c) are read per round, and each pull is judged against its own round's
+    suspects. All pulls of a spec make one reading, however
     far apart they are. A spec with no pull at all, or whose pulls cannot form
     a reading (for example one pull id served twice), gets an empty degraded
     reading with the reason, and its pulls stay in `pulls`. This function does
@@ -1307,6 +1469,7 @@ def read_clean(
     every: list[Pull] = []
     failed: list[tuple[int, str]] = []
     rounds: list[RoundSuspects] = []
+    salvaged: set[int] = set()
     round_start: datetime | None = None
     for index in range(pulls):
         if round_start is not None:
@@ -1318,16 +1481,20 @@ def read_clean(
             got = fetch_round(source, specs, round_index=index, now=now)
         except RoundFailed as error:
             failed.append((index, error.message))
-            continue
+            if not error.pulls:
+                continue
+            got = list(error.pulls)  # paid for before the round stopped: kept, never thrown away
+            salvaged.add(index)
         rounds.append(round_suspects(got))
         for spec, pull in zip(specs, got):
             collected[spec].append(pull)
             every.append(pull)
 
-    joined = _merge_suspects(rounds) if rounds else None
+    per_round = tuple(rounds) or None
     past = list(history or ())
-    round_reasons = [(f"round-{index}", f"{DROP_NO_RESULT}: {text}") for index, text in failed]
-    label = SYNTHETIC if getattr(source, "name", None) in SYNTHETIC_PROVIDERS else REAL
+    # A round that handed pulls back gave every spec a pull (failed ones say why), so it is not a missing result.
+    round_reasons = [(f"round-{index}", f"{DROP_NO_RESULT}: {text}") for index, text in failed if index not in salvaged]
+    label = REAL if provider_is_real(getattr(source, "name", None)) else SYNTHETIC
     readings: list[CleanReading] = []
     for spec in specs:
         mine = collected[spec]
@@ -1339,7 +1506,8 @@ def read_clean(
         try:
             _check_one_request(mine)
             (reading,) = assemble_readings(
-                mine, history=past, suspects=joined, window_hours=None, overlap_rule=overlap_rule, version=version,
+                mine, history=past, suspects=per_round, window_hours=None, overlap_rule=overlap_rule, version=version,
+                min_depth=min_depth,
             )
         except ValueError as error:  # the source broke the contract for this spec; keep the other readings
             reasons = round_reasons + [("reading", f"{DEGRADED_INVALID_PULLS}: {error}")]

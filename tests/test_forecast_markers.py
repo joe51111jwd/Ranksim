@@ -54,7 +54,11 @@ def stage_report_like(
     as_of: str,
     not_test: int = 0,
     baselines: dict[str, list[int]] | None = None,
+    spec_baselines: bool = True,
 ) -> dict:
+    """With spec_baselines, persistence, band_prior and site_strength are present (all NT50 points)."""
+    named = {name: [NT50] * len(graded) for name in ("persistence", "band_prior", "site_strength")} if spec_baselines else {}
+    named.update(baselines or {})
     eligibility = {
         name: {s: {"made": 0, "due": 0, "graded": 0, "due_not_graded": 0, "not_yet_due": 0, "next_due_date": None}
                for s in STAGE_DAYS}
@@ -66,7 +70,7 @@ def stage_report_like(
         "source": source,
         "stage": stage,
         "as_of": as_of,
-        "headline": headline(graded, baselines),
+        "headline": headline(graded, named),
         "eligibility": eligibility,
         "held_out": {"test": len(graded) - not_test, "not_test": not_test},
     }
@@ -137,6 +141,44 @@ def test_marker_3_passes_only_above_the_best_baseline_on_held_out_launches():
     # Seed data cannot pass marker 3.
     seed = stage_report_like(graded, source="seed", stage="upload", as_of="2026-12-21")
     assert evaluate_marker(3, seed)["passed"] is False
+
+
+def test_marker_3_is_not_passed_without_the_band_prior_and_site_strength_baselines():
+    """Spec section 2: the four baselines are printed on the same forecasts every time."""
+    graded = cells(20, 5, hit_share=0.85, page_one_every=3)
+    bare = stage_report_like(graded, source="backtest", stage="upload", as_of="2026-12-21", spec_baselines=False,
+                             baselines={"persistence": [NT50] * len(graded)})
+    verdict = evaluate_marker(3, bare)
+    assert verdict["passed"] is None
+    assert verdict["baselines_missing"] == ["band_prior", "site_strength"]
+    gain = next(c for c in verdict["checks"] if c["name"] == "lower bound of gain over best baseline")
+    assert gain["ok"] is None
+    assert any("band_prior, site_strength" in note for note in verdict["notes"])
+    assert "NOT MEASURABLE YET" in render_marker_text(verdict)
+
+
+def test_marker_3_judges_a_tercile_constant_tool_against_the_band_prior():
+    """A tool that only knows search difficulty (easy 5, medium 15, hard NT50) is the band prior itself."""
+    terciles = {"easy": (5, 5), "medium": (15, 15), "hard": (NT50, NT50)}
+    graded = [
+        GradedCell(f"site{i % 8}.example", f"q{i}", terciles[name][0], terciles[name][1], difficulty=name)
+        for i, name in enumerate(["easy", "medium", "hard"] * 12)
+    ]
+    band_prior = [terciles[c.difficulty][0] for c in graded]
+    report = stage_report_like(graded, source="backtest", stage="upload", as_of="2026-12-21",
+                               baselines={"band_prior": band_prior})
+    verdict = evaluate_marker(3, report)
+    assert verdict["best_baseline"] == "band_prior"
+    assert verdict["passed"] is False  # no gain over the band prior
+
+
+def test_markers_4_and_5_are_not_passed_without_the_spec_baselines():
+    graded = cells(20, 10, hit_share=0.95, page_one_every=3)
+    for number, stage, source in ((4, "d30", "backtest"), (5, "d60", "seed")):
+        bare = stage_report_like(graded, source=source, stage=stage, as_of="2027-03-19", spec_baselines=False)
+        verdict = evaluate_marker(number, bare)
+        assert verdict["passed"] is None, verdict
+        assert verdict["baselines_missing"] == ["persistence", "band_prior", "site_strength"]
 
 
 def test_marker_3_fails_under_75_and_is_not_measurable_with_few_outcomes():

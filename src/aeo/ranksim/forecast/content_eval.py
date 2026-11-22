@@ -74,7 +74,7 @@ FLIGHTS_H1_SEPARATOR = "@@"
 
 DFS_DATASET_PARTITION = "dataset=dfs_serp"
 DFS_US_LOCALE = "US_en"
-DFS_COLUMNS = ("locale", "keyword", "keyword_id", "snapshot_date", "rank", "site", "url", "title", "description", "main_domain_rank", "poison_window")
+DFS_COLUMNS = ("locale", "keyword", "keyword_id", "snapshot_date", "rank", "site", "url", "title", "description", "main_domain_rank", "poison_risk")
 
 EVAL_SEED = 20261122
 DEFAULT_SNIPPET_SEARCHES = 400
@@ -456,7 +456,12 @@ def _read_locale(panel_dir: Path, locale: str, columns: Sequence[str], keyword_i
 
     tables = []
     for part in sorted((panel_dir / f"locale={locale}").glob("*.parquet")):
-        table = pq.read_table(part, columns=list(columns))
+        # A part written before the column was renamed carries poison_window. Read it under the new name.
+        names = set(pq.read_schema(part).names)
+        legacy = "poison_risk" in columns and "poison_risk" not in names and "poison_window" in names
+        table = pq.read_table(part, columns=["poison_window" if legacy and c == "poison_risk" else c for c in columns])
+        if legacy:
+            table = table.rename_columns(["poison_risk" if c == "poison_window" else c for c in table.column_names])
         if keyword_ids is not None:
             table = table.filter(pc.is_in(table["keyword_id"], value_set=pa.array(sorted(keyword_ids))))
         tables.append(table.to_pandas())
@@ -480,7 +485,7 @@ def sample_dfs_searches(panel_dir: Path, locales: Sequence[str], n: int, *, seed
         chosen.setdefault(locale, set()).add(kid)
     frames = [_read_locale(panel_dir, locale, DFS_COLUMNS, ids) for locale, ids in sorted(chosen.items())]
     rows = pd.concat(frames, ignore_index=True)
-    rows = rows[(rows["rank"] <= max(TOP_KS)) & (~rows["poison_window"].astype(bool)) & (~rows["site"].isin(EXCLUDED_SITES))]
+    rows = rows[(rows["rank"] <= max(TOP_KS)) & (~rows["poison_risk"].fillna(False).astype(bool)) & (~rows["site"].isin(EXCLUDED_SITES))]
     rows = rows.sort_values(["locale", "keyword_id", "rank", "url"]).drop_duplicates(["locale", "keyword_id", "rank"]).reset_index(drop=True)
     rows["search_id"] = rows["locale"] + "|" + rows["keyword_id"]
     return rows

@@ -1226,7 +1226,7 @@ def synthetic_training_set(
                     "snapshot_date": moment.date(), "rank": hit.rank, "rank_absolute": hit.rank_absolute, "domain": hit.domain,
                     "site": hit.site, "url": hit.url, "title": hit.title, "description": None, "is_new": None,
                     "previous_rank_absolute": None, "main_domain_rank": None, "page_rank": None, "etv": None, "kd": None,
-                    "search_volume": None, "intent": None, "items_count": None, "se_results_count": None, "poison_window": False,
+                    "search_volume": None, "intent": None, "items_count": None, "se_results_count": None, "poison_risk": False,
                 })
         folder = panel_dir / f"dataset={SYNTHETIC_DATASET}" / f"locale={SYNTHETIC_LOCALE}"
         folder.mkdir(parents=True, exist_ok=True)

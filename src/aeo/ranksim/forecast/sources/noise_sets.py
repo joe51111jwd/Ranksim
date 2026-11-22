@@ -451,7 +451,7 @@ def run_noise(*, panel_dir: str | Path | None = None, dobbs_dir: str | Path | No
     from .panel import load_panel
 
     panel = load_panel(
-        ["dataset", "locale", "keyword_id", "snapshot_time", "rank", "site", "poison_window"],
+        ["dataset", "locale", "keyword_id", "snapshot_time", "rank", "site", "poison_risk"],
         datasets=[DATASET_HISTORY],
         panel_dir=panel_dir,
     )

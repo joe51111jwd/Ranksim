@@ -508,9 +508,9 @@ class SeedManifest:
                     continue
                 late = self.launched_by(day)
                 if late:
-                    first = sorted(late, key=lambda item: (item.launch_date, site_key(item.domain)))[0]
+                    first = min(late, key=lambda item: (item.launch_date or day, site_key(item.domain)))
                     raise ManifestError(
-                        f"{first.domain} launches on {first.launch_date.isoformat()}, on or before the day {label} "
+                        f"{first.domain} launches on {first.launch_date}, on or before the day {label} "
                         f"({day.isoformat()}). Searches are frozen before launch, or they could be chosen from early "
                         "rankings. For a backfilled pilot, record after_launch_reason in the manifest."
                     )

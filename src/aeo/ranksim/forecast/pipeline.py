@@ -1680,7 +1680,9 @@ def stage_calendar(scoreboard: Scoreboard, today: date, *, window_days: int = ST
                 missed.append(entry)
             elif day <= today + timedelta(days=window_days):
                 due.append(entry)
-    key = lambda item: (item["stage_date"], item["site"], item["stage"])  # noqa: E731
+    def key(item: dict[str, Any]) -> tuple[str, str, str]:
+        return (item["stage_date"], item["site"], item["stage"])
+
     return {"due": sorted(due, key=key), "missed": sorted(missed, key=key)}
 
 

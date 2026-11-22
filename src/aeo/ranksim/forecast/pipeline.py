@@ -131,7 +131,7 @@ from .scoreboard import (
     search_key,
 )
 from .seeds import SeedManifest, SeedSearch, SeedSite
-from .types import REAL, SYNTHETIC, SYNTHETIC_PROVIDERS, CleanReading, Forecast, Pull, PullSpec, SerpSource
+from .types import REAL, SYNTHETIC, CleanReading, Forecast, Pull, PullSpec, SerpSource, provider_is_synthetic
 
 PROVIDERS = ("dataforseo", "serper", "synthetic")
 PAID_PROVIDERS = ("dataforseo", "serper")
@@ -175,6 +175,8 @@ DEMO_READ_HOUR = 12
 DEMO_FORECAST_HOUR = 13
 DEMO_MARKER1_DAYS_BEFORE_LAUNCH = 7
 DEMO_DIFFICULTY_METRIC = "synthetic difficulty (true score at position 10 on the first day)"
+DEMO_TRAIN_POOL = 37  # more new sites in the same world; those whose day 90 is before the first demo launch train the bundle
+DEMO_BUNDLE = "demo-synthetic"
 
 
 # ----------------------------------------------------------------------------------------------
@@ -934,8 +936,11 @@ class ReadingRunSummary:
 
 
 def source_label(source: SerpSource) -> str:
-    """SYNTHETIC for a source of the simulated world, REAL for a provider of Google results."""
-    return SYNTHETIC if getattr(source, "name", None) in SYNTHETIC_PROVIDERS else REAL
+    """SYNTHETIC for a source of the simulated world or the DataForSEO sandbox (in any mode), REAL for Google results.
+
+    types.provider_is_synthetic is the one list: "dataforseo-sandbox-live" counts as the sandbox too.
+    """
+    return SYNTHETIC if provider_is_synthetic(getattr(source, "name", None)) else REAL
 
 
 def history_for(
@@ -1083,7 +1088,9 @@ def read_round(
     No reading is built here: `assemble` builds the readings of a UTC date from the stored pulls of
     its rounds. The record is a scoreboard freeze named read_round.<start time>.<hash> that lists the
     round's pull ids, so `assemble` reads the round suspects of each round from exactly its pulls.
-    A round that fails as a whole stores nothing and says why.
+    A round that fails as a whole says why. When the source had already paid for part of the round
+    (RoundFailed.pulls is not empty), those pulls are stored and recorded with the failure: they were
+    paid for, and the unsent ones are failed pulls, never empty results.
     """
     chosen = clock or SystemClock()
     before = ledger.spent_total if ledger is not None else None
@@ -1096,6 +1103,7 @@ def read_round(
         got = fetch_round(source, list(specs), now=chosen.now)
     except RoundFailed as error:
         failed = error.message
+        got = list(error.pulls)
     if got:
         scoreboard.store_batch(pulls=got)
         ids = sorted(pull.pull_id for pull in got)
@@ -1108,6 +1116,7 @@ def read_round(
             "started_at": started,
             "pull_ids": ids,
             "searches": len(specs),
+            **({"failed": failed} if failed else {}),
         })
     spent = (ledger.spent_total - before) if ledger is not None and before is not None else None
     return RoundRunSummary(
@@ -1574,10 +1583,43 @@ def grade(scoreboard: Scoreboard, today: date) -> dict[str, Any]:
 
 TRAINING_SPLIT = "train"
 TRAINING_SOURCE = "backtest"  # training cells come from the backtest's training split
+SITE_STRENGTH_NOTE_KEY = "baselines"  # forecast notes: {"baselines": {"site_strength": point}}, made at forecast time
 SITE_STRENGTH_MISSING = (
-    "The site strength only baseline is missing: strength.py (part 3, the site-strength map) is not finished, "
-    "so it is not computed yet. It will be wired in when strength.py is done. Until then markers 3 to 5 cannot pass."
+    "The site strength only baseline is missing: {why} The forecasting commands (upload and update) store it with "
+    "every forecast they make, from the bundle's site strength only model on the same date. Markers 3 to 5 cannot "
+    "pass while it is missing."
 )
+
+
+def site_strength_points(
+    scoreboard: Scoreboard, *, source: str, stage: str, as_of: date, model_version: str | None = None
+) -> tuple[dict[str, int] | None, str]:
+    """The site strength only baseline point of every graded forecast (forecast id -> point), and a plain sentence.
+
+    The point is the one the forecast stored when it was made (notes["baselines"]["site_strength"]): the
+    bundle's strength-only placement model on the same feature row and date, through the same appearance
+    gate, so it uses nothing later than the forecast. When any graded forecast lacks it the baseline is
+    missing as a whole (never filled in for part of the rows) and the sentence says how many lack it.
+    """
+    records = scoreboard.graded_records(source, stage, as_of, "original", model_version=model_version)
+    if not records:
+        return None, SITE_STRENGTH_MISSING.format(why=f"there is no graded {source} {stage} forecast as of {as_of}.")
+    ids = [record.forecast_id for record in records]
+    with Session(scoreboard.engine) as session:
+        notes = dict(session.execute(select(ForecastRow.forecast_id, ForecastRow.notes)
+                                     .where(ForecastRow.forecast_id.in_(ids))).all())
+    points: dict[str, int] = {}
+    for forecast_id in ids:
+        value = ((notes.get(forecast_id) or {}).get(SITE_STRENGTH_NOTE_KEY) or {}).get("site_strength")
+        if isinstance(value, int) and not isinstance(value, bool) and 1 <= value <= NT50:
+            points[forecast_id] = value
+    if len(points) < len(ids):
+        lacking = len(ids) - len(points)
+        return None, SITE_STRENGTH_MISSING.format(
+            why=f"{lacking} of {len(ids)} graded {source} {stage} forecasts carry no site strength only point "
+                "(made by a placeholder or before forecasting stored it).")
+    return points, (f"The site strength only baseline is the point each forecast stored when it was made, from the "
+                    f"bundle's strength-only model, on all {len(ids)} graded forecasts.")
 
 
 def band_prior_training(
@@ -1591,8 +1633,8 @@ def band_prior_training(
     out, so the band prior never sees a held-out site. The list is empty when none remain; the
     sentence then says why.
     """
-    held_out = {record.cell.site for record in scoreboard.graded_records(source, stage, as_of, "original",
-                                                                           model_version=model_version)}
+    fetched = scoreboard.graded_records(source, stage, as_of, "original", model_version=model_version)
+    held_out = {record.cell.site for record in report_module.held_out_records(fetched, source)[0]}
     training_source = "synthetic" if source == "synthetic" else TRAINING_SOURCE
     with Session(scoreboard.engine) as session:
         versions = sorted(set(session.scalars(
@@ -1622,22 +1664,39 @@ def band_prior_training(
 
 
 def stage_marker(
-    scoreboard: Scoreboard, *, source: str, stage: str, as_of: date, model_version: str | None = None
+    scoreboard: Scoreboard,
+    *,
+    source: str,
+    stage: str,
+    as_of: date,
+    model_version: str | None = None,
+    training_cells: Sequence[Any] | None = None,
+    training_note: str | None = None,
 ) -> dict[str, Any]:
     """The stage report for one source and stage, and the marker judged on it when the stage has one (3, 4 or 5).
 
-    The band prior baseline is fitted on graded training cells (see `band_prior_training`) when any
-    exist. The site strength only baseline is not computed yet. `baseline_notes` says in plain
-    sentences which required baseline is missing and why; the report and the marker never pass
-    while one is missing.
+    All four spec baselines are handed to report.stage_report when they can be built:
+    always NT50 and persistence (always), the band prior by difficulty fitted on graded training
+    cells (`band_prior_training`, or `training_cells` given by the caller with `training_note`,
+    for example a bundle's own training cells; sites must differ from the graded ones, which the
+    report checks), and the site strength only points each forecast stored when it was made
+    (`site_strength_points`). `baseline_notes` says in plain sentences where each came from or why
+    it is missing; the report and the marker never pass while one is missing.
     """
     scoreboard.require_verified()
-    training, band_note = band_prior_training(scoreboard, source=source, stage=stage, as_of=as_of, model_version=model_version)
+    if training_cells is not None:
+        training = list(training_cells)
+        band_note = training_note or (f"The band prior by difficulty is fitted on {len(training)} training cells given "
+                                      "by the caller.")
+    else:
+        training, band_note = band_prior_training(scoreboard, source=source, stage=stage, as_of=as_of,
+                                                  model_version=model_version)
+    strength, strength_note = site_strength_points(scoreboard, source=source, stage=stage, as_of=as_of,
+                                                   model_version=model_version)
     report = report_module.stage_report(scoreboard, source=source, stage=stage, as_of=as_of, model_version=model_version,
-                                        band_prior_training=training or None)
-    notes = [band_note]
-    if "site_strength" in (report.get("baselines_missing") or []):
-        notes.append(SITE_STRENGTH_MISSING)
+                                        band_prior_training=training or None,
+                                        extra_baselines={"site_strength": strength} if strength is not None else None)
+    notes = [band_note, strength_note]
     report["baseline_notes"] = notes
     report["notes"] = list(report.get("notes") or []) + notes
     number = STAGE_MARKERS.get(stage)
@@ -2149,10 +2208,16 @@ class DemoResult:
     export_check: dict[str, Any]
     lines: list[str] = field(default_factory=list)
     label: str = SYNTHETIC
+    training: dict[str, Any] = field(default_factory=dict)
+    forecast_runs: list[dict[str, Any]] = field(default_factory=list)
+    forecasts_skipped: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "label": self.label,
+            "training": self.training,
+            "forecast_runs": self.forecast_runs,
+            "forecasts_skipped": self.forecasts_skipped,
             "workdir": self.workdir,
             "seed": self.seed,
             "manifest_hash": self.manifest_hash,
@@ -2220,14 +2285,20 @@ def demo(
     sites: int = DEMO_SITES,
     pulls: int = DEFAULT_PULLS,
 ) -> DemoResult:
-    """Run the whole measuring flow on a small synthetic world. Every number it prints is SYNTHETIC.
+    """Run the whole flow on a small synthetic world. Every number it prints is SYNTHETIC.
 
-    Steps: build a world; write and freeze a seed manifest from its new sites; register it; freeze a
-    marker 1 sample and read it on two days 24 hours apart; read every site's searches on days 0, 7,
-    14, 30, 60 and 90 after its launch; record a persistence placeholder forecast for every stage;
-    grade at day 90; show that a late forecast, a replacement and an edit are refused; verify, export
-    and compare; print the stage reports and the marker evaluations.
+    Steps: build a world; train a SYNTHETIC bundle (trust, placement, updater) on new sites whose day 90
+    comes before the first demo launch, so the bundle knows nothing later than any forecast date; write
+    and freeze a seed manifest from the `sites` latest-launching new sites; import their agency forms and
+    register them; freeze a marker 1 sample and read it on two days 24 hours apart; read every site's
+    searches on days 0, 7, 14, 30, 60 and 90 after its launch; make the upload forecast on launch day
+    and update it on each stage day through the live path (forecasting.upload_or_update, features from
+    the stored readings); grade at day 90; show that a late forecast, a replacement and an edit are
+    refused; verify, export and compare; print the stage reports with all four baselines and the marker
+    evaluations, which can never pass because the data is synthetic.
     """
+    from . import forecasting
+    from .features import synthetic_strength
     from .synth import DEFAULT_KNOBS, World
 
     folder = Path(workdir)
@@ -2235,19 +2306,27 @@ def demo(
     database = folder / "scoreboard.db"
     if database.exists():
         raise ValueError(f"{database} already exists. The demo runs on a fresh folder.")
+    paths = ForecastPaths(root=folder)
 
     world = World(
         seed,
         niches=1,
         searches_per_niche=DEMO_SEARCHES_PER_NICHE,
         established_sites=DEMO_ESTABLISHED_SITES,
-        new_sites=sites,
+        new_sites=sites + DEMO_TRAIN_POOL,
         knobs=replace(DEFAULT_KNOBS, targets_per_site=DEMO_TARGETS_PER_SITE),
     )
-    new_sites = sorted(world.new_sites.values(), key=lambda info: (info.launch_date, info.site))
-    if not new_sites:
-        raise ValueError("The demo needs at least one new site.")
+    reachable = sorted((info for info in world.new_sites.values() if info.launch_date + timedelta(days=90) < world.end),
+                       key=lambda info: (info.launch_date, info.site))
+    if len(reachable) < sites or sites < 1:
+        raise ValueError("The demo needs at least one new site that reaches day 90 inside the world.")
+    new_sites = reachable[-sites:]
     earliest = new_sites[0].launch_date
+    train_sites = [info.site for info in reachable if info.launch_date + timedelta(days=90) < earliest]
+    trained = forecasting.train_synthetic(paths, world, name=DEMO_BUNDLE, sites=train_sites)
+    bundle = trained.bundle
+    assert bundle is not None
+    strength = synthetic_strength(world)
     marker1_a = max(world.start, earliest - timedelta(days=DEMO_MARKER1_DAYS_BEFORE_LAUNCH))
     marker1_b = marker1_a + timedelta(days=1)
     clock = VirtualClock(_at(marker1_a - timedelta(days=3), 9))
@@ -2296,11 +2375,24 @@ def demo(
 
     try:
         say(f"Demo on a simulated world, seed {seed}. Nothing here is a real Google result and nothing is accuracy.")
+        say(f"Trained bundle {bundle.version} on {len(train_sites)} other new sites of the same world, whose day 90 "
+            f"outcomes all come before the first demo launch. Training cutoff {bundle.training_cutoff}.")
+        say(f"Placement rows {trained.counts.get('upload_rows')}. Updater in use: "
+            f"{(trained.counts.get('updater') or {}).get('in_use')}.")
+        if trained.marker2 and trained.marker2.get("verdict"):
+            say(markers_module.render_marker_text(trained.marker2["verdict"]))
+        elif trained.marker2:
+            say(f"Marker 2 on held-out training sites: not measured, {trained.marker2.get('note')}.")
         say(f"Seed manifest frozen with hash {digest} at {manifest_path}.")
-        registered = register_manifest(board, manifest, source="synthetic")
+        forms_dir = folder / "forms"
+        forms_dir.mkdir(parents=True, exist_ok=True)
+        for info in new_sites:
+            form_path = forms_dir / f"{info.site}.json"
+            form_path.write_text(json.dumps(world.agency_form(info.site), indent=2, sort_keys=True), encoding="utf-8")
+            import_form(paths, board, file=form_path)
+        say(f"Imported {len(new_sites)} agency forms before registering, so their brand names flag brand searches.")
+        registered = register_manifest(board, manifest, source="synthetic", paths=paths)
         say(f"Registered {registered.sites_added} sites and {registered.searches_added} searches. Manifest hash frozen as {registered.freeze_name}.")
-        board.register_model_version(PERSISTENCE_MODEL, description=PERSISTENCE_DESCRIPTION, frozen_at=clock.now())
-        say(f"Model version {PERSISTENCE_MODEL} frozen. It is a persistence placeholder, not a model.")
 
         specs_all = manifest_specs(manifest)
         sample, _ = freeze_marker1_sample(board, [spec.search for spec in specs_all], n=len(specs_all))
@@ -2322,7 +2414,10 @@ def demo(
                 forecast_events.setdefault(_at(site.launch_date + timedelta(days=offset), DEMO_FORECAST_HOUR), []).append((site, stage))
 
         runs: list[dict[str, Any]] = []
+        forecast_runs: list[dict[str, Any]] = []
         recorded = 0
+        skipped = 0
+        versions: dict[str, str] = {}
         for moment in sorted(set(reads) | set(forecast_events)):
             clock.set(moment)
             if moment in reads:
@@ -2332,19 +2427,24 @@ def demo(
             for site, stage in sorted(forecast_events.get(moment, []), key=lambda item: (item[0].domain, item[1])):
                 assert site.launch_date is not None
                 as_of = site.launch_date + timedelta(days=STAGE_DAYS[stage])
-                for item in site.searches:
-                    forecast, inputs = persistence_forecast(
-                        board, site=site.domain, search=item.search, stage=stage, as_of=as_of,
-                        location_code=manifest.location_code, device=manifest.device, now=clock.now(),
-                        target_url=item.target_url,
-                    )
-                    board.record_forecast(forecast, input_reading_ids=inputs)
-                    recorded += 1
+                run = forecasting.upload_or_update(board, paths, bundle=bundle, site=site.domain, stage=stage, day=as_of,
+                                                   now=clock.now(), record=True, strength=strength)
+                if run.blocked or run.missed or run.refused:
+                    raise RuntimeError(f"The demo forecast run was stopped: {run.blocked or run.missed or run.refused}")
+                recorded += len(run.recorded)
+                skipped += len(run.skipped)
+                for forecast in run.forecasts:
+                    versions.setdefault(stage, forecast.model_version)
+                forecast_runs.append({"site": run.site, "stage": stage, "as_of": as_of.isoformat(),
+                                      "recorded": len(run.recorded), "skipped": len(run.skipped), "gate": run.gate["tag"]})
         say(
             f"Took {len(runs)} reading runs: {sum(r['readings'] for r in runs)} readings from {sum(r['pulls_returned'] for r in runs)} pulls. "
             f"{sum(r['pulls_dropped'] for r in runs)} pulls were dropped by the filter and {sum(r['degraded'] for r in runs)} readings are degraded."
         )
-        say(f"Recorded {recorded} persistence placeholder forecasts (PREDICTED, model {PERSISTENCE_MODEL}).")
+        say(f"Recorded {recorded} forecasts through the live path (PREDICTED, bundle {bundle.version}): the upload forecast on "
+            "launch day and one update on each stage day, each built from the readings stored on or before its date.")
+        if skipped:
+            say(f"Skipped {skipped} cells with no clean reading on or before their date. They are not called NOT IN TOP 50.")
 
         m1 = marker1(board, list(sample.searches), location_code=manifest.location_code, device=manifest.device,
                      a_date=marker1_a, b_date=marker1_b)
@@ -2356,7 +2456,7 @@ def demo(
         graded = grade(board, today)
         say(grade_job.render_summary(graded))
 
-        refusals = _demo_refusals(board, manifest)
+        refusals = _demo_refusals(board, manifest, versions)
         for item in refusals:
             say(f"Refused as it should be, {item['attempt']}: {item['refusal']}")
 
@@ -2369,8 +2469,11 @@ def demo(
 
         reports: dict[str, dict[str, Any]] = {}
         evaluations: dict[str, dict[str, Any]] = {}
+        training_note = (f"The band prior by difficulty is fitted on the bundle's {len(trained.training_cells)} training "
+                         f"cells from {len(train_sites)} training sites, none of them graded here.")
         for stage in STAGE_DAYS:
-            result = stage_marker(board, source="synthetic", stage=stage, as_of=today)
+            result = stage_marker(board, source="synthetic", stage=stage, as_of=today,
+                                  training_cells=trained.training_cells, training_note=training_note)
             reports[stage] = result["report"]
             say(report_module.render_text(result["report"]))
             if result["evaluation"] is not None:
@@ -2393,6 +2496,9 @@ def demo(
             chain=status.to_dict(),
             export_check=comparison.to_dict(),
             lines=lines,
+            training=trained.to_dict(),
+            forecast_runs=forecast_runs,
+            forecasts_skipped=skipped,
         )
     finally:
         board.close()
@@ -2410,17 +2516,21 @@ def _skip_fsync(board: Scoreboard) -> None:
     board.engine.dispose()  # open connections are replaced by ones that carry the pragma
 
 
-def _demo_refusals(board: Scoreboard, manifest: SeedManifest) -> list[dict[str, Any]]:
-    """Try a late forecast, a replacement and an edit. Each must be refused. Returns what each refusal said."""
+def _demo_refusals(board: Scoreboard, manifest: SeedManifest, versions: Mapping[str, str]) -> list[dict[str, Any]]:
+    """Try a late forecast, a replacement and an edit. Each must be refused. Returns what each refusal said.
+
+    `versions` maps a stage to the model version the demo recorded there, so the replacement really
+    names the same (site, search, stage, model version) as a stored forecast.
+    """
     site = sorted(manifest.sites, key=lambda item: site_key(item.domain))[0]
     item = site.searches[0]
     assert site.launch_date is not None
     out: list[dict[str, Any]] = []
     late = Forecast(site=site.domain, search=item.search, stage="upload", as_of=site.launch_date + timedelta(days=30),
-                    point=NT50, range_low=NT50, range_high=NT50, label="out_of_reach", model_version=PERSISTENCE_MODEL)
+                    point=NT50, range_low=NT50, range_high=NT50, label="out_of_reach", model_version=versions["upload"])
     out.append(_expect_refusal("a late upload forecast dated 30 days after launch", lambda: board.record_forecast(late)))
     again = Forecast(site=site.domain, search=item.search, stage="d30", as_of=site.launch_date + timedelta(days=30),
-                     point=1, range_low=1, range_high=3, label="contested", model_version=PERSISTENCE_MODEL)
+                     point=1, range_low=1, range_high=3, label="contested", model_version=versions["d30"])
     out.append(_expect_refusal("a second d30 forecast that would replace the first", lambda: board.record_forecast(again)))
 
     def edit() -> None:

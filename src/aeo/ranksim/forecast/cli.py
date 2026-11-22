@@ -21,8 +21,8 @@ Rules every command follows:
 
 Each command is one small function `cmd_<name>(ctx, args) -> int`. They share
 one `Context` that opens the scoreboard, the spend ledger and a result-page
-source. A later step adds the forecasting commands (upload, update, backtest,
-train) the same way: one parser function, one command function.
+source. The forecasting commands (train, backtest, upload, update, due) live in
+cli_forecasting.py and the data commands in cli_data.py, plugged in the same way.
 """
 
 from __future__ import annotations
@@ -760,7 +760,11 @@ def cmd_read_round(ctx: Context, args: argparse.Namespace) -> int:
     if summary.freeze_name:
         lines.append(f"The round is recorded in the scoreboard as {summary.freeze_name}.")
     if summary.failed:
-        lines.append(f"The round failed and stored nothing: {summary.failed}")
+        if summary.pulls_returned:
+            lines.append(f"The round failed part way: {summary.failed} The {summary.pulls_returned} pulls it already holds "
+                         "were paid for and are stored.")
+        else:
+            lines.append(f"The round failed and stored nothing: {summary.failed}")
     lines.append(f"Spent {usd_text(summary.spent_usd or 0)}. Remaining {usd_text(ctx.ledger().remaining)}.")
     lines.append(f"No reading is built yet. After the last round of the day run: {PROG} assemble --date <UTC date>")
     ctx.emit(summary.to_dict(), lines)
@@ -879,7 +883,11 @@ def cmd_marker(ctx: Context, args: argparse.Namespace) -> int:
     if args.number == 1:
         return ctx.fail(f"Marker 1 is judged on two readings a day apart. Run: {PROG} marker1 report --location-code <city>")
     if args.number == 2:
-        return ctx.fail("Marker 2 is judged on the trust model. Its command is coming in the next step.")
+        from .cli_forecasting import marker2
+
+        return marker2(ctx)
+    if args.source is None:
+        return ctx.fail(f"Marker {args.number} is judged on one source. Add --source seed, pilot, backtest or synthetic.")
     stage = {3: "upload", 4: "d30", 5: "d60"}[args.number]
     result = pipeline.stage_marker(ctx.scoreboard(), source=args.source, stage=stage, as_of=_today(ctx, args.as_of),
                                    model_version=args.model_version)
@@ -1198,9 +1206,10 @@ def _register_grading(sub: Any, common: argparse.ArgumentParser) -> None:
     rep.add_argument("--as-of", type=_iso_date, default=None)
     rep.add_argument("--model-version", default=None)
     rep.set_defaults(handler=cmd_report)
-    marker = sub.add_parser("marker", parents=[common], help="judge marker 3, 4 or 5 on the scoreboard")
+    marker = sub.add_parser("marker", parents=[common],
+                            help="judge marker 2 on the newest trust report, or marker 3, 4 or 5 on the scoreboard")
     marker.add_argument("--number", type=int, choices=(1, 2, 3, 4, 5), required=True)
-    marker.add_argument("--source", choices=SOURCES, required=True)
+    marker.add_argument("--source", choices=SOURCES, default=None, help="needed for markers 3, 4 and 5")
     marker.add_argument("--as-of", type=_iso_date, default=None)
     marker.add_argument("--model-version", default=None)
     marker.set_defaults(handler=cmd_marker)

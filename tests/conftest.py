@@ -23,6 +23,7 @@ PROVIDER_ENV_VARS = (
     "GEMINI_API_KEY",
     "RANKSIM_LLM_MODEL",
     "RANKSIM_AUTHORITY",
+    "GOOGLE_APPLICATION_CREDENTIALS",
 )
 
 PAID_HOSTS = (
@@ -37,6 +38,10 @@ PAID_HOSTS = (
     "api.search.brave.com",
     "api.perplexity.ai",
     "generativelanguage.googleapis.com",
+    "sandbox.dataforseo.com",
+    "searchconsole.googleapis.com",
+    "www.googleapis.com",
+    "bigquery.googleapis.com",
 )
 
 

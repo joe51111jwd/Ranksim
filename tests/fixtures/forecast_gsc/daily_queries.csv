@@ -1,0 +1,7 @@
+date,query,page,clicks,impressions,ctr,position
+2026-12-03,emergency plumber leeds,https://seedsite.example/,1,4,0.2500,35.50
+2026-12-03,"""quoted query""",https://seedsite.example/,0,1,0.0000,62.00
+2026-12-04,boiler repair leeds,https://seedsite.example/boiler-repair/,0,6,0.0000,12.00
+2026-12-05,emergency plumber leeds,https://seedsite.example/,0,2,0.0000,29.00
+2026-12-05,other site query,https://www.excluded.example/page/,0,3,0.0000,9.00
+2026-12-06,boiler repair leeds,https://seedsite.example/boiler-repair/,1,3,0.3333,8.00

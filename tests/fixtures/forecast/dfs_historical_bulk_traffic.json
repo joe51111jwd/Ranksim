@@ -1,0 +1,103 @@
+{
+  "version": "0.1.20230705",
+  "status_code": 20000,
+  "status_message": "Ok.",
+  "time": "0.1397 sec.",
+  "cost": 0.103,
+  "tasks_count": 1,
+  "tasks_error": 0,
+  "tasks": [
+    {
+      "id": "07261403-6223-0563-0000-3d0a5c66407e",
+      "status_code": 20000,
+      "status_message": "Ok.",
+      "time": "0.0678 sec.",
+      "cost": 0.103,
+      "result_count": 1,
+      "path": [
+        "v3",
+        "dataforseo_labs",
+        "google",
+        "historical_bulk_traffic_estimation",
+        "live"
+      ],
+      "data": {
+        "api": "dataforseo_labs",
+        "function": "historical_bulk_traffic_estimation",
+        "se_type": "google",
+        "targets": [
+          "dataforseo.com",
+          "cnn.com",
+          "forbes.com"
+        ],
+        "location_code": 2840,
+        "language_code": "en",
+        "date_from": "2021-01-01",
+        "date_to": "2021-03-29",
+        "item_types": [
+          "organic",
+          "paid"
+        ]
+      },
+      "result": [
+        {
+          "se_type": "google",
+          "location_code": 2840,
+          "language_code": "en",
+          "total_count": 3,
+          "items_count": 3,
+          "items": [
+            {
+              "se_type": "google",
+              "target": "cnn.com",
+              "metrics": {
+                "organic": [
+                  {
+                    "year": 2021,
+                    "month": 3,
+                    "etv": 224412747.905034,
+                    "count": 16031288
+                  },
+                  {
+                    "year": 2021,
+                    "month": 2,
+                    "etv": 226712953.25628597,
+                    "count": 15936794
+                  },
+                  {
+                    "year": 2021,
+                    "month": 1,
+                    "etv": 97614973.29717998,
+                    "count": 9812595
+                  }
+                ],
+                "paid": [
+                  {
+                    "year": 2021,
+                    "month": 3,
+                    "etv": 1000.816,
+                    "count": 115
+                  },
+                  {
+                    "year": 2021,
+                    "month": 2,
+                    "etv": 1018.3889999999999,
+                    "count": 116
+                  },
+                  {
+                    "year": 2021,
+                    "month": 1,
+                    "etv": 18974.175,
+                    "count": 66
+                  }
+                ],
+                "local_pack": null,
+                "featured_snippet": null
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

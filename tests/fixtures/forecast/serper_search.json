@@ -1,0 +1,3 @@
+{"searchParameters":{"q":"example query","gl":"us","hl":"en","type":"search","num":10,"engine":"google"},
+ "organic":[{"title":"Example title","link":"https://example.com/page","displayedLink":"https://example.com › page","snippet":"...","date":"Mar 1, 2026","position":1}],
+ "credits":1}

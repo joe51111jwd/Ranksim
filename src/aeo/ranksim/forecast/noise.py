@@ -1,0 +1,595 @@
+"""Marker 1: how much two clean readings of one search, a day apart, agree.
+
+What is REAL here: the readings and pulls compared are observed Google result
+lists. The agreement numbers are statistics of those REAL readings. Nothing
+here is PREDICTED, and nothing here is a forecast. Agreement between two
+readings from the same city and device measures how repeatable the reader is.
+It does not show the reader is right (the two readings share any bias).
+
+Definitions (docs/plan/IMPLEMENTATION_SPEC.md section 3, OUR READING):
+
+- Unit: one (search, site). The headline set holds the sites in the top 10 of
+  either reading. The top-50 set holds the sites in the top 50 of either
+  reading. A unit absent from one reading is counted there at 51 (NT50), so a
+  site that enters or leaves is a disagreement unless the other position is 49
+  or 50. That edge is part of the frozen rule and is tested.
+- Agree: the two positions differ by 2 or less.
+- Bands use the better of the two positions: 1-3, 4-10, 11-20, 21-50.
+- Entry and exit: the share of top-10 units present in only one reading's top
+  10 (and the same for the top 50).
+- Grading rule agreement: reading A's position taken as the forecast of
+  reading B under grading.RULE_V1, over top-50 units, both directions averaged.
+- Pairs whose readings are degraded, more than 28 or less than 20 hours apart,
+  or from a different location or device are skipped and listed with the reason.
+- Intervals: bootstrap over searches (whole searches resampled). The Wilson
+  interval is printed beside it and is right only if units were independent.
+
+The raw single-pull baseline is measured on single pulls with the same
+definitions. It is never a quoted number.
+"""
+
+from __future__ import annotations
+
+import itertools
+import json
+import random
+import sys
+from collections import Counter
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any, Mapping, Sequence
+
+from .asof import parse_utc
+from .chain import canonical_json, sha256_text
+from .config import EXCLUDED_SITES, NT50, TOP_DEPTH
+from .grading import RULE_V1, fine_band_of
+from .reader import pull_site_positions, build_clean_reading, load_serper_chunk_pulls
+from .stats import cluster_bootstrap_ratio, wilson
+from .types import REAL, CleanReading, Pull
+
+AGREE_WITHIN = 2
+HEADLINE_DEPTH = 10
+MARKER1_SEARCHES = 300
+MARKER1_SAMPLE_SEED = 20261130
+MIN_GAP_HOURS = 20.0
+MAX_GAP_HOURS = 28.0
+AGREEMENT_BANDS = ("1-3", "4-10", "11-20", "21-50")
+
+SKIP_DEGRADED = "degraded reading"
+SKIP_GAP = "gap outside the window"
+SKIP_PLACE = "different location or device"
+SKIP_SEARCH = "different search"
+SKIP_NOT_OK = "raw pull not ok"
+
+COMMITTED_DAY = "2026-11-19"
+COMMITTED_LABELS = ("pull-a", "pull-b", "pull-c")
+DRY_RUN_LABEL = (
+    "DRY RUN ON COMMITTED PULLS. NOT MARKER 1. Top 10 only. No pinned city and no device. "
+    "Same day, three Serper pulls about 35 to 40 minutes apart, not a day apart. "
+    "The searches were chosen for a client. Rows for excluded sites are dropped."
+)
+
+
+@dataclass(frozen=True)
+class AgreementRow:
+    """One (search, site) unit compared between two readings. Absent is NT50 (51)."""
+
+    search: str
+    site: str
+    position_a: int
+    position_b: int
+    difference: int
+    agree: bool
+    top10_unit: bool
+    top50_unit: bool
+    entry_exit_top10: bool
+    entry_exit_top50: bool
+    band: str
+    grading_hit_a_as_forecast: bool
+    grading_hit_b_as_forecast: bool
+
+
+def _reading_positions(reading: CleanReading) -> dict[str, int]:
+    return {
+        entry.site: entry.position
+        for entry in reading.positions
+        if entry.position <= TOP_DEPTH and entry.site not in EXCLUDED_SITES
+    }
+
+
+def _rows(search: str, first: Mapping[str, int], second: Mapping[str, int]) -> list[AgreementRow]:
+    rows: list[AgreementRow] = []
+    for site in sorted(set(first) | set(second)):
+        if site in EXCLUDED_SITES:
+            continue
+        a = int(first.get(site, NT50))
+        b = int(second.get(site, NT50))
+        if a > TOP_DEPTH and b > TOP_DEPTH:
+            continue
+        a_top10, b_top10 = a <= HEADLINE_DEPTH, b <= HEADLINE_DEPTH
+        a_top50, b_top50 = a <= TOP_DEPTH, b <= TOP_DEPTH
+        rows.append(
+            AgreementRow(
+                search=search,
+                site=site,
+                position_a=a,
+                position_b=b,
+                difference=abs(a - b),
+                agree=abs(a - b) <= AGREE_WITHIN,
+                top10_unit=a_top10 or b_top10,
+                top50_unit=True,
+                entry_exit_top10=a_top10 != b_top10,
+                entry_exit_top50=a_top50 != b_top50,
+                band=fine_band_of(min(a, b)),
+                grading_hit_a_as_forecast=RULE_V1.is_hit(a, b),
+                grading_hit_b_as_forecast=RULE_V1.is_hit(b, a),
+            )
+        )
+    return rows
+
+
+def agreement(a: CleanReading, b: CleanReading) -> list[AgreementRow]:
+    """Per-unit rows for one search: every site in the top 50 of either reading.
+
+    `top10_unit` marks the headline set. Raises ValueError when the readings are of different searches.
+    """
+    if a.search != b.search:
+        raise ValueError(f"readings of different searches: {a.search!r} and {b.search!r}")
+    return _rows(a.search, _reading_positions(a), _reading_positions(b))
+
+
+def single_pull_agreement(a: Pull, b: Pull) -> list[AgreementRow]:
+    """The same rows for two single raw pulls (the measured baseline)."""
+    if a.spec.search != b.spec.search:
+        raise ValueError(f"pulls of different searches: {a.spec.search!r} and {b.spec.search!r}")
+    if not (a.ok and b.ok):
+        raise ValueError("a failed pull has no positions to compare")
+    return _rows(a.spec.search, pull_site_positions(a), pull_site_positions(b))
+
+
+# ---------------------------------------------------------------------------
+# Summaries
+
+
+def _ratio_block(values: Sequence[float], clusters: Sequence[str]) -> dict[str, Any]:
+    total = len(values)
+    got = float(sum(values))
+    low, high = cluster_bootstrap_ratio(list(values), [1.0] * total, list(clusters))
+    w_low, w_high = wilson(got, total)
+    whole = all(value in (0.0, 1.0) for value in values)
+    return {
+        "count": total,
+        "right": int(got) if whole else got,
+        "rate": got / total if total else None,
+        "cluster_interval": [low, high],
+        "wilson_interval_if_independent": [w_low, w_high],
+    }
+
+
+def _agree_block(rows: Sequence[AgreementRow]) -> dict[str, Any]:
+    return _ratio_block([1.0 if row.agree else 0.0 for row in rows], [row.search for row in rows])
+
+
+def summarize_rows(rows: Sequence[AgreementRow]) -> dict[str, Any]:
+    """Headline, top 50, bands, entry and exit, and grading-rule agreement for a set of rows."""
+    top10 = [row for row in rows if row.top10_unit]
+    top50 = [row for row in rows if row.top50_unit]
+    by_band = {band: _agree_block([row for row in top50 if row.band == band]) for band in AGREEMENT_BANDS}
+    moved10 = sum(1 for row in top10 if row.entry_exit_top10)
+    moved50 = sum(1 for row in top50 if row.entry_exit_top50)
+    grading = [
+        (float(row.grading_hit_a_as_forecast) + float(row.grading_hit_b_as_forecast)) / 2.0 for row in top50
+    ]
+    return {
+        "headline": _agree_block(top10),
+        "top50": _agree_block(top50),
+        "by_band": by_band,
+        "entry_exit": {
+            "top10": {"count": len(top10), "in_one_reading_only": moved10, "rate": moved10 / len(top10) if top10 else None},
+            "top50": {"count": len(top50), "in_one_reading_only": moved50, "rate": moved50 / len(top50) if top50 else None},
+        },
+        "grading_rule_agreement": {
+            "rule": RULE_V1.version,
+            "rule_hash": RULE_V1.rule_hash(),
+            **_ratio_block(grading, [row.search for row in top50]),
+        },
+        "present_in_both_top10": _agree_block([row for row in top10 if not row.entry_exit_top10]),
+        "searches": len({row.search for row in rows}),
+    }
+
+
+def _gap_hours(first: str, second: str) -> float:
+    return abs((parse_utc(second) - parse_utc(first)).total_seconds()) / 3600.0
+
+
+def _pair_problem(
+    search_a: str,
+    search_b: str,
+    place_a: tuple[int, str],
+    place_b: tuple[int, str],
+    gap_hours: float,
+    *,
+    min_gap_hours: float,
+    max_gap_hours: float,
+    enforce_gap: bool,
+) -> str | None:
+    if search_a != search_b:
+        return SKIP_SEARCH
+    if place_a != place_b:
+        return SKIP_PLACE
+    if enforce_gap and not (min_gap_hours <= gap_hours <= max_gap_hours):
+        return f"{SKIP_GAP}: {gap_hours:.2f} hours, window {min_gap_hours:g} to {max_gap_hours:g}"
+    return None
+
+
+def _skip_entry(search: str, reason: str) -> dict[str, str]:
+    return {"search": search, "reason": reason}
+
+
+def _reading_pairs_rows(
+    pairs: Sequence[tuple[CleanReading, CleanReading]], **window: Any
+) -> tuple[list[AgreementRow], int, list[dict[str, str]]]:
+    rows: list[AgreementRow] = []
+    used = 0
+    skipped: list[dict[str, str]] = []
+    for a, b in pairs:
+        if a.degraded or b.degraded:
+            skipped.append(_skip_entry(a.search, SKIP_DEGRADED))
+            continue
+        problem = _pair_problem(
+            a.search, b.search, (a.location_code, a.device), (b.location_code, b.device),
+            _gap_hours(a.taken_at, b.taken_at), **window,
+        )
+        if problem:
+            skipped.append(_skip_entry(a.search, problem))
+            continue
+        rows.extend(agreement(a, b))
+        used += 1
+    return rows, used, skipped
+
+
+def _raw_pairs_rows(pairs: Sequence[tuple[Pull, Pull]], **window: Any) -> tuple[list[AgreementRow], int, list[dict[str, str]]]:
+    rows: list[AgreementRow] = []
+    used = 0
+    skipped: list[dict[str, str]] = []
+    for a, b in pairs:
+        if not (a.ok and b.ok):
+            skipped.append(_skip_entry(a.spec.search, SKIP_NOT_OK))
+            continue
+        problem = _pair_problem(
+            a.spec.search, b.spec.search, (a.spec.location_code, a.spec.device), (b.spec.location_code, b.spec.device),
+            _gap_hours(a.completed_at, b.completed_at), **window,
+        )
+        if problem:
+            skipped.append(_skip_entry(a.spec.search, problem))
+            continue
+        rows.extend(single_pull_agreement(a, b))
+        used += 1
+    return rows, used, skipped
+
+
+def _skip_counts(skipped: Sequence[dict[str, str]]) -> dict[str, int]:
+    return dict(sorted(Counter(entry["reason"].split(":")[0] for entry in skipped).items()))
+
+
+def agreement_report(
+    pairs: Sequence[tuple[CleanReading, CleanReading]],
+    *,
+    raw_pairs: Sequence[tuple[Pull, Pull]] | None = None,
+    no_overlap_pairs: Sequence[tuple[CleanReading, CleanReading]] | None = None,
+    min_gap_hours: float = MIN_GAP_HOURS,
+    max_gap_hours: float = MAX_GAP_HOURS,
+    enforce_gap: bool = True,
+) -> dict[str, Any]:
+    """The marker 1 report for pairs of clean readings (A, B) of the same searches.
+
+    `raw_pairs` are single raw pulls of the same searches: the measured
+    baseline. `no_overlap_pairs` are the same readings rebuilt with the
+    overlap rule of the poisoned-page filter switched off: the ablation.
+    Degraded readings are never used.
+    """
+    if min_gap_hours > max_gap_hours:
+        raise ValueError("min_gap_hours is above max_gap_hours")
+    window = {"min_gap_hours": min_gap_hours, "max_gap_hours": max_gap_hours, "enforce_gap": enforce_gap}
+    rows, used, skipped = _reading_pairs_rows(pairs, **window)
+    summary = summarize_rows(rows)
+
+    raw_block: dict[str, Any] | None = None
+    if raw_pairs is not None:
+        raw_rows, raw_used, raw_skipped = _raw_pairs_rows(raw_pairs, **window)
+        raw_summary = summarize_rows(raw_rows)
+        raw_block = {
+            "headline": raw_summary["headline"],
+            "top50": raw_summary["top50"],
+            "by_band": raw_summary["by_band"],
+            "entry_exit": raw_summary["entry_exit"],
+            "present_in_both_top10": raw_summary["present_in_both_top10"],
+            "pairs_used": raw_used,
+            "pairs_skipped": raw_skipped,
+            "pairs_skipped_by_reason": _skip_counts(raw_skipped),
+            "searches": raw_summary["searches"],
+        }
+
+    ablation: dict[str, Any] | None = None
+    if no_overlap_pairs is not None:
+        ab_rows, ab_used, ab_skipped = _reading_pairs_rows(no_overlap_pairs, **window)
+        ab_summary = summarize_rows(ab_rows)
+        ablation = {
+            "headline": ab_summary["headline"],
+            "top50": ab_summary["top50"],
+            "pairs_used": ab_used,
+            "pairs_skipped_by_reason": _skip_counts(ab_skipped),
+            "searches": ab_summary["searches"],
+            "note": "Same readings with the overlap rule of the poisoned-page filter switched off.",
+        }
+
+    return {
+        "label": REAL,
+        "what": "Agreement of two clean readings of each search. Repeatability of the reader, not its accuracy.",
+        "headline": summary["headline"],
+        "top50": summary["top50"],
+        "by_band": summary["by_band"],
+        "entry_exit": summary["entry_exit"],
+        "grading_rule_agreement": summary["grading_rule_agreement"],
+        "present_in_both_top10": summary["present_in_both_top10"],
+        "raw_single_pull_baseline": raw_block,
+        "ablation_no_overlap_rule": ablation,
+        "pairs_used": used,
+        "pairs_skipped": skipped,
+        "pairs_skipped_by_reason": _skip_counts(skipped),
+        "searches": summary["searches"],
+        "definitions": {
+            "unit": "(search, site) in the top 10 of either reading; also reported over the top 50",
+            "absent": NT50,
+            "agree_within": AGREE_WITHIN,
+            "gap_hours": [min_gap_hours, max_gap_hours] if enforce_gap else None,
+            "interval": "bootstrap over searches; Wilson only if units were independent",
+            "bands_from": "the better of the two positions",
+        },
+    }
+
+
+def _ok_in_order(pulls: Sequence[Pull]) -> list[Pull]:
+    return sorted((pull for pull in pulls if pull.ok), key=lambda pull: (parse_utc(pull.requested_at), pull.pull_id))
+
+
+def marker1_report_from_pulls(
+    reading_pulls: Sequence[tuple[Sequence[Pull], Sequence[Pull]]],
+    *,
+    min_gap_hours: float = MIN_GAP_HOURS,
+    max_gap_hours: float = MAX_GAP_HOURS,
+    enforce_gap: bool = True,
+) -> dict[str, Any]:
+    """Build both readings of each search from their pulls, with and without the overlap rule, and report.
+
+    The raw baseline pairs the i-th OK pull of reading A with the i-th OK pull
+    of reading B (in requested order), so every single pull is used once.
+    """
+    pairs: list[tuple[CleanReading, CleanReading]] = []
+    plain: list[tuple[CleanReading, CleanReading]] = []
+    raw: list[tuple[Pull, Pull]] = []
+    for first, second in reading_pulls:
+        pairs.append((build_clean_reading(first), build_clean_reading(second)))
+        plain.append((build_clean_reading(first, overlap_rule=False), build_clean_reading(second, overlap_rule=False)))
+        raw.extend(zip(_ok_in_order(first), _ok_in_order(second)))
+    return agreement_report(
+        pairs,
+        raw_pairs=raw,
+        no_overlap_pairs=plain,
+        min_gap_hours=min_gap_hours,
+        max_gap_hours=max_gap_hours,
+        enforce_gap=enforce_gap,
+    )
+
+
+# ---------------------------------------------------------------------------
+# The frozen search sample
+
+
+@dataclass(frozen=True)
+class SearchSample:
+    """A frozen, seeded, stratified sample of searches. `sha256` covers the seed, n, strata and the list."""
+
+    searches: tuple[str, ...]
+    strata: tuple[tuple[str, str], ...]
+    seed: int
+    requested: int
+    candidates: int
+    per_stratum: tuple[tuple[str, int], ...]
+    sha256: str
+
+
+def sample_marker1_searches(
+    candidates: Sequence[str],
+    n: int = MARKER1_SEARCHES,
+    *,
+    seed: int = MARKER1_SAMPLE_SEED,
+    strata: Mapping[str, str] | None = None,
+) -> SearchSample:
+    """Draw `n` searches, stratified by `strata` (search -> stratum), proportional with largest remainders.
+
+    The result does not depend on the order of `candidates`. Duplicates are
+    folded. Every candidate must have a stratum when `strata` is given. When
+    there are n or fewer candidates, all are taken.
+    """
+    if n < 1:
+        raise ValueError("n must be at least 1")
+    unique = sorted({str(text).strip() for text in candidates if str(text).strip()})
+    if not unique:
+        raise ValueError("no candidate searches")
+    if strata is None:
+        assignment = {search: "all" for search in unique}
+    else:
+        missing = [search for search in unique if search not in strata]
+        if missing:
+            raise ValueError(f"{len(missing)} candidates have no stratum, for example {missing[0]!r}")
+        assignment = {search: str(strata[search]) for search in unique}
+    groups: dict[str, list[str]] = {}
+    for search in unique:
+        groups.setdefault(assignment[search], []).append(search)
+    names = sorted(groups)
+    take = min(n, len(unique))
+    exact = {name: take * len(groups[name]) / len(unique) for name in names}
+    quota = {name: int(exact[name]) for name in names}
+    left = take - sum(quota.values())
+    for name in sorted(names, key=lambda item: (-(exact[item] - quota[item]), item))[:left]:
+        quota[name] += 1
+
+    rng = random.Random(seed)
+    chosen: list[tuple[str, str]] = []
+    for name in names:
+        picked = rng.sample(groups[name], quota[name])
+        chosen.extend((name, search) for search in sorted(picked))
+    searches = tuple(search for _, search in chosen)
+    payload = {
+        "seed": seed,
+        "requested": n,
+        "candidates": unique,
+        "strata": {search: assignment[search] for search in unique},
+        "searches": list(searches),
+    }
+    return SearchSample(
+        searches=searches,
+        strata=tuple(chosen),
+        seed=seed,
+        requested=n,
+        candidates=len(unique),
+        per_stratum=tuple((name, quota[name]) for name in names),
+        sha256=sha256_text(canonical_json(payload)),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Dry run on the committed Serper pulls
+
+
+def _by_search(pulls: Sequence[Pull]) -> dict[str, Pull]:
+    out: dict[str, Pull] = {}
+    for pull in pulls:
+        if pull.spec.search in out:
+            raise ValueError(f"search {pull.spec.search!r} appears twice in one pull set")
+        out[pull.spec.search] = pull
+    return out
+
+
+def _brief(block: dict[str, Any]) -> dict[str, Any]:
+    return {key: block[key] for key in ("count", "right", "rate", "cluster_interval")}
+
+
+def _absent_as_11_block(rows: Sequence[AgreementRow]) -> dict[str, Any]:
+    """Top-10 union agreement with absent counted as 11 (the old top-10 repo rule). Only for comparison."""
+    top10 = [row for row in rows if row.top10_unit]
+    values = [
+        1.0 if abs(min(row.position_a, HEADLINE_DEPTH + 1) - min(row.position_b, HEADLINE_DEPTH + 1)) <= AGREE_WITHIN else 0.0
+        for row in top10
+    ]
+    return _brief(_ratio_block(values, [row.search for row in top10]))
+
+
+def dry_run_on_committed_pulls(root: str | Path = ".", *, day: str = COMMITTED_DAY, labels: Sequence[str] = COMMITTED_LABELS) -> dict[str, Any]:
+    """What the committed pulls can honestly show. It is NOT marker 1.
+
+    Loads `<root>/evals/claude/serp/<day>/<label>/chunk-NN.json.gz` for each
+    label, then measures with this module's definitions:
+
+    - single pull against single pull, every pair of labels, pooled;
+    - leave one out: each pull against the clean reading of the other two
+      (a 2-pull reading is degraded under the spec and is used here only as a
+      stability check);
+    - the 3-pull clean reading against each 2-pull reading;
+    - how many pulls the poisoned-page filter dropped.
+    """
+    base = Path(root) / "evals" / "claude" / "serp" / day
+    sets = {label: load_serper_chunk_pulls(base / label) for label in labels}
+    indexed = {label: _by_search(pulls) for label, pulls in sets.items()}
+    searches = sorted(set.intersection(*(set(found) for found in indexed.values())))
+    failed = {label: sum(1 for pull in pulls if not pull.ok) for label, pulls in sets.items()}
+
+    window = {"min_gap_hours": 0.0, "max_gap_hours": 0.0, "enforce_gap": False}
+    pair_results: dict[str, Any] = {}
+    pooled_raw: list[tuple[Pull, Pull]] = []
+    identical: dict[str, int] = {}
+    for x, y in itertools.combinations(labels, 2):
+        chosen = [(indexed[x][s], indexed[y][s]) for s in searches]
+        pooled_raw.extend(chosen)
+        rows, _, _ = _raw_pairs_rows(chosen, **window)
+        summary = summarize_rows(rows)
+        pair_results[f"{x} vs {y}"] = {
+            "headline": _brief(summary["headline"]),
+            "present_in_both_top10": _brief(summary["present_in_both_top10"]),
+        }
+        identical[f"{x} vs {y}"] = sum(
+            1 for a, b in chosen if a.ok and b.ok and [h.url for h in a.hits] == [h.url for h in b.hits]
+        )
+    raw_rows, raw_used, raw_skipped = _raw_pairs_rows(pooled_raw, **window)
+    raw_summary = summarize_rows(raw_rows)
+
+    loo_rows: list[AgreementRow] = []
+    three_two_rows: list[AgreementRow] = []
+    drops: Counter[str] = Counter()
+    degraded_three = 0
+    dropped_plain: Counter[str] = Counter()
+    for search in searches:
+        group = [indexed[label][search] for label in labels]
+        full = build_clean_reading(group)
+        degraded_three += int(full.degraded)
+        drops.update(reason.split(":")[0] for _, reason in full.dropped)
+        plain = build_clean_reading(group, overlap_rule=False)
+        dropped_plain.update(reason.split(":")[0] for _, reason in plain.dropped)
+        for held in range(len(group)):
+            if not group[held].ok:
+                continue
+            rest = build_clean_reading([pull for i, pull in enumerate(group) if i != held])
+            loo_rows.extend(_rows(search, pull_site_positions(group[held]), _reading_positions(rest)))
+            three_two_rows.extend(_rows(search, _reading_positions(full), _reading_positions(rest)))
+    loo = summarize_rows(loo_rows)
+    three_two = summarize_rows(three_two_rows)
+
+    return {
+        "label": DRY_RUN_LABEL,
+        "is_marker_1": False,
+        "inputs": {
+            "directory": str(base),
+            "labels": list(labels),
+            "pulls_loaded": {label: len(pulls) for label, pulls in sets.items()},
+            "pulls_failed": failed,
+            "searches_in_all_pulls": len(searches),
+            "excluded_sites_dropped": sorted(EXCLUDED_SITES),
+            "identical_ordered_url_lists": identical,
+        },
+        "single_pull_vs_single_pull": {
+            "pairs_used": raw_used,
+            "pairs_skipped_by_reason": _skip_counts(raw_skipped),
+            "headline_top10_union_absent_51": raw_summary["headline"],
+            "present_in_both_top10": raw_summary["present_in_both_top10"],
+            "comparison_only_top10_union_absent_11": _absent_as_11_block(raw_rows),
+            "entry_exit_top10": raw_summary["entry_exit"]["top10"],
+            "by_band": {band: _brief(raw_summary["by_band"][band]) for band in ("1-3", "4-10")},
+            "per_pair": pair_results,
+        },
+        "leave_one_out_pull_vs_other_two": {
+            "headline_top10_union_absent_51": loo["headline"],
+            "present_in_both_top10": loo["present_in_both_top10"],
+            "comparison_only_top10_union_absent_11": _absent_as_11_block(loo_rows),
+        },
+        "three_pull_reading_vs_two_pull_reading": {
+            "headline_top10_union_absent_51": three_two["headline"],
+            "present_in_both_top10": three_two["present_in_both_top10"],
+            "note": "The two readings share pulls, so this is an upper bound on stability, not a test.",
+        },
+        "filter_on_three_pull_readings": {
+            "readings": len(searches),
+            "degraded": degraded_three,
+            "dropped_by_reason": dict(sorted(drops.items())),
+            "dropped_by_reason_without_overlap_rule": dict(sorted(dropped_plain.items())),
+        },
+    }
+
+
+def _print_dry_run(root: str) -> None:
+    result = dry_run_on_committed_pulls(root)
+    print(json.dumps(result, indent=2, sort_keys=True))
+
+
+if __name__ == "__main__":
+    _print_dry_run(sys.argv[1] if len(sys.argv) > 1 else ".")

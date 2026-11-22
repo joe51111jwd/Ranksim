@@ -1,0 +1,3 @@
+date,year_month,query,country,device,clicks,impressions,ctr_percent,avg_position,position_bucket
+2026-12-03,2026-12,emergency plumber leeds,GBR,desktop,0,2,0.0,11.0,11-20
+2026-12-03,2026-12,emergency plumber leeds,GBR,mobile,1,4,25.0,7.5,4-10

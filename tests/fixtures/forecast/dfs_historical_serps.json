@@ -1,0 +1,107 @@
+{
+  "version": "0.1.20220216",
+  "status_code": 20000,
+  "status_message": "Ok.",
+  "time": "23.9825 sec.",
+  "cost": 0.0005,
+  "tasks_count": 1,
+  "tasks_error": 0,
+  "tasks": [
+    {
+      "id": "02171444-2806-0380-0000-3d1691a4ad1b",
+      "status_code": 20000,
+      "status_message": "Ok.",
+      "time": "23.9043 sec.",
+      "cost": 0.0005,
+      "result_count": 1,
+      "path": [
+        "v3",
+        "dataforseo_labs",
+        "google",
+        "historical_serps",
+        "live"
+      ],
+      "data": {
+        "api": "dataforseo_labs",
+        "function": "historical_serps",
+        "se_type": "google",
+        "keyword": "albert einstein",
+        "language_name": "English",
+        "location_code": 2840,
+        "date_from": "2021-08-01",
+        "date_to": "2021-10-01"
+      },
+      "result": [
+        {
+          "se_type": "google",
+          "keyword": "albert einstein",
+          "location_code": 2840,
+          "language_code": "en",
+          "total_count": 5,
+          "items_count": 5,
+          "items": [
+            {
+              "se_type": "google",
+              "keyword": "albert einstein",
+              "type": "organic",
+              "se_domain": "google.com",
+              "location_code": 2840,
+              "language_code": "en",
+              "check_url": "https://www.google.com/search?q=albert%20einstein&num=100&hl=en&gl=US&gws_rd=cr&ie=UTF-8&oe=UTF-8&uule=w+CAIQIFISCQs2MuSEtepUEUK33kOSuTsc",
+              "datetime": "2021-08-01 08:05:11 +00:00",
+              "spell": null,
+              "se_results_count": 85600000,
+              "items_count": 96,
+              "item_types": [
+                "answer_box",
+                "carousel",
+                "multi_carousel",
+                "..."
+              ],
+              "items": [
+                {
+                  "type": "organic",
+                  "rank_group": 1,
+                  "rank_absolute": 1,
+                  "position": "left",
+                  "xpath": "/html[1]/body[1]/div[7]/div[1]/div[9]/div[1]/div[1]/div[2]/div[2]/div[1]/div[1]/div[1]/div[1]",
+                  "domain": "dataforseo.com",
+                  "title": "SEO software API. API for agencies. Best SEO data API provider.",
+                  "url": "https://dataforseo.com/",
+                  "breadcrumb": "https://dataforseo.com",
+                  "is_image": false,
+                  "is_video": false,
+                  "is_featured_snippet": false,
+                  "is_malicious": false,
+                  "description": "DataForSEO – the best data provider for SEO-software companies and agencies ... We make our project live because we believe that we're helping companies to fill ...",
+                  "pre_snippet": null,
+                  "extended_snippet": null,
+                  "amp_version": false,
+                  "rating": null,
+                  "highlighted": [
+                    "DataForSEO"
+                  ],
+                  "main_domain": "dataforseo.com",
+                  "relative_url": "/",
+                  "etv": 15.199999809265137,
+                  "estimated_paid_traffic_cost": 119.4809799194336,
+                  "rank_changes": {
+                    "previous_rank_absolute": 1,
+                    "is_new": false,
+                    "is_up": false,
+                    "is_down": false
+                  },
+                  "backlinks_info": null,
+                  "rank_info": {
+                    "page_rank": 0,
+                    "main_domain_rank": 746
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

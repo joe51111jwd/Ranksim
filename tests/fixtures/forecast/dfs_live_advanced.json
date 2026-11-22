@@ -1,0 +1,85 @@
+{
+  "version": "0.1.20200129",
+  "status_code": 20000,
+  "status_message": "Ok.",
+  "time": "0.3059 sec.",
+  "cost": 0.003,
+  "tasks_count": 1,
+  "tasks_error": 0,
+  "tasks": [
+    {
+      "id": "11151456-0696-0066-0000-002a5915da37",
+      "status_code": 20000,
+      "status_message": "Ok.",
+      "time": "0.0952 sec.",
+      "cost": 0.003,
+      "result_count": 1,
+      "path": [
+        "v3",
+        "serp",
+        "google",
+        "organic",
+        "advanced",
+        "live"
+      ],
+      "data": {
+        "api": "serp",
+        "function": "live",
+        "se": "google",
+        "se_type": "organic",
+        "language_name": "English",
+        "location_name": "United States",
+        "keyword": "flight ticket new york san francisco",
+        "tag": "tag2",
+        "device": "desktop",
+        "os": "windows"
+      },
+      "result": [
+        {
+          "keyword": "flight ticket new york san francisco",
+          "type": "organic",
+          "se_domain": "google.com",
+          "location_code": 2840,
+          "language_code": "en",
+          "check_url": "https://www.google.com/search?q=flight%20ticket%20new%20york%20san%20francisco&num=100&hl=en&gl=US&gws_rd=cr&ie=UTF-8&oe=UTF-8&uule=w+CAIQIFISCQs2MuSEtepUEUK33kOSuTsc",
+          "datetime": "2019-11-15 12:57:46 +00:00",
+          "spell": null,
+          "se_results_count": 85600000,
+          "pages_count": 1,
+          "items_count": 96,
+          "item_types": [
+            "answer_box",
+            "app",
+            "carousel",
+            "multi_carousel",
+            "..."
+          ],
+          "items": [
+            {
+              "type": "organic",
+              "rank_group": 26,
+              "rank_absolute": 30,
+              "page": 1,
+              "position": "left",
+              "xpath": "/html[1]/body[1]/div[7]/div[1]/div[9]/div[1]/div[1]/div[2]/div[2]/div[1]/div[1]/div[29]",
+              "domain": "www.t-mobile.com",
+              "title": "Apple iPhone 12 Pro 5G | 4 colors in 512GB, 256GB & 128GB",
+              "url": "https://www.t-mobile.com/cell-phone/apple-iphone-12-pro",
+              "breadcrumb": "https://www.t-mobile.com › Phones › Apple",
+              "website_name": "T-Mobile",
+              "checks": [
+                "is_image"
+              ],
+              "description": "Get a great deal on the 5G-ready Apple iPhone 12 Pro. See all the features, specs, price and get it on T-Mobile.",
+              "pre_snippet": null,
+              "extended_snippet": "Rating: 4 · ‎231 reviews · ‎US$30.00 to US$899.99 · ‎In stock",
+              "highlighted": null,
+              "links": null,
+              "related_result": "[...trimmed]"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

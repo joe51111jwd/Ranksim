@@ -1,0 +1,86 @@
+{
+  "version": "0.1.20200129",
+  "status_code": 20000,
+  "status_message": "Ok.",
+  "time": "0.3059 sec.",
+  "cost": 0,
+  "tasks_count": 1,
+  "tasks_error": 0,
+  "tasks": [
+    {
+      "id": "11151456-0696-0066-0000-002a5915da37",
+      "status_code": 20000,
+      "status_message": "Ok.",
+      "time": "0.0952 sec.",
+      "cost": 0,
+      "result_count": 1,
+      "path": [
+        "v3",
+        "serp",
+        "google",
+        "organic",
+        "task_get",
+        "regular",
+        "11151456-0696-0066-0000-002a5915da37"
+      ],
+      "data": {
+        "api": "serp",
+        "function": "task_get",
+        "se": "google",
+        "se_type": "organic",
+        "language_code": "en",
+        "location_code": 2840,
+        "keyword": "flight ticket new york san francisco",
+        "priority": "2",
+        "tag": "tag2",
+        "device": "desktop",
+        "os": "windows"
+      },
+      "result": [
+        {
+          "keyword": "flight ticket new york san francisco",
+          "type": "organic",
+          "se_domain": "google.com",
+          "location_code": 2840,
+          "language_code": "en",
+          "check_url": "https://www.google.com/search?q=flight%20ticket%20new%20york%20san%20francisco&num=100&hl=en&gl=US&gws_rd=cr&ie=UTF-8&oe=UTF-8&uule=w+CAIQIFISCQs2MuSEtepUEUK33kOSuTsc",
+          "datetime": "2019-11-15 12:57:46 +00:00",
+          "spell": null,
+          "item_types": [
+            "featured_snippet",
+            "organic",
+            "paid",
+            "ai_overview"
+          ],
+          "se_results_count": 85600000,
+          "pages_count": 1,
+          "items_count": 96,
+          "items": [
+            {
+              "type": "organic",
+              "rank_group": 1,
+              "rank_absolute": 6,
+              "page": 1,
+              "domain": "www.skyscanner.com",
+              "title": "Cheap flights from New York to San Francisco SFO from $123 ...",
+              "description": "Flight information New York to San Francisco International .... tool will help you find the cheapest tickets from New York in San Francisco in just a few clicks.",
+              "url": "https://www.skyscanner.com/routes/nyca/sfo/new-york-to-san-francisco-international.html",
+              "breadcrumb": "https://www.skyscanner.com › United States › New York"
+            },
+            {
+              "type": "organic",
+              "rank_group": 2,
+              "rank_absolute": 7,
+              "page": 1,
+              "domain": "www.expedia.com",
+              "title": "JFK to SFO: Flights from New York to San Francisco for 2019 ...",
+              "description": "Book your New York (JFK) to San Francisco (SFO) flight with our Best Price ... How much is a plane ticket to San Francisco (SFO) from New York (JFK)?.",
+              "url": "https://www.expedia.com/lp/flights/jfk/sfo/new-york-to-san-francisco",
+              "breadcrumb": "https://www.expedia.com › flights › jfk › sfo › new-york-to-san-francisco"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

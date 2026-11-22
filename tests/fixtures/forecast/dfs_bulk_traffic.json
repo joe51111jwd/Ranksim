@@ -1,0 +1,69 @@
+{
+  "version": "0.1.20210917",
+  "status_code": 20000,
+  "status_message": "Ok.",
+  "time": "0.2930 sec.",
+  "cost": 0.0103,
+  "tasks_count": 1,
+  "tasks_error": 0,
+  "tasks": [
+    {
+      "id": "11261921-1535-0365-0000-33f1d9943d3e",
+      "status_code": 20000,
+      "status_message": "Ok.",
+      "time": "0.2426 sec.",
+      "cost": 0.0103,
+      "result_count": 1,
+      "path": [
+        "v3",
+        "dataforseo_labs",
+        "google",
+        "bulk_traffic_estimation",
+        "live"
+      ],
+      "data": {
+        "api": "dataforseo_labs",
+        "function": "bulk_traffic_estimation",
+        "se_type": "google",
+        "targets": [
+          "dataforseo.com",
+          "cnn.com",
+          "forbes.com"
+        ],
+        "location_code": 2840,
+        "language_code": "en",
+        "item_types": [
+          "organic",
+          "paid"
+        ]
+      },
+      "result": [
+        {
+          "se_type": "google",
+          "location_code": 2840,
+          "language_code": "en",
+          "total_count": 3,
+          "items_count": 3,
+          "items": [
+            {
+              "se_type": "google",
+              "target": "cnn.com",
+              "metrics": {
+                "organic": {
+                  "etv": 217332878.18734226,
+                  "count": 11786473
+                },
+                "paid": {
+                  "etv": 0,
+                  "count": 0
+                },
+                "local_pack": null,
+                "featured_snippet": null
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

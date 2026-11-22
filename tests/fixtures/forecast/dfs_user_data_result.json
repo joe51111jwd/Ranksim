@@ -1,0 +1,19 @@
+{
+  "login": "support@dataforseo.com",
+  "timezone": "Europe/Kiev",
+  "money": {
+    "total": 1,
+    "balance": -3809.628325,
+    "limits": "...",
+    "statistics": "..."
+  },
+  "price": {
+    "serp": {
+      "task_post": {
+        "priority_low": [{"cost_type": "per_request", "cost": 0.0006}],
+        "priority_normal": [{"cost_type": "per_request", "cost": 0.0006}],
+        "priority_high": [{"cost_type": "per_request", "cost": 0.0012}]
+      }
+    }
+  }
+}

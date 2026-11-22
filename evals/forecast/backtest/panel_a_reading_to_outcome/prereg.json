@@ -1,0 +1,159 @@
+{
+  "frozen_at": "2026-11-22T20:13:14Z",
+  "payload": {
+    "baselines": [
+      "always_nt50",
+      "persistence",
+      "band_prior",
+      "site_strength",
+      "the updater version not in use (table or model)",
+      "placement_prior_no_reading"
+    ],
+    "cells": "Every site in the top 100 of a page (the reading). The outcome is the FIRST later page of the same search whose gap is inside the window. Outcome position 1 to 50; NT50 when deeper or absent from a page at least 50 deep; absent from a shallower page is dropped and counted. Train: training search groups, outcome before the cutoff. Test: held-out search groups, reading on or after the cutoff. Subsets: all, new to the search at the reading (not on any earlier page; unknown on a search's first page), young sites. Windows chosen from the consecutive gap distribution (modes at 60 to 75 and 75 to 130 days), not from outcomes.",
+    "dataset": "panel dfs_history (DataForSEO sample databases), poison-risk pages dropped",
+    "feature_set": [
+      "own_score",
+      "gap_top10",
+      "gap_top20",
+      "gap_top50",
+      "q_top10",
+      "q_top20",
+      "q_top50",
+      "demand_top10_q25",
+      "demand_top10_q50",
+      "demand_top10_q75",
+      "demand_t11_20_q50",
+      "demand_t21_50_q50",
+      "trust_pred",
+      "trust_gap_top10",
+      "trust_q_top10",
+      "st_s_cc_hc",
+      "st_s_cc_pr",
+      "st_s_cc_hosts",
+      "st_s_crux",
+      "st_s_tranco",
+      "sd_age_days",
+      "sd_left_censored",
+      "sd_age_lower_bound_days",
+      "pg_kd",
+      "pg_log_volume",
+      "pg_depth",
+      "pg_sites_top10",
+      "new_to_search",
+      "lead_days",
+      "reading_position",
+      "reading_in_top50",
+      "reading_move",
+      "readings_count",
+      "prior_p_1-3",
+      "prior_p_4-10",
+      "prior_p_11-20",
+      "prior_p_21-50",
+      "prior_p_NT50",
+      "prior_point",
+      "lead_days",
+      "new_to_search",
+      "own_score",
+      "gap_top10",
+      "gap_top20",
+      "gap_top50",
+      "q_top10",
+      "q_top50",
+      "demand_top10_q50",
+      "demand_t21_50_q50",
+      "trust_pred",
+      "trust_gap_top10",
+      "pg_kd",
+      "sc_impressions_total",
+      "sc_clicks_total",
+      "sc_query_present_target",
+      "sc_avg_position_target",
+      "sc_impressions_slope"
+    ],
+    "model_versions": {
+      "placement": "placement-v1, fitted here on training cells",
+      "strength_only_forecaster": "strength-only-forecaster-v1 (fitted on training cells)",
+      "strength_score": "strength-v1 (data/forecast/models/strength/strength-v1-score.json, fitted on training pages)",
+      "trust": "trust-v1-free-lexical-all (fitted on training searches and training sites before the cutoff)",
+      "updater": "updater-table-v1 and updater-model-v2, fitted here"
+    },
+    "name": "panel_a_reading_to_outcome",
+    "notes": [
+      "The panel cannot give searches a site targets but never ranks for. Every cell exists because the site appeared on the search at least once. An upload-day forecast for a brand-new site, which is mostly not in the top 50, cannot be validated on it.",
+      "These cells are a stand-in. They are sites already seen on a search, read on a single country-level page, not brand-new domains at launch. A marker verdict here is about this stand-in only."
+    ],
+    "split": {
+      "search_test_share": 0.3,
+      "seed": 20261122,
+      "site_test_share": 0.3,
+      "time_cutoff": "2026-01-01",
+      "version": "strength-split-v1"
+    },
+    "thresholds": {
+      "bootstrap": {
+        "clusters": [
+          "search",
+          "site"
+        ],
+        "draws": 2000,
+        "seed": 20261122
+      },
+      "consecutive_page_gap_distribution": {
+        "bins": {
+          "(0, 2]": 2820,
+          "(105, 130]": 840,
+          "(130, 200]": 549,
+          "(2, 28]": 271,
+          "(200, 400]": 117,
+          "(28, 45]": 3105,
+          "(45, 60]": 1509,
+          "(60, 75]": 25893,
+          "(75, 90]": 4983,
+          "(90, 105]": 1313
+        },
+        "pairs": 41400,
+        "quantiles": {
+          "0.05": 0.460837495369213,
+          "0.1": 40.8864446577581,
+          "0.25": 60.333936831765044,
+          "0.5": 61.73632050440972,
+          "0.75": 69.58231124883392,
+          "0.9": 84.33172401209143,
+          "0.95": 96.33309183946643
+        }
+      },
+      "difficulty_kd_cuts_from_training_pages": [
+        0.0,
+        6.0
+      ],
+      "grading_rule": "v1",
+      "grading_rule_hash": "6b8797e2ba8ec50aa6ea9a7eafb62eeeefc66f6fe21da497f68b04ba8edc5906",
+      "label_thresholds": {
+        "locked": 0.8,
+        "out_of_reach": 0.8
+      },
+      "lead_floor_days": 28,
+      "min_count_to_print": 30,
+      "placement_point_rule": "median",
+      "prior_cross_fit_folds": 3,
+      "range_coverage": 0.8,
+      "train_cells_max": 200000,
+      "updater_model_replaces_table": "lower bound of model minus table on validation rows above 0",
+      "validation_share_of_training_search_groups": 0.2,
+      "young_site": "sd_young == 1 (start estimate under 730 days)"
+    },
+    "time_cutoff": "2026-01-01",
+    "version": "backtest-v1",
+    "windows_days": {
+      "lead_28_74": [
+        28.0,
+        74.999
+      ],
+      "lead_75_130": [
+        75.0,
+        130.0
+      ]
+    }
+  },
+  "sha256": "6387ef90f9078e268e0e40356674a5f983c5fefd1acbc7c7da82bf3dd8755a06"
+}

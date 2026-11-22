@@ -1,0 +1,127 @@
+{
+  "frozen_at": "2026-11-22T20:13:14Z",
+  "payload": {
+    "baselines": [
+      "always_nt50",
+      "persistence",
+      "band_prior",
+      "site_strength",
+      "page_middle",
+      "always_21_50"
+    ],
+    "cells": "Sites new to a search on a page (on no earlier page of it). Input: the latest page of the search dated 28 to 130 days before. Forecast date: that page's date. Outcome: the entrant's position on its page. CONDITIONAL on the site appearing: cells that never appear are missing, so this is not the upload-day hit rate.",
+    "dataset": "panel dfs_history (DataForSEO sample databases), poison-risk pages dropped",
+    "feature_set": [
+      "own_score",
+      "gap_top10",
+      "gap_top20",
+      "gap_top50",
+      "q_top10",
+      "q_top20",
+      "q_top50",
+      "demand_top10_q25",
+      "demand_top10_q50",
+      "demand_top10_q75",
+      "demand_t11_20_q50",
+      "demand_t21_50_q50",
+      "trust_pred",
+      "trust_gap_top10",
+      "trust_q_top10",
+      "st_s_cc_hc",
+      "st_s_cc_pr",
+      "st_s_cc_hosts",
+      "st_s_crux",
+      "st_s_tranco",
+      "sd_age_days",
+      "sd_left_censored",
+      "sd_age_lower_bound_days",
+      "pg_kd",
+      "pg_log_volume",
+      "pg_depth",
+      "pg_sites_top10",
+      "lead_days"
+    ],
+    "model_versions": {
+      "placement": "placement-v1, fitted here on training cells",
+      "strength_only_forecaster": "strength-only-forecaster-v1 (fitted on training cells)",
+      "strength_score": "strength-v1 (data/forecast/models/strength/strength-v1-score.json, fitted on training pages)",
+      "trust": "trust-v1-free-lexical-all (fitted on training searches and training sites before the cutoff)",
+      "updater": "updater-table-v1 and updater-model-v2, fitted here"
+    },
+    "name": "panel_c_entrant_placement",
+    "notes": [
+      "The panel cannot give searches a site targets but never ranks for. Every cell exists because the site appeared on the search at least once. An upload-day forecast for a brand-new site, which is mostly not in the top 50, cannot be validated on it.",
+      "Title match is left out: the entrant's title is only seen on the outcome page."
+    ],
+    "split": {
+      "search_test_share": 0.3,
+      "seed": 20261122,
+      "site_test_share": 0.3,
+      "time_cutoff": "2026-01-01",
+      "version": "strength-split-v1"
+    },
+    "thresholds": {
+      "bootstrap": {
+        "clusters": [
+          "search",
+          "site"
+        ],
+        "draws": 2000,
+        "seed": 20261122
+      },
+      "consecutive_page_gap_distribution": {
+        "bins": {
+          "(0, 2]": 2820,
+          "(105, 130]": 840,
+          "(130, 200]": 549,
+          "(2, 28]": 271,
+          "(200, 400]": 117,
+          "(28, 45]": 3105,
+          "(45, 60]": 1509,
+          "(60, 75]": 25893,
+          "(75, 90]": 4983,
+          "(90, 105]": 1313
+        },
+        "pairs": 41400,
+        "quantiles": {
+          "0.05": 0.460837495369213,
+          "0.1": 40.8864446577581,
+          "0.25": 60.333936831765044,
+          "0.5": 61.73632050440972,
+          "0.75": 69.58231124883392,
+          "0.9": 84.33172401209143,
+          "0.95": 96.33309183946643
+        }
+      },
+      "difficulty_kd_cuts_from_training_pages": [
+        0.0,
+        6.0
+      ],
+      "grading_rule": "v1",
+      "grading_rule_hash": "6b8797e2ba8ec50aa6ea9a7eafb62eeeefc66f6fe21da497f68b04ba8edc5906",
+      "label_thresholds": {
+        "locked": 0.8,
+        "out_of_reach": 0.8
+      },
+      "lead_floor_days": 28,
+      "mae_top30": "mean absolute error in places for entrants landing in 1 to 30: the model's median given 1 to 30, and its plain point (NT50 counted as 51), against 15.5 (the middle of the top 30)",
+      "min_count_to_print": 30,
+      "placement_point_rule": "median",
+      "prior_cross_fit_folds": 3,
+      "range_coverage": 0.8,
+      "train_cells_max": 200000,
+      "updater_model_replaces_table": "lower bound of model minus table on validation rows above 0",
+      "validation_share_of_training_search_groups": 0.2,
+      "young_site": "sd_young == 1 (start estimate under 730 days)"
+    },
+    "time_cutoff": "2026-01-01",
+    "version": "backtest-v1",
+    "windows_days": {
+      "input_page_gap": [
+        28.0,
+        130.0
+      ]
+    }
+  },
+  "sha256": "0d622bbda707187515632c8231440f524cc62c7d57eb208576b0d28cec2d9892"
+}

@@ -74,8 +74,8 @@ BAND_GRID: tuple[dict[str, Any], ...] = (
     {"num_leaves": 15, "min_data_in_leaf": 100},
     {"num_leaves": 31, "min_data_in_leaf": 200},
 )
-BAND_FIXED: dict[str, Any] = {"learning_rate": 0.05, "feature_fraction": 0.8, "bagging_fraction": 0.8, "bagging_freq": 1,
-                              "lambda_l2": 1.0, "max_rounds": 800, "early_stopping_rounds": 30}
+BAND_FIXED: dict[str, Any] = {"learning_rate": 0.1, "feature_fraction": 0.8, "bagging_fraction": 0.8, "bagging_freq": 1,
+                              "lambda_l2": 1.0, "max_rounds": 400, "early_stopping_rounds": 20}
 WITHIN_FIXED: dict[str, Any] = {"learning_rate": 0.05, "num_leaves": 15, "min_data_in_leaf": 50, "rounds": 200,
                                 "feature_fraction": 0.8, "bagging_fraction": 0.8, "bagging_freq": 1, "lambda_l2": 1.0}
 

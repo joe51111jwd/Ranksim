@@ -1,0 +1,10 @@
+{
+ "code_revision": "542274a71c754000a60ce39fd0a6f54c17ad24ca",
+ "label": "REAL",
+ "name": "panel_ceiling_single_pull",
+ "prereg_sha256": "6330dd0b21de69550f73944040cd92c44a31f35f38e060e0d41b6627e74557c1",
+ "report_file": "report-v1.json",
+ "report_sha256": "d419b1a9de498acbe7b3b3170fc33c599611d3150261f39f2eb50278756ca0c8",
+ "run_version": 1,
+ "written_at": "2026-11-22T20:14:09Z"
+}

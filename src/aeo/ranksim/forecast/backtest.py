@@ -932,16 +932,20 @@ def sample_training(frame: pd.DataFrame, cap: int, seed: int) -> pd.DataFrame:
 
 
 def cross_fitted_prior(train: pd.DataFrame, features: Sequence[str], *, label: str, seed: int,
-                       group_col: str = "search_group") -> np.ndarray:
-    """Out-of-fold prior distributions on training rows (folds by search group), so the updater never sees an in-sample prior."""
-    from .placement import group_folds
+                       group_col: str = "search_group", settings: Mapping[str, Any] | None = None) -> np.ndarray:
+    """Out-of-fold prior distributions on training rows (folds by search group), so the updater never sees an in-sample prior.
 
+    `settings` (the tree settings the main fit chose) skips the grid search in each fold.
+    """
+    from .placement import BAND_GRID, group_folds
+
+    grid = [dict(settings)] if settings else list(BAND_GRID)
     folds = group_folds(train[group_col].astype(str).tolist(), seed + 3, PRIOR_FOLDS)
     out = np.zeros((len(train), 51))
     for k in range(PRIOR_FOLDS):
         fit_rows = folds != k
         model = fit_placement(train[fit_rows], features, training_label=label, seed=seed + k, group_col=group_col,
-                              name=f"prior-fold{k}")
+                              name=f"prior-fold{k}", grid=grid)
         out[~fit_rows] = model.distributions(train[~fit_rows])
     return out
 
@@ -972,7 +976,7 @@ def panel_specs(design: PanelDesign, *, gaps: Mapping[str, Any], cuts: Sequence[
     a = BacktestSpec(
         name="panel_a_reading_to_outcome", windows_days=windows, feature_set=list(PANEL_PRIOR_FEATURES) + list(MODEL_FEATURES),
         model_versions=models, baselines=["always_nt50", "persistence", "band_prior", "site_strength",
-                                          "updater_table", "updater_model", "placement_prior_no_reading"],
+                                          "the updater version not in use (table or model)", "placement_prior_no_reading"],
         thresholds=thresholds,
         cells=("Every site in the top 100 of a page (the reading). The outcome is the FIRST later page of the same search whose "
                "gap is inside the window. Outcome position 1 to 50; NT50 when deeper or absent from a page at least 50 deep; "
@@ -1131,6 +1135,10 @@ def _run_panel_body(sp: pd.DataFrame, pages: pd.DataFrame, design: PanelDesign, 
         "top50_of_first_pull": summarize([c for c, p in zip(ceil_cells, ceil["position_in"]) if p <= TOP_DEPTH], cluster_by="search")["hit"],
         "held_out_searches": summarize([c for c, m in zip(ceil_cells, test_mask) if m], cluster_by="search")["hit"],
         "gap_days_median": float(ceil["gap_days"].median()) if len(ceil) else None,
+        "by_gap": {name: summarize([c for c, g in zip(ceil_cells, ceil["gap_days"]) if lo <= g < hi], cluster_by="search")["hit"]
+                   for name, lo, hi in (("under_half_a_day", 0.0, 0.5), ("half_a_day_to_two_days", 0.5, 2.0))},
+        "by_band_of_first_pull": {band: summarize([c for c, p in zip(ceil_cells, ceil["position_in"]) if fine_band_of(int(p)) == band],
+                                                  cluster_by="search")["hit"] for band in FINE_BANDS},
         "note": "Persistence of one pull as the forecast of the next pull under 2 days later, rule v1. Label noise, not a model.",
     }
     results["ceiling"] = write_run(specs["ceiling"].name, {"label": REAL, "ceiling": ceiling}, prereg_sha256=shas["ceiling"],
@@ -1150,13 +1158,17 @@ def _run_panel_body(sp: pd.DataFrame, pages: pd.DataFrame, design: PanelDesign, 
             log(f"A {name}: train {len(train)}, validation {len(val)}, test {len(test)} cells")
         use = pd.concat([train.assign(_side="train"), val.assign(_side="val"), test.assign(_side="test")], ignore_index=True)
         use = add_site_features(use, sp, pages, score=score, trust_model=trust_model, evidence=evidence, cuts=cuts, log=log)
+        _note(log, f"A {name}: features built")
         check_inputs_dated(use, date_cols=INPUT_DATE_COLS)
         train, val, test = (use[use["_side"] == s].reset_index(drop=True) for s in ("train", "val", "test"))
         check_held_out(test, split)
         check_outcome_depth(test)
         feats = list(PANEL_PRIOR_FEATURES)
         prior_model = fit_placement(train, feats, training_label=REAL, seed=design.seed, name=f"prior-{name}")
-        train_prior = cross_fitted_prior(train, feats, label=REAL, seed=design.seed)
+        _note(log, f"A {name}: prior placement fitted ({prior_model.cv.get('chosen')})")
+        train_prior = cross_fitted_prior(train, feats, label=REAL, seed=design.seed,
+                                         settings=(prior_model.cv.get("chosen") or {}).get("params"))
+        _note(log, f"A {name}: cross-fitted priors done")
         val_prior = prior_model.distributions(val)
         test_prior = prior_model.distributions(test)
         for frame, prior in ((train, train_prior), (val, val_prior), (test, test_prior)):
@@ -1169,6 +1181,7 @@ def _run_panel_body(sp: pd.DataFrame, pages: pd.DataFrame, design: PanelDesign, 
         except UpdaterError:
             model = None
         updater = choose_version(table, model, val, val_prior)
+        _note(log, f"A {name}: updater in use {updater.in_use}")
         models = ForecastModels(placement=prior_model, updater=updater)
         dists, forecasts = forecast_frame(test, models, stage="d30")
         test["forecast_label"] = [f.label for f in forecasts]
@@ -1182,8 +1195,12 @@ def _run_panel_body(sp: pd.DataFrame, pages: pd.DataFrame, design: PanelDesign, 
             "updater_table": [dist_median(d) for d in updater.distributions(test, test_prior, "table")],
             "placement_prior_no_reading": [dist_median(d) for d in test_prior],
         }
+        versions = {"updater_table": points["updater_table"]}
         if model is not None:
-            points["updater_model"] = [dist_median(d) for d in updater.distributions(test, test_prior, "model")]
+            versions["updater_model"] = [dist_median(d) for d in updater.distributions(test, test_prior, "model")]
+            points["updater_model"] = versions["updater_model"]
+        # The version in use is the model being graded. It is never also listed as its own baseline.
+        points.pop("updater_" + updater.in_use, None)
         train_cells = _cells_for(train, train["position_out"].astype(int).tolist(), "d30")
         notes = [PANEL_LIMIT_NOTE, STAND_IN_NOTE, f"Updater in use: {updater.in_use}. {updater.reason}"]
         as_of_report = max(as_date(d) for d in test["outcome_date"]) if len(test) else split.cutoff
@@ -1194,6 +1211,9 @@ def _run_panel_body(sp: pd.DataFrame, pages: pd.DataFrame, design: PanelDesign, 
                                  "range_level": prior_model.range_level, "cv": prior_model.cv,
                                  "calibration_on_its_fold": prior_model.calibration},
                  "point_diagnostics": point_diagnostics(prior_model, dists, test["position_out"].tolist()),
+                 "updater_versions_on_test": {k: float(np.mean([RULE_V1.is_hit(int(p), int(a)) for p, a in
+                                                                zip(v, test["position_out"])])) if len(test) else None
+                                              for k, v in versions.items()},
                  "train_rows": int(len(train)), "validation_rows": int(len(val))}
         subsets = {"all": test, "new_to_search": test[test["new_to_search"] == 1.0],
                    "young_sites": test[test["sd_young"] == 1.0]}
@@ -1673,6 +1693,11 @@ def _clean(obj: Any) -> Any:
 
 def _log(message: str) -> None:
     print(message, file=sys.stderr, flush=True)
+
+
+def _note(log: Callable[[str], None] | None, message: str) -> None:
+    if log:
+        log(f"{datetime.now(timezone.utc).strftime('%H:%M:%S')} {message}")
 
 
 def synthetic_spec(seeds: Sequence[int], base: SyntheticDesign) -> BacktestSpec:

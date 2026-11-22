@@ -1,0 +1,296 @@
+{
+ "ceiling": {
+  "all_searches": {
+   "band_match": {
+    "cluster_interval": [
+     0.8835205530570821,
+     0.8945233649539228
+    ],
+    "count": 154796,
+    "rate": 0.8890087599162769,
+    "right": 137615,
+    "wilson_interval_if_independent": [
+     0.8874342716984497,
+     0.8905639411229597
+    ]
+   },
+   "by_real_band": {
+    "1-10": {
+     "count": 22100,
+     "rate": 0.9447963800904977,
+     "right": 20880,
+     "share_of_outcomes": 0.14276854699087832
+    },
+    "11-20": {
+     "count": 19448,
+     "rate": 0.9036918963389552,
+     "right": 17575,
+     "share_of_outcomes": 0.12563632135197292
+    },
+    "21-50": {
+     "count": 50712,
+     "rate": 0.8862596624073198,
+     "right": 44944,
+     "share_of_outcomes": 0.32760536447970234
+    },
+    "NT50": {
+     "count": 62536,
+     "rate": 0.8903991301010618,
+     "right": 55682,
+     "share_of_outcomes": 0.40398976717744645
+    }
+   },
+   "cluster_by": "search",
+   "clusters": 1343,
+   "confusion_forecast_by_real": {
+    "1-10": {
+     "1-10": 20900,
+     "11-20": 1030,
+     "21-50": 176,
+     "NT50": 148
+    },
+    "11-20": {
+     "1-10": 1008,
+     "11-20": 16089,
+     "21-50": 2205,
+     "NT50": 496
+    },
+    "21-50": {
+     "1-10": 172,
+     "11-20": 2234,
+     "21-50": 44944,
+     "NT50": 6210
+    },
+    "NT50": {
+     "1-10": 20,
+     "11-20": 95,
+     "21-50": 3387,
+     "NT50": 55682
+    }
+   },
+   "design_effect": 8.09085149929011,
+   "grading_rule": "v1",
+   "grading_rule_hash": "6b8797e2ba8ec50aa6ea9a7eafb62eeeefc66f6fe21da497f68b04ba8edc5906",
+   "hit": {
+    "cluster_interval": [
+     0.8929502762436546,
+     0.903897057678159
+    ],
+    "count": 154796,
+    "rate": 0.8984792888705134,
+    "right": 139081,
+    "wilson_interval_if_independent": [
+     0.8969648609088341,
+     0.8999739397863682
+    ]
+   },
+   "hit_forecast_side_rule": {
+    "cluster_interval": [
+     0.8924563506108735,
+     0.9033853580921282
+    ],
+    "count": 154796,
+    "rate": 0.8980270808031215,
+    "right": 139011,
+    "wilson_interval_if_independent": [
+     0.8965096966310633,
+     0.8995247103730302
+    ]
+   },
+   "hit_under_both_rules": {
+    "cluster_interval": [
+     0.8842856218356179,
+     0.8955528674246798
+    ],
+    "count": 154796,
+    "rate": 0.8899454766273031,
+    "right": 137760,
+    "wilson_interval_if_independent": [
+     0.8883767613420667,
+     0.8914948384109252
+    ]
+   },
+   "page_one": {
+    "calls": 22254,
+    "minimum_count": 30,
+    "outcomes": 22100,
+    "precision": {
+     "cluster_interval": [
+      0.9344688459836705,
+      0.9438252948100725
+     ],
+     "count": 22254,
+     "measurable": true,
+     "rate": 0.9391570054821605,
+     "right": 20900,
+     "wilson_interval_if_independent": [
+      0.9359399262777632,
+      0.9422224973409925
+     ]
+    },
+    "recall": {
+     "cluster_interval": [
+      0.9415030419221306,
+      0.949665003668623
+     ],
+     "count": 22100,
+     "measurable": true,
+     "rate": 0.9457013574660633,
+     "right": 20900,
+     "wilson_interval_if_independent": [
+      0.9426355470970735,
+      0.948612249658118
+     ]
+    }
+   },
+   "point_pileup": {
+    "share_of_11_20_points_at_15": 0.10203050813213456,
+    "share_of_21_50_points_at_25": 0.036650485436893206
+   },
+   "range": {
+    "count": 0,
+    "coverage": null,
+    "covered": 0
+   }
+  },
+  "all_searches_site_clusters": {
+   "cluster_interval": [
+    0.89641712594676,
+    0.9006753514895807
+   ],
+   "count": 154796,
+   "rate": 0.8984792888705134,
+   "right": 139081,
+   "wilson_interval_if_independent": [
+    0.8969648609088341,
+    0.8999739397863682
+   ]
+  },
+  "by_band_of_first_pull": {
+   "1-3": {
+    "cluster_interval": [
+     0.9796711380558468,
+     0.9874210082082996
+    ],
+    "count": 7386,
+    "rate": 0.9836176550230166,
+    "right": 7265,
+    "wilson_interval_if_independent": [
+     0.9804611369853169,
+     0.9862713754521115
+    ]
+   },
+   "11-20": {
+    "cluster_interval": [
+     0.8100863173210171,
+     0.832561034500665
+    ],
+    "count": 19798,
+    "rate": 0.8212445701586019,
+    "right": 16259,
+    "wilson_interval_if_independent": [
+     0.8158453291197617,
+     0.826519171497624
+    ]
+   },
+   "21-50": {
+    "cluster_interval": [
+     0.8494006590255353,
+     0.8655993209254157
+    ],
+    "count": 53560,
+    "rate": 0.8575056011949216,
+    "right": 45928,
+    "wilson_interval_if_independent": [
+     0.8545195924609263,
+     0.8604403311928235
+    ]
+   },
+   "4-10": {
+    "cluster_interval": [
+     0.9317864409765678,
+     0.9441603201060187
+    ],
+    "count": 14868,
+    "rate": 0.9380548829701372,
+    "right": 13947,
+    "wilson_interval_if_independent": [
+     0.9340658675595189,
+     0.9418175955656275
+    ]
+   },
+   "NT50": {
+    "cluster_interval": [
+     0.9367285981773037,
+     0.9449489960051183
+    ],
+    "count": 59184,
+    "rate": 0.9408286023249527,
+    "right": 55682,
+    "wilson_interval_if_independent": [
+     0.9388989471569845,
+     0.9427010354391653
+    ]
+   }
+  },
+  "by_gap": {
+   "half_a_day_to_two_days": {
+    "cluster_interval": [
+     0.8559936790856673,
+     0.8740456478155073
+    ],
+    "count": 35151,
+    "rate": 0.8649825040539387,
+    "right": 30405,
+    "wilson_interval_if_independent": [
+     0.8613700471953255,
+     0.86851519578198
+    ]
+   },
+   "under_half_a_day": {
+    "cluster_interval": [
+     0.9021792509477248,
+     0.9142861847389415
+    ],
+    "count": 119645,
+    "rate": 0.9083204479919763,
+    "right": 108676,
+    "wilson_interval_if_independent": [
+     0.9066721658652779,
+     0.909942510956542
+    ]
+   }
+  },
+  "gap_days_median": 0.20010054531250002,
+  "held_out_searches": {
+   "cluster_interval": [
+    0.8801280845405771,
+    0.9014274019425462
+   ],
+   "count": 50756,
+   "rate": 0.8904563007329183,
+   "right": 45196,
+   "wilson_interval_if_independent": [
+    0.8877096011125591,
+    0.8931439015949898
+   ]
+  },
+  "label": "REAL",
+  "note": "Persistence of one pull as the forecast of the next pull under 2 days later, rule v1. Label noise, not a model.",
+  "pairs_of_pages": 2820,
+  "top50_of_first_pull": {
+   "cluster_interval": [
+    0.865131082008581,
+    0.8790777909700604
+   ],
+   "count": 95612,
+   "rate": 0.872264987658453,
+   "right": 83399,
+   "wilson_interval_if_independent": [
+    0.8701342383706675,
+    0.874365824735068
+   ]
+  }
+ },
+ "label": "REAL"
+}

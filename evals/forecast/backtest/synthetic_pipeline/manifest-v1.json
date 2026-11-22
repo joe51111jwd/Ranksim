@@ -1,0 +1,10 @@
+{
+ "code_revision": "542274a71c754000a60ce39fd0a6f54c17ad24ca",
+ "label": "SYNTHETIC",
+ "name": "synthetic_pipeline",
+ "prereg_sha256": "4c1bdbca6171c4707d3d1f9ee526cafc6fa0503d731cef8e635f7c8cd755d140",
+ "report_file": "report-v1.json",
+ "report_sha256": "099865b67652a7824681324e4b32a93df22bb85ba3294f9982a51b702f623c68",
+ "run_version": 1,
+ "written_at": "2026-11-22T21:17:23Z"
+}

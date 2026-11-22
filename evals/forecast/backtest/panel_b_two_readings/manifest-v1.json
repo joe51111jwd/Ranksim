@@ -1,0 +1,10 @@
+{
+ "code_revision": "542274a71c754000a60ce39fd0a6f54c17ad24ca",
+ "label": "REAL",
+ "name": "panel_b_two_readings",
+ "prereg_sha256": "90619111be11bc69717138d13d67cc8e43d53951bf5ac2e3a1d06fca15846c93",
+ "report_file": "report-v1.json",
+ "report_sha256": "232f43df0b79c7408cc4495c098d73f63d5714dc124e3cc3f7e2ae66b46e0fb1",
+ "run_version": 1,
+ "written_at": "2026-11-22T20:59:05Z"
+}

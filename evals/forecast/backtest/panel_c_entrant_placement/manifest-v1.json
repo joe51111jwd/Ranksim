@@ -1,0 +1,10 @@
+{
+ "code_revision": "542274a71c754000a60ce39fd0a6f54c17ad24ca",
+ "label": "REAL",
+ "name": "panel_c_entrant_placement",
+ "prereg_sha256": "0d622bbda707187515632c8231440f524cc62c7d57eb208576b0d28cec2d9892",
+ "report_file": "report-v1.json",
+ "report_sha256": "fa72a0b2745a4daee48aa90e4fb1f4809dff15d415534d87862824cb83fea53c",
+ "run_version": 1,
+ "written_at": "2026-11-22T21:06:08Z"
+}

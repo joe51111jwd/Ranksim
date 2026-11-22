@@ -1,0 +1,124 @@
+{
+  "frozen_at": "2026-11-22T20:13:14Z",
+  "payload": {
+    "baselines": [
+      "always_nt50",
+      "persistence",
+      "band_prior",
+      "site_strength",
+      "mean_of_two_readings"
+    ],
+    "cells": "Test A cells (first window) where the page just before the reading page exists and gives a known position (present, or absent from a page at least 50 deep). Same model form fitted twice on the same training rows: with the move between the two readings and the reading count, and without them. Scored on identical test cells.",
+    "dataset": "panel dfs_history (DataForSEO sample databases), poison-risk pages dropped",
+    "feature_set": [
+      "reading_position",
+      "reading_in_top50",
+      "reading_move",
+      "readings_count",
+      "prior_p_1-3",
+      "prior_p_4-10",
+      "prior_p_11-20",
+      "prior_p_21-50",
+      "prior_p_NT50",
+      "prior_point",
+      "lead_days",
+      "new_to_search",
+      "own_score",
+      "gap_top10",
+      "gap_top20",
+      "gap_top50",
+      "q_top10",
+      "q_top50",
+      "demand_top10_q50",
+      "demand_t21_50_q50",
+      "trust_pred",
+      "trust_gap_top10",
+      "pg_kd",
+      "sc_impressions_total",
+      "sc_clicks_total",
+      "sc_query_present_target",
+      "sc_avg_position_target",
+      "sc_impressions_slope"
+    ],
+    "model_versions": {
+      "placement": "placement-v1, fitted here on training cells",
+      "strength_only_forecaster": "strength-only-forecaster-v1 (fitted on training cells)",
+      "strength_score": "strength-v1 (data/forecast/models/strength/strength-v1-score.json, fitted on training pages)",
+      "trust": "trust-v1-free-lexical-all (fitted on training searches and training sites before the cutoff)",
+      "updater": "updater-table-v1 and updater-model-v2, fitted here"
+    },
+    "name": "panel_b_two_readings",
+    "notes": [
+      "The panel cannot give searches a site targets but never ranks for. Every cell exists because the site appeared on the search at least once. An upload-day forecast for a brand-new site, which is mostly not in the top 50, cannot be validated on it."
+    ],
+    "split": {
+      "search_test_share": 0.3,
+      "seed": 20261122,
+      "site_test_share": 0.3,
+      "time_cutoff": "2026-01-01",
+      "version": "strength-split-v1"
+    },
+    "thresholds": {
+      "bootstrap": {
+        "clusters": [
+          "search",
+          "site"
+        ],
+        "draws": 2000,
+        "seed": 20261122
+      },
+      "consecutive_page_gap_distribution": {
+        "bins": {
+          "(0, 2]": 2820,
+          "(105, 130]": 840,
+          "(130, 200]": 549,
+          "(2, 28]": 271,
+          "(200, 400]": 117,
+          "(28, 45]": 3105,
+          "(45, 60]": 1509,
+          "(60, 75]": 25893,
+          "(75, 90]": 4983,
+          "(90, 105]": 1313
+        },
+        "pairs": 41400,
+        "quantiles": {
+          "0.05": 0.460837495369213,
+          "0.1": 40.8864446577581,
+          "0.25": 60.333936831765044,
+          "0.5": 61.73632050440972,
+          "0.75": 69.58231124883392,
+          "0.9": 84.33172401209143,
+          "0.95": 96.33309183946643
+        }
+      },
+      "difficulty_kd_cuts_from_training_pages": [
+        0.0,
+        6.0
+      ],
+      "grading_rule": "v1",
+      "grading_rule_hash": "6b8797e2ba8ec50aa6ea9a7eafb62eeeefc66f6fe21da497f68b04ba8edc5906",
+      "label_thresholds": {
+        "locked": 0.8,
+        "out_of_reach": 0.8
+      },
+      "lead_floor_days": 28,
+      "min_count_to_print": 30,
+      "placement_point_rule": "median",
+      "prior_cross_fit_folds": 3,
+      "range_coverage": 0.8,
+      "train_cells_max": 200000,
+      "updater_model_replaces_table": "lower bound of model minus table on validation rows above 0",
+      "validation_share_of_training_search_groups": 0.2,
+      "young_site": "sd_young == 1 (start estimate under 730 days)"
+    },
+    "time_cutoff": "2026-01-01",
+    "version": "backtest-v1",
+    "windows_days": {
+      "lead_28_74": [
+        28.0,
+        74.999
+      ]
+    }
+  },
+  "sha256": "90619111be11bc69717138d13d67cc8e43d53951bf5ac2e3a1d06fca15846c93"
+}

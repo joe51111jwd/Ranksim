@@ -1,0 +1,10 @@
+{
+ "code_revision": "542274a71c754000a60ce39fd0a6f54c17ad24ca",
+ "label": "REAL",
+ "name": "panel_a_reading_to_outcome",
+ "prereg_sha256": "6387ef90f9078e268e0e40356674a5f983c5fefd1acbc7c7da82bf3dd8755a06",
+ "report_file": "report-v1.json",
+ "report_sha256": "2bff743de2ded9a410555894e4e32cea9d98e49594c1411276e7c010aac97110",
+ "run_version": 1,
+ "written_at": "2026-11-22T20:59:05Z"
+}

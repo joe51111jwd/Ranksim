@@ -1,0 +1,100 @@
+{
+  "frozen_at": "2026-11-22T21:06:44Z",
+  "payload": {
+    "baselines": [
+      "always_nt50",
+      "persistence",
+      "band_prior",
+      "site_strength"
+    ],
+    "cells": "Every held-out new site on its 20 target searches, forecast at upload and updated at day 7, 14, 30 and 60.",
+    "dataset": "synth.World (SYNTHETIC)",
+    "feature_set": [
+      "st_s_cc_hc",
+      "cl_s_cc_hc_q_top10",
+      "cl_s_cc_hc_q_top20",
+      "cl_s_cc_hc_q_top50",
+      "cl_s_cc_hc_gap_top10",
+      "cl_s_cc_hc_gap_top20",
+      "cl_s_cc_hc_gap_top50",
+      "pg_s_cc_hc_t10_q25",
+      "pg_s_cc_hc_t10_q50",
+      "pg_s_cc_hc_t10_q75",
+      "pg_s_cc_hc_t21_50_q50",
+      "pg_kd",
+      "pg_log_volume",
+      "fp_referring_domains",
+      "fp_brand_search_volume",
+      "fp_review_count",
+      "fp_review_rating",
+      "fp_links_planned",
+      "fp_press_planned",
+      "fp_pages_at_launch",
+      "trust_pred"
+    ],
+    "model_versions": {
+      "placement": "placement-v1",
+      "trust": "trust-v1 synthetic footprint",
+      "updater": "updater-table-v1 / updater-model-v2"
+    },
+    "name": "synthetic_pipeline",
+    "notes": [
+      "SYNTHETIC. It proves the machinery and shows the spread at plan size. Never accuracy."
+    ],
+    "split": {
+      "test_sites": 10,
+      "train_sites": 50,
+      "unit": "new site"
+    },
+    "thresholds": {
+      "design": {
+        "established_sites": 360,
+        "niches": 3,
+        "searches_per_niche": 30,
+        "seed": 3,
+        "test_share_seed": 20261122,
+        "test_sites": 10,
+        "train_sites": 50
+      },
+      "grading_rule": "v1",
+      "reader_pulls": 5,
+      "seeds": [
+        100,
+        101,
+        102,
+        103,
+        104,
+        105,
+        106,
+        107,
+        108,
+        109,
+        110,
+        111,
+        112,
+        113,
+        114,
+        115,
+        116,
+        117,
+        118,
+        119
+      ]
+    },
+    "time_cutoff": "none: sites are split",
+    "version": "backtest-v1",
+    "windows_days": {
+      "outcome_day": [
+        90
+      ],
+      "stages": [
+        0,
+        7,
+        14,
+        30,
+        60
+      ]
+    }
+  },
+  "sha256": "4c1bdbca6171c4707d3d1f9ee526cafc6fa0503d731cef8e635f7c8cd755d140"
+}

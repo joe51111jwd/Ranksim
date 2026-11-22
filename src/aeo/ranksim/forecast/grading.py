@@ -136,6 +136,11 @@ def _ratio_block(numer: Sequence[float], denom: Sequence[float], clusters: Seque
     }
 
 
+def ratio_block(numer: Sequence[float], denom: Sequence[float], clusters: Sequence[str]) -> dict[str, Any]:
+    """The shared shape of one reported rate: count, right, rate, cluster interval, Wilson interval."""
+    return _ratio_block(numer, denom, clusters)
+
+
 def summarize(cells: Sequence[GradedCell], rule: GradingRule = RULE_V1, *, cluster_by: str = "site") -> dict[str, Any]:
     """Every number reported for one set of graded forecasts. Brand cells are the caller's to split off."""
     if cluster_by not in ("site", "search"):

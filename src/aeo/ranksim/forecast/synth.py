@@ -75,6 +75,18 @@ Figures the noise is roughly calibrated to (from the maps, none re-measured here
 - Search Console: data after 2 to 3 days, rare queries anonymized, pages a user
   did not view are not recorded (r4-free-label-sources.md 3).
 
+What the default knobs give (measured on this generator, SYNTHETIC, seed 3,
+60 searches, 10 days of pulls, outages switched off): top-10 pair agreement
+0.905 between two pulls 40 minutes apart, 0.876 a day apart, 0.865 ten days
+apart (the measured 0.80 at ten days fell inside a core update and is not
+matched). Next-day within 2 places at 4 to 10: 0.79. Within 1 at 1 to 3: 0.88.
+Mean next-day move of pages still in the top 50: 0.58, 1.62, 3.08, 4.38 by
+band, so top pages move more than SEOmonitor's figures and deep pages a little
+less. Day-90 target cells over seeds 0 to 9: 0.106 in 1 to 10, 0.079 in 11 to
+20, 0.217 in 21 to 50, 0.598 beyond 50. The share beyond 50 averages 0.614
+over seeds 0 to 29 with 30 new sites each, from 0.44 to 0.70 per world, because
+cells of one site share its trust.
+
 The CTR curve, the Search Console view chances and the traffic detection floor
 are SYNTHETIC modelling choices, not measured numbers. They exist so the dated
 lists have a plausible shape. `tests/test_forecast_synth.py` checks the noise
@@ -115,6 +127,7 @@ DEFAULT_CITY_LOCATION_CODE = 1026201  # Austin, Texas, United States (City), per
 COUNTRY_LOCATION_CODE = 2840  # United States. Labs history is country level only.
 DEFAULT_START_MONTH = date(2025, 1, 1)
 SNAPSHOT_DEPTH = 100
+POISON_CHECK_TOP = 20  # a poisoned page keeps fewer than half of the true sites in its top 20
 TLD = "example"
 
 NICHE_NAMES = ("plumber", "dentist", "roofer", "electrician", "landscaper", "locksmith", "accountant", "veterinarian")
@@ -467,6 +480,8 @@ class World:
         difficulty = np.empty(n_searches)
         for q in range(n_searches):
             cand = np.flatnonzero(page_day[:, q] < 0)
+            if not len(cand):
+                raise ValueError(f"search {searches[q]['text']!r} has no established competitor. Add established_sites.")
             scores = np.sort(self._score(cand, q, 0))[::-1]
             difficulty[q] = scores[min(9, len(scores) - 1)]
         terciles = [""] * n_searches
@@ -762,6 +777,12 @@ class World:
         """Replace most slots with unrelated sites, keeping the rest of the true list in order."""
         share = rng.uniform(self.knobs.poison_replace_low, self.knobs.poison_replace_high)
         replace_slot = rng.random(len(sites)) < share
+        # DataForSEO's definition: fewer than half of the usual sites appear. Enforced on the top 20.
+        head = min(POISON_CHECK_TOP, len(sites))
+        kept_head = np.flatnonzero(~replace_slot[:head])
+        allowed = (head - 1) // 2
+        if len(kept_head) > allowed:
+            replace_slot[rng.choice(kept_head, size=len(kept_head) - allowed, replace=False)] = True
         strangers = list(rng.choice(len(self._unrelated), size=len(sites), replace=False))
         kept = iter(sites)
         out: list[str] = []

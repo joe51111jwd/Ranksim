@@ -28,6 +28,12 @@ synthetic) gets a SYNTHETIC verdict: `passed` is None, never True, and the
 value the bars would give is kept under `synthetic_check_passed`, so the code
 can still be tested end to end.
 
+A stand-in report (`stand_in` true, with `stand_in_reason`) holds cells that are
+not what the marker is about, for example the free panel's sites that already
+rank instead of new site launches. Its `passed` is None, never True or False,
+the value the bars would give is kept under `stand_in_passed`, and the text says
+in one sentence why it does not count.
+
 The plan's schedule is checked here too, with date arithmetic only.
 """
 
@@ -44,6 +50,8 @@ from .report import plain_date
 from .types import REAL, SYNTHETIC
 
 MARKER_MIN_COUNT = MIN_COUNT_TO_PRINT_RATE
+MARKER2_LINK_GAIN = "gain_over_link_count"
+MARKER2_BEST_SINGLE_GAIN = "gain_over_best_single_measure"
 _ISO_DATE = re.compile(r"\b\d{4}-\d{2}-\d{2}\b")
 SCHEDULE_DAYS = (7, 14, 30, 60, 90)
 
@@ -202,11 +210,35 @@ def is_synthetic_report(report: Mapping[str, Any]) -> bool:
     return report.get("label") == SYNTHETIC or report.get("source") == "synthetic"
 
 
+STAND_IN_DEFAULT_REASON = "its cells are not new site launches"
+
+
+def is_stand_in_report(report: Mapping[str, Any]) -> bool:
+    """True when the report says it is a stand-in (`stand_in` true): its cells are not what the plan's
+    marker is about, for example the free panel's sites that already rank instead of new launches."""
+    return bool(report.get("stand_in"))
+
+
+def _stand_in_reason(report: Mapping[str, Any]) -> str:
+    reason = str(report.get("stand_in_reason") or "").strip().rstrip(".")
+    return reason or STAND_IN_DEFAULT_REASON
+
+
+def stand_in_sentence(report: Mapping[str, Any]) -> str:
+    """One plain sentence that says the report is a stand-in and why it does not count."""
+    return (f"This is a stand-in, not the plan's marker: {_stand_in_reason(report)}, "
+            "so what the bars would give does not count as a pass or a fail.")
+
+
 def evaluate_marker(number: int, report: Mapping[str, Any]) -> dict[str, Any]:
     """Judge one marker on one report. passed is True, False, or None when it is not measurable yet.
 
     On a synthetic report the verdict is labeled SYNTHETIC and passed is None.
     The computed value is kept under synthetic_check_passed.
+    On a stand-in report (`stand_in` true, `stand_in_reason` says why) passed is None too and the
+    computed value is kept under stand_in_passed. A stand-in never passes or fails the plan's marker.
+    For marker 2 the report may carry `gain_over_link_count` (the verdict, the plan's wording) and
+    `gain_over_best_single_measure` (stricter, printed beside it with no bar).
     """
     item = marker(number)
     notes: list[str] = []
@@ -221,10 +253,21 @@ def evaluate_marker(number: int, report: Mapping[str, Any]) -> dict[str, Any]:
     elif number == 2:
         pairs = report.get("pairs") or {}
         checks.append(_rate_check(item.targets[0], pairs, item.min_count, notes))
+        # The verdict uses the gain over link count, the plan's wording (spec section 7). The gain
+        # over the best single measure is stricter and is printed beside it with no bar.
         gain = report.get("gain_over_link_count") or {}
         checks.append(
             _bound_check(item.targets[1], gain.get("difference_interval"), int(pairs.get("count") or 0), item.min_count, notes)
         )
+        for key in (MARKER2_LINK_GAIN, MARKER2_BEST_SINGLE_GAIN):
+            block = report.get(key)
+            if isinstance(block, Mapping):
+                interval = block.get("difference_interval")
+                extra[key] = {
+                    "difference": block.get("difference"),
+                    "difference_interval": list(interval) if interval else None,
+                    "baseline": block.get("baseline"),
+                }
         if report.get("counts"):
             extra["counts"] = dict(report["counts"])
     else:
@@ -234,21 +277,28 @@ def evaluate_marker(number: int, report: Mapping[str, Any]) -> dict[str, Any]:
     if passed is None and not notes:
         notes.append("Not measurable yet.")
     synthetic = is_synthetic_report(report)
+    stand_in = is_stand_in_report(report)
     if synthetic:
         notes.append("Synthetic results test the code. They cannot pass a marker.")
+    if stand_in:
+        notes.append(stand_in_sentence(report))
     result = {
         "marker": number,
         "name": item.name,
         "date": item.date.isoformat(),
         "markers_hash": markers_hash(),
         "label": SYNTHETIC if synthetic else REAL,
-        "passed": None if synthetic else passed,
+        "passed": None if (synthetic or stand_in) else passed,
         "checks": checks,
         "notes": notes,
     }
     if synthetic:
         result["synthetic_check_passed"] = passed
-    result.update(extra)
+    if stand_in:
+        result["stand_in"] = True
+        result["stand_in_reason"] = _stand_in_reason(report)
+        result["stand_in_passed"] = passed
+    result.update({key: value for key, value in extra.items() if key not in result})
     return result
 
 
@@ -345,13 +395,31 @@ def render_marker_text(result: Mapping[str, Any]) -> str:
             f"Marker {result['marker']}, {result['name']}: NOT A MARKER RESULT ({SYNTHETIC}). "
             f"Synthetic code check: {check} ({SYNTHETIC})."
         ]
+    elif result.get("stand_in"):
+        check = words[result.get("stand_in_passed")]
+        lines = [
+            f"Marker {result['marker']}, {result['name']}: NOT A MARKER RESULT (STAND-IN). "
+            f"What the bars would give on the stand-in: {check} ({result['label']})."
+        ]
     else:
         lines = [f"Marker {result['marker']}, {result['name']}: {words[result['passed']]} ({result['label']})."]
+    if result.get("stand_in") and result.get("label") == SYNTHETIC:
+        lines.append(f"It is also a stand-in. What the bars would give: {words[result.get('stand_in_passed')]} ({SYNTHETIC}).")
     for check in result["checks"]:
         state = {True: "met", False: "not met", None: "not measurable"}[check["ok"]]
         lines.append(
             f"Check {check['name']}: {_shown(check['value'])} against {_shown(check['target'])}, {state} ({result['label']})."
         )
+    for key, words_for in ((MARKER2_LINK_GAIN, "Gain over link count alone, the plan's measure"),
+                           (MARKER2_BEST_SINGLE_GAIN, "Gain over the best single measure, stricter and with no bar")):
+        gain = result.get(key)
+        if isinstance(gain, Mapping):
+            interval = gain.get("difference_interval") or [None, None]
+            base = f" ({gain['baseline']})" if gain.get("baseline") else ""
+            lines.append(
+                f"{words_for}{base}: {_shown(gain.get('difference'))}, interval {_shown(interval[0])} to "
+                f"{_shown(interval[1])} ({result['label']})."
+            )
     lines.extend(_plain_dates(note) for note in result["notes"])
     return "\n".join(lines).replace("\u2014", ",").replace("\u2013", " to ")
 

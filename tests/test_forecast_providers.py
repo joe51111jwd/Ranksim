@@ -905,3 +905,53 @@ def test_a_resubmission_the_approval_cannot_cover_keeps_the_pulls_already_collec
     assert len(queue.posts) == 1 and ledger.spent_total == Decimal("0.007200")
     assert alpha.ok and alpha.hits[0].site == "x.com"
     assert beta.ok is False and beta.status_code == 40103 and "Not resubmitted" in beta.status_message
+
+
+def test_estimate_with_keywords_equals_what_the_client_reserves(tmp_path):
+    clock = Clock()
+    ledger = ledger_for(tmp_path, clock)
+    checked: list[Decimal] = []
+    original = ledger.check
+
+    def check(item, kind, amount, *args, **kwargs):
+        checked.append(Decimal(amount))
+        return original(item, kind, amount, *args, **kwargs)
+
+    ledger.check = check  # type: ignore[method-assign]
+    words = ["alpha", "site:example.com alpha", "beta"]
+    queue = FakeQueue({word: [("ok", [organic(1, "c.com", "https://c.com/", 1)])] for word in words})
+    client = dfs_client(tmp_path, queue, clock, ledger)
+    source = DataForSeoSerpSource(client)
+    preview = source.estimate_cost(3, 50, keywords=words)
+    client.serp_fetch([spec(word) for word in words], max_resubmits=0)
+    assert checked and preview == float(checked[0])
+    assert preview > source.estimate_cost(3, 50)  # the operator search costs five times the pages
+    with pytest.raises(ValueError, match="one per pull"):
+        source.estimate_cost(2, 50, keywords=words)
+
+
+def test_every_source_accepts_keywords_in_its_estimate(tmp_path):
+    from aeo.ranksim.forecast.reader import ReplaySource
+    from aeo.ranksim.forecast.synth import SyntheticSource
+
+    clock = Clock()
+    serper = serper_source(tmp_path, lambda request: httpx.Response(500), clock, None)
+    assert serper.estimate_cost(2, 50, keywords=["a", "site:b.com c"]) == serper.estimate_cost(2, 50)
+    assert ReplaySource([]).estimate_cost(2, 50, keywords=["a", "b"]) == 0.0
+    assert SyntheticSource.estimate_cost(None, 2, 50, keywords=["a", "b"]) == 0.0  # type: ignore[arg-type]
+    sandbox = DataForSeoClient("test-login", SECRET, client=httpx.Client(transport=httpx.MockTransport(
+        lambda request: httpx.Response(500))), ledger=None, raw_dir=tmp_path / "raw", sleep=clock.sleep, now=clock.now,
+        base_url=DFS_SANDBOX)
+    assert DataForSeoSerpSource(sandbox).estimate_cost(1, 50, keywords=["site:x.com y"]) == 0.0
+
+
+def test_a_sandbox_round_is_labeled_synthetic_by_the_pipeline(tmp_path):
+    from aeo.ranksim.forecast.pipeline import source_label
+    from aeo.ranksim.forecast.types import SYNTHETIC as SYN
+
+    clock = Clock()
+    sandbox = DataForSeoClient("test-login", SECRET, client=httpx.Client(transport=httpx.MockTransport(
+        lambda request: httpx.Response(500))), ledger=None, raw_dir=tmp_path / "raw", sleep=clock.sleep, now=clock.now,
+        base_url=DFS_SANDBOX)
+    assert source_label(DataForSeoSerpSource(sandbox)) == SYN
+    assert source_label(DataForSeoSerpSource(dfs_client(tmp_path, FakeQueue({}), clock, None))) == "REAL"

@@ -249,6 +249,8 @@ def fetch_updates(
         "updates": [asdict(item) for item in sorted(updates, key=lambda item: (item.start, item.incident_id))],
     }
     path = cache_path(root)
+    if path.resolve() == PACKAGED_PATH.resolve():
+        raise ValueError("fetch_updates writes only the cache, never the packaged copy that ships with the code.")
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, indent=1, sort_keys=True), encoding="utf-8")
     record_source(path.parent, path.name, {"url": HISTORY_URL, "fetched_at": payload["fetched_at"],
@@ -265,19 +267,25 @@ def _from_payload(payload: dict[str, Any]) -> list[RankingUpdate]:
     return [RankingUpdate(**item) for item in payload.get("updates", [])]
 
 
-def load_updates(root: str | Path | None = None, path: str | Path | None = None) -> list[RankingUpdate]:
-    """The calendar with no network: the given file, else the newer of the cache file and the packaged copy."""
+def load_calendar(root: str | Path | None = None, path: str | Path | None = None) -> tuple[dict[str, Any], Path]:
+    """(payload, file it came from): the given file, else the newer of the cache file and the packaged copy. No network."""
     candidates = [Path(path)] if path else [cache_path(root), PACKAGED_PATH]
     best: dict[str, Any] | None = None
+    best_path: Path | None = None
     for candidate in candidates:
         if not candidate.exists():
             continue
         payload = json.loads(candidate.read_text(encoding="utf-8"))
         if best is None or str(payload.get("fetched_at", "")) > str(best.get("fetched_at", "")):
-            best = payload
-    if best is None:
+            best, best_path = payload, candidate
+    if best is None or best_path is None:
         raise FileNotFoundError("no Google update calendar found. Run fetch_updates() once with network.")
-    return _from_payload(best)
+    return best, best_path
+
+
+def load_updates(root: str | Path | None = None, path: str | Path | None = None) -> list[RankingUpdate]:
+    """The calendar with no network: the given file, else the newer of the cache file and the packaged copy."""
+    return _from_payload(load_calendar(root, path)[0])
 
 
 def overlaps(
@@ -326,10 +334,8 @@ def scoreboard_rows(updates: Iterable[RankingUpdate]) -> list[dict[str, Any]]:
 
 
 def main() -> int:
+    """Fetch the calendar into the cache. The packaged copy is never rewritten by a run: it changes only in a reviewed commit."""
     payload = fetch_updates()
-    packaged = dict(payload)
-    PACKAGED_PATH.parent.mkdir(parents=True, exist_ok=True)
-    PACKAGED_PATH.write_text(json.dumps(packaged, indent=1, sort_keys=True), encoding="utf-8")
     counts: dict[str, int] = {}
     for item in payload["updates"]:
         counts[item["kind"]] = counts.get(item["kind"], 0) + 1

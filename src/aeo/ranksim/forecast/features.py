@@ -20,6 +20,10 @@ The leakage rules this module enforces:
   for reports (`st_s_opr`) and it is listed in `SURVIVORSHIP_LIMITED`.
   `check_model_features` refuses it in any model feature list. The start-date
   estimate here does not use Open PageRank evidence either.
+- RDAP registration records exist only for domains still registered on the
+  fetch day and are stamped with the registration date, so they pass any as-of
+  filter while encoding survival. They have no dated history and are used for
+  live forecasts only (`live=True`), never in a backtest or training frame.
 - A left-censored start date ("started on or before U") is never turned into an
   age. The frame carries the lower bound on age and the censoring flag apart.
 - A site with no result on a page has no title there. Its content score is
@@ -47,7 +51,10 @@ import argparse
 import hashlib
 import json
 import math
+import os
+import subprocess
 import sys
+import tempfile
 from dataclasses import asdict, dataclass, field
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
@@ -93,6 +100,11 @@ YOUNG_AGE_DAYS = 730  # "young" means an estimated start under two years before 
 DEFAULT_WINDOW_DAYS = (28.0, 120.0)
 
 START_SOURCES_EXCLUDED = ("openpagerank_first_month",)  # survivorship: OPR holds only today's top 10 million
+# Sources with no dated history: RDAP answers only for domains still registered on the day it is asked, and the
+# record is stamped with the registration date it reports, not the fetch date. Whether a record exists at all
+# therefore encodes survival to the fetch day (the same reason Open PageRank is refused). These are used for live
+# forecasts only (`live=True`) and dropped from every backtest and training frame (IMPLEMENTATION_SPEC section 6).
+UNDATED_START_SOURCES = ("rdap_registration",)
 
 
 # ---------------------------------------------------------------------------
@@ -141,12 +153,16 @@ def evals_dir(name: str) -> Path:
     return Path(__file__).resolve().parents[4] / "evals" / "forecast" / name
 
 
-def freeze_prereg(path: str | Path, payload: Mapping[str, Any]) -> str:
+def freeze_prereg(path: str | Path, payload: Mapping[str, Any], *, code: bool = False) -> str:
     """Write a preregistration JSON with its sha256, or check an existing one is identical.
 
     The sha256 covers the canonical JSON of `payload`. An existing file with a
     different payload raises ValueError: a frozen design is never edited in place.
     A new design needs a new version name. Returns the sha256.
+
+    With `code`, the file also stores (beside the payload, outside its sha256) the
+    sha256 of every forecast source file at freeze time; `require_prereg` then
+    refuses to score once the code has changed.
     """
     target = Path(path)
     body = json.loads(json.dumps(payload, default=str))
@@ -158,14 +174,23 @@ def freeze_prereg(path: str | Path, payload: Mapping[str, Any]) -> str:
                              "Make a new version instead of editing a frozen preregistration.")
         return digest
     target.parent.mkdir(parents=True, exist_ok=True)
-    stamped = {"payload": body, "sha256": digest,
-               "frozen_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")}
+    stamped: dict[str, Any] = {"payload": body, "sha256": digest,
+                               "frozen_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")}
+    if code:
+        prov = code_provenance()
+        stamped["code"] = {"source_tree_sha256": prov["source_tree_sha256"], "code_revision": prov["code_revision"],
+                           "source_dirty_at_freeze": prov["source_dirty"], "source_sha256": prov["source_sha256"]}
     target.write_text(json.dumps(stamped, indent=2, sort_keys=True), encoding="utf-8")
     return digest
 
 
-def require_prereg(path: str | Path, payload: Mapping[str, Any]) -> str:
-    """The sha256 of a frozen preregistration that matches `payload`. Raises when it is missing or differs."""
+def require_prereg(path: str | Path, payload: Mapping[str, Any], *, check_code: bool = True) -> str:
+    """The sha256 of a frozen preregistration that matches `payload`. Raises when it is missing or differs.
+
+    A preregistration frozen with the code's source hash (`freeze_prereg(..., code=True)`, every version 2 and
+    later design) is also refused when the forecast source tree hashes differently now: code changed after the
+    freeze (a tree learning rate, a rule) cannot be scored under the frozen sha. Version 1 files carry no code hash.
+    """
     target = Path(path)
     if not target.is_file():
         raise FileNotFoundError(f"{target} is missing. Freeze the design (the prereg command) before scoring anything.")
@@ -174,7 +199,222 @@ def require_prereg(path: str | Path, payload: Mapping[str, Any]) -> str:
     old = json.loads(target.read_text(encoding="utf-8"))
     if old.get("sha256") != digest:
         raise ValueError(f"the frozen design {target} does not match the code's design. Refusing to score.")
+    frozen_code = (old.get("code") or {}).get("source_tree_sha256")
+    if check_code and frozen_code:
+        now = source_tree_sha256()
+        if now != frozen_code:
+            raise ValueError(f"the forecast source code changed after {target} was frozen (source tree sha256 "
+                             f"{frozen_code[:12]} then, {now[:12]} now). Refusing to score: freeze a new version.")
     return digest
+
+
+# ---------------------------------------------------------------------------
+# versions of a design and the provenance of a scored run
+
+
+class ProvenanceRefusal(ValueError):
+    """A scored held-out run is refused because its code or its preregistration cannot be traced in git."""
+
+
+class AlreadyScored(ValueError):
+    """A held-out result for this design version exists. A test is scored once; a result file is never overwritten."""
+
+
+def repo_root() -> Path:
+    return Path(__file__).resolve().parents[4]
+
+
+def forecast_source_dir() -> Path:
+    return Path(__file__).resolve().parent
+
+
+def prereg_file(folder: str | Path, version: int = 1) -> Path:
+    """prereg.json for design version 1 (the files already frozen), prereg-v<k>.json for version k >= 2."""
+    version = int(version)
+    if version < 1:
+        raise ValueError("a design version is 1 or more")
+    return Path(folder) / ("prereg.json" if version == 1 else f"prereg-v{version}.json")
+
+
+def report_file(folder: str | Path, version: int = 1) -> Path:
+    """report.json for design version 1 (the scored files already committed), report-v<k>.json for k >= 2."""
+    version = int(version)
+    if version < 1:
+        raise ValueError("a design version is 1 or more")
+    return Path(folder) / ("report.json" if version == 1 else f"report-v{version}.json")
+
+
+def versioned_payload(payload: Mapping[str, Any], *, name: str, version: int, reason: str | None) -> dict[str, Any]:
+    """Version 1 is returned unchanged (its frozen sha must still reproduce). Version k >= 2 records its version
+    name and the reason for the new version inside the frozen payload, and refuses an empty reason."""
+    out = dict(payload)
+    if int(version) == 1:
+        return out
+    if not reason or not str(reason).strip():
+        raise ValueError(f"design version {version} of {name} needs the reason for the new version, recorded in its prereg")
+    out["version"] = f"{name}-v{int(version)}"
+    out["design_version"] = int(version)
+    out["reason_for_new_version"] = str(reason).strip()
+    return out
+
+
+def frozen_reason(folder: str | Path, version: int) -> str | None:
+    """The reason recorded in a frozen version k >= 2 prereg, or None when there is none."""
+    path = prereg_file(folder, version)
+    if int(version) == 1 or not path.is_file():
+        return None
+    return json.loads(path.read_text(encoding="utf-8")).get("payload", {}).get("reason_for_new_version")
+
+
+def _git(*args: str, root: Path | None = None) -> subprocess.CompletedProcess:
+    """A READ-ONLY git command (never one that changes the tree or the index). --no-optional-locks keeps `status`
+    from refreshing the index."""
+    return subprocess.run(["git", "--no-optional-locks", *args], cwd=root or repo_root(), capture_output=True,
+                          text=True, timeout=30, check=False)
+
+
+def source_files(base: Path | None = None) -> list[Path]:
+    """Every Python file of the forecast package (and its sources/ subpackage), sorted."""
+    folder = base or forecast_source_dir()
+    return sorted(p for p in folder.rglob("*.py") if "__pycache__" not in p.parts)
+
+
+def source_hashes(base: Path | None = None) -> dict[str, str]:
+    folder = base or forecast_source_dir()
+    return {p.relative_to(folder).as_posix(): hashlib.sha256(p.read_bytes()).hexdigest() for p in source_files(folder)}
+
+
+def source_tree_sha256(base: Path | None = None) -> str:
+    """One sha256 over the (relative path, sha256) list of every forecast source file."""
+    return sha256_text(canonical_json(source_hashes(base)))
+
+
+def code_provenance(root: Path | None = None) -> dict[str, Any]:
+    """What code ran: git HEAD, whether the forecast source differs from HEAD (and which files), and the sha256
+    of every forecast source file as it is on disk. Read-only git; works (with nulls) without git."""
+    root = root or repo_root()
+    try:
+        rel = forecast_source_dir().relative_to(root.resolve()).as_posix()
+    except ValueError:
+        rel = "src/aeo/ranksim/forecast"
+    head = None
+    dirty: list[str] | None = None
+    try:
+        out = _git("rev-parse", "HEAD", root=root)
+        head = (out.stdout.strip() or None) if out.returncode == 0 else None
+        status = _git("status", "--porcelain", "--", rel, root=root)
+        if status.returncode == 0:
+            dirty = sorted(line[3:] for line in status.stdout.splitlines() if line.strip())
+    except (OSError, subprocess.SubprocessError):
+        pass
+    hashes = source_hashes()
+    return {"code_revision": head, "source_dirty": None if dirty is None else bool(dirty), "dirty_files": dirty,
+            "source_tree_sha256": sha256_text(canonical_json(hashes)), "source_sha256": hashes}
+
+
+def require_clean_source(provenance: Mapping[str, Any]) -> None:
+    """Refuse a scored REAL run whose forecast source is not exactly a git commit: its revision would not hold
+    the code that produced the numbers."""
+    if not provenance.get("code_revision"):
+        raise ProvenanceRefusal("git HEAD is unknown, so the code of a scored run could not be traced. Refusing to score.")
+    if provenance.get("source_dirty") is not False:
+        raise ProvenanceRefusal(f"the forecast source differs from {str(provenance.get('code_revision'))[:12]} "
+                                f"({provenance.get('dirty_files')}). Commit and push it before a scored run.")
+
+
+def require_prereg_committed(path: str | Path, root: Path | None = None) -> dict[str, Any]:
+    """Refuse unless the prereg file is tracked, unchanged from HEAD, and HEAD is on a remote branch: git is the
+    outside timestamp that the design was frozen before the held-out side was read (master plan rule 1).
+    Returns {"prereg_commit": <last commit touching it>, "head": HEAD}."""
+    root = root or repo_root()
+    target = Path(path).resolve()
+    try:
+        rel = target.relative_to(root.resolve()).as_posix()
+    except ValueError as error:
+        raise ProvenanceRefusal(f"{target} is outside the repository, so git cannot date it. Refusing to score.") from error
+    try:
+        tracked = _git("ls-files", "--error-unmatch", "--", rel, root=root)
+        changed = _git("diff", "--quiet", "HEAD", "--", rel, root=root)
+        head = _git("rev-parse", "HEAD", root=root).stdout.strip()
+        remote = _git("branch", "-r", "--contains", "HEAD", root=root)
+        last = _git("log", "-1", "--format=%H", "--", rel, root=root).stdout.strip()
+    except (OSError, subprocess.SubprocessError) as error:
+        raise ProvenanceRefusal(f"git is not available to check {rel}. Refusing to score.") from error
+    if tracked.returncode != 0:
+        raise ProvenanceRefusal(f"{rel} is not committed. Commit and push the prereg before scoring.")
+    if changed.returncode != 0:
+        raise ProvenanceRefusal(f"{rel} differs from HEAD. Commit and push the prereg before scoring.")
+    if remote.returncode != 0 or not remote.stdout.strip():
+        raise ProvenanceRefusal("HEAD is on no remote branch. Push the prereg commit before scoring.")
+    return {"prereg_commit": last or None, "head": head or None}
+
+
+def begin_scored_run(folder: str | Path, version: int, payload: Mapping[str, Any], *, outputs: Sequence[str | Path] = (),
+                     check_git: bool = True) -> dict[str, Any]:
+    """Every refusal of a scored held-out run, done BEFORE any held-out row is read.
+
+    1. The prereg of this design version exists and matches `payload` (and the code, when frozen with it).
+    2. No result of this version exists: no report file, no manifest, no manifest under the same prereg sha256,
+       and none of `outputs` (model files) exists. A test is scored once.
+    3. With `check_git` (always, for the command line): the forecast source is exactly HEAD, and the prereg is
+       committed, unchanged, and pushed.
+    Returns the context `finish_scored_run` needs.
+    """
+    base = Path(folder)
+    prereg_path = prereg_file(base, version)
+    digest = require_prereg(prereg_path, payload)
+    report_path = report_file(base, version)
+    manifest_path = base / f"manifest-v{int(version)}.json"
+    for path in (report_path, manifest_path, *map(Path, outputs)):
+        if path.exists():
+            raise AlreadyScored(f"{path} exists: design version {version} was already scored. A test is scored once. "
+                                "Freeze a new version (with the reason) to score again.")
+    for old in base.glob("manifest-v*.json"):
+        try:
+            if json.loads(old.read_text(encoding="utf-8")).get("prereg_sha256") == digest:
+                raise AlreadyScored(f"{old} already holds a scored run under prereg sha256 {digest[:12]}.")
+        except (OSError, ValueError) as error:
+            if isinstance(error, AlreadyScored):
+                raise
+    provenance = code_provenance()
+    git_info = None
+    if check_git:
+        require_clean_source(provenance)
+        git_info = require_prereg_committed(prereg_path)
+    return {"folder": base, "version": int(version), "prereg_file": prereg_path, "prereg_sha256": digest,
+            "report_file": report_path, "manifest_file": manifest_path, "provenance": provenance, "git": git_info,
+            "git_checked": bool(check_git)}
+
+
+def finish_scored_run(context: Mapping[str, Any], report: Mapping[str, Any], *, extra: Mapping[str, Any] | None = None,
+                      default: Callable[[Any], Any] | None = None) -> dict[str, Any]:
+    """Write the report and its manifest for a scored run, each by exclusive create (never overwritten)."""
+    report_sha = write_new_json(context["report_file"], report, default=default)
+    manifest = {
+        "report_file": Path(context["report_file"]).name, "report_sha256": report_sha,
+        "prereg_file": Path(context["prereg_file"]).name, "prereg_sha256": context["prereg_sha256"],
+        "design_version": context["version"], "label": report.get("label"),
+        "reason_for_new_version": report.get("reason_for_new_version"),
+        "written_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        **{k: v for k, v in context["provenance"].items()}, "git": context.get("git"),
+        "git_checked": context.get("git_checked"),
+    }
+    manifest.update(dict(extra or {}))
+    write_new_json(context["manifest_file"], manifest, default=default)
+    return manifest
+
+
+def write_new_json(path: str | Path, data: Any, *, default: Callable[[Any], Any] | None = None) -> str:
+    """Write a JSON file that must not exist yet (exclusive create). Returns the sha256 of the text written."""
+    target = Path(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    text = json.dumps(data, indent=2, sort_keys=True, default=default or str)
+    try:
+        with open(target, "x", encoding="utf-8") as handle:
+            handle.write(text)
+    except FileExistsError as error:
+        raise AlreadyScored(f"{target} exists. A result or model file is never overwritten.") from error
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
 # ---------------------------------------------------------------------------
@@ -361,13 +601,52 @@ def cached_strength(
             log(f"strength: {len(missing)} new (site, date) pairs to look up")
         fresh = strength_for_dates(missing, sources=sources, root=root, log=log)
         keep = ["site", "as_of", *RAW_STRENGTH_KEYS, *MEASURES]
-        have = fresh[keep] if have is None else pd.concat([have[keep], fresh[keep]], ignore_index=True)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = path.with_suffix(".tmp.parquet")
-        have.to_parquet(tmp, index=False)
-        tmp.replace(path)
+        have = merge_into_parquet(path, fresh[keep], keys=["site", "as_of"], columns=keep)
     assert have is not None
     return want.merge(have, on=["site", "as_of"], how="left")
+
+
+def merge_into_parquet(path: str | Path, fresh: pd.DataFrame, *, keys: Sequence[str], columns: Sequence[str]) -> pd.DataFrame:
+    """Add `fresh` rows to a parquet file shared between processes, without losing anyone's rows.
+
+    Under an exclusive lock on `<path>.lock` (where the platform has one), the
+    file is read AGAIN at write time, the new rows are added (rows already on
+    disk win for a key, so a cached value never changes), and the result is
+    written to a temporary file in the same folder and moved over the old one
+    with os.replace (atomic). Returns the merged frame.
+    """
+    target = Path(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    lock_handle = open(target.with_name(target.name + ".lock"), "a+")
+    try:
+        try:
+            import fcntl
+
+            fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX)
+        except (ImportError, OSError):  # no advisory locks here: the re-read and the atomic replace still hold
+            pass
+        on_disk = pd.read_parquet(target) if target.is_file() else None
+        parts = []
+        if on_disk is not None:
+            if "as_of" in on_disk:
+                on_disk["as_of"] = [as_date(d) for d in on_disk["as_of"]]
+            parts.append(on_disk[list(columns)])
+        add = fresh[list(columns)].copy()
+        if "as_of" in add:
+            add["as_of"] = [as_date(d) for d in add["as_of"]]
+        parts.append(add)
+        merged = pd.concat(parts, ignore_index=True).drop_duplicates(list(keys), keep="first").reset_index(drop=True)
+        handle, tmp_name = tempfile.mkstemp(prefix=f".{target.name}.", suffix=".tmp", dir=str(target.parent))
+        os.close(handle)
+        try:
+            merged.to_parquet(tmp_name, index=False)
+            os.replace(tmp_name, target)
+        finally:
+            if os.path.exists(tmp_name):
+                os.unlink(tmp_name)
+        return merged
+    finally:
+        lock_handle.close()
 
 
 # ---------------------------------------------------------------------------
@@ -381,17 +660,24 @@ class StartEvidence:
     by_site: dict[str, list[Dated]] = field(default_factory=dict)
 
     @classmethod
-    def load(cls, sites: Iterable[str], root: str | Path | None = None) -> "StartEvidence":
-        """Common Crawl first release and cached RDAP registrations. No network."""
+    def load(cls, sites: Iterable[str], root: str | Path | None = None, *, live: bool = False) -> "StartEvidence":
+        """Common Crawl first release, and (only with `live`) cached RDAP registrations. No network.
+
+        RDAP has no dated history (UNDATED_START_SOURCES), so backtest and training
+        frames, the default, never load it.
+        """
         from .sources import domain_age
         from .sources.strength_lists import default_root
 
         base = default_root(root)
         site_set = sorted(set(sites))
         table: dict[str, list[Dated]] = {site: [] for site in site_set}
-        for source in (domain_age.cc_first_release(site_set, base), domain_age.RdapLookup(base).registration_dates(site_set)):
+        loaded = [domain_age.cc_first_release(site_set, base)]
+        if live:
+            loaded.append(domain_age.RdapLookup(base).registration_dates(site_set))
+        for source in loaded:
             for site, dated in source.items():
-                if dated.source in START_SOURCES_EXCLUDED:
+                if dated.source in START_SOURCES_EXCLUDED or (not live and dated.source in UNDATED_START_SOURCES):
                     continue
                 table.setdefault(site, []).append(dated)
         return cls(table)
@@ -430,7 +716,12 @@ def _check_start_evidence(evidence: Sequence[Dated]) -> None:
         raise ValueError("Open PageRank evidence is survivorship limited and is not used for start dates here")
 
 
-def start_features(site: str, as_of: date, evidence: Sequence[Dated]) -> dict[str, float]:
+def dated_start_evidence(evidence: Sequence[Dated], *, live: bool = False) -> list[Dated]:
+    """The evidence a forecast may use: without `live`, sources with no dated history (RDAP) are dropped."""
+    return [item for item in evidence if live or item.source not in UNDATED_START_SOURCES]
+
+
+def start_features(site: str, as_of: date, evidence: Sequence[Dated], *, live: bool = False) -> dict[str, float]:
     """Start-date features for one site as of a date. The estimate is PREDICTED from REAL evidence.
 
     Evidence published after `as_of` is dropped (domain_age.best_start_date does
@@ -444,11 +735,14 @@ def start_features(site: str, as_of: date, evidence: Sequence[Dated]) -> dict[st
 
     _check_start_evidence(evidence)
     day = as_date(as_of)
-    return _start_row(best_start_date(site, list(evidence), as_of=day), day)
+    return _start_row(best_start_date(site, dated_start_evidence(evidence, live=live), as_of=day), day)
 
 
-def start_features_frame(site_dates: pd.DataFrame, evidence: StartEvidence) -> pd.DataFrame:
-    """`start_features` for every (site, as_of) row. The estimate is cached per (site, evidence visible on the date)."""
+def start_features_frame(site_dates: pd.DataFrame, evidence: StartEvidence, *, live: bool = False) -> pd.DataFrame:
+    """`start_features` for every (site, as_of) row. The estimate is cached per (site, evidence visible on the date).
+
+    Without `live` (backtests and training frames), RDAP evidence is dropped even when `evidence` holds it.
+    """
     from .sources.domain_age import best_start_date
 
     cache: dict[tuple[str, tuple[date, ...]], Any] = {}
@@ -457,6 +751,7 @@ def start_features_frame(site_dates: pd.DataFrame, evidence: StartEvidence) -> p
         when = as_date(day)
         items = evidence.by_site.get(site, [])
         _check_start_evidence(items)
+        items = dated_start_evidence(items, live=live)
         visible = tuple(sorted(i.snapshot_date for i in items if i.snapshot_date is not None and i.snapshot_date <= when))
         key = (site, visible)
         if key not in cache:
@@ -722,8 +1017,11 @@ def site_features(
     positions: pd.DataFrame | None = None,
     locale: str | None = None,
     root: str | Path | None = None,
+    live: bool = False,
 ) -> pd.DataFrame:
     """Per site, as of one date: dated strength (REAL, guarded), start date (PREDICTED), panel history (REAL).
+
+    `live` (a forecast made today, never a backtest or training row) also uses RDAP registration records.
 
     Panel history needs `positions` (site_positions rows) and `locale`; it uses
     pages dated on or before `as_of` only. Returns one row per site, indexed by site.
@@ -732,8 +1030,8 @@ def site_features(
     frame = pd.DataFrame({"site": list(sites), "as_of": [day] * len(sites)})
     strength = strength_for_dates(frame, sources=sources, root=root).set_index("site")
     out = strength.drop(columns=["as_of"]).add_prefix("st_")
-    ev = evidence if evidence is not None else StartEvidence.load(sites, root)
-    start = start_features_frame(frame, ev)
+    ev = evidence if evidence is not None else StartEvidence.load(sites, root, live=live)
+    start = start_features_frame(frame, ev, live=live)
     start.index = frame["site"]
     out = out.join(start)
     if positions is not None and locale is not None:
@@ -958,11 +1256,24 @@ def sample_keywords(keywords: pd.DataFrame, count: int, seed: int) -> list[str]:
     return sorted(ranked[: max(0, int(count))]) if count < len(ids) else ids
 
 
+def excluded_site_mask(sites: pd.Series) -> pd.Series:
+    """True where a site value names an excluded site (config.EXCLUDED_SITES) once normalised: lower case and
+    site_key (www and subdomains folded), so 'WWW.SmartCrewHQ.com ' cannot slip through a raw isin."""
+    from ..site_history import site_key
+
+    bad = set()
+    for value in pd.Series(sites).dropna().unique():
+        text = str(value).strip().lower()
+        if text and (text in EXCLUDED_SITES or site_key(text) in EXCLUDED_SITES):
+            bad.add(value)
+    return pd.Series(sites).isin(bad) if bad else pd.Series(False, index=pd.Series(sites).index)
+
+
 def prepare_page_rows(panel_rows: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
     """(site rows, page meta) from panel-shaped rows. Site rows: best rank and its title per site per page."""
     rows = panel_rows.copy()
     rows["snapshot_time"] = pd.to_datetime(rows["snapshot_time"], utc=True)
-    rows = rows[~rows["site"].isin(EXCLUDED_SITES)]
+    rows = rows[~excluded_site_mask(rows["site"])]
     depth = rows.groupby(["keyword_id", "snapshot_time"], sort=False)["rank"].transform("max")
     rows = rows.assign(depth=depth.astype(int))
     rows = rows.sort_values(["keyword_id", "snapshot_time", "rank"], kind="mergesort")

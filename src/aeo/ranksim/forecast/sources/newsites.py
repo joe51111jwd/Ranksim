@@ -27,6 +27,11 @@ each handled in code and not only in a comment:
   crawl, set `possible_rebrand`.
 - Parked domains. Parking or marketplace name servers, parking text on the
   page, or redirects to a domain marketplace set `parked`.
+- Spam and parking among the kept sites. `spam_filter` checks each kept site
+  with facts knowable at registration or launch only: the domain name, the
+  launch-era home page, and a name server reading taken near the launch day.
+  It records a reason per site (spam_rule), never deletes a row, and counts
+  what each rule removed.
 - Survivorship. Dead and never-crawled sites STAY in the cohort table with
   their flags. The funnel counts every stage. Missing evidence stays None.
 - Coverage. cenk/nrd history starts 2025-08-14. shreshta has history from
@@ -736,13 +741,19 @@ class Crawl:
     end: datetime
 
 
-def load_crawls(path: Path | None = None, *, http: httpx.Client | None = None) -> dict[str, Crawl]:
-    """Crawls from collinfo.json (data/forecast/public/commoncrawl/collinfo.json, fetched once when missing)."""
+def load_crawls(path: Path | None = None, *, http: httpx.Client | None = None,
+                sleep: Callable[[float], None] = time.sleep) -> dict[str, Crawl]:
+    """Crawls from collinfo.json (data/forecast/public/commoncrawl/collinfo.json, fetched once when missing).
+
+    Only an HTTP 200 answer is saved. Any other answer raises ConnectionError, so an error page never becomes the crawl list.
+    """
     target = path or default_public("commoncrawl") / "collinfo.json"
     if not target.is_file():
         if http is None:
             raise FileNotFoundError(f"{target} is missing and no http client was given to fetch it")
-        response = _get(http, CC_COLLINFO, Polite(MIN_GAP_CC))
+        response = _get(http, CC_COLLINFO, Polite(MIN_GAP_CC, sleep=sleep), sleep=sleep)
+        if response.status_code != 200:
+            raise ConnectionError(f"{CC_COLLINFO} answered HTTP {response.status_code}")
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes(response.content)
         _record_source(target.parent, target.name, {"url": CC_COLLINFO, "fetched_at": utc_iso(_utcnow()),
@@ -1456,7 +1467,7 @@ def cohort(
     started = time.monotonic()
     cache = Path(cache_root) if cache_root else default_cache()
     public = Path(public_root) if public_root else forecast_paths().root / "public"
-    crawl_map = dict(crawls) if crawls is not None else load_crawls(public / "commoncrawl" / "collinfo.json", http=http)
+    crawl_map = dict(crawls) if crawls is not None else load_crawls(public / "commoncrawl" / "collinfo.json", http=http, sleep=sleep)
     for crawl_id in plan.before + plan.after:
         if crawl_id not in crawl_map:
             raise ValueError(f"crawl {crawl_id} is not in the crawl list")
@@ -1548,10 +1559,17 @@ def rows_to_frame(rows: Sequence[CohortRow]):
     return frame
 
 
-def write_cohort(result: CohortResult, out_dir: Path, name: str) -> dict[str, str]:
-    """Write cohort_<name>.parquet, pages_<name>.jsonl and funnel_<name>.json. Returns their paths."""
+def write_cohort(result: CohortResult, out_dir: Path, name: str, spam: "SpamFilterResult | None" = None) -> dict[str, str]:
+    """Write cohort_<name>.parquet, pages_<name>.jsonl and funnel_<name>.json. Returns their paths.
+
+    With `spam` the table carries spam_rule and kept_after_filter too, and the funnel JSON holds the filter counts.
+    """
     out_dir.mkdir(parents=True, exist_ok=True)
-    frame = rows_to_frame(result.rows)
+    frame = rows_to_frame(result.rows) if spam is None else filtered_frame(result.rows, spam)
+    if spam is not None:
+        result.report["spam_filter"] = {"version": spam.rule_version, "rule_hash": spam.rule_hash, "candidates": spam.candidates,
+                                        "removed": spam.removed, "kept_after_filter": spam.kept_after_filter,
+                                        "ns_not_judged": spam.ns_not_judged}
     table_path = out_dir / f"cohort_{name}.parquet"
     tmp = table_path.with_name(table_path.name + ".tmp")
     frame.to_parquet(tmp, index=False)
@@ -1575,6 +1593,136 @@ def load_pages(path: Path) -> dict[str, PageText]:
                 row[name] = tuple(row.get(name) or ())
             out[row["site"]] = PageText(**row)
     return out
+
+
+# ----------------------------------------------------------------------------------------------
+# The spam and parking filter. Knowable at registration or launch only.
+# ----------------------------------------------------------------------------------------------
+
+# A name server reading counts as launch-era evidence only when it was taken this close to the launch day.
+# RDAP is read when the cohort is built, so for a cohort launched a year ago the reading is today's state and is
+# never used here. OUR READING: two weeks, so a reading taken in the launch month of a fresh cohort counts.
+PARKING_NS_NEAR_LAUNCH_DAYS = 14
+# Parts of a domain name that mark spam (gambling, pharma, adult, fakes, payday loans). Matched inside the name.
+SPAM_NAME_TOKENS: tuple[str, ...] = ("casino", "poker", "betting", "bet365", "viagra", "cialis", "porn", "xxx", "escort", "replica",
+                                     "payday")
+# Phrases on the launch page that mark spam or an unfinished template. Matched as whole words.
+SPAM_TEXT_PHRASES: tuple[str, ...] = ("online casino", "casino bonus", "sports betting", "betting tips", "buy viagra", "viagra", "cialis",
+                                      "porn", "xxx", "escort service", "payday loan", "payday loans", "replica watches", "lorem ipsum")
+SPAM_NAME_MAX_CHARS = 30
+SPAM_NAME_MAX_HYPHENS = 2
+SPAM_NAME_MAX_DIGITS = 4
+
+RULE_PARKING_NS = "parking_name_servers_near_launch"
+RULE_SPAM_NAME = "spam_domain_name"
+RULE_SPAM_TEXT = "spam_launch_text"
+SPAM_RULES: tuple[str, ...] = (RULE_PARKING_NS, RULE_SPAM_NAME, RULE_SPAM_TEXT)
+
+
+@dataclass(frozen=True)
+class SpamRule:
+    """The frozen spam and parking filter. Its hash covers these values and the source of spam_reason."""
+
+    version: str = "spam-parking-filter-v1"
+    parking_ns_near_launch_days: int = PARKING_NS_NEAR_LAUNCH_DAYS
+    name_tokens: tuple[str, ...] = SPAM_NAME_TOKENS
+    text_phrases: tuple[str, ...] = SPAM_TEXT_PHRASES
+    name_max_chars: int = SPAM_NAME_MAX_CHARS
+    name_max_hyphens: int = SPAM_NAME_MAX_HYPHENS
+    name_max_digits: int = SPAM_NAME_MAX_DIGITS
+
+    def rule_hash(self) -> str:
+        import inspect
+
+        payload = {**asdict(self), "code": inspect.getsource(spam_reason)}
+        return hashlib.sha256(json.dumps(payload, sort_keys=True, default=list).encode("utf-8")).hexdigest()
+
+
+DEFAULT_SPAM_RULE = SpamRule()
+
+
+def _name_label(site: str) -> str:
+    """The part of a registrable domain before its public suffix: "best-casino" for best-casino.co.uk."""
+    key = site_key(site)
+    return key.split(".", 1)[0] if key else ""
+
+
+def ns_reading_near_launch(row: CohortRow, rule: SpamRule = DEFAULT_SPAM_RULE) -> bool:
+    """True when the row's name server reading was taken within the rule's days of its launch day."""
+    if row.launch_date is None or not row.current_state_checked_at:
+        return False
+    checked = _date_or_none(row.current_state_checked_at)
+    return checked is not None and abs((checked - row.launch_date).days) <= rule.parking_ns_near_launch_days
+
+
+def spam_reason(row: CohortRow, page: PageText | None, rule: SpamRule = DEFAULT_SPAM_RULE) -> str | None:
+    """Why a kept site is spam or parked, or None. The first rule that hits wins. Label blind.
+
+    Only facts knowable at registration or launch are read: the domain name
+    itself, the launch-era home page text, and a name server reading taken
+    within the rule's days of the launch day. Today's name servers on an older
+    site (parked_now), today's DNS, traffic and rankings are never read, so the
+    filter cannot keep the sites that later did well.
+    """
+    if row.ns_parking and ns_reading_near_launch(row, rule):
+        return RULE_PARKING_NS
+    label = _name_label(row.site)
+    if (len(label) > rule.name_max_chars or label.count("-") > rule.name_max_hyphens
+            or sum(ch.isdigit() for ch in label) > rule.name_max_digits
+            or any(token in label for token in rule.name_tokens)):
+        return RULE_SPAM_NAME
+    if page is not None:
+        words = " ".join([page.title or "", page.meta_description or "", *page.h1, *page.h2, *page.h3, page.text or ""])
+        if _phrase_hit(words, rule.text_phrases):
+            return RULE_SPAM_TEXT
+    return None
+
+
+@dataclass
+class SpamFilterResult:
+    """What the filter did. Rows are never deleted: each one gets its reason (or None) beside it."""
+
+    rule_version: str
+    rule_hash: str
+    candidates: int
+    removed: dict[str, int]
+    reasons: dict[str, str]
+    kept_after_filter: int
+    ns_not_judged: int
+
+    def lines(self) -> list[str]:
+        out = [f"Spam and parking filter {self.rule_version}: {self.candidates} kept sites checked."]
+        out += [f"Rule {name} removed {self.removed.get(name, 0)} sites." for name in SPAM_RULES]
+        out.append(f"{self.ns_not_judged} kept sites have no name server reading near their launch day, so the name server rule "
+                   "could not judge them. Today's name servers are never used for that.")
+        out.append(f"Kept after the filter: {self.kept_after_filter}.")
+        return out
+
+
+def spam_filter(rows: Sequence[CohortRow], pages: Mapping[str, PageText], rule: SpamRule = DEFAULT_SPAM_RULE) -> SpamFilterResult:
+    """Run spam_reason on every kept row. `pages` are the launch-era home pages (CohortResult.pages)."""
+    reasons: dict[str, str] = {}
+    removed = {name: 0 for name in SPAM_RULES}
+    candidates = not_judged = 0
+    for row in rows:
+        if not row.kept:
+            continue
+        candidates += 1
+        if not ns_reading_near_launch(row, rule):
+            not_judged += 1
+        reason = spam_reason(row, pages.get(row.site), rule)
+        if reason is not None:
+            reasons[row.site] = reason
+            removed[reason] += 1
+    return SpamFilterResult(rule.version, rule.rule_hash(), candidates, removed, reasons, candidates - len(reasons), not_judged)
+
+
+def filtered_frame(rows: Sequence[CohortRow], result: SpamFilterResult):
+    """The cohort table with two more columns: spam_rule (the reason, or None) and kept_after_filter."""
+    frame = rows_to_frame(rows)
+    frame["spam_rule"] = [result.reasons.get(row.site) for row in rows]
+    frame["kept_after_filter"] = [bool(row.kept) and row.site not in result.reasons for row in rows]
+    return frame
 
 
 # ----------------------------------------------------------------------------------------------

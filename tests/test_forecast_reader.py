@@ -453,10 +453,10 @@ def test_read_clean_goes_on_after_a_failing_round_and_keeps_the_gap():
 def test_read_clean_with_every_round_failing_gives_empty_degraded_readings():
     clock = FakeClock()
     source = FlakySource(ReplaySource([]), clock, fail_on={0, 1, 2})
-    result = read_clean(source, [SPEC], pulls=3, gap_seconds=0, sleep=clock.sleep, now=clock.now)
+    result = read_clean(source, [SPEC], pulls=3, gap_seconds=60, sleep=clock.sleep, now=clock.now)
     reading = result.readings[0]
     assert reading.degraded and reading.pulls_total == 0 and reading.positions == ()
-    assert len(result.failed_rounds) == 3 and clock.sleeps == []
+    assert len(result.failed_rounds) == 3 and clock.sleeps == [55.0, 55.0]  # failed rounds still keep the gap
 
 
 def test_read_clean_records_a_round_that_breaks_the_source_contract():
@@ -470,7 +470,7 @@ def test_read_clean_records_a_round_that_breaks_the_source_contract():
             return 0.0
 
     clock = FakeClock()
-    result = read_clean(Short(), [SPEC], pulls=2, gap_seconds=0, sleep=clock.sleep, now=clock.now)
+    result = read_clean(Short(), [SPEC], pulls=2, gap_seconds=60, sleep=clock.sleep, now=clock.now)
     assert [index for index, _ in result.failed_rounds] == [0, 1]
     assert "returned 0 pulls for 1 specs" in result.failed_rounds[0][1]
 
@@ -574,7 +574,7 @@ def test_replay_misses_get_distinct_ids_and_read_clean_survives_them():
     clock = FakeClock()
     result = read_clean(
         ReplaySource([make_pull("only", good_sites())], clock=lambda: fixed),
-        [SPEC], pulls=5, gap_seconds=0, sleep=clock.sleep, now=clock.now,
+        [SPEC], pulls=5, gap_seconds=60, sleep=clock.sleep, now=clock.now,
     )
     reading = result.readings[0]
     assert reading.pulls_total == 5 and reading.pulls_kept == 1 and reading.degraded
@@ -595,7 +595,7 @@ def test_read_clean_keeps_other_readings_when_one_spec_gets_a_repeated_pull():
             return 0.0
 
     clock = FakeClock()
-    result = read_clean(Repeating(), [SPEC, other], pulls=3, gap_seconds=0, sleep=clock.sleep, now=clock.now)
+    result = read_clean(Repeating(), [SPEC, other], pulls=3, gap_seconds=60, sleep=clock.sleep, now=clock.now)
     broken, fine = result.readings
     assert broken.degraded and broken.pulls_total == 0
     assert broken.dropped[-1][1].startswith("invalid_pulls: the same pull id appears twice")
@@ -1010,7 +1010,7 @@ def test_read_clean_uses_round_suspects():
     result = read_clean(ReplaySource(stored), [search] + others, pulls=3, gap_seconds=60, sleep=clock.sleep, now=clock.now)
     first = result.readings[0]
     assert first.pull_ids == ("pull-ok1",) and first.degraded
-    old = read_clean(ReplaySource(stored), [search] + others, pulls=3, gap_seconds=0, sleep=clock.sleep, now=clock.now,
+    old = read_clean(ReplaySource(stored), [search] + others, pulls=3, gap_seconds=60, sleep=clock.sleep, now=clock.now,
                      version=1).readings[0]
     assert old.pull_ids == ("pull-alt0", "pull-alt2")
 
@@ -1035,14 +1035,14 @@ def test_read_clean_passes_the_latest_earlier_clean_reading_as_history():
     stored.insert(1, slots_pull("ok", clean, spec=search))
     clock = FakeClock()
     later = [history_reading(clean, search, taken_at="2026-11-22T10:00:00Z")]  # after the pulls: ignored
-    ignored = read_clean(ReplaySource(stored), [search], pulls=4, gap_seconds=0, sleep=clock.sleep, now=clock.now,
+    ignored = read_clean(ReplaySource(stored), [search], pulls=4, gap_seconds=60, sleep=clock.sleep, now=clock.now,
                          history=later).readings[0]
     assert ignored.position_of("spam0.com") == 1
     history = [history_reading(clean, search, taken_at="2026-11-18T10:00:00Z")]
-    with_history = read_clean(ReplaySource(stored), [search], pulls=4, gap_seconds=0, sleep=clock.sleep, now=clock.now,
+    with_history = read_clean(ReplaySource(stored), [search], pulls=4, gap_seconds=60, sleep=clock.sleep, now=clock.now,
                               history=history).readings[0]
     assert with_history.pull_ids == ("pull-ok",) and with_history.degraded
-    without = read_clean(ReplaySource(stored), [search], pulls=4, gap_seconds=0, sleep=clock.sleep, now=clock.now).readings[0]
+    without = read_clean(ReplaySource(stored), [search], pulls=4, gap_seconds=60, sleep=clock.sleep, now=clock.now).readings[0]
     assert without.position_of("spam0.com") == 1 and not without.degraded
 
 
@@ -1097,7 +1097,7 @@ def test_read_clean_gives_failed_specs_a_no_pulls_reason_and_the_source_label():
         def estimate_cost(self, count, depth=50):
             return 0.0
 
-    result = read_clean(Broken(), [SPEC], pulls=2, gap_seconds=0, sleep=lambda s: None)
+    result = read_clean(Broken(), [SPEC], pulls=2, gap_seconds=60, sleep=lambda s: None)
     (reading,) = result.readings
     assert reading.degraded and reading.degraded_reason.startswith(DEGRADED_NO_PULLS)
     assert reading.label == SYNTHETIC and reading.reader_version == READER_VERSION_V2
@@ -1166,7 +1166,7 @@ def test_round_ubiquity_uses_the_suspects_of_one_round_not_all_rounds_joined():
         assert not alone.is_suspect("zfiller1.com", "gamma widgets")
 
     specs = [top10(s) for s in ("alpha tools", "beta tools", "gamma widgets")]
-    result = read_clean(ReplaySource(pulls), specs, pulls=5, gap_seconds=0, sleep=lambda s: None, now=lambda: t0)
+    result = read_clean(ReplaySource(pulls), specs, pulls=5, gap_seconds=60, sleep=lambda s: None, now=lambda: t0)
     gamma = next(r for r in result.readings if r.search == "gamma widgets")
     assert not gamma.degraded and gamma.pulls_kept == 3, gamma.dropped
     # assemble_readings with one RoundSuspects per round judges the same way.
@@ -1259,3 +1259,96 @@ def test_sandbox_pulls_are_never_real():
     sandbox = [replace(make_pull(str(i), good_sites()), provider="dataforseo-sandbox") for i in range(3)]
     assert build_clean_reading(sandbox).label == SYNTHETIC
     assert not provider_is_real("dataforseo-sandbox-live") and provider_is_real("dataforseo") and provider_is_real("serper")
+
+
+# ---------------------------------------------------------------------------
+# the gap floor, keyword-aware cost previews, and the one list of synthetic providers
+
+
+def test_read_clean_refuses_a_gap_under_the_floor_for_a_real_provider():
+    from aeo.ranksim.forecast.config import MIN_PULL_GAP_SECONDS
+
+    clock = FakeClock()
+    for name in ("dataforseo", "serper", "replay"):
+        source = ReplaySource([make_pull(str(i), good_sites()) for i in range(3)], name=name)
+        with pytest.raises(ValueError, match="at least 60 seconds apart"):
+            read_clean(source, [SPEC], pulls=3, gap_seconds=MIN_PULL_GAP_SECONDS - 1, sleep=clock.sleep, now=clock.now)
+    one = read_clean(ReplaySource([make_pull("x", good_sites())]), [SPEC], pulls=1, gap_seconds=0,
+                     sleep=clock.sleep, now=clock.now)
+    assert len(one.readings) == 1  # one round has no gap to keep
+
+
+def test_read_clean_lets_synthetic_and_sandbox_sources_read_faster():
+    clock = FakeClock()
+    for name in ("synthetic", "dataforseo-sandbox", "dataforseo-sandbox-live_normal"):
+        pulls = [replace(make_pull(str(i), good_sites()), provider=name) for i in range(3)]
+        result = read_clean(ReplaySource(pulls, name=name), [SPEC], pulls=3, gap_seconds=0, sleep=clock.sleep, now=clock.now)
+        assert result.readings[0].label == SYNTHETIC and clock.sleeps == []
+
+
+def test_a_fast_read_through_a_source_that_says_synthetic_is_never_a_real_reading():
+    clock = FakeClock()
+    real_pulls = [make_pull(str(i), good_sites()) for i in range(3)]  # these pulls claim provider dataforseo
+    result = read_clean(ReplaySource(real_pulls, name="synthetic"), [SPEC], pulls=3, gap_seconds=0,
+                        sleep=clock.sleep, now=clock.now)
+    assert result.readings[0].label == SYNTHETIC
+
+
+def test_cost_preview_passes_the_search_texts_to_a_source_that_takes_them():
+    seen: list[object] = []
+
+    class Texts:
+        name = "texts"
+
+        def fetch(self, specs):
+            raise AssertionError("a preview never fetches")
+
+        def estimate_cost(self, count, depth=50, *, keywords=None):
+            seen.append(keywords)
+            return float(sum(5 if "site:" in k else 1 for k in keywords)) if keywords is not None else float(count)
+
+    specs = [SPEC, PullSpec(search="site:example.com hauling", location_code=1023191)]
+    assert cost_of_reading(Texts(), specs, pulls=2).usd_per_round == 6.0
+    assert seen[-1] == [SPEC.search, "site:example.com hauling"]
+    assert cost_of_reading(Texts(), ["plain", "site:x.com y"], pulls=1).usd_total == 6.0
+    counted = cost_of_reading(Texts(), 2, pulls=1)
+    assert counted.usd_total == 2.0 and seen[-1] is None
+    assert any("without the search texts" in note for note in counted.notes)
+
+
+def test_cost_preview_still_works_with_a_source_that_does_not_take_keywords():
+    class Old:
+        name = "old"
+
+        def fetch(self, specs):
+            raise AssertionError("a preview never fetches")
+
+        def estimate_cost(self, count, depth=50):
+            return 0.5 * count
+
+    preview = cost_of_reading(Old(), ["a", "site:b.com c"], pulls=1)
+    assert preview.usd_total == 1.0 and any("without the search texts" in note for note in preview.notes)
+
+
+def test_excluded_sites_are_matched_after_normalising():
+    from aeo.ranksim.forecast.reader import pull_site_positions, slot_sites
+    from aeo.ranksim.forecast.types import is_excluded_site
+
+    assert is_excluded_site("www.SmartCrewHQ.com") and is_excluded_site("https://blog.smartcrewhq.com/x")
+    assert not is_excluded_site("example.com") and not is_excluded_site(None) and not is_excluded_site("")
+    hits = (OrganicHit(rank=1, url="https://www.smartcrewhq.com/", domain="www.smartcrewhq.com", site="www.SmartCrewHQ.com"),
+            OrganicHit(rank=2, url="https://a.com/", domain="a.com", site="a.com"))
+    pull = replace(make_pull("ex", good_sites()), hits=hits)
+    assert pull_site_positions(pull) == {"a.com": 2}
+    assert slot_sites(pull) == ["a.com"]
+
+
+def test_the_sandbox_is_in_the_one_list_of_synthetic_providers():
+    from aeo.ranksim.forecast.types import SYNTHETIC_PROVIDERS, provider_is_synthetic
+
+    assert "dataforseo-sandbox" in SYNTHETIC_PROVIDERS
+    assert provider_is_synthetic("dataforseo-sandbox-live_normal") and provider_is_synthetic("synthetic")
+    assert not provider_is_synthetic("dataforseo") and not provider_is_synthetic("dataforseo-live_normal")
+    assert not provider_is_synthetic(None)
+    for name in ("synthetic", "dataforseo-sandbox", "dataforseo-sandbox-live_normal", "dataforseo", "serper", "replay"):
+        assert provider_is_real(name) is not provider_is_synthetic(name)

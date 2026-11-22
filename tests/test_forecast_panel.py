@@ -541,3 +541,58 @@ def test_real_keyword_history_rows_older_than_the_record_carry_no_kd():
     for row in dfs.iter_keyword_rows(path, "dfs_keywords_history"):
         if row["snapshot_month"].replace("-", "") < newest[row["keyword"]]:
             assert row["kd"] is None, row["keyword"]
+
+
+# ---------------------------------------------------------------------------
+# Follow-ups of the data-layer bug hunt
+
+
+def test_labs_etv_fails_closed_until_the_switch_is_turned_on(monkeypatch):
+    rows = list(dfs.iter_labs_historical_serps(FIX / "labs_historical_serps.json", locale="US_en"))
+    assert all(row["etv"] is None for row in rows), "no record date: every etv is held back"
+    dated = list(dfs.iter_labs_historical_serps(FIX / "labs_historical_serps.json", locale="US_en", record_date=date(2026, 10, 1)))
+    assert [row["etv"] is None for row in dated] == [row["snapshot_date"] < date(2026, 10, 1) for row in dated]
+    monkeypatch.setattr(dfs, "LABS_ETV_IS_PAGE_DATED", True)
+    trusted = list(dfs.iter_labs_historical_serps(FIX / "labs_historical_serps.json", locale="US_en"))
+    assert trusted[0]["etv"] == 1.5
+
+
+def _write_part(folder: Path, sites: list[str]) -> None:
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
+    rows = [{name: None for name in pn.PANEL_COLUMNS} | {
+        "dataset": "dfs_history", "locale": "US_en", "keyword": "k", "keyword_id": "id", "snapshot_time": datetime(2025, 1, 1, tzinfo=timezone.utc),
+        "snapshot_date": date(2025, 1, 1), "rank": rank, "site": site, pn.POISON_RISK_COLUMN: False}
+        for rank, site in enumerate(sites, start=1)]
+    target = folder / "dataset=dfs_history" / "locale=US_en"
+    target.mkdir(parents=True, exist_ok=True)
+    pq.write_table(pa.Table.from_pylist(rows, schema=pn.PANEL_SCHEMA), target / "part-x.parquet")
+
+
+def test_loaders_drop_an_excluded_site_however_a_writer_spelled_it(tmp_path: Path):
+    _write_part(tmp_path, ["WWW.SmartCrewHQ.com", "SmartCrewHQ.com", "blog.smartcrewhq.com", "ok.com"])
+    panel = pn.load_panel(["keyword_id", "snapshot_time", "site", "rank"], panel_dir=tmp_path)
+    assert list(panel["site"]) == ["ok.com"]
+    raw = pd.DataFrame({"keyword_id": ["id"] * 2, "snapshot_time": [pd.Timestamp("2025-01-01", tz="UTC")] * 2,
+                        "site": ["Www.SmartCrewHQ.com", "ok.com"], "rank": [1, 2], pn.POISON_RISK_COLUMN: [False, False]})
+    assert list(pn.site_positions(raw)["site"]) == ["ok.com"]
+    assert list(pn.excluded_mask(pd.Series(["SMARTCREWHQ.COM", "x.com", None]))) == [True, False, False]
+
+
+def test_a_failed_panel_rebuild_leaves_the_old_panel_in_place(tmp_path: Path, sample_root: Path, monkeypatch):
+    out = tmp_path / "panel"
+    files = pn.select_sample_files(pn.discover_sample_files(sample_root), ["history"])
+    pn.build_panel_into(files, out, root=sample_root)
+    before = sorted(p.relative_to(out) for p in out.rglob("*"))
+    with pytest.raises(pn.PanelExistsError):
+        pn.build_panel_into(files, out, root=sample_root)
+
+    def broken(*args, **kwargs):
+        raise RuntimeError("disk full")
+
+    monkeypatch.setattr(pn, "build_panel", broken)
+    with pytest.raises(RuntimeError):
+        pn.build_panel_into(files, out, overwrite=True, root=sample_root)
+    assert sorted(p.relative_to(out) for p in out.rglob("*")) == before
+    assert [p.name for p in tmp_path.iterdir() if p.name.startswith(".")] == []

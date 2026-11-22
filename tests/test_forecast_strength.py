@@ -5,6 +5,7 @@ Hand-made frames only. Every outcome here is made up for the test; none is REAL 
 
 from __future__ import annotations
 
+import json
 import math
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
@@ -183,3 +184,98 @@ def test_prereg_payload_freezes(tmp_path: Path):
     assert require_prereg(tmp_path / "prereg.json", S.prereg_payload()) == digest
     assert "s_opr" in payload["survivorship_limited_not_fitted"]
     assert "s_opr" not in payload["fitted_measures"]
+
+
+# ---------------------------------------------------------------------------
+# a scored result is never overwritten; a rerun is a new design version beside the old one
+
+
+REPO = Path(__file__).resolve().parents[1]
+
+
+def _stub_strength_run(monkeypatch, tmp_path: Path) -> dict[str, int]:
+    """Replace every loader and scorer by stubs (no panel row is read) and send model files to tmp_path."""
+    monkeypatch.setenv("RANKSIM_FORECAST_DIR", str(tmp_path / "data"))
+    rows = []
+    for p in range(4):
+        for r in range(1, 6):
+            rows.append({"page_code": p, "rank100": r, "keyword": f"k{p}", "keyword_id": f"k{p}", "snapshot_depth": 60,
+                         "side": "train" if p < 2 else "test", "search_group": f"g{p}", "site": f"s{r}.com",
+                         **{m: float(-r) for m in S.MEASURES}})
+    loads = {"n": 0}
+
+    def load(split, log=None):
+        loads["n"] += 1
+        return pd.DataFrame(rows)
+
+    monkeypatch.setattr(S, "load_page_rows", load)
+    stub = S.StrengthScore(tuple(S.MODEL_MEASURES), {m: 0.0 for m in S.MODEL_MEASURES}, {m: 1.0 for m in S.MODEL_MEASURES},
+                           {n: 0.0 for m in S.MODEL_MEASURES for n in (m, f"{m}__missing")}, 1.0)
+    monkeypatch.setattr(S, "fit_strength_score", lambda train: stub)
+    monkeypatch.setattr(S, "pair_tests", lambda test, values: {})
+    monkeypatch.setattr(S, "gate_tests", lambda test, values: {})
+    monkeypatch.setattr(S, "topical_test", lambda pos, score, log=None: {})
+    forecaster = S.StrengthOnlyForecaster(("own_score",), [0.0], [1.0], [[0.0]], [0.0], ["NT50"], {"NT50": {"51": 1.0}}, 1.0)
+    monkeypatch.setattr(S, "forecaster_test", lambda pos, score, split, log=None: ({"n": 1}, forecaster))
+    return loads
+
+
+def test_a_scored_strength_report_is_never_overwritten_and_a_rerun_is_a_new_version(tmp_path: Path, monkeypatch):
+    from aeo.ranksim.forecast.features import AlreadyScored, prereg_file
+
+    loads = _stub_strength_run(monkeypatch, tmp_path)
+    out = tmp_path / "evals"
+    freeze_prereg(prereg_file(out, 1), S.prereg_payload())
+    S.run(out_dir=out, check_git=False)
+    first = (out / "report.json").read_text()
+    score_file = S.model_files(1)["score"]
+    first_model = score_file.read_text()
+    with pytest.raises(AlreadyScored):  # refused before any row is read
+        S.run(out_dir=out, check_git=False)
+    assert loads["n"] == 1
+    assert (out / "report.json").read_text() == first and score_file.read_text() == first_model
+    with pytest.raises(ValueError):  # a new version needs its reason
+        S.prereg_payload(version=2)
+    freeze_prereg(prereg_file(out, 2), S.prereg_payload(version=2, reason="panel rebuilt"), code=True)
+    report = S.run(out_dir=out, check_git=False, version=2)
+    assert report["design_version"] == 2 and report["reason_for_new_version"] == "panel rebuilt"
+    assert (out / "report.json").read_text() == first  # version 1 stays as it was
+    assert (out / "report-v2.json").is_file() and S.model_files(2)["score"].is_file()
+    manifest = json.loads((out / "manifest-v2.json").read_text())
+    assert manifest["prereg_file"] == "prereg-v2.json" and manifest["git_checked"] is False
+    assert {"code_revision", "source_dirty", "source_tree_sha256", "source_sha256"} <= set(manifest)
+    assert S.load_strength_score(version=2).version == "strength-v2"
+    with pytest.raises(AlreadyScored):
+        S.run(out_dir=out, check_git=False, version=2)
+
+
+def test_a_strength_model_file_that_does_not_match_its_manifest_is_refused(tmp_path: Path, monkeypatch):
+    from aeo.ranksim.forecast.features import prereg_file
+
+    _stub_strength_run(monkeypatch, tmp_path)
+    out = tmp_path / "evals"
+    freeze_prereg(prereg_file(out, 1), S.prereg_payload())
+    S.run(out_dir=out, check_git=False)
+    path = S.model_files(1)["score"]
+    path.write_text(path.read_text().replace('"c_value": 1.0', '"c_value": 2.0'))
+    with pytest.raises(ValueError, match="sha256"):
+        S.load_strength_score()
+
+
+def test_a_scored_strength_run_refuses_an_uncommitted_prereg_before_reading_any_row(tmp_path: Path, monkeypatch):
+    from aeo.ranksim.forecast.features import ProvenanceRefusal, prereg_file
+
+    loads = _stub_strength_run(monkeypatch, tmp_path)
+    out = tmp_path / "evals"
+    freeze_prereg(prereg_file(out, 1), S.prereg_payload())
+    with pytest.raises(ProvenanceRefusal):
+        S.run(out_dir=out)
+    assert loads["n"] == 0 and not (out / "report.json").exists()
+
+
+def test_the_version_1_strength_design_still_hashes_to_its_frozen_sha():
+    frozen = json.loads((REPO / "evals/forecast/strength/prereg.json").read_text())
+    from aeo.ranksim.forecast.chain import canonical_json, sha256_text
+
+    payload = json.loads(json.dumps(S.prereg_payload(), default=str))
+    assert sha256_text(canonical_json(payload)) == frozen["sha256"]

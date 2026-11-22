@@ -14,17 +14,31 @@ Protections of docs/plan/PLAN_AUDIT.md section B, each enforced in code with a t
   (AsOfGuard keyed on publication date); readings after as_of are refused by
   updater.usable_readings.
 - B5 and B7 a graded cell from the training side: `check_held_out` refuses any
-  graded cell whose search group is a training group or whose forecast date is
-  before the time cutoff. Every graded cell is marked held out.
+  graded cell whose search group is a training group, whose site is a training
+  site (SplitRule.site_is_test, the sites the trust model was fitted on), or
+  whose forecast date is before the time cutoff. `backtest_report` computes its
+  held-out counts from a per-cell flag and refuses a cell that is not held out;
+  it never certifies cells it was not shown to be held out.
+- Brand searches (the search contains the site's brand name, `is_brand_search`)
+  are flagged on every graded cell, left out of the headline and shown apart.
+- Intervals: the headline (which marker verdicts read) resamples sites, as
+  IMPLEMENTATION_SPEC section 2 fixes; the search-clustered version is printed
+  apart as `headline_search_clusters`.
 - B8 single snapshots: every report says labels are single snapshots, stores
   the real days from forecast date to outcome page, and `refuse_pooling`
   refuses to mix backtest cells with real graded outcomes of any other source.
 - An outcome page too shallow to say NT50: `outcome_position` raises
   ShallowOutcome when a site is absent from a page that stops before rank 50.
 - Freeze before scoring: a `BacktestSpec` is hashed and written to
-  evals/forecast/backtest/<name>/prereg.json before any held-out outcome is read
-  (`features.freeze_prereg` refuses to change a frozen design). Reports and
-  manifests are versioned files that are never overwritten.
+  evals/forecast/backtest/<name>/prereg.json (design version 1) or
+  prereg-v<k>.json (version k, with the reason recorded inside) before any
+  held-out outcome is read (`features.freeze_prereg` refuses to change a frozen
+  design). A scored run refuses a dirty forecast source tree and a prereg that
+  is not committed and pushed, and a design is scored once: a second scored run
+  under the same prereg sha256 is refused. Reports and manifests are versioned
+  files (report-v<k>.json) that are never overwritten; each manifest records the
+  code revision, whether the source was dirty, and the sha256 of every forecast
+  source file and of every model file loaded.
 
 What the panel cannot give: searches a site targets but never ranks for. Every
 panel cell exists because the site appeared on the search at least once, so an
@@ -37,8 +51,8 @@ ones in the same table shapes.
 backtest runs the same core (`forecast_frame`), so it tests the code that ships.
 
 CLI:
-  python -m aeo.ranksim.forecast.backtest prereg            freeze the panel designs (A, B, C)
-  python -m aeo.ranksim.forecast.backtest run               score them once, write versioned reports
+  python -m aeo.ranksim.forecast.backtest prereg [--design-version k --reason "..."]   freeze the panel designs (A, B, C)
+  python -m aeo.ranksim.forecast.backtest run [--design-version k]   score them once, write versioned reports
   python -m aeo.ranksim.forecast.backtest synthetic [--seeds 20]   SYNTHETIC end to end run and seed spread
 """
 
@@ -48,6 +62,7 @@ import argparse
 import hashlib
 import json
 import math
+import re
 import subprocess
 import sys
 from collections import defaultdict
@@ -74,7 +89,17 @@ from .config import (
     TOP_DEPTH,
     forecast_paths,
 )
-from .features import evals_dir, freeze_prereg, require_prereg, search_group, stable_share
+from .features import (
+    code_provenance,
+    evals_dir,
+    freeze_prereg,
+    prereg_file,
+    require_clean_source,
+    require_prereg,
+    require_prereg_committed,
+    search_group,
+    stable_share,
+)
 from .grading import (
     FINE_BANDS,
     RULE_V1,
@@ -171,14 +196,32 @@ def backtest_dir(name: str, root: str | Path | None = None) -> Path:
     return base / name
 
 
-def freeze_spec(spec: BacktestSpec, root: str | Path | None = None) -> str:
-    """Write prereg.json for the spec (or check an existing one is identical). Returns the sha256."""
-    return freeze_prereg(backtest_dir(spec.name, root) / "prereg.json", spec.payload())
+def spec_prereg_file(spec: BacktestSpec, root: str | Path | None = None, design_version: int = 1) -> Path:
+    """prereg.json (design version 1) or prereg-v<k>.json beside it."""
+    return prereg_file(backtest_dir(spec.name, root), design_version)
 
 
-def require_spec(spec: BacktestSpec, root: str | Path | None = None) -> str:
+def freeze_spec(spec: BacktestSpec, root: str | Path | None = None, *, design_version: int = 1, code: bool = False) -> str:
+    """Write the prereg for the spec (or check an existing one is identical). Returns the sha256."""
+    return freeze_prereg(spec_prereg_file(spec, root, design_version), spec.payload(), code=code)
+
+
+def require_spec(spec: BacktestSpec, root: str | Path | None = None, *, design_version: int = 1) -> str:
     """The sha256 of the frozen spec. Raises when it is missing or differs: nothing is scored then."""
-    return require_prereg(backtest_dir(spec.name, root) / "prereg.json", spec.payload())
+    return require_prereg(spec_prereg_file(spec, root, design_version), spec.payload())
+
+
+def refuse_scored_twice(name: str, prereg_sha256: str, root: str | Path | None = None) -> None:
+    """A design is scored once: refuse when a manifest under the same prereg sha256 exists in its folder."""
+    folder = backtest_dir(name, root)
+    for path in sorted(folder.glob("manifest-v*.json")):
+        try:
+            old = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if old.get("prereg_sha256") == prereg_sha256:
+            raise BacktestRefusal(f"{path} already holds a scored run under prereg sha256 {prereg_sha256[:12]}. A test is "
+                                  "scored once: freeze a new design version (with the reason) to score again.")
 
 
 def next_version(folder: Path, stem: str = "report") -> int:
@@ -188,6 +231,8 @@ def next_version(folder: Path, stem: str = "report") -> int:
 
 
 def code_revision() -> str | None:
+    """git HEAD, read only. HEAD alone does not say whether the code that ran was committed, so every manifest
+    also records features.code_provenance() (dirty flag, changed files, sha256 of every forecast source file)."""
     try:
         out = subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True, check=True,
                              cwd=Path(__file__).resolve().parent)
@@ -197,24 +242,36 @@ def code_revision() -> str | None:
 
 
 def write_run(name: str, report: Mapping[str, Any], *, prereg_sha256: str, extra_manifest: Mapping[str, Any] | None = None,
-              root: str | Path | None = None) -> dict[str, Any]:
-    """Write report-v<k>.json and manifest-v<k>.json for a new run. Never overwrites: a rerun gets the next k."""
+              root: str | Path | None = None, scored_once: bool = False,
+              provenance: Mapping[str, Any] | None = None) -> dict[str, Any]:
+    """Write report-v<k>.json and manifest-v<k>.json for a new run. Never overwrites: a rerun gets the next k.
+
+    With `scored_once` (every scored REAL run), a run under a prereg sha256 that already has a manifest is
+    refused. The manifest records the code provenance (HEAD, dirty flag, changed files, source sha256).
+    """
     folder = backtest_dir(name, root)
     folder.mkdir(parents=True, exist_ok=True)
+    if scored_once:
+        refuse_scored_twice(name, prereg_sha256, root)
     version = next_version(folder)
     report_path = folder / f"report-v{version}.json"
     if report_path.exists():
         raise BacktestRefusal(f"{report_path} exists. A run is never overwritten.")
     text = json.dumps(_clean(report), indent=1, sort_keys=True)
-    report_path.write_text(text, encoding="utf-8")
+    with open(report_path, "x", encoding="utf-8") as handle:
+        handle.write(text)
+    prov = dict(provenance) if provenance is not None else code_provenance()
     manifest = {
         "name": name, "run_version": version, "report_file": report_path.name,
         "report_sha256": hashlib.sha256(text.encode("utf-8")).hexdigest(), "prereg_sha256": prereg_sha256,
-        "code_revision": code_revision(), "written_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-        "label": report.get("label"),
+        "code_revision": prov.get("code_revision"), "source_dirty": prov.get("source_dirty"),
+        "dirty_files": prov.get("dirty_files"), "source_tree_sha256": prov.get("source_tree_sha256"),
+        "source_sha256": prov.get("source_sha256"),
+        "written_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"), "label": report.get("label"),
     }
     manifest.update(dict(extra_manifest or {}))
-    (folder / f"manifest-v{version}.json").write_text(json.dumps(_clean(manifest), indent=1, sort_keys=True), encoding="utf-8")
+    with open(folder / f"manifest-v{version}.json", "x", encoding="utf-8") as handle:
+        handle.write(json.dumps(_clean(manifest), indent=1, sort_keys=True))
     return manifest
 
 
@@ -260,16 +317,33 @@ def _present(value: Any) -> bool:
         return True
 
 
-def check_held_out(frame: pd.DataFrame, split: Any, *, keyword_col: str = "keyword", as_of_col: str = "as_of") -> None:
-    """Refuse grading any cell whose search is a training search or whose forecast date is before the cutoff."""
+def held_out_flags(frame: pd.DataFrame, split: Any, *, keyword_col: str = "keyword", as_of_col: str = "as_of",
+                   site_col: str = "site", require_test_site: bool = True) -> np.ndarray:
+    """True per row when the cell is held out on every side: a test search group, a forecast date on or after the
+    cutoff and (with `require_test_site`) a test site, i.e. a site the trust model was never fitted on."""
     if len(frame) == 0:
-        return
+        return np.zeros(0, dtype=bool)
     test_search = np.array([bool(split.search_is_test(str(k))) for k in frame[keyword_col]])
     late = np.array([as_date(d) >= split.cutoff for d in frame[as_of_col]])
-    bad = ~(test_search & late)
+    ok = test_search & late
+    if require_test_site:
+        if site_col not in frame:
+            raise BacktestRefusal(f"the cells have no {site_col} column, so the site side of the split cannot be checked")
+        ok &= np.array([bool(split.site_is_test(str(s))) for s in frame[site_col]])
+    return ok
+
+
+def check_held_out(frame: pd.DataFrame, split: Any, *, keyword_col: str = "keyword", as_of_col: str = "as_of",
+                   site_col: str = "site", require_test_site: bool = True) -> None:
+    """Refuse grading any cell whose search is a training search, whose site is a training site, or whose forecast
+    date is before the cutoff (IMPLEMENTATION_SPEC section 6: only held-out sites are graded; PLAN_AUDIT B7)."""
+    if len(frame) == 0:
+        return
+    bad = ~held_out_flags(frame, split, keyword_col=keyword_col, as_of_col=as_of_col, site_col=site_col,
+                          require_test_site=require_test_site)
     if bad.any():
-        raise BacktestRefusal(f"{int(bad.sum())} graded cells are from the training side (training search group or "
-                              f"forecast date before {split.cutoff}). Only held-out cells are graded.")
+        raise BacktestRefusal(f"{int(bad.sum())} graded cells are from the training side (training search group, training "
+                              f"site, or forecast date before {split.cutoff}). Only held-out cells are graded.")
 
 
 def outcome_position(rank100: float | int | None, depth: float | int) -> int:
@@ -387,19 +461,33 @@ def backtest_report(
     source: str = "backtest",
     notes: Sequence[str] = (),
     extra: Mapping[str, Any] | None = None,
+    held_out: Sequence[bool] | None = None,
 ) -> dict[str, Any]:
     """A report in the shape of report.stage_report, for backtest (REAL) or synthetic (SYNTHETIC) cells.
 
-    Every cell is a held-out row. `lead_days` on each cell is the real days from
-    the forecast date to the outcome page. Cells with a lead under the floor are
-    left out of the headline, as stage_report does. The headline clusters by
-    search (the split unit); `headline_site_clusters` resamples sites.
+    `held_out` is one flag per cell (held out on the search, date and site sides,
+    `held_out_flags`). A cell flagged False is refused. Without flags the report
+    does not certify anything: every cell is counted as unchecked (not_test), so
+    the marker 3 check "only held out launches are graded" cannot pass.
+    `lead_days` on each cell is the real days from the forecast date to the
+    outcome page. Cells with a lead under the floor are left out of the headline,
+    as stage_report does. Brand cells (`is_brand`) are left out of the headline
+    and shown apart. The headline resamples SITES (IMPLEMENTATION_SPEC section 2;
+    marker verdicts read it); `headline_search_clusters` resamples searches and is
+    printed apart. `headline_site_clusters` is kept as an alias of the headline.
     """
     if source not in ("backtest", "synthetic"):
         raise PoolingRefused("backtest_report writes backtest or synthetic reports only, never real seed or pilot ones")
     refuse_pooling(cells, source)
     if not (len(cells) == len(outcome_dates) == len(as_ofs)):
         raise BacktestRefusal("one outcome date and one forecast date per cell are required")
+    if held_out is not None:
+        if len(held_out) != len(cells):
+            raise BacktestRefusal("one held-out flag per cell is required")
+        not_held = [i for i, flag in enumerate(held_out) if not bool(flag)]
+        if not_held:
+            raise BacktestRefusal(f"{len(not_held)} cells are not held out (training search, training site or a date before "
+                                  "the cutoff). Only held-out cells are graded.")
     short = [i for i, c in enumerate(cells) if c.lead_days is None or c.lead_days < LEAD_FLOOR_DAYS]
     keep = [i for i in range(len(cells)) if i not in set(short)]
     main = [cells[i] for i in keep]
@@ -413,8 +501,8 @@ def backtest_report(
                 raise BacktestRefusal(f"band prior training sites overlap graded sites: {overlap[:3]}")
         band_prior = fit_band_prior(training)
         base["band_prior"] = band_prior_points(band_prior, main)
-    head = headline(main, base, cluster_by="search")
-    head_site = headline(main, base, cluster_by="site")
+    head = headline(main, base, cluster_by="site")
+    head_search = headline(main, base, cluster_by="search")
     missing = [name for name in SPEC_BASELINES if name not in head["baselines"]]
     persistence = base.get("persistence")
     by_lead: dict[str, Any] = {}
@@ -433,6 +521,14 @@ def backtest_report(
     leads = [c.lead_days for c in main if c.lead_days is not None]
     label = SYNTHETIC if source == "synthetic" else REAL
     all_notes = list(notes)
+    if held_out is None:
+        held_block: dict[str, Any] = {"test": 0, "not_test": len(main), "unchecked": len(main)}
+        all_notes.append("No per-cell held-out flags were given, so no graded cell is certified as held out.")
+    else:
+        held_block = {"test": len(main), "not_test": 0}
+    brand_count = sum(1 for c in main if c.is_brand)
+    all_notes.append(f"{brand_count} brand searches (the search contains the site's brand name) are left out of the "
+                     "headline and shown apart.")
     if short:
         all_notes.append(f"{len(short)} graded rows have a lead under {LEAD_FLOOR_DAYS} days and are not called forecasts here ({label}).")
     if source == "backtest":
@@ -446,20 +542,20 @@ def backtest_report(
         "grading_rule": RULE_V1.version, "grading_rule_hash": RULE_V1.rule_hash(), "lead_floor_days": LEAD_FLOOR_DAYS,
         "excluded_short_lead": len(short), "excluded_after_stage_day": 0, "baselines_required": list(SPEC_BASELINES),
         "baselines_missing": missing, "band_prior": band_prior, "minimum_count": MIN_COUNT_TO_PRINT_RATE,
-        "headline": head, "headline_site_clusters": head_site,
+        "headline": head, "headline_site_clusters": head, "headline_search_clusters": head_search,
         "eligibility": _eligibility(source, stage, len(main)),
         "by_difficulty": _group_blocks([c for c in main if not c.is_brand], lambda c: c.difficulty or "unknown",
                                        DIFFICULTY_TERCILES),
         "by_niche": _group_blocks([c for c in main if not c.is_brand], lambda c: c.niche or "unknown"),
         "by_lead_days": by_lead,
         "built_by": {source: len(main)},
-        "held_out": {"test": len(main), "not_test": 0},
+        "held_out": held_block,
         "target_url": {"count": 0, "right": 0, "rate": None, "measurable": False, "forecasts_with_target_url": 0,
                        "position_unknown": 0},
         "core_updates": _core_update_block(main, [outcome_dates[i] for i in keep], [as_ofs[i] for i in keep]),
         "regrades": {"count": 0, "pairs": [], "note": "backtest cells are graded once"},
         "single_snapshot_labels": source == "backtest",
-        "every_graded_cell_held_out": True,
+        "every_graded_cell_held_out": held_out is not None,
         "real_lead_days": {"count": len(leads), "min": min(leads) if leads else None,
                            "median": float(np.median(leads)) if leads else None, "max": max(leads) if leads else None},
         "notes": all_notes,
@@ -470,10 +566,46 @@ def backtest_report(
     return report
 
 
+BRAND_SHORT_LABEL = 3  # a derived site label shorter than this must match a whole word of the search
+
+
+def _compact(value: Any) -> str:
+    return re.sub(r"[^0-9a-z]", "", str(value).lower())
+
+
+def site_label(site: str) -> str:
+    """The site's own name, as the scoreboard derives it when no brand terms are registered: site.split('.')[0]."""
+    return str(site).strip().lower().split(".")[0]
+
+
+def is_brand_search(site: str, search_text: str, brand_terms: Sequence[str] = ()) -> bool:
+    """True when the search contains the site's brand name (IMPLEMENTATION_SPEC section 2), by the scoreboard's rule:
+    a registered brand term, or else the site label, compacted (letters and digits only) inside the compacted search.
+    A derived label shorter than BRAND_SHORT_LABEL characters must be a whole word of the search ('hp laptop' for
+    hp.com), so x.com is not a brand search on 'xbox'."""
+    compact = _compact(search_text)
+    registered = [t for t in (brand_terms or ()) if _compact(t)]
+    if registered:
+        return any(_compact(t) in compact for t in registered)
+    label = _compact(site_label(site))
+    if not label:
+        return False
+    if len(label) >= BRAND_SHORT_LABEL:
+        return label in compact
+    return label in re.split(r"[^0-9a-z]+", str(search_text).lower())
+
+
 def graded_cells_from(frame: pd.DataFrame, points: Sequence[int], *, stage: str, source: str = "backtest",
-                      niche_col: str = "locale", search_col: str = "keyword_id") -> list[GradedCell]:
-    """GradedCell per row (site, search, point, REAL actual, real lead days, label, difficulty, niche)."""
+                      niche_col: str = "locale", search_col: str = "keyword_id", text_col: str = "keyword",
+                      brand_terms: Mapping[str, Sequence[str]] | None = None) -> list[GradedCell]:
+    """GradedCell per row (site, search, point, REAL actual, real lead days, label, difficulty, niche, brand flag).
+
+    `search_col` is the cluster key of the search; the brand flag is worked out from the search TEXT in `text_col`
+    (the search key when there is no text column) and the site's registered brand terms, if any.
+    """
     labels = frame["forecast_label"].tolist() if "forecast_label" in frame else [None] * len(frame)
+    texts = frame[text_col].tolist() if text_col in frame else frame[search_col].tolist()
+    terms = brand_terms or {}
     lows = frame["range_low"].tolist() if "range_low" in frame else [None] * len(frame)
     highs = frame["range_high"].tolist() if "range_high" in frame else [None] * len(frame)
     out = []
@@ -481,6 +613,7 @@ def graded_cells_from(frame: pd.DataFrame, points: Sequence[int], *, stage: str,
             frame["site"], frame[search_col], frame["position_out"], frame["lead_days"], frame["difficulty"],
             frame[niche_col] if niche_col in frame else [None] * len(frame))):
         out.append(GradedCell(site=str(site), search=str(search), point=int(points[i]), actual=int(actual),
+                              is_brand=is_brand_search(str(site), str(texts[i]), terms.get(str(site), ())),
                               difficulty=diff if isinstance(diff, str) else None, label=labels[i], source=source,
                               stage=stage, lead_days=int(lead), range_low=None if lows[i] is None else int(lows[i]),
                               range_high=None if highs[i] is None else int(highs[i]),
@@ -661,13 +794,9 @@ def strength_lookup(site_dates: pd.DataFrame, *, log: Callable[[str], None] | No
         if log:
             log(f"strength: {len(missing)} (site, date) pairs not cached, looking up")
         fresh = strength_for_dates(missing, log=log)[keep]
-        extra_path = panel_cache_dir() / "strength_extra.parquet"
-        extra_path.parent.mkdir(parents=True, exist_ok=True)
-        old = pd.read_parquet(extra_path) if extra_path.is_file() else None
-        if old is not None:
-            old["as_of"] = [as_date(d) for d in old["as_of"]]
-        joined = fresh if old is None else pd.concat([old[keep], fresh], ignore_index=True)
-        joined.to_parquet(extra_path, index=False)
+        from .features import merge_into_parquet
+
+        merge_into_parquet(panel_cache_dir() / "strength_extra.parquet", fresh, keys=["site", "as_of"], columns=keep)
         have = pd.concat([have, fresh], ignore_index=True)
     return want.merge(have, on=["site", "as_of"], how="left")
 
@@ -837,6 +966,21 @@ def ceiling_cells(sp: pd.DataFrame, pages: pd.DataFrame, max_gap: float) -> pd.D
 
     Same kind of cells as test A: sites in the top 100 of the first pull, the
     second pull at least 50 deep when the site is absent. Nothing is fitted.
+
+    Do not quote these numbers for the noise figure, or the reverse. The ceiling
+    report-v1 gives 0.898 ("all_searches": sites in the top 100 of the FIRST pull,
+    so pull-one positions 51 to 100 forecast NT50 and mostly stay there) and 0.872
+    ("top50_of_first_pull": pull-one positions 1 to 50 only). Units are taken from
+    the first pull alone, pairs are CONSECUTIVE pages of one search under 2 days
+    apart (median 0.2 days, same-day repulls included), the first page may be
+    shallow, and clusters are searches. The brief's 0.716 is
+    sources/noise_sets.py `rule_v1_a_as_forecast_of_b_top50_units`: units are
+    every site in the top 50 of EITHER pull (a site absent from pull A but in
+    pull B's top 50 is a unit forecast 51, a sure miss), pairs are ANY two pages
+    of one search 0.5 to 3 days apart with BOTH pages at least 50 deep, clusters
+    are searches too. The unit set (union of both pulls' top 50s against pull
+    one's top 50 or top 100), the gap window and the depth rule all differ; the
+    size of each part has not been measured. Neither number stands for the other.
     """
     pairs = pages[["keyword_id", "snapshot_time", "page_idx"]].copy()
     pairs = pairs.merge(pairs, on="keyword_id", suffixes=("_a", "_b"))
@@ -916,6 +1060,40 @@ def add_site_features(cells: pd.DataFrame, sp: pd.DataFrame, pages: pd.DataFrame
     return out.drop(columns=["_page"]).reset_index(drop=True)
 
 
+MODEL_DATE_COL = "model_labels_end"
+
+
+def mark_model_labels_end(frame: pd.DataFrame, labels_end: date) -> pd.DataFrame:
+    """Record, per row, the last date of the labels the frozen trust and strength models were fitted on.
+
+    Both models were fitted on training pages dated before DEFAULT_SPLIT's cutoff, so their predictions carry
+    facts up to the day before it. A graded (test) row must have its forecast date after that day:
+    `check_model_inputs_dated` raises LeakError otherwise. Training and validation rows dated earlier are known
+    to see in-sample trust and strength inputs; `in_sample_model_inputs` counts them for the report.
+    """
+    out = frame.copy()
+    out[MODEL_DATE_COL] = labels_end
+    return out
+
+
+def check_model_inputs_dated(test: pd.DataFrame) -> None:
+    """LeakError when a graded row's forecast date is not after the frozen models' last label date."""
+    if MODEL_DATE_COL in test:
+        check_inputs_dated(test, date_cols=(MODEL_DATE_COL,), outcome_col=None)
+
+
+def in_sample_model_inputs(frame: pd.DataFrame) -> dict[str, Any]:
+    """How many rows carry trust and strength inputs from models whose labels end after the row's forecast date."""
+    if MODEL_DATE_COL not in frame or len(frame) == 0:
+        return {"rows": 0, "of": int(len(frame))}
+    late = np.array([as_date(e) > as_date(a) for e, a in zip(frame[MODEL_DATE_COL], frame["as_of"])])
+    return {"rows": int(late.sum()), "of": int(len(frame)),
+            "note": ("These rows' trust and strength inputs come from the frozen models fitted on training pages up to "
+                     "the cutoff, which include later pages of these rows' own searches. They fit the prior and set its "
+                     "temperature and 80% range; no graded row is among them. Not fixed: needs time-respecting or "
+                     "out-of-fold trust and strength fits for training rows.")}
+
+
 def sample_training(frame: pd.DataFrame, cap: int, seed: int) -> pd.DataFrame:
     """Whole searches in sha256(seed|keyword_id) order until `cap` rows. Deterministic."""
     if len(frame) <= cap:
@@ -954,8 +1132,17 @@ def cross_fitted_prior(train: pd.DataFrame, features: Sequence[str], *, label: s
 # panel preregistration and run
 
 
-def panel_specs(design: PanelDesign, *, gaps: Mapping[str, Any], cuts: Sequence[float]) -> dict[str, BacktestSpec]:
-    """The three frozen designs (A, B, C) and the ceiling, built from no outcome at all."""
+def panel_specs(design: PanelDesign, *, gaps: Mapping[str, Any], cuts: Sequence[float], version: int = 1,
+                reason: str | None = None) -> dict[str, BacktestSpec]:
+    """The three frozen designs (A, B, C) and the ceiling, built from no outcome at all.
+
+    Version 1 returns the designs frozen and scored in prereg.json, unchanged (their sha256 still reproduces).
+    Version k >= 2 records what the code now does and the reason for the new version: graded cells are held out
+    on the SITE side too (training cells use training sites only), brand searches are left out of the headline,
+    and headline intervals resample sites.
+    """
+    if int(version) >= 2:
+        return _panel_specs_v2(design, gaps=gaps, cuts=cuts, version=int(version), reason=reason)
     split = asdict(_split())
     common = {"dataset": "panel dfs_history (DataForSEO sample databases), poison-risk pages dropped", "split": split,
               "time_cutoff": split["time_cutoff"]}
@@ -1013,32 +1200,96 @@ def panel_specs(design: PanelDesign, *, gaps: Mapping[str, Any], cuts: Sequence[
     return {"A": a, "B": b, "C": c, "ceiling": ceiling}
 
 
-def _load_models(log: Callable[[str], None] | None):
-    from .strength import load_strength_forecaster, load_strength_score
-    from .trust import default_models_dir, load_trust_model
+def _panel_specs_v2(design: PanelDesign, *, gaps: Mapping[str, Any], cuts: Sequence[float], version: int,
+                    reason: str | None) -> dict[str, BacktestSpec]:
+    if not reason or not str(reason).strip():
+        raise ValueError(f"backtest design version {version} needs the reason for the new version, recorded in its prereg")
+    base = panel_specs(design, gaps=gaps, cuts=cuts, version=1)
+    sides = (" Version {v} sides: test cells are held-out search groups AND held-out sites (SplitRule.site_is_test, sites "
+             "the trust model never trained on) with the reading on or after the cutoff; training and validation cells are "
+             "training search groups AND training sites with the outcome before the cutoff.").format(v=version)
+    rules = {"headline_clusters": "site (2,000 draws, seed 20261122); the search-clustered headline is printed apart",
+             "brand_searches": ("flagged when the compacted site label (site.split('.')[0]) or a registered brand term is "
+                                "inside the compacted search text (labels under 3 characters must be a whole word); left "
+                                "out of the headline and shown apart"),
+             "held_out_flags": "computed per graded cell (search, date and site sides); a cell not held out is refused",
+             "start_evidence": "Common Crawl first release only; RDAP is left out (no dated history)",
+             "models": {"strength": f"strength-v{STRENGTH_MODEL_VERSION}", "trust": TRUST_MODEL_NAME,
+                        "missing_model": "refused"}}
+    out = {}
+    for key, spec in base.items():
+        data = asdict(spec)
+        data["version"] = f"backtest-v{version}"
+        data["cells"] = spec.cells + (sides if key != "ceiling" else "")
+        data["thresholds"] = {**dict(spec.thresholds), f"version_{version}_rules": rules}
+        data["notes"] = [*spec.notes, f"Design version {version}. Reason for the new version: {str(reason).strip()}"]
+        out[key] = BacktestSpec(**data)
+    return out
 
-    score = load_strength_score()
-    forecaster = load_strength_forecaster()
-    path = default_models_dir() / "trust-v1-free-lexical-all.json"
-    trust_model = load_trust_model(path) if path.is_file() else None
+
+TRUST_MODEL_NAME = "trust-v1-free-lexical-all"  # the trust model every panel prereg names
+STRENGTH_MODEL_VERSION = 1  # strength-v1-score.json and strength-v1-forecaster.json
+
+
+def model_paths(*, strength_version: int = STRENGTH_MODEL_VERSION, trust_name: str = TRUST_MODEL_NAME) -> dict[str, Path]:
+    from .strength import model_files
+    from .trust import default_models_dir
+
+    files = model_files(strength_version)
+    return {"strength_score": files["score"], "strength_forecaster": files["forecaster"],
+            "trust": default_models_dir() / f"{trust_name}.json"}
+
+
+def model_hashes(paths: Mapping[str, Path]) -> dict[str, Any]:
+    """The sha256 of every model file a run loads, for its manifest."""
+    return {name: {"file": str(path), "sha256": hashlib.sha256(Path(path).read_bytes()).hexdigest() if Path(path).is_file() else None}
+            for name, path in paths.items()}
+
+
+def _load_models(log: Callable[[str], None] | None, *, strength_version: int = STRENGTH_MODEL_VERSION,
+                 trust_name: str = TRUST_MODEL_NAME):
+    """The preregistered models: the strength score, the strength-only forecaster and the trust model.
+
+    A missing preregistered model is refused: scoring the design without its trust input would publish a
+    different design under the same prereg sha256.
+    """
+    from .strength import load_strength_forecaster, load_strength_score
+    from .trust import load_trust_model
+
+    paths = model_paths(strength_version=strength_version, trust_name=trust_name)
+    missing = [name for name, path in paths.items() if not Path(path).is_file()]
+    if missing:
+        raise BacktestRefusal(f"the preregistered model files {missing} are missing ({[str(paths[m]) for m in missing]}). "
+                              "The design is not scored without them.")
+    score = load_strength_score(paths["strength_score"])
+    forecaster = load_strength_forecaster(paths["strength_forecaster"])
+    trust_model = load_trust_model(paths["trust"])
     if log:
-        log(f"models: strength score, strength-only forecaster, trust {'loaded' if trust_model else 'missing'}")
+        log(f"models: strength-v{strength_version} score and forecaster, trust {trust_name}")
     return score, forecaster, trust_model
 
 
 def prereg_panel(design: PanelDesign = PanelDesign(), *, root: str | Path | None = None,
-                 log: Callable[[str], None] | None = None) -> dict[str, str]:
-    """Freeze the panel designs. Reads page dates, depths and training-page kd only: no position of any outcome page."""
+                 log: Callable[[str], None] | None = None, version: int = 1, reason: str | None = None) -> dict[str, str]:
+    """Freeze the panel designs. Reads page dates, depths and training-page kd only: no position of any outcome page.
+
+    Version 1 is frozen and scored. Version k >= 2 (with its reason) goes to prereg-v<k>.json beside it, with the
+    sha256 of the forecast source so later code changes are refused."""
     _, pages = load_panel_pages(log=log)
-    specs = panel_specs(design, gaps=consecutive_gaps(pages), cuts=difficulty_cuts(pages))
-    return {key: freeze_spec(spec, root) for key, spec in specs.items()}
+    specs = panel_specs(design, gaps=consecutive_gaps(pages), cuts=difficulty_cuts(pages), version=version, reason=reason)
+    return {key: freeze_spec(spec, root, design_version=version, code=version > 1) for key, spec in specs.items()}
 
 
 def _sides(cells: pd.DataFrame, design: PanelDesign) -> tuple[pd.Series, pd.Series, pd.Series]:
+    """(train, validation, test) masks. Test: held-out search group, forecast date on or after the cutoff and a
+    held-out SITE (one the trust model never trained on). Train and validation: training search group, outcome
+    before the cutoff and a training site, so no held-out site's label enters a fit."""
     split = _split()
     cut = split.cutoff
-    test = cells["test_search"].astype(bool) & np.array([as_date(d) >= cut for d in cells["as_of"]])
-    train_all = (~cells["test_search"].astype(bool)) & np.array([as_date(d) < cut for d in cells["outcome_date"]])
+    test_site = np.array([bool(split.site_is_test(str(s))) for s in cells["site"]], dtype=bool)
+    test = cells["test_search"].astype(bool) & np.array([as_date(d) >= cut for d in cells["as_of"]]) & test_site
+    train_all = ((~cells["test_search"].astype(bool)) & np.array([as_date(d) < cut for d in cells["outcome_date"]])
+                 & ~test_site)
     is_val = np.array([stable_share(str(g), design.seed + 21) < design.validation_share for g in cells["search_group"]])
     return pd.Series(train_all & ~is_val, index=cells.index), pd.Series(train_all & is_val, index=cells.index), pd.Series(test, index=cells.index)
 
@@ -1068,7 +1319,8 @@ def _subset_block(frame: pd.DataFrame, points: Mapping[str, Sequence[int]], mode
     base = {k: v for k, v in points.items() if k != model_name and k != "always_nt50"}
     report = backtest_report(cells, base, stage=stage, as_of=as_of, model_version=model_name,
                              outcome_dates=list(frame["outcome_date"]), as_ofs=list(frame["as_of"]),
-                             band_prior_training=band_prior_training, notes=notes, extra=extra)
+                             band_prior_training=band_prior_training, notes=notes, extra=extra,
+                             held_out=held_out_flags(frame, _split()).tolist())
     by_points = dict(points)
     if report["band_prior"] is not None:
         by_points["band_prior"] = band_prior_points(report["band_prior"], cells)
@@ -1082,17 +1334,29 @@ def _subset_block(frame: pd.DataFrame, points: Mapping[str, Sequence[int]], mode
 
 
 def run_panel(design: PanelDesign = PanelDesign(), *, root: str | Path | None = None, rehearsal: bool = False,
-              log: Callable[[str], None] | None = None) -> dict[str, Any]:
-    """Score tests A, B, C and the ceiling once on the REAL panel and write versioned reports. Needs the frozen preregs.
+              log: Callable[[str], None] | None = None, version: int = 1, reason: str | None = None,
+              check_git: bool = True) -> dict[str, Any]:
+    """Score tests A, B, C and the ceiling ONCE on the REAL panel and write versioned reports. Needs the frozen preregs.
+
+    Design version 1 is scored (report-v1.json), so a version 1 run is refused. A rerun is design version k >= 2:
+    `prereg --design-version k --reason ...`, commit and push the prereg-v<k>.json files, then `run --design-version k`.
+    Before any held-out outcome is read the run refuses: a prereg that does not match, a design already scored under
+    the same prereg sha256, a forecast source tree that differs from HEAD, a prereg that is not committed and pushed,
+    and a missing preregistered model file.
 
     With `rehearsal` the whole run happens inside the training side of the real split (training searches, pages
     before the cutoff), re-split by strength.REHEARSAL_SPLIT, and writes under data/forecast/cache/backtest/. No
-    held-out outcome is read. Use it to debug before the one scored run.
+    held-out outcome is read, no git check is made, and it can be rerun. Use it to debug before the one scored run.
     """
 
     sp, pages = load_panel_pages(log=log)
     gaps, cuts = consecutive_gaps(pages), difficulty_cuts(pages)
-    specs = panel_specs(design, gaps=gaps, cuts=cuts)
+    if version > 1 and not reason:
+        from .features import frozen_reason
+
+        probe = panel_specs(design, gaps=gaps, cuts=cuts)["A"]
+        reason = frozen_reason(backtest_dir(probe.name, root), version)
+    specs = panel_specs(design, gaps=gaps, cuts=cuts, version=version, reason=reason)
     if rehearsal:
         from .strength import REHEARSAL_SPLIT
 
@@ -1100,23 +1364,46 @@ def run_panel(design: PanelDesign = PanelDesign(), *, root: str | Path | None = 
         _ACTIVE_SPLIT.append(REHEARSAL_SPLIT)
         root = Path(root) if root else panel_cache_dir() / "rehearsal_evals"
         specs = {k: BacktestSpec(**{**asdict(v), "name": "rehearsal_" + v.name}) for k, v in specs.items()}
-        shas = {key: freeze_spec(spec, root) for key, spec in specs.items()}
+        shas = {key: freeze_spec(spec, root, design_version=version) for key, spec in specs.items()}
         try:
-            return _run_panel_body(sp, pages, design, specs, shas, cuts, root, log)
+            return _run_panel_body(sp, pages, design, specs, shas, cuts, root, log, rehearsal=True)
         finally:
             _ACTIVE_SPLIT.pop()
-    shas = {key: require_spec(spec, root) for key, spec in specs.items()}
-    return _run_panel_body(sp, pages, design, specs, shas, cuts, root, log)
+    shas = {key: require_spec(spec, root, design_version=version) for key, spec in specs.items()}
+    for key, spec in specs.items():
+        refuse_scored_twice(spec.name, shas[key], root)
+    provenance = code_provenance()
+    git_info: dict[str, Any] = {}
+    if check_git:
+        require_clean_source(provenance)
+        git_info = {key: require_prereg_committed(spec_prereg_file(spec, root, version)) for key, spec in specs.items()}
+    return _run_panel_body(sp, pages, design, specs, shas, cuts, root, log, rehearsal=False, provenance=provenance,
+                           git_info=git_info, design_version=version)
 
 
 def _run_panel_body(sp: pd.DataFrame, pages: pd.DataFrame, design: PanelDesign, specs: Mapping[str, BacktestSpec],
                     shas: Mapping[str, str], cuts: Sequence[float], root: str | Path | None,
-                    log: Callable[[str], None] | None) -> dict[str, Any]:
+                    log: Callable[[str], None] | None, *, rehearsal: bool = False,
+                    provenance: Mapping[str, Any] | None = None, git_info: Mapping[str, Any] | None = None,
+                    design_version: int = 1) -> dict[str, Any]:
     from .features import StartEvidence
     from .markers import evaluate_marker
 
     score, strength_fc, trust_model = _load_models(log)
-    evidence = StartEvidence.load(sorted(set(sp["site"])))
+    loaded = model_hashes(model_paths())
+    evidence = StartEvidence.load(sorted(set(sp["site"])))  # backtest frame: no RDAP (no dated history)
+    prov = dict(provenance) if provenance is not None else code_provenance()
+    scored = not rehearsal
+    from .strength import DEFAULT_SPLIT
+
+    labels_end = DEFAULT_SPLIT.cutoff - timedelta(days=1)  # trust-v1 and strength-v1: training pages before the cutoff
+
+    def _write(key: str, report: Mapping[str, Any]) -> dict[str, Any]:
+        extra = {"models_loaded": loaded, "design_version": design_version, "rehearsal": rehearsal,
+                 "git": (git_info or {}).get(key), "git_checked": bool(git_info)}
+        return write_run(specs[key].name, report, prereg_sha256=shas[key], root=root, scored_once=scored,
+                         provenance=prov, extra_manifest=extra)
+
     results: dict[str, Any] = {}
 
     # ---- ceiling (nothing fitted)
@@ -1141,8 +1428,7 @@ def _run_panel_body(sp: pd.DataFrame, pages: pd.DataFrame, design: PanelDesign, 
                                                   cluster_by="search")["hit"] for band in FINE_BANDS},
         "note": "Persistence of one pull as the forecast of the next pull under 2 days later, rule v1. Label noise, not a model.",
     }
-    results["ceiling"] = write_run(specs["ceiling"].name, {"label": REAL, "ceiling": ceiling}, prereg_sha256=shas["ceiling"],
-                                   root=root)
+    results["ceiling"] = _write("ceiling", {"label": REAL, "ceiling": ceiling})
     results["ceiling"]["numbers"] = ceiling
 
     # ---- A and B
@@ -1158,10 +1444,13 @@ def _run_panel_body(sp: pd.DataFrame, pages: pd.DataFrame, design: PanelDesign, 
             log(f"A {name}: train {len(train)}, validation {len(val)}, test {len(test)} cells")
         use = pd.concat([train.assign(_side="train"), val.assign(_side="val"), test.assign(_side="test")], ignore_index=True)
         use = add_site_features(use, sp, pages, score=score, trust_model=trust_model, evidence=evidence, cuts=cuts, log=log)
+        use = mark_model_labels_end(use, labels_end)
         _note(log, f"A {name}: features built")
         check_inputs_dated(use, date_cols=INPUT_DATE_COLS)
         train, val, test = (use[use["_side"] == s].reset_index(drop=True) for s in ("train", "val", "test"))
         check_held_out(test, split)
+        if not rehearsal:
+            check_model_inputs_dated(test)
         check_outcome_depth(test)
         feats = list(PANEL_PRIOR_FEATURES)
         prior_model = fit_placement(train, feats, training_label=REAL, seed=design.seed, name=f"prior-{name}")
@@ -1214,7 +1503,9 @@ def _run_panel_body(sp: pd.DataFrame, pages: pd.DataFrame, design: PanelDesign, 
                  "updater_versions_on_test": {k: float(np.mean([RULE_V1.is_hit(int(p), int(a)) for p, a in
                                                                 zip(v, test["position_out"])])) if len(test) else None
                                               for k, v in versions.items()},
-                 "train_rows": int(len(train)), "validation_rows": int(len(val))}
+                 "train_rows": int(len(train)), "validation_rows": int(len(val)),
+                 "in_sample_model_inputs": {"train": in_sample_model_inputs(train), "validation": in_sample_model_inputs(val),
+                                            "test": in_sample_model_inputs(test)}}
         subsets = {"all": test, "new_to_search": test[test["new_to_search"] == 1.0],
                    "young_sites": test[test["sd_young"] == 1.0]}
         block = {}
@@ -1228,17 +1519,16 @@ def _run_panel_body(sp: pd.DataFrame, pages: pd.DataFrame, design: PanelDesign, 
         a_reports[name] = block
         if name == design.windows_days[0][0]:
             b_report = _test_b(train, val, test, test_prior, points, train_cells, design, as_of_report, shas["B"])
-    results["A"] = write_run(specs["A"].name, {"label": REAL, "kind": "panel_a", "windows": a_reports},
-                             prereg_sha256=shas["A"], root=root)
+    results["A"] = _write("A", {"label": REAL, "kind": "panel_a", "windows": a_reports})
     results["A"]["summary"] = _summary_a(a_reports)
     if b_report is not None:
-        results["B"] = write_run(specs["B"].name, b_report, prereg_sha256=shas["B"], root=root)
+        results["B"] = _write("B", b_report)
         results["B"]["summary"] = b_report.get("summary")
 
     # ---- C
     c_report = _test_c(sp, pages, design, score=score, strength_fc=strength_fc, trust_model=trust_model, evidence=evidence,
-                       cuts=cuts, sha=shas["C"], log=log)
-    results["C"] = write_run(specs["C"].name, c_report, prereg_sha256=shas["C"], root=root)
+                       cuts=cuts, sha=shas["C"], log=log, labels_end=labels_end, strict_model_dates=not rehearsal)
+    results["C"] = _write("C", c_report)
     results["C"]["summary"] = c_report.get("summary")
     return results
 
@@ -1253,8 +1543,9 @@ def _summary_a(a_reports: Mapping[str, Any]) -> dict[str, Any]:
             head = rep["headline"]
             out[window][sub] = {
                 "cells": head["forecasts"], "hit": head["summary"]["hit"]["rate"],
-                "hit_interval_search": head["summary"]["hit"]["cluster_interval"],
-                "hit_interval_site": rep["headline_site_clusters"]["summary"]["hit"]["cluster_interval"],
+                "hit_interval_site": head["summary"]["hit"]["cluster_interval"],
+                "hit_interval_search": rep["headline_search_clusters"]["summary"]["hit"]["cluster_interval"],
+                "brand_cells_shown_apart": head["brand_forecasts_shown_apart"],
                 "baselines": {k: v["baseline_rate"] for k, v in head["baselines"].items()},
                 "best_baseline": head["best_baseline"], "skill": head["skill_over_best_baseline"],
                 "gain_over_best_interval": head["baselines"][head["best_baseline"]]["difference_interval"] if head["best_baseline"] else None,
@@ -1297,8 +1588,10 @@ def _test_b(train: pd.DataFrame, val: pd.DataFrame, test: pd.DataFrame, test_pri
     cells = _cells_for(te, p_with, "d30")
     from .grading import compare_to_baseline
 
-    gain_s = compare_to_baseline(cells, p_without, cluster_by="search")
-    gain_site = compare_to_baseline(cells, p_without, cluster_by="site")
+    keep = [i for i, c in enumerate(cells) if not c.is_brand]  # brand searches are shown apart, never in a gain
+    kept_cells, kept_without = [cells[i] for i in keep], [p_without[i] for i in keep]
+    gain_s = compare_to_baseline(kept_cells, kept_without, cluster_by="search")
+    gain_site = compare_to_baseline(kept_cells, kept_without, cluster_by="site")
     report["kind"] = "stage_report"
     report["move_adds"] = {"with_minus_without_search_clusters": gain_s, "with_minus_without_site_clusters": gain_site}
     report["summary"] = {"cells": len(te), "with_move": gain_s["model_rate"], "latest_alone": gain_s["baseline_rate"],
@@ -1309,7 +1602,8 @@ def _test_b(train: pd.DataFrame, val: pd.DataFrame, test: pd.DataFrame, test_pri
 
 
 def _test_c(sp: pd.DataFrame, pages: pd.DataFrame, design: PanelDesign, *, score: Any, strength_fc: Any, trust_model: Any,
-            evidence: Any, cuts: Sequence[float], sha: str, log: Callable[[str], None] | None) -> dict[str, Any]:
+            evidence: Any, cuts: Sequence[float], sha: str, log: Callable[[str], None] | None,
+            labels_end: date | None = None, strict_model_dates: bool = False) -> dict[str, Any]:
     from .markers import evaluate_marker
 
     cells, counts = entrant_cells(sp, pages, design)
@@ -1320,10 +1614,14 @@ def _test_c(sp: pd.DataFrame, pages: pd.DataFrame, design: PanelDesign, *, score
         log(f"C: train {len(train)}, test {len(test)} entrant cells")
     use = pd.concat([train.assign(_side="train"), test.assign(_side="test")], ignore_index=True)
     use = add_site_features(use, sp, pages, score=score, trust_model=trust_model, evidence=evidence, cuts=cuts, log=log)
+    if labels_end is not None:
+        use = mark_model_labels_end(use, labels_end)
     check_inputs_dated(use, date_cols=INPUT_DATE_COLS)
     train = use[use["_side"] == "train"].reset_index(drop=True)
     test = use[use["_side"] == "test"].reset_index(drop=True)
     check_held_out(test, _split())
+    if strict_model_dates:
+        check_model_inputs_dated(test)
     model = fit_placement(train, list(ENTRANT_FEATURES), training_label=REAL, seed=design.seed, name="entrant")
     dists, forecasts = forecast_frame(test, ForecastModels(placement=model), stage="upload")
     test["forecast_label"] = [f.label for f in forecasts]
@@ -1341,6 +1639,8 @@ def _test_c(sp: pd.DataFrame, pages: pd.DataFrame, design: PanelDesign, *, score
              "Page middle and always 21 to 50 score the same under rule v1 whenever the page middle is 21 to 50."]
     report = _subset_block(test, points, "placement", stage="upload", band_prior_training=train_cells, as_of=as_of_report,
                            notes=notes, extra={"prereg_sha256": sha, "cell_counts": counts, "train_rows": int(len(train)),
+                                               "in_sample_model_inputs": {"train": in_sample_model_inputs(train),
+                                                                          "test": in_sample_model_inputs(test)},
                                                "model": {"version": model.model_version(), "temperature": model.temperature,
                                                          "range_level": model.range_level, "cv": model.cv,
                                                          "calibration_on_its_fold": model.calibration},
@@ -1363,7 +1663,9 @@ def _test_c(sp: pd.DataFrame, pages: pd.DataFrame, design: PanelDesign, *, score
     }
     head = report["headline"]
     report["summary"] = {"cells": head["forecasts"], "hit": head["summary"]["hit"]["rate"],
-                         "interval_search": head["summary"]["hit"]["cluster_interval"],
+                         "interval_site": head["summary"]["hit"]["cluster_interval"],
+                         "interval_search": report["headline_search_clusters"]["summary"]["hit"]["cluster_interval"],
+                         "brand_cells_shown_apart": head["brand_forecasts_shown_apart"],
                          "baselines": {k: v["baseline_rate"] for k, v in head["baselines"].items()},
                          "best_baseline": head["best_baseline"], "skill": head["skill_over_best_baseline"],
                          "mae_top30": {k: v["mae"] for k, v in report["mae_top30"].items() if isinstance(v, dict)}}
@@ -1580,6 +1882,7 @@ def run_synthetic(design: SyntheticDesign = SyntheticDesign(), *, log: Callable[
     train_cells = [GradedCell(site=s, search=q, point=int(p), actual=int(p), difficulty=d, source="synthetic")
                    for s, q, p, d in zip(train["site"], train["search"], train["position_out"], train["difficulty"])]
     strength_points = [dist_median(d) for d in strength_only.distributions(test)]
+    brand_names = {s: tuple((world.agency_form(s) or {}).get("brand_names") or ()) for s in test_sites}
     for stage in SYN_STAGES:
         day_n = STAGE_DAYS[stage]
         forecasts: list[Forecast] = []
@@ -1601,6 +1904,7 @@ def run_synthetic(design: SyntheticDesign = SyntheticDesign(), *, log: Callable[
             known = [r for r in got if r.position is not None]
             persistence.append(int(known[-1].position) if known else NT50)
         cells = [GradedCell(site=s, search=q, point=int(p), actual=int(a), difficulty=d, niche=n, source="synthetic",
+                            is_brand=is_brand_search(s, q, brand_names.get(s, ())),
                             stage=stage, lead_days=90 - day_n, label=by_key[(s, q)].label,
                             range_low=by_key[(s, q)].range_low, range_high=by_key[(s, q)].range_high)
                  for s, q, p, a, d, n in zip(rows["site"], rows["search"], rows["point"], rows["actual"],
@@ -1610,7 +1914,8 @@ def run_synthetic(design: SyntheticDesign = SyntheticDesign(), *, log: Callable[
         report = backtest_report(cells, {"persistence": persistence, "site_strength": strength_points}, stage=stage,
                                  as_of=max(outcome_dates), model_version=updater.version() if stage != "upload" else placement.model_version(),
                                  outcome_dates=outcome_dates, as_ofs=as_ofs, band_prior_training=train_cells,
-                                 source="synthetic", notes=["SYNTHETIC. Never accuracy."])
+                                 source="synthetic", notes=["SYNTHETIC. Never accuracy."],
+                                 held_out=[c.site in test_sites for c in cells])
         if stage == "upload":
             report["marker_3_synthetic"] = evaluate_marker(3, report)
         if stage == "d30":
@@ -1717,18 +2022,22 @@ def synthetic_spec(seeds: Sequence[int], base: SyntheticDesign) -> BacktestSpec:
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m aeo.ranksim.forecast.backtest")
     sub = parser.add_subparsers(dest="command", required=True)
-    sub.add_parser("prereg", help="freeze the panel designs before scoring")
+    pre = sub.add_parser("prereg", help="freeze the panel designs before scoring")
+    pre.add_argument("--design-version", type=int, default=1, help="1 is frozen and scored; k >= 2 writes prereg-v<k>.json")
+    pre.add_argument("--reason", default=None, help="why a new design version is needed (required for k >= 2)")
     run_cmd = sub.add_parser("run", help="score the panel designs once (REAL), versioned reports")
     run_cmd.add_argument("--rehearsal", action="store_true", help="debug inside the training side only")
+    run_cmd.add_argument("--design-version", type=int, default=1, help="the frozen design version to score (once)")
     syn = sub.add_parser("synthetic", help="SYNTHETIC end to end run and the seed spread at plan size")
     syn.add_argument("--seeds", type=int, default=20)
     syn.add_argument("--seed", type=int, default=3)
     args = parser.parse_args(argv)
     if args.command == "prereg":
-        print(json.dumps(prereg_panel(log=_log), indent=2))
+        print(json.dumps(prereg_panel(log=_log, version=args.design_version, reason=args.reason), indent=2))
         return 0
     if args.command == "run":
-        print(json.dumps(_clean(run_panel(rehearsal=args.rehearsal, log=_log)), indent=1, default=str)[:20000])
+        print(json.dumps(_clean(run_panel(rehearsal=args.rehearsal, log=_log, version=args.design_version)), indent=1,
+                         default=str)[:20000])
         return 0
     base = SyntheticDesign(seed=args.seed)
     seeds = list(range(100, 100 + args.seeds))

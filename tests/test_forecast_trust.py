@@ -50,7 +50,10 @@ def test_label_pairs_respect_the_threshold_and_pages():
                           "residual": [10.0, -1.0, 0.0, 30.0, 0.0], "site": list("vwxyz")})
     hi, lo = T.label_pairs(frame, threshold=10.0)
     pairs = {(frame["site"][h], frame["site"][l]) for h, l in zip(hi, lo)}
-    assert pairs == {("v", "w"), ("v", "x"), ("y", "z")}
+    # 10.0 against 0.0 differs by exactly the threshold, not more (spec section 6 part 5): no pair
+    assert pairs == {("v", "w"), ("y", "z")}
+    hi, lo = T.label_pairs(frame, threshold=10.0, strict=False)  # the trust-v1 rule, kept only for that scored version
+    assert {(frame["site"][h], frame["site"][l]) for h, l in zip(hi, lo)} == {("v", "w"), ("v", "x"), ("y", "z")}
 
 
 def test_two_way_interval_brackets_the_mean():
@@ -172,3 +175,89 @@ def test_synthetic_frame_never_feeds_the_planted_ceiling():
     assert "planted_ceiling" not in T.SYNTHETIC_FEATURES
     for row in frame.itertuples():
         assert row.as_of == world.new_sites[row.site].launch_date  # features as of launch day, label at day 90
+
+
+# ---------------------------------------------------------------------------
+# marker 2 pairs need labels MORE than the threshold apart; a scored result is never overwritten
+
+
+REPO = Path(__file__).resolve().parents[1]
+
+
+def test_marker2_pairs_need_labels_that_differ_by_more_than_the_threshold():
+    frame = pd.DataFrame({"keyword_id": ["k", "k"], "snapshot_time": [pd.Timestamp("2026-03-01", tz="UTC")] * 2,
+                          "site": ["a.com", "b.com"], "residual": [5.0, 5.0 - T.PAIR_THRESHOLD]})
+    hi, _ = T.label_pairs(frame, T.PAIR_THRESHOLD)
+    assert len(hi) == 0
+    assert T.pairs_strict(2) and not T.pairs_strict(1)  # trust-v1 was scored with "at least"; it is never rescored
+    v2 = T.prereg_payload(version=2, reason="pairs as the spec defines them")
+    assert ">" in v2["pair_comparison"] and v2["version"] == "trust-v2" and "RDAP" in v2["start_evidence"]
+
+
+def test_the_version_1_trust_design_still_hashes_to_its_frozen_sha():
+    from aeo.ranksim.forecast.chain import canonical_json, sha256_text
+
+    frozen = json.loads((REPO / "evals/forecast/trust/prereg.json").read_text())
+    assert sha256_text(canonical_json(json.loads(json.dumps(T.prereg_payload(), default=str)))) == frozen["sha256"]
+
+
+def _stub_trust_run(monkeypatch) -> dict[str, int]:
+    from aeo.ranksim.forecast import markers as M
+
+    calls = {"rows": 0, "scored": 0}
+
+    def fake_rows(*_a, **_k):
+        calls["rows"] += 1
+        return pd.DataFrame(), None
+
+    def fake_run_one(*_a, version=1, **_k):
+        calls["scored"] += 1
+        return {"evaluation": {"score": calls["scored"]}, "feature_sets": {}}
+
+    monkeypatch.setattr(T, "load_label_rows", fake_rows)
+    monkeypatch.setattr(T, "run_one", fake_run_one)
+    monkeypatch.setattr(T, "marker2_report", lambda ev, name: {"score": ev["score"]})
+    monkeypatch.setattr(M, "evaluate_marker", lambda marker, rep: {"passed": False, "score": rep["score"]})
+    monkeypatch.setattr(M, "render_marker_text", lambda verdict: "stub")
+    return calls
+
+
+def test_trust_run_refuses_to_score_the_held_out_side_a_second_time(tmp_path: Path, monkeypatch):
+    from aeo.ranksim.forecast.features import AlreadyScored, freeze_prereg, prereg_file
+
+    calls = _stub_trust_run(monkeypatch)
+    freeze_prereg(prereg_file(tmp_path, 1), T.prereg_payload())
+    T.run(out_dir=tmp_path, check_git=False, models_dir=tmp_path / "models")
+    first = (tmp_path / "report.json").read_text()
+    with pytest.raises(AlreadyScored):
+        T.run(out_dir=tmp_path, check_git=False, models_dir=tmp_path / "models")
+    assert calls == {"rows": 1, "scored": 3}  # the refusal came before any row was read or scored
+    assert (tmp_path / "report.json").read_text() == first
+    freeze_prereg(prereg_file(tmp_path, 2), T.prereg_payload(version=2, reason="panel rebuilt"), code=True)
+    report = T.run(out_dir=tmp_path, check_git=False, models_dir=tmp_path / "models", version=2)
+    assert report["version"] == "trust-v2" and report["pair_comparison"] == ">"
+    assert (tmp_path / "report.json").read_text() == first and (tmp_path / "report-v2.json").is_file()
+    manifest = json.loads((tmp_path / "manifest-v2.json").read_text())
+    assert manifest["prereg_file"] == "prereg-v2.json" and "source_tree_sha256" in manifest
+
+
+def test_trust_run_refuses_an_uncommitted_prereg_before_reading_any_row(tmp_path: Path, monkeypatch):
+    from aeo.ranksim.forecast.features import ProvenanceRefusal, freeze_prereg, prereg_file
+
+    calls = _stub_trust_run(monkeypatch)
+    freeze_prereg(prereg_file(tmp_path, 1), T.prereg_payload())
+    with pytest.raises(ProvenanceRefusal):
+        T.run(out_dir=tmp_path, models_dir=tmp_path / "models")
+    assert calls["rows"] == 0
+
+
+def test_a_saved_trust_model_is_never_replaced(tmp_path: Path):
+    from aeo.ranksim.forecast.features import AlreadyScored
+
+    model = T.fit_trust_model(_fit_frame(), feature_set="x", features=["st_s_cc_hc", "st_s_tranco"],
+                              grid=({"num_leaves": 4, "min_child_samples": 10},))
+    path, _ = T.save_trust_model(model, {"language": "en"}, tmp_path)
+    before = path.read_text()
+    with pytest.raises(AlreadyScored):
+        T.save_trust_model(model, {"language": "en", "train_rows": 1}, tmp_path)
+    assert path.read_text() == before

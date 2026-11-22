@@ -28,8 +28,9 @@ strictly before the page, never from the page itself).
 
 Marker 2, on the panel. Held-out sites AND held-out searches (no site and no
 search on both sides), later dates than training. Pairs are two held-out
-sites on the same held-out page whose labels differ by at least the frozen
-threshold. The model is right when it puts the site with the higher label
+sites on the same held-out page whose labels differ by MORE than the frozen
+threshold (trust-v1 was frozen and scored with "at least"; every later design
+version uses "more than", as the spec says, and records it in its prereg). The model is right when it puts the site with the higher label
 first; a tie scores 0.5. Each single strength measure and a within-page
 shuffle are scored on the identical pairs.
 
@@ -39,8 +40,10 @@ for page content. It is not yet the plan's 20,000 new sites with traffic
 curves. Those need the paid pulls.
 
 CLI:
-  python -m aeo.ranksim.forecast.trust prereg
-  python -m aeo.ranksim.forecast.trust run [--rehearsal]
+  python -m aeo.ranksim.forecast.trust prereg [--design-version k --reason "..."]
+  python -m aeo.ranksim.forecast.trust run [--rehearsal] [--design-version k]
+A design version is scored once: version 1 (report.json) is scored, so a rerun
+is version k >= 2 (prereg-v<k>.json committed and pushed first, then report-v<k>.json).
 """
 
 from __future__ import annotations
@@ -70,11 +73,18 @@ from .features import (
     SYNTHETIC_FOOTPRINT_COLUMNS,
     _loo_quantile_and_gap,
     check_model_features,
+    AlreadyScored,
+    begin_scored_run,
+    code_provenance,
     evals_dir,
+    excluded_site_mask,
+    finish_scored_run,
     freeze_prereg,
-    require_prereg,
+    frozen_reason,
+    prereg_file,
     search_group,
     stable_share,
+    versioned_payload,
 )
 from .strength import DEFAULT_SPLIT, SplitRule, pair_block, pair_scores
 from .types import PREDICTED, REAL, SYNTHETIC
@@ -358,7 +368,10 @@ def fit_trust_model(
 
 
 def code_revision() -> str | None:
-    """The repository HEAD commit, read only. None when git is not available."""
+    """The repository HEAD commit, read only. None when git is not available.
+
+    HEAD alone does not say whether the code that ran was committed: manifests written by `run` also carry
+    features.code_provenance() (dirty flag, changed files, sha256 of every forecast source file)."""
     try:
         out = subprocess.run(["git", "rev-parse", "HEAD"], cwd=Path(__file__).resolve().parent, capture_output=True,
                              text=True, timeout=10, check=False)
@@ -371,23 +384,36 @@ def default_models_dir() -> Path:
     return forecast_paths().models / "trust"
 
 
-def save_trust_model(model: TrustModel, manifest: Mapping[str, Any], models_dir: str | Path | None = None) -> tuple[Path, str]:
-    """Write the model JSON (never committed: it lives under data/) and a manifest with its sha256. Returns (path, sha256)."""
-    folder = Path(models_dir) if models_dir else default_models_dir()
-    folder.mkdir(parents=True, exist_ok=True)
+def trust_model_name(model: TrustModel, manifest: Mapping[str, Any]) -> str:
     name = f"{model.version}-{model.feature_set}-{model.label_backend or 'unknown'}"
     if manifest.get("language"):
         name += f"-{manifest['language']}"
     elif "language" in manifest:
         name += "-all"
+    return name
+
+
+def save_trust_model(model: TrustModel, manifest: Mapping[str, Any], models_dir: str | Path | None = None, *,
+                     overwrite: bool = False) -> tuple[Path, str]:
+    """Write the model JSON (never committed: it lives under data/) and a manifest with its sha256. Returns (path, sha256).
+
+    An existing model file is never replaced (the backtest loads it by name): a new fit gets a new version name.
+    """
+    folder = Path(models_dir) if models_dir else default_models_dir()
+    folder.mkdir(parents=True, exist_ok=True)
+    name = trust_model_name(model, manifest)
     payload = model.payload()
     payload["manifest"] = dict(manifest)
     text = json.dumps(payload, sort_keys=True, default=str)
     path = folder / f"{name}.json"
-    path.write_text(text, encoding="utf-8")
+    manifest_path = folder / f"{name}.manifest.json"
+    if not overwrite and (path.exists() or manifest_path.exists()):
+        raise AlreadyScored(f"{path} exists. A model file is never replaced: fit it under a new version name.")
+    with open(path, "w" if overwrite else "x", encoding="utf-8") as handle:
+        handle.write(text)
     digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
-    (folder / f"{name}.manifest.json").write_text(json.dumps({**manifest, "model_file": path.name, "sha256": digest},
-                                                             indent=2, sort_keys=True, default=str), encoding="utf-8")
+    with open(manifest_path, "w" if overwrite else "x", encoding="utf-8") as handle:
+        handle.write(json.dumps({**manifest, "model_file": path.name, "sha256": digest}, indent=2, sort_keys=True, default=str))
     return path, digest
 
 
@@ -433,8 +459,13 @@ def trust_gap(site_trust: float, page: pd.DataFrame, site: str | None = None, *,
 # pairs and intervals
 
 
-def label_pairs(frame: pd.DataFrame, threshold: float = PAIR_THRESHOLD) -> tuple[np.ndarray, np.ndarray]:
-    """(higher-label, lower-label) row indices: two rows on the same page whose residuals differ by at least threshold."""
+def label_pairs(frame: pd.DataFrame, threshold: float = PAIR_THRESHOLD, *, strict: bool = True) -> tuple[np.ndarray, np.ndarray]:
+    """(higher-label, lower-label) row indices: two rows on the same page whose residuals differ by MORE than threshold.
+
+    IMPLEMENTATION_SPEC section 6 part 5: labels that "differ by more than a frozen threshold". Residuals are whole
+    and half places, so a gap of exactly the threshold is common and is left out. `strict=False` reproduces the
+    trust-v1 pair set (at least the threshold), which was scored once under that rule and is kept only for it.
+    """
     data = frame.reset_index(drop=True)
     codes = data.groupby(["keyword_id", "snapshot_time"], sort=False).ngroup().to_numpy()
     res = data["residual"].to_numpy(dtype=float)
@@ -449,7 +480,8 @@ def label_pairs(frame: pd.DataFrame, threshold: float = PAIR_THRESHOLD) -> tuple
             continue
         a, b = np.triu_indices(len(idx), k=1)
         ra, rb = res[idx[a]], res[idx[b]]
-        ok = np.isfinite(ra) & np.isfinite(rb) & (np.abs(ra - rb) >= threshold)
+        gap = np.abs(ra - rb)
+        ok = np.isfinite(ra) & np.isfinite(rb) & ((gap > threshold) if strict else (gap >= threshold))
         a, b, ra, rb = a[ok], b[ok], ra[ok], rb[ok]
         hi = np.where(ra > rb, idx[a], idx[b])
         lo = np.where(ra > rb, idx[b], idx[a])
@@ -527,16 +559,19 @@ def evaluate_pairs(
     single_measures: Sequence[str] = SINGLE_MEASURES,
     young_col: str | None = "sd_young",
     seed: int = SEED,
+    strict: bool = True,
 ) -> dict[str, Any]:
-    """Marker 2 pairs on the held-out frame: each model, each single measure and a shuffle on the IDENTICAL pairs."""
+    """Marker 2 pairs on the held-out frame: each model, each single measure and a shuffle on the IDENTICAL pairs.
+
+    A pair needs labels that differ by more than `threshold` (`strict=False`: at least, the trust-v1 rule)."""
     data = frame.reset_index(drop=True)
-    hi, lo = label_pairs(data, threshold)
+    hi, lo = label_pairs(data, threshold, strict=strict)
     searches = data["keyword_id"].to_numpy()[hi]
     sa = data["site"].to_numpy()[hi]
     sb = data["site"].to_numpy()[lo]
     rng = np.random.default_rng(seed)
     shuffle = rng.random(len(data))
-    out: dict[str, Any] = {"threshold_places": threshold, "pairs": int(len(hi)),
+    out: dict[str, Any] = {"threshold_places": threshold, "pair_comparison": ">" if strict else ">=", "pairs": int(len(hi)),
                            "pages": int(data.iloc[hi].groupby(["keyword_id", "snapshot_time"]).ngroups) if len(hi) else 0}
     singles: dict[str, Any] = {}
     single_scores: dict[str, np.ndarray] = {}
@@ -596,7 +631,24 @@ def marker2_report(evaluation: Mapping[str, Any], model_name: str, *, label: str
 # the REAL data
 
 
-def prereg_payload(split: SplitRule = DEFAULT_SPLIT) -> dict[str, Any]:
+def prereg_payload(split: SplitRule = DEFAULT_SPLIT, *, version: int = 1, reason: str | None = None) -> dict[str, Any]:
+    """The frozen marker 2 design. Version 1 is the file already frozen (unchanged, its sha256 still reproduces).
+    Version k >= 2 also records its version name, the reason for the new version, the pair comparison
+    (labels differ by MORE than the threshold), and that RDAP start evidence is left out (no dated history)."""
+    payload = versioned_payload(_prereg_payload_v1(split), name="trust", version=version, reason=reason)
+    if int(version) >= 2:
+        payload["pair_comparison"] = "labels differ by more than the threshold (>)"
+        payload["start_evidence"] = ("Common Crawl first release only; RDAP is left out (today-only, no dated history, "
+                                     "its presence encodes survival to the fetch day)")
+    return payload
+
+
+def pairs_strict(version: int) -> bool:
+    """trust-v1 was frozen and scored with pairs at least the threshold apart; every later version uses more than."""
+    return int(version) >= 2
+
+
+def _prereg_payload_v1(split: SplitRule) -> dict[str, Any]:
     return {
         "name": "trust", "version": TRUST_VERSION, "split": asdict(split),
         "split_rule": ("searches by search group (share to test by sha256), sites by sha256(seed|site|name) share to test, "
@@ -650,6 +702,7 @@ def load_label_rows(split: SplitRule, *, sites_split: SplitRule | None = None, l
     rows = panel_mod.load_panel(["locale", "language", "keyword", "keyword_id", "snapshot_time", "snapshot_date", "rank", "site",
                                  "title", "main_domain_rank", panel_mod.POISON_RISK_COLUMN], datasets=["dfs_history"])
     rows = rows[~rows[panel_mod.POISON_RISK_COLUMN].fillna(False).astype(bool)].drop(columns=[panel_mod.POISON_RISK_COLUMN])
+    rows = rows[~excluded_site_mask(rows["site"])]
     mdr_rows = rows[["site", "snapshot_time", "main_domain_rank"]]
     depth = rows.groupby(["keyword_id", "snapshot_time"], sort=False)["rank"].transform("max")
     rows = rows.assign(depth=depth)
@@ -711,7 +764,7 @@ def _scorer(backend: str) -> Any:
 
 
 def run_one(best: pd.DataFrame, config: Mapping[str, Any], *, models_dir: Path | None, manifest_base: Mapping[str, Any],
-            log: Callable[[str], None] | None = None, save: bool = True) -> dict[str, Any]:
+            log: Callable[[str], None] | None = None, save: bool = True, version: int = 1) -> dict[str, Any]:
     """One label backend and language: labels, two feature sets, trees and ridge, pairs on held-out sites and searches."""
     language = config.get("language")
     rows = best if language is None else best[best["language"] == language]
@@ -745,6 +798,7 @@ def run_one(best: pd.DataFrame, config: Mapping[str, Any], *, models_dir: Path |
     model_values: dict[str, np.ndarray] = {}
     for name in FEATURE_SETS:
         model = fit_trust_model(train_ok, feature_set=name, label_backend=scorer.mode, label_model=scorer.model_name)
+        model.version = f"trust-v{int(version)}"
         model_values[f"{name}_gbt"] = model.predict(test)
         model_values[f"{name}_ridge"] = model.predict_ridge(test)
         info: dict[str, Any] = {"features_used": model.features, "cv": model.cv, "rounds": model.rounds}
@@ -761,16 +815,22 @@ def run_one(best: pd.DataFrame, config: Mapping[str, Any], *, models_dir: Path |
     model_values = {k: v[keep_index] for k, v in model_values.items()}
     test_eval["st_mdr_before"] = test_eval["mdr_before"]  # DataForSEO domain rank: 0 to 1000, higher is stronger
     singles = [*SINGLE_MEASURES, "st_mdr_before"]
-    result["evaluation"] = evaluate_pairs(test_eval, model_values, single_measures=singles)
+    result["evaluation"] = evaluate_pairs(test_eval, model_values, single_measures=singles, strict=pairs_strict(version))
     return result
 
 
 def run(split: SplitRule = DEFAULT_SPLIT, *, out_dir: str | Path | None = None, log: Callable[[str], None] | None = None,
-        rehearsal: bool = False) -> dict[str, Any]:
-    """Score the frozen marker 2 design once on REAL held-out sites and searches. Writes report.json.
+        rehearsal: bool = False, version: int = 1, reason: str | None = None, check_git: bool = True,
+        models_dir: str | Path | None = None) -> dict[str, Any]:
+    """Score the frozen marker 2 design ONCE on REAL held-out sites and searches.
+
+    Design version 1 is already scored (evals/forecast/trust/report.json), so a version 1 run is refused. A rerun
+    needs a new design version k: `prereg --design-version k --reason ...` writes prereg-v<k>.json, commit and push
+    it, then `run --design-version k` writes report-v<k>.json, manifest-v<k>.json (code revision, dirty flag, source
+    sha256) and trust-v<k>-*.json models, each by exclusive create. Every refusal happens before any held-out row is read.
 
     With `rehearsal`, only DEFAULT_SPLIT's training pages are read (train searches before the cutoff, train sites only),
-    split again inside, and nothing is written under evals/.
+    split again inside, nothing is written under evals/, and it can be rerun.
     """
     from .markers import evaluate_marker, render_marker_text
     from .strength import REHEARSAL_SPLIT
@@ -790,20 +850,30 @@ def run(split: SplitRule = DEFAULT_SPLIT, *, out_dir: str | Path | None = None, 
 
         sites_split = REHEARSAL_SPLIT
         models_dir = None
-    else:
+    context: dict[str, Any] | None = None
+    if not rehearsal:
         folder = Path(out_dir) if out_dir else evals_dir(REPORT_NAME)
-        digest = require_prereg(folder / "prereg.json", prereg_payload(split))
-        models_dir = default_models_dir()
+        models_dir = Path(models_dir) if models_dir else default_models_dir()
+        reason = reason or frozen_reason(folder, version)
+        existing = sorted(models_dir.glob(f"trust-v{int(version)}-*.json")) if models_dir.is_dir() else []
+        context = begin_scored_run(folder, version, prereg_payload(split, version=version, reason=reason),
+                                   outputs=existing[:1], check_git=check_git)
+        digest = context["prereg_sha256"]
     best, _ = load_label_rows(split, sites_split=sites_split, log=log, restrict=restrict)
-    manifest_base = {"version": TRUST_VERSION, "data_sources": ["panel dfs_history (DataForSEO sample databases)",
-                                                                "Common Crawl domain ranks", "Chrome UX Report top lists",
-                                                                "Tranco", "Common Crawl first release and RDAP (start dates)"],
+    provenance = context["provenance"] if context else code_provenance()
+    manifest_base = {"version": f"trust-v{int(version)}", "design_version": int(version),
+                     "data_sources": ["panel dfs_history (DataForSEO sample databases)",
+                                      "Common Crawl domain ranks", "Chrome UX Report top lists", "Tranco",
+                                      "Common Crawl first release (start dates; RDAP left out, no dated history)"],
                      "split_hash": sha256_text(canonical_json(asdict(split))), "prereg_sha256": digest,
-                     "code_revision": code_revision(), "label": PREDICTED}
+                     "code_revision": provenance["code_revision"], "source_dirty": provenance["source_dirty"],
+                     "dirty_files": provenance["dirty_files"], "source_tree_sha256": provenance["source_tree_sha256"],
+                     "label": PREDICTED}
     runs = {}
     for config in (PRIMARY, *SECONDARY):
         key = f"{config['backend']}_{config.get('language') or 'all'}"
-        runs[key] = run_one(best, config, models_dir=models_dir, manifest_base=manifest_base, log=log, save=not rehearsal)
+        runs[key] = run_one(best, config, models_dir=models_dir, manifest_base=manifest_base, log=log, save=not rehearsal,
+                            version=version)
     primary_key = f"{PRIMARY['backend']}_{PRIMARY['language']}"
     primary_eval = runs[primary_key]["evaluation"]
     marker_input = marker2_report(primary_eval, "free_gbt")
@@ -811,7 +881,9 @@ def run(split: SplitRule = DEFAULT_SPLIT, *, out_dir: str | Path | None = None, 
     marker_input_mdr = marker2_report(primary_eval, "free_plus_mdr_gbt")
     verdict_mdr = evaluate_marker(2, marker_input_mdr)
     report = {
-        "label": REAL, "name": REPORT_NAME, "version": TRUST_VERSION, "prereg_sha256": digest, "rehearsal": bool(rehearsal),
+        "label": REAL, "name": REPORT_NAME, "version": f"trust-v{int(version)}", "design_version": int(version),
+        "reason_for_new_version": reason if int(version) > 1 else None,
+        "pair_comparison": ">" if pairs_strict(version) else ">=", "prereg_sha256": digest, "rehearsal": bool(rehearsal),
         "computed_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "what_this_is": ("The plan's marker 2 definition applied to sites that already rank somewhere in a public sample, "
                          "with result titles standing in for page content. It is not yet the plan's 20,000 new sites with "
@@ -826,8 +898,13 @@ def run(split: SplitRule = DEFAULT_SPLIT, *, out_dir: str | Path | None = None, 
     from .strength import _clean, _json_default
 
     report = _clean(report)
-    folder.mkdir(parents=True, exist_ok=True)
-    (folder / "report.json").write_text(json.dumps(report, indent=2, sort_keys=True, default=_json_default), encoding="utf-8")
+    if context is None:  # rehearsal: rerunnable, under the cache only
+        folder.mkdir(parents=True, exist_ok=True)
+        (folder / "report.json").write_text(json.dumps(report, indent=2, sort_keys=True, default=_json_default), encoding="utf-8")
+        return report
+    models = {key: {name: {"file": info.get("model_file"), "sha256": info.get("model_sha256")}
+                    for name, info in (runs[key].get("feature_sets") or {}).items()} for key in runs}
+    finish_scored_run(context, report, default=_json_default, extra={"name": REPORT_NAME, "models": models})
     return report
 
 
@@ -913,16 +990,21 @@ def _log(message: str) -> None:
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m aeo.ranksim.forecast.trust")
     sub = parser.add_subparsers(dest="command", required=True)
-    sub.add_parser("prereg", help="freeze the marker 2 design before scoring")
+    pre = sub.add_parser("prereg", help="freeze the marker 2 design before scoring")
+    pre.add_argument("--design-version", type=int, default=1, help="1 is frozen and scored; k >= 2 writes prereg-v<k>.json")
+    pre.add_argument("--reason", default=None, help="why a new design version is needed (required for k >= 2)")
     run_cmd = sub.add_parser("run", help="score the frozen design once on REAL held-out sites and searches")
     run_cmd.add_argument("--rehearsal", action="store_true", help="training pages only, nested split, nothing written to evals")
+    run_cmd.add_argument("--design-version", type=int, default=1, help="the frozen design version to score (once)")
     args = parser.parse_args(argv)
     folder = evals_dir(REPORT_NAME)
     if args.command == "prereg":
-        digest = freeze_prereg(folder / "prereg.json", prereg_payload())
-        print(json.dumps({"prereg": str(folder / "prereg.json"), "sha256": digest}, indent=2))
+        path = prereg_file(folder, args.design_version)
+        digest = freeze_prereg(path, prereg_payload(version=args.design_version, reason=args.reason),
+                               code=args.design_version > 1)
+        print(json.dumps({"prereg": str(path), "sha256": digest}, indent=2))
         return 0
-    report = run(log=_log, rehearsal=args.rehearsal)
+    report = run(log=_log, rehearsal=args.rehearsal, version=args.design_version)
     print(report.get("marker2_text_free", ""))
     return 0
 

@@ -306,3 +306,146 @@ def test_freeze_prereg_is_write_once(tmp_path: Path):
         F.require_prereg(path, {"a": 2})
     with pytest.raises(FileNotFoundError):
         F.require_prereg(tmp_path / "missing.json", {"a": 1})
+
+
+# ---------------------------------------------------------------------------
+# start evidence without a dated history (RDAP) never enters a backtest or training frame
+
+
+def _rdap(registered: date, site: str = "x.com") -> Dated:
+    """What RdapLookup.registration_dates builds from a record fetched on 2026-11-22 (dated by the registration)."""
+    return Dated({"date": registered.isoformat(), "kind": "registration", "fetched_at": "2026-11-22T16:56:16Z",
+                  "url": f"https://rdap.example/domain/{site}"}, "rdap_registration", registered)
+
+
+def test_start_features_do_not_use_a_registration_record_fetched_after_as_of():
+    row = F.start_features("x.com", date(2024, 1, 1), [_rdap(date(2019, 5, 3))])
+    assert row["sd_registration_known"] == 0.0
+    assert math.isnan(row["sd_age_days"])
+    live = F.start_features("x.com", date(2024, 1, 1), [_rdap(date(2019, 5, 3))], live=True)  # live forecasts keep it
+    assert live["sd_registration_known"] == 1.0
+
+
+def test_two_sites_with_the_same_dated_evidence_get_the_same_start_features():
+    first_seen = _cc(date(2019, 8, 31), date(2019, 9, 15), date(2019, 5, 31))
+    evidence = F.StartEvidence({"still-registered.com": [first_seen, _rdap(date(2019, 6, 1), "still-registered.com")],
+                                "dropped-in-2024.com": [first_seen]})
+    as_of = date(2021, 3, 1)
+    frame = F.start_features_frame(pd.DataFrame({"site": ["still-registered.com", "dropped-in-2024.com"],
+                                                 "as_of": [as_of, as_of]}), evidence)
+    a, b = frame.iloc[0], frame.iloc[1]
+    for col in F.START_COLUMNS:
+        assert (pd.isna(a[col]) and pd.isna(b[col])) or a[col] == b[col], col
+
+
+def test_start_evidence_loader_leaves_rdap_out_unless_live(tmp_path: Path, monkeypatch):
+    from aeo.ranksim.forecast.sources import domain_age
+
+    monkeypatch.setattr(domain_age, "cc_first_release", lambda sites, base: {})
+    monkeypatch.setattr(domain_age.RdapLookup, "registration_dates",
+                        lambda self, sites: {s: _rdap(date(2019, 6, 1), s) for s in sites})
+    assert F.StartEvidence.load(["a.com"], tmp_path).by_site == {"a.com": []}
+    assert [d.source for d in F.StartEvidence.load(["a.com"], tmp_path, live=True).by_site["a.com"]] == ["rdap_registration"]
+
+
+# ---------------------------------------------------------------------------
+# the shared strength cache and the excluded sites
+
+
+def test_cached_strength_keeps_rows_another_process_wrote_meanwhile(tmp_path: Path, monkeypatch):
+    path = tmp_path / "cache.parquet"
+    F.cached_strength(pd.DataFrame({"site": ["a.com"], "as_of": [date(2025, 6, 1)]}), cache_path=path, sources=[cc_source()])
+    real_lookup = F.strength_for_dates
+
+    def lookup_while_another_process_writes(missing, **kwargs):
+        # another process adds b.com to the shared file while this one is looking c.com up
+        monkeypatch.setattr(F, "strength_for_dates", real_lookup)
+        F.cached_strength(pd.DataFrame({"site": ["b.com"], "as_of": [date(2025, 6, 1)]}), cache_path=path,
+                          sources=[cc_source()])
+        return real_lookup(missing, **kwargs)
+
+    monkeypatch.setattr(F, "strength_for_dates", lookup_while_another_process_writes)
+    F.cached_strength(pd.DataFrame({"site": ["c.com"], "as_of": [date(2025, 6, 1)]}), cache_path=path, sources=[cc_source()])
+    on_disk = pd.read_parquet(path)
+    assert sorted(on_disk["site"]) == ["a.com", "b.com", "c.com"]
+    assert not [p.name for p in tmp_path.iterdir() if p.name.endswith(".tmp")]  # the temporary file was moved, not left
+
+
+def test_merge_into_parquet_never_changes_a_cached_value(tmp_path: Path):
+    path = tmp_path / "x.parquet"
+    F.merge_into_parquet(path, pd.DataFrame({"site": ["a.com"], "as_of": [date(2025, 1, 1)], "v": [1.0]}),
+                         keys=["site", "as_of"], columns=["site", "as_of", "v"])
+    merged = F.merge_into_parquet(path, pd.DataFrame({"site": ["a.com"], "as_of": [date(2025, 1, 1)], "v": [9.0]}),
+                                  keys=["site", "as_of"], columns=["site", "as_of", "v"])
+    assert merged["v"].tolist() == [1.0] and pd.read_parquet(path)["v"].tolist() == [1.0]
+
+
+def test_prepare_page_rows_drops_an_excluded_site_however_it_is_spelled():
+    rows = pd.DataFrame({"keyword_id": ["k"] * 3, "keyword": ["q"] * 3, "snapshot_time": ["2025-01-01T00:00:00Z"] * 3,
+                         "rank": [1, 2, 3], "site": ["WWW.SmartCrewHQ.com ", "blog.smartcrewhq.com", "plumbco.com"]})
+    site_rows, _ = F.prepare_page_rows(rows)
+    assert site_rows["site"].tolist() == ["plumbco.com"]
+
+
+# ---------------------------------------------------------------------------
+# design versions and the provenance of a scored run
+
+
+def test_version_1_payload_is_unchanged_and_later_versions_record_their_reason():
+    base = {"name": "x", "version": "x-v1", "a": 1}
+    assert F.versioned_payload(base, name="x", version=1, reason=None) == base
+    with pytest.raises(ValueError):
+        F.versioned_payload(base, name="x", version=2, reason=" ")
+    v2 = F.versioned_payload(base, name="x", version=2, reason="panel rebuilt with the data-layer fixes")
+    assert v2["version"] == "x-v2" and v2["reason_for_new_version"] == "panel rebuilt with the data-layer fixes"
+    assert F.prereg_file("f", 1).name == "prereg.json" and F.prereg_file("f", 2).name == "prereg-v2.json"
+    assert F.report_file("f", 1).name == "report.json" and F.report_file("f", 3).name == "report-v3.json"
+
+
+def test_a_prereg_frozen_with_its_code_refuses_scoring_after_the_code_changed(tmp_path: Path, monkeypatch):
+    path = tmp_path / "prereg-v2.json"
+    digest = F.freeze_prereg(path, {"a": 1}, code=True)
+    stored = json.loads(path.read_text())
+    assert stored["code"]["source_tree_sha256"] == F.source_tree_sha256() and "source_sha256" in stored["code"]
+    assert F.require_prereg(path, {"a": 1}) == digest
+    monkeypatch.setattr(F, "source_tree_sha256", lambda base=None: "0" * 64)
+    with pytest.raises(ValueError, match="changed after"):
+        F.require_prereg(path, {"a": 1})
+
+
+def test_code_provenance_records_the_source_hash_of_every_forecast_module():
+    prov = F.code_provenance()
+    assert {"code_revision", "source_dirty", "dirty_files", "source_tree_sha256", "source_sha256"} <= set(prov)
+    assert "backtest.py" in prov["source_sha256"] and "sources/panel.py" in prov["source_sha256"]
+    with pytest.raises(F.ProvenanceRefusal):
+        F.require_clean_source({**prov, "source_dirty": True, "dirty_files": ["src/aeo/ranksim/forecast/placement.py"]})
+    with pytest.raises(F.ProvenanceRefusal):
+        F.require_clean_source({**prov, "code_revision": None})
+
+
+def _git_repo(tmp_path: Path) -> Path:
+    import subprocess
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    for args in (["init", "-q"], ["config", "user.email", "t@example.invalid"], ["config", "user.name", "t"]):
+        subprocess.run(["git", *args], cwd=repo, check=True, capture_output=True)
+    return repo
+
+
+def test_a_prereg_must_be_committed_unchanged_and_pushed_before_scoring(tmp_path: Path):
+    import subprocess
+
+    repo = _git_repo(tmp_path)
+    prereg = repo / "evals" / "prereg.json"
+    prereg.parent.mkdir(parents=True)
+    prereg.write_text("{}")
+    with pytest.raises(F.ProvenanceRefusal, match="not committed"):
+        F.require_prereg_committed(prereg, root=repo)
+    subprocess.run(["git", "add", "-A"], cwd=repo, check=True, capture_output=True)
+    subprocess.run(["git", "-c", "commit.gpgsign=false", "commit", "-q", "-m", "freeze"], cwd=repo, check=True, capture_output=True)
+    with pytest.raises(F.ProvenanceRefusal, match="no remote"):
+        F.require_prereg_committed(prereg, root=repo)
+    prereg.write_text('{"edited": true}')
+    with pytest.raises(F.ProvenanceRefusal, match="differs from HEAD"):
+        F.require_prereg_committed(prereg, root=repo)

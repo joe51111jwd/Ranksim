@@ -556,7 +556,8 @@ def test_traffic_curves_keep_missing_sites_missing(tmp_path):
     client = make_client(tmp_path, labs(log, {"historical_bulk_traffic_estimation": lambda task: dfs_fixture("dfs_historical_bulk_traffic.json")}),
                          approve="5.00")
     report = ts.pull_traffic_curves(client, ["tinynew.com", "cnn.com"], execute=True, root=tmp_path, today=date(2026, 11, 22), job="t")
-    assert log[0]["task"]["targets"] == ["cnn.com", "tinynew.com"] and log[0]["task"]["date_from"] == "2024-05-01"
+    # 30 calendar months, the month of today included: 2024-06 .. 2026-11, the same window as past result pages.
+    assert log[0]["task"]["targets"] == ["cnn.com", "tinynew.com"] and log[0]["task"]["date_from"] == "2024-06-01"
     months = pd.read_parquet(report.outputs["traffic_months"])
     targets = pd.read_parquet(report.outputs["traffic_targets"]).set_index("site")
     assert tuple(months.columns) == tuple(ts.TRAFFIC_MONTH_COLUMNS) and tuple(targets.reset_index().columns) == tuple(ts.TRAFFIC_TARGET_COLUMNS)
@@ -862,3 +863,142 @@ def test_split_test_share_stays_at_or_under_the_rule_share():
     hundred = [{"site": f"h{i}.com", "keyword": f"word{i}", "launch_date": date(2025, 5, 1)} for i in range(100)]
     assert ts.assign_split(hundred, ts.SplitRule(test_share=0.29)).count("test") == 29  # no float round-down to 28
     assert ts.DEFAULT_SPLIT_RULE.version == "split-rule-v2"
+
+
+# ----------------------------------------------------------------------------------------------
+# Follow-ups of the data-layer bug hunt: the traffic window, saved-call counts, the batch check, the spam filter.
+# ----------------------------------------------------------------------------------------------
+
+
+def test_traffic_window_is_n_calendar_months_ending_this_month_like_past_pages(tmp_path):
+    log: list[dict[str, Any]] = []
+    client = make_client(tmp_path, labs(log, {"historical_bulk_traffic_estimation": lambda task: dfs_fixture("dfs_historical_bulk_traffic.json")}),
+                         approve="5.00")
+    for months, job in ((30, "w30"), (1, "w1"), (24, "w24")):
+        ts.pull_traffic_curves(client, ["cnn.com"], months=months, execute=True, root=tmp_path, today=date(2026, 11, 22), job=job)
+        start, end, covered = ts._history_window(date(2026, 11, 22), months)
+        assert (log[-1]["task"]["date_from"], log[-1]["task"]["date_to"], covered) == (start.isoformat(), end.isoformat(), months)
+    assert log[1]["task"]["date_from"] == "2026-11-01", "one month is the current month only"
+    ts.pull_traffic_curves(client, ["cnn.com"], months=120, execute=True, root=tmp_path, today=date(2026, 11, 22), job="long")
+    assert log[-1]["task"]["date_from"] == ts.TRAFFIC_MIN_DATE.isoformat(), "never before the endpoint's first month"
+
+
+def test_the_saved_call_count_matches_the_clients_own_requests_for_every_pull(tmp_path):
+    """The request layouts in trainingset copy the client's. After a run, the dry run must see every call saved."""
+    log: list[dict[str, Any]] = []
+    answers = {
+        "historical_serps": serps_answer,
+        "historical_bulk_traffic_estimation": lambda task: dfs_fixture("dfs_historical_bulk_traffic.json"),
+        "ranked_keywords": lambda task: dfs_fixture("dfs_ranked_keywords.json"),
+    }
+    client = make_client(tmp_path, labs(log, answers), approve="5.00")
+    day = date(2026, 11, 22)
+    runs = [
+        (ts.pull_past_result_pages, ["plumber near me", "emergency plumber"], {"months": 24, "today": day, "panel_dir": tmp_path / "panel"}),
+        (ts.pull_traffic_curves, ["cnn.com", "tinynew.com"], {"months": 30, "today": day}),
+        (ts.pull_exact_positions, ["dataforseo.com", "other.com"], {"rows_per_site": 10}),
+    ]
+    for pull, inputs, options in runs:
+        before = pull(None, inputs, root=tmp_path, raw_dir=tmp_path / "raw", **options)
+        assert before.calls_saved == 0 and before.unpaid_usd == before.planned_usd
+        pull(client, inputs, execute=True, root=tmp_path, **options)
+        after = pull(None, inputs, root=tmp_path, raw_dir=tmp_path / "raw", **{k: v for k, v in options.items() if k != "panel_dir"})
+        assert after.calls_saved == after.calls_planned > 0 and after.unpaid_usd == 0, pull.__name__
+        assert "Still to pay: 0.000000 USD" in after.lines()[1]
+
+
+def test_a_batch_the_approval_cannot_cover_is_refused_before_the_first_call(tmp_path):
+    log: list[dict[str, Any]] = []
+    one = budget.historical_serps_estimate(24)
+    client = make_client(tmp_path, labs(log, {"historical_serps": serps_answer}), approve=str(one))
+    with pytest.raises(BudgetError):
+        ts.pull_past_result_pages(client, ["plumber near me", "emergency plumber"], months=24, execute=True, root=tmp_path,
+                                  panel_dir=tmp_path / "panel", today=date(2026, 11, 22))
+    assert log == [] and not (tmp_path / "jobs").exists(), "nothing was sent and no job was frozen"
+
+
+def test_a_frozen_traffic_job_keeps_its_sites_and_dates_in_the_dry_run(tmp_path):
+    log: list[dict[str, Any]] = []
+    client = make_client(tmp_path, labs(log, {"historical_bulk_traffic_estimation": lambda task: dfs_fixture("dfs_historical_bulk_traffic.json")}),
+                         approve="5.00")
+    first = ts.pull_traffic_curves(client, ["cnn.com", "tinynew.com"], execute=True, root=tmp_path, today=date(2026, 11, 22), job="frozen")
+    later = ts.pull_traffic_curves(None, ["other.com"], root=tmp_path, today=date(2027, 3, 1), job="frozen", raw_dir=tmp_path / "raw")
+    assert later.units == 2 and later.calls_saved == 1 and later.unpaid_usd == 0
+    assert first.manifest["date_from"] == "2024-06-01"
+
+
+def _kept_row(site: str, *, launch: date = date(2025, 12, 10), ns_parking: bool | None = None, checked: str | None = None) -> ns.CohortRow:
+    return ns.CohortRow(
+        site=site, registered_on=date(2025, 10, 24), registered_on_source="rdap", listed_on=date(2025, 10, 27), source="t", tld="com",
+        rdap_status="found", rdap_registered_on=date(2025, 10, 24), nameservers=(), ns_parking=ns_parking, dns_resolves=True,
+        current_state_checked_at=checked, cc_crawls_checked=(), cc_pre_registration_captures=0, cc_first_seen=launch,
+        cc_first_content=launch, cc_pages_first_content_crawl=2, home_url=None, home_title=None, launch_date=launch,
+        launch_date_source="cc_first_content_capture:X", launch_uncertainty_days=10, parked=False, parked_now=bool(ns_parking),
+        possibly_re_registered=False, possible_rebrand=False, no_content_evidence=False, redirects_offsite=False,
+        re_registered_after_listing=False, registration_older_than_list=False, not_registered_now=False, resolvable_or_crawled=True,
+        content_evidence=True, kept=True,
+    )
+
+
+def _page(site: str, text: str) -> ns.PageText:
+    return ns.PageText(site=site, crawl="X", url=f"https://{site}/", captured_at="2025-12-10T00:00:00Z", http_status=200, title=None,
+                       meta_description=None, h1=(), h2=(), h3=(), text=text, visible_chars=len(text), parked_text=False,
+                       rebrand_text=False, sha256="x")
+
+
+def test_the_spam_filter_uses_only_registration_and_launch_facts_and_counts_each_rule():
+    rows = [
+        _kept_row("freshbakery.com"),
+        _kept_row("best-online-casino.com"),
+        _kept_row("a-b-c-d.com"),
+        _kept_row("shop12345.com"),
+        _kept_row("pills.com"),
+        _kept_row("parkednear.com", ns_parking=True, checked="2025-12-15T00:00:00Z"),
+        _kept_row("parkedtoday.com", ns_parking=True, checked="2026-11-22T00:00:00Z"),
+    ]
+    pages = {"pills.com": _page("pills.com", "Buy viagra online today with free shipping"),
+             "freshbakery.com": _page("freshbakery.com", "Sourdough bread baked every morning")}
+    result = ns.spam_filter(rows, pages)
+    assert result.reasons == {"best-online-casino.com": ns.RULE_SPAM_NAME, "a-b-c-d.com": ns.RULE_SPAM_NAME,
+                              "shop12345.com": ns.RULE_SPAM_NAME, "pills.com": ns.RULE_SPAM_TEXT,
+                              "parkednear.com": ns.RULE_PARKING_NS}
+    assert result.removed == {ns.RULE_PARKING_NS: 1, ns.RULE_SPAM_NAME: 3, ns.RULE_SPAM_TEXT: 1}
+    assert result.candidates == 7 and result.kept_after_filter == 2
+    assert "parkedtoday.com" not in result.reasons, "today's name servers on a site launched a year ago are never used"
+    assert result.ns_not_judged == 6
+    assert any("Rule spam_domain_name removed 3 sites." == line for line in result.lines())
+    # A row that is not kept is not a candidate, and the filter reads no rankings or traffic at all.
+    import inspect
+
+    assert set(inspect.signature(ns.spam_filter).parameters) == {"rows", "pages", "rule"}
+    assert set(inspect.signature(ns.spam_reason).parameters) == {"row", "page", "rule"}
+    frame = ns.filtered_frame(rows, result)
+    assert frame.loc[frame["site"] == "pills.com", "spam_rule"].iloc[0] == ns.RULE_SPAM_TEXT
+    assert frame["kept_after_filter"].sum() == 2 and len(frame) == 7
+    assert ns.SpamRule(name_max_digits=9).rule_hash() != ns.DEFAULT_SPAM_RULE.rule_hash()
+
+
+def test_cohort_never_takes_an_excluded_site_however_it_is_spelled(tmp_path):
+    regs = [ns.Registration("WWW.SmartCrewHQ.com", date(2025, 10, 27), "t", "com"), ns.Registration("ok.com", date(2025, 10, 27), "t", "com")]
+    result = ns.cohort(regs, http=httpx.Client(transport=httpx.MockTransport(refuse_all)), plan=ns.CrawlPlan((), ()), crawls={},
+                       cache_root=tmp_path / "c", public_root=tmp_path / "p", use_rdap=False, use_dns=False, use_cc=False)
+    assert [row.site for row in result.rows] == ["ok.com"]
+
+
+def test_an_error_page_is_never_saved_as_the_crawl_list_and_retries_do_not_really_sleep(tmp_path):
+    slept: list[float] = []
+
+    def missing(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(404, text="not here")
+
+    target = tmp_path / "collinfo.json"
+    with pytest.raises(ConnectionError):
+        ns.load_crawls(target, http=httpx.Client(transport=httpx.MockTransport(missing)), sleep=slept.append)
+    assert not target.exists()
+
+    def down(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(503)
+
+    with pytest.raises(ConnectionError):
+        ns.load_crawls(target, http=httpx.Client(transport=httpx.MockTransport(down)), sleep=slept.append)
+    assert slept and not target.exists()

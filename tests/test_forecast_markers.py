@@ -297,3 +297,62 @@ def test_shared_constants_live_in_config():
     assert scoreboard.DIFFICULTY_TERCILES is config.DIFFICULTY_TERCILES and synth.TERCILES is config.DIFFICULTY_TERCILES
     assert report.REPORT_MIN_COUNT == markers.MARKER_MIN_COUNT == config.MIN_COUNT_TO_PRINT_RATE == 30
     assert config.MIN_COUNT_PRECISION_RECALL == config.MIN_COUNT_TO_PRINT_RATE
+
+
+# ---------------------------------------------------------------------------------------------
+# stand-in reports and the two marker 2 gains
+
+
+@pytest.mark.parametrize("bars_met", [True, False])
+def test_a_stand_in_report_never_passes_or_fails_the_plans_marker(bars_met):
+    graded = cells(20, 5, hit_share=0.85 if bars_met else 0.60, page_one_every=3)
+    report = stage_report_like(graded, source="backtest", stage="upload", as_of="2026-12-21",
+                               baselines={"persistence": [30] * len(graded)})
+    real = evaluate_marker(3, report)
+    stand = evaluate_marker(3, dict(report, stand_in=True,
+                                    stand_in_reason="the free panel's sites already rank, they are not new launches"))
+    assert stand["passed"] is None and stand["stand_in"] is True
+    assert stand["stand_in_passed"] is real["passed"] and real["passed"] is bars_met
+    assert stand["label"] == "REAL"
+    text = render_marker_text(stand)
+    assert text.splitlines()[0].startswith("Marker 3, Forecast at upload: NOT A MARKER RESULT (STAND-IN).")
+    sentence = [line for line in text.splitlines() if line.startswith("This is a stand-in")]
+    assert len(sentence) == 1 and "already rank" in sentence[0] and "does not count" in sentence[0]
+    assert "—" not in text and "–" not in text
+
+
+def test_every_marker_honours_the_stand_in_flag():
+    block = {"count": 300, "right": 290, "rate": 0.97, "cluster_interval": [0.95, 0.98]}
+    assert evaluate_marker(1, {"headline": block, "stand_in": True})["passed"] is None
+    pair = {"pairs": {"count": 400, "right": 300, "rate": 0.75}, "gain_over_link_count": {"difference_interval": [0.02, 0.2]}}
+    verdict = evaluate_marker(2, dict(pair, stand_in=True))
+    assert verdict["passed"] is None and verdict["stand_in_passed"] is True
+    assert "its cells are not new site launches" in render_marker_text(verdict)
+
+
+def test_a_synthetic_stand_in_is_still_synthetic_and_never_passes():
+    block = {"count": 300, "right": 290, "rate": 0.97, "cluster_interval": [0.95, 0.98]}
+    verdict = evaluate_marker(1, {"label": "SYNTHETIC", "headline": block, "stand_in": True})
+    assert verdict["passed"] is None and verdict["label"] == "SYNTHETIC"
+    assert verdict["synthetic_check_passed"] is True and verdict["stand_in_passed"] is True
+    assert "NOT A MARKER RESULT (SYNTHETIC)" in render_marker_text(verdict)
+
+
+def test_marker_2_prints_both_gains_and_the_verdict_follows_link_count():
+    report = {
+        "pairs": {"count": 400, "right": 300, "rate": 0.75},
+        "gain_over_link_count": {"difference": 0.06, "difference_interval": [0.02, 0.10], "baseline": "link count"},
+        "gain_over_best_single_measure": {"difference": 0.01, "difference_interval": [-0.01, 0.03], "baseline": "st_s_cc_pr"},
+    }
+    verdict = evaluate_marker(2, report)
+    assert verdict["passed"] is True  # spec section 7: the gain over link count decides
+    assert verdict["gain_over_link_count"]["difference_interval"] == [0.02, 0.10]
+    assert verdict["gain_over_best_single_measure"]["baseline"] == "st_s_cc_pr"
+    text = render_marker_text(verdict)
+    assert "Gain over link count alone, the plan's measure (link count): 6.0%, interval 2.0% to 10.0% (REAL)." in text
+    assert "Gain over the best single measure, stricter and with no bar (st_s_cc_pr): 1.0%, interval -1.0% to 3.0% (REAL)." in text
+    worse = dict(report, gain_over_link_count={"difference": 0.0, "difference_interval": [-0.02, 0.02]},
+                 gain_over_best_single_measure={"difference": 0.05, "difference_interval": [0.01, 0.09]})
+    assert evaluate_marker(2, worse)["passed"] is False  # a good stricter gain never rescues the plan's bar
+    only_link = {k: v for k, v in report.items() if k != "gain_over_best_single_measure"}
+    assert "gain_over_best_single_measure" not in evaluate_marker(2, only_link)

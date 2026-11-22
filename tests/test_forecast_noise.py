@@ -439,3 +439,20 @@ def test_marker1_from_pulls_reads_round_suspects_per_round():
     first, second = side(a_day, "a"), side(a_day + timedelta(hours=24), "b")
     report = marker1_report_from_pulls([(first[s], second[s]) for s in first])
     assert report["pairs_used"] == 3 and report["pairs_skipped"] == []
+
+
+def test_agreement_drops_an_excluded_site_whatever_its_spelling():
+    from aeo.ranksim.forecast.noise import agreement
+
+    def reading(rid: str, positions: dict[str, int]) -> CleanReading:
+        return CleanReading(
+            reading_id=rid, search="q", location_code=1, device="desktop", taken_at="2026-11-23T10:00:00Z",
+            pulls_total=5, pulls_kept=5, dropped=(), degraded=False, pulls_not_independent=False,
+            positions=tuple(SitePosition(site, pos, (pos,) * 5) for site, pos in positions.items()),
+            pull_ids=(), label="REAL",
+        )
+
+    a = reading("a", {"www.SmartCrewHQ.com": 1, "alpha.example": 2})
+    b = reading("b", {"smartcrewhq.com": 1, "alpha.example": 3})
+    sites = {row.site for row in agreement(a, b)}
+    assert sites == {"alpha.example"}

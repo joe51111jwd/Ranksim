@@ -34,13 +34,16 @@ natural group here is the locale. The function takes any grouping so the paid
 niche data can use it.
 
 CLI:
-  python -m aeo.ranksim.forecast.strength prereg   freeze the design (writes prereg.json)
-  python -m aeo.ranksim.forecast.strength run      score it once (writes report.json)
+  python -m aeo.ranksim.forecast.strength prereg   freeze the design (writes prereg.json; with --design-version k
+                                                   and --reason, prereg-v<k>.json beside it)
+  python -m aeo.ranksim.forecast.strength run      score it once (version 1 wrote report.json and is refused now;
+                                                   --design-version k writes report-v<k>.json and manifest-v<k>.json)
 """
 
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import math
 import sys
@@ -61,11 +64,16 @@ from .features import (
     MODEL_MEASURES,
     SURVIVORSHIP_LIMITED,
     _loo_quantile_and_gap,
+    begin_scored_run,
     evals_dir,
+    finish_scored_run,
     freeze_prereg,
-    require_prereg,
+    frozen_reason,
+    prereg_file,
     search_group,
     stable_share,
+    versioned_payload,
+    write_new_json,
 )
 from .grading import FINE_BANDS, RULE_V1, GradedCell, compare_to_baseline, fine_band_of, summarize
 from .stats import cluster_bootstrap_ratio
@@ -659,8 +667,16 @@ def fit_strength_only(rows: pd.DataFrame, *, seed: int = SEED, c_grid: Sequence[
 # the REAL evaluation
 
 
-def prereg_payload(split: SplitRule = DEFAULT_SPLIT) -> dict[str, Any]:
-    """Everything frozen before any held-out number: split, windows, thresholds, measures, baselines."""
+def prereg_payload(split: SplitRule = DEFAULT_SPLIT, *, version: int = 1, reason: str | None = None) -> dict[str, Any]:
+    """Everything frozen before any held-out number: split, windows, thresholds, measures, baselines.
+
+    Version 1 is the design already frozen in evals/forecast/strength/prereg.json (unchanged, so its sha256 still
+    reproduces). Version k >= 2 adds its version name and the reason for the new version, and goes to prereg-v<k>.json.
+    """
+    return versioned_payload(_prereg_payload_v1(split), name="strength", version=version, reason=reason)
+
+
+def _prereg_payload_v1(split: SplitRule) -> dict[str, Any]:
     return {
         "name": "strength", "version": STRENGTH_VERSION, "split": asdict(split),
         "pages": {"dataset": "dfs_history", "poison_risk_pages": "dropped", "min_depth_top_and_straddle10": MIN_DEPTH_TOP,
@@ -945,14 +961,32 @@ def verdict_lines(report: Mapping[str, Any]) -> list[str]:
     return lines
 
 
+def model_files(version: int = 1, models_dir: str | Path | None = None) -> dict[str, Path]:
+    """The strength score, the strength-only forecaster and their sha256 manifest for one design version."""
+    folder = Path(models_dir) if models_dir else forecast_paths().models / "strength"
+    name = f"strength-v{int(version)}"
+    return {"score": folder / f"{name}-score.json", "forecaster": folder / f"{name}-forecaster.json",
+            "manifest": folder / f"{name}.manifest.json"}
+
+
 def run(split: SplitRule = DEFAULT_SPLIT, *, out_dir: str | Path | None = None, log: Callable[[str], None] | None = None,
-        rehearsal: bool = False) -> dict[str, Any]:
-    """Score the frozen design once on REAL held-out searches at later dates. Writes report.json.
+        rehearsal: bool = False, version: int = 1, reason: str | None = None, check_git: bool = True,
+        models_dir: str | Path | None = None) -> dict[str, Any]:
+    """Score the frozen design ONCE on REAL held-out searches at later dates.
+
+    Design version 1 is already scored (evals/forecast/strength/report.json), so a
+    version 1 run is refused. A rerun needs a new design version k: freeze
+    prereg-v<k>.json with the reason (`prereg --design-version k --reason ...`),
+    commit and push it, then `run --design-version k`. It writes report-v<k>.json,
+    manifest-v<k>.json (code revision, dirty flag and source sha256) and the model
+    files strength-v<k>-*.json, each by exclusive create: nothing is ever
+    overwritten, and every refusal happens before any held-out row is read.
 
     With `rehearsal`, only the training pages are read and split again inside
     (REHEARSAL_SPLIT). No held-out outcome is touched, nothing is written under
-    evals/, and the report says REHEARSAL. It is for debugging the code.
+    evals/, the report says REHEARSAL, and it can be rerun. It is for debugging the code.
     """
+    context: dict[str, Any] | None = None
     if rehearsal:
         folder = Path(out_dir) if out_dir else forecast_paths().cache / "rehearsal" / REPORT_NAME
         digest = "rehearsal"
@@ -960,13 +994,19 @@ def run(split: SplitRule = DEFAULT_SPLIT, *, out_dir: str | Path | None = None, 
         split = REHEARSAL_SPLIT
     else:
         folder = Path(out_dir) if out_dir else evals_dir(REPORT_NAME)
-        digest = require_prereg(folder / "prereg.json", prereg_payload(split))
+        reason = reason or frozen_reason(folder, version)
+        outputs = model_files(version, models_dir)
+        context = begin_scored_run(folder, version, prereg_payload(split, version=version, reason=reason),
+                                   outputs=list(outputs.values()), check_git=check_git)
+        digest = context["prereg_sha256"]
         pos = load_page_rows(split, log=log)
     if log:
         log(f"page rows {len(pos)}")
     train = _page_subset(pos, "train", MIN_DEPTH_TOP)
     test = _page_subset(pos, "test", MIN_DEPTH_TOP)
     score = fit_strength_score(train)
+    if not rehearsal:
+        score.version = f"strength-v{int(version)}"
     test = test.copy()
     test["kw_code"] = test.groupby("keyword_id", sort=False).ngroup().to_numpy()
     test["strength_score"] = score.score(test)
@@ -985,8 +1025,9 @@ def run(split: SplitRule = DEFAULT_SPLIT, *, out_dir: str | Path | None = None, 
         log("forecaster")
     forecaster, model = forecaster_test(pos, score, split, log=log)
     report: dict[str, Any] = {
-        "label": REAL, "name": REPORT_NAME, "version": STRENGTH_VERSION, "prereg_sha256": digest,
-        "rehearsal": bool(rehearsal),
+        "label": REAL, "name": REPORT_NAME, "version": f"strength-v{int(version)}" if not rehearsal else STRENGTH_VERSION,
+        "design_version": int(version), "reason_for_new_version": reason if int(version) > 1 else None,
+        "prereg_sha256": digest, "rehearsal": bool(rehearsal),
         "computed_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "what_is_real": "Positions on dated panel pages (single country-level pulls) and list values as published.",
         "what_is_predicted": "The fitted strength score, page demand, topical strength and the strength-only forecaster.",
@@ -1001,25 +1042,45 @@ def run(split: SplitRule = DEFAULT_SPLIT, *, out_dir: str | Path | None = None, 
     }
     report["verdict"] = verdict_lines(report)
     report = _clean(report)
-    folder.mkdir(parents=True, exist_ok=True)
-    (folder / "report.json").write_text(json.dumps(report, indent=2, sort_keys=True, default=_json_default), encoding="utf-8")
-    if rehearsal:
+    if rehearsal:  # rehearsals stay rerunnable and write only under the cache
+        folder.mkdir(parents=True, exist_ok=True)
+        (folder / "report.json").write_text(json.dumps(report, indent=2, sort_keys=True, default=_json_default), encoding="utf-8")
         return report
-    models = forecast_paths().models / "strength"
-    models.mkdir(parents=True, exist_ok=True)
-    (models / f"{STRENGTH_VERSION}-score.json").write_text(json.dumps(score.to_dict(), indent=2, sort_keys=True), encoding="utf-8")
-    (models / f"{STRENGTH_VERSION}-forecaster.json").write_text(json.dumps(model.to_dict(), indent=2, sort_keys=True), encoding="utf-8")
+    assert context is not None
+    files = model_files(version, models_dir)
+    shas = {"score": write_new_json(files["score"], score.to_dict()),
+            "forecaster": write_new_json(files["forecaster"], model.to_dict())}
+    model_manifest = {"design_version": int(version), "prereg_sha256": digest, "label": PREDICTED,
+                      "files": {k: files[k].name for k in shas}, "sha256": shas,
+                      "fitted_on": "training pages (train searches dated before the cutoff)",
+                      **{k: v for k, v in context["provenance"].items() if k != "source_sha256"},
+                      "source_tree_sha256": context["provenance"]["source_tree_sha256"]}
+    write_new_json(files["manifest"], model_manifest)
+    finish_scored_run(context, report, default=_json_default,
+                      extra={"name": REPORT_NAME, "model_files": {k: str(files[k]) for k in shas}, "model_sha256": shas})
     return report
 
 
-def load_strength_score(path: str | Path | None = None) -> StrengthScore:
-    target = Path(path) if path else forecast_paths().models / "strength" / f"{STRENGTH_VERSION}-score.json"
-    return StrengthScore.from_dict(json.loads(Path(target).read_text(encoding="utf-8")))
+def _checked_text(target: Path, kind: str) -> str:
+    """The model file's text, checked against the sha256 manifest beside it when there is one."""
+    text = Path(target).read_text(encoding="utf-8")
+    stem = Path(target).name.rsplit("-", 1)[0]  # strength-v<k>
+    manifest = Path(target).with_name(f"{stem}.manifest.json")
+    if manifest.is_file():
+        expected = json.loads(manifest.read_text(encoding="utf-8")).get("sha256", {}).get(kind)
+        if expected and hashlib.sha256(text.encode("utf-8")).hexdigest() != expected:
+            raise ValueError(f"{target} does not match the sha256 in {manifest.name}")
+    return text
 
 
-def load_strength_forecaster(path: str | Path | None = None) -> StrengthOnlyForecaster:
-    target = Path(path) if path else forecast_paths().models / "strength" / f"{STRENGTH_VERSION}-forecaster.json"
-    return StrengthOnlyForecaster.from_dict(json.loads(Path(target).read_text(encoding="utf-8")))
+def load_strength_score(path: str | Path | None = None, *, version: int = 1) -> StrengthScore:
+    target = Path(path) if path else model_files(version)["score"]
+    return StrengthScore.from_dict(json.loads(_checked_text(target, "score")))
+
+
+def load_strength_forecaster(path: str | Path | None = None, *, version: int = 1) -> StrengthOnlyForecaster:
+    target = Path(path) if path else model_files(version)["forecaster"]
+    return StrengthOnlyForecaster.from_dict(json.loads(_checked_text(target, "forecaster")))
 
 
 def _log(message: str) -> None:
@@ -1029,16 +1090,21 @@ def _log(message: str) -> None:
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m aeo.ranksim.forecast.strength")
     sub = parser.add_subparsers(dest="command", required=True)
-    sub.add_parser("prereg", help="freeze the design before scoring")
+    pre = sub.add_parser("prereg", help="freeze the design before scoring")
+    pre.add_argument("--design-version", type=int, default=1, help="1 is frozen and scored; k >= 2 writes prereg-v<k>.json")
+    pre.add_argument("--reason", default=None, help="why a new design version is needed (required for k >= 2)")
     run_cmd = sub.add_parser("run", help="score the frozen design once on REAL held-out data")
     run_cmd.add_argument("--rehearsal", action="store_true", help="training pages only, nested split, nothing written to evals")
+    run_cmd.add_argument("--design-version", type=int, default=1, help="the frozen design version to score (once)")
     args = parser.parse_args(argv)
     folder = evals_dir(REPORT_NAME)
     if args.command == "prereg":
-        digest = freeze_prereg(folder / "prereg.json", prereg_payload())
-        print(json.dumps({"prereg": str(folder / "prereg.json"), "sha256": digest}, indent=2))
+        path = prereg_file(folder, args.design_version)
+        digest = freeze_prereg(path, prereg_payload(version=args.design_version, reason=args.reason),
+                               code=args.design_version > 1)
+        print(json.dumps({"prereg": str(path), "sha256": digest}, indent=2))
         return 0
-    report = run(log=_log, rehearsal=args.rehearsal)
+    report = run(log=_log, rehearsal=args.rehearsal, version=args.design_version)
     print("\n".join(report.get("verdict", [])))
     return 0
 

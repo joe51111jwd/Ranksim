@@ -14,7 +14,9 @@ config.MIN_COUNT_TO_PRINT_RATE (30) forecasts are printed as NOT MEASURABLE.
 
 from __future__ import annotations
 
+import statistics
 from collections import defaultdict
+from dataclasses import dataclass, field
 from datetime import date, timedelta
 from typing import Any, Callable, Mapping, Sequence
 
@@ -27,7 +29,7 @@ from .config import (
     SPEC_BASELINES,
     STAGE_DAYS,
 )
-from .grading import GradedCell, band_prior_points, fit_band_prior, headline
+from .grading import RULE_V1, GradedCell, GradingRule, band_prior_points, fit_band_prior, headline
 from .scoreboard import GradedRecord, PoolingRefused, Scoreboard, ScoreboardRefusal, mapping_points
 from .types import REAL, SYNTHETIC
 
@@ -91,79 +93,165 @@ def stage_report(
     that is in the headline is refused. The report lists the spec baselines it lacks under
     `baselines_missing`, and markers 3 to 5 are never passed while one is missing.
     """
-    if source not in SOURCES:
-        raise PoolingRefused(f"Pick one source of {', '.join(SOURCES)}. A combined view is refused.")
-    if stage not in STAGE_DAYS:
-        raise ScoreboardRefusal(f"The stage must be one of {', '.join(STAGE_DAYS)}.")
+    _check_source_and_stage(source, stage)
     status = scoreboard.require_verified()
 
-    all_records = scoreboard.graded_records(source, stage, as_of, "original", model_version=model_version)
-    # A forecast dated after its stage day is a shorter lead, never that stage's marker (spec section 2).
-    # The scoreboard refuses such rows now; this keeps any stored before that out of the headline.
-    late = [r for r in all_records if _after_stage_day(r, stage)]
-    late_ids = {r.grade_id for r in late}
-    # lead_days on the cell is the outcome reading date minus as_of (spec section 2).
-    short = [
-        r for r in all_records
-        if r.grade_id not in late_ids and (r.cell.lead_days is None or r.cell.lead_days < LEAD_FLOOR_DAYS)
-    ]
-    short_ids = {r.grade_id for r in short}
-    records = [r for r in all_records if r.grade_id not in short_ids and r.grade_id not in late_ids]
-    cells = [r.cell for r in records]
+    fetched = scoreboard.graded_records(source, stage, as_of, "original", model_version=model_version)
+    graded, not_held_out = held_out_records(fetched, source)
+    late, short, records = _lead_filter(graded, stage)
 
     baselines: dict[str, list[int]] = {"persistence": scoreboard.persistence_points(records)}
     for name, spec in sorted((extra_baselines or {}).items()):
         if name in RESERVED_BASELINES:
             raise ScoreboardRefusal(f"The baseline name {name} is reserved. It is always computed here.")
         baselines[name] = _baseline_points(name, spec, records)
+    return _assemble(
+        records=records,
+        short=short,
+        late=late,
+        not_held_out=not_held_out,
+        baselines=baselines,
+        band_prior_training=band_prior_training,
+        band_prior_unit="site",
+        rule=scoreboard.rule,
+        source=source,
+        stage=stage,
+        as_of=as_of,
+        model_version=records[0].model_version if records else model_version,
+        chain=status.to_dict(),
+        eligibility=scoreboard.eligibility(as_of),
+        core_updates=[u for u in scoreboard.core_updates() if u["recorded_at"][:10] <= as_of.isoformat()],
+        regrades=_regrade_block(scoreboard, source, stage, as_of, model_version),
+        cluster_by="site",
+        lead_key=None,
+    )
+
+
+def _check_source_and_stage(source: str, stage: str) -> None:
+    if source not in SOURCES:
+        raise PoolingRefused(f"Pick one source of {', '.join(SOURCES)}. A combined view is refused.")
+    if stage not in STAGE_DAYS:
+        raise ScoreboardRefusal(f"The stage must be one of {', '.join(STAGE_DAYS)}.")
+
+
+HELD_OUT_SPLIT = "test"
+# Sources whose graded rows come from a split: only the held-out rows are graded in a report, so the
+# training rows stay free for the band prior and no training row is ever counted as accuracy.
+SPLIT_SOURCES = ("backtest",)
+
+
+def held_out_records(records: Sequence[Any], source: str) -> tuple[list[Any], list[Any]]:
+    """The rows a report grades, and the rows it leaves out because they are not held out.
+
+    For a backtest only rows whose split is "test" are graded. A training row, or one with no
+    split, is left out and counted. Other sources grade every row. Works on GradedRecord and on
+    MemoryCell alike (both carry `split`). pipeline.band_prior_training should take its held-out
+    sites from the first list, so a training site is never dropped for being "graded".
+    """
+    if source not in SPLIT_SOURCES:
+        return list(records), []
+    kept = [r for r in records if r.split == HELD_OUT_SPLIT]
+    left = [r for r in records if r.split != HELD_OUT_SPLIT]
+    return kept, left
+
+
+def _lead_filter(records: Sequence[Any], stage: str) -> tuple[list[Any], list[Any], list[Any]]:
+    """(late, short, kept). A forecast dated after its stage day is a shorter lead, never that stage's
+    marker (spec section 2); the scoreboard refuses such rows now and this keeps any stored before
+    that out. lead_days on the cell is the outcome reading date minus as_of (spec section 2)."""
+    late = [r for r in records if _after_stage_day(r, stage)]
+    late_ids = {id(r) for r in late}
+    short = [
+        r for r in records
+        if id(r) not in late_ids and (r.cell.lead_days is None or r.cell.lead_days < LEAD_FLOOR_DAYS)
+    ]
+    short_ids = {id(r) for r in short}
+    kept = [r for r in records if id(r) not in short_ids and id(r) not in late_ids]
+    return late, short, kept
+
+
+def _assemble(
+    *,
+    records: Sequence[Any],
+    short: Sequence[Any],
+    late: Sequence[Any],
+    not_held_out: Sequence[Any],
+    baselines: dict[str, list[int]],
+    band_prior_training: Sequence[GradedCell] | None,
+    band_prior_unit: str,
+    rule: GradingRule,
+    source: str,
+    stage: str,
+    as_of: date,
+    model_version: str | None,
+    chain: Mapping[str, Any],
+    eligibility: Mapping[str, Any],
+    core_updates: Sequence[Mapping[str, Any]],
+    regrades: Mapping[str, Any],
+    cluster_by: str,
+    lead_key: Callable[[int | None], str] | None,
+) -> dict[str, Any]:
+    """The report body shared by stage_report (rows from the scoreboard) and report_from_cells (rows in memory)."""
+    cells = [r.cell for r in records]
     band_prior: dict[str, int] | None = None
     if band_prior_training is not None:
         training = list(band_prior_training)
-        overlap = sorted({c.site for c in training} & {r.cell.site for r in records})
+        overlap = sorted({getattr(c, band_prior_unit) for c in training} & {getattr(c, band_prior_unit) for c in cells})
         if overlap:
             raise ScoreboardRefusal(
-                f"The band prior training cells include {len(overlap)} site(s) that are graded here "
+                f"The band prior training cells include {len(overlap)} {band_prior_unit}(s) that are graded here "
                 f"({', '.join(overlap[:3])}). It is fitted on training data only."
             )
         try:
-            band_prior = fit_band_prior(training, scoreboard.rule)
+            band_prior = fit_band_prior(training, rule)
         except ValueError as error:
             raise ScoreboardRefusal(f"The band prior cannot be fitted: {error}.") from error
         baselines["band_prior"] = band_prior_points(band_prior, cells)
-    head = headline(cells, baselines, scoreboard.rule)
+    head = headline(cells, baselines, rule, cluster_by=cluster_by)
     missing_baselines = [name for name in SPEC_BASELINES if name not in head["baselines"]]
 
     main = [r for r in records if not r.cell.is_brand]
     main_index = [i for i, r in enumerate(records) if not r.cell.is_brand]
-    persistence_main = [baselines["persistence"][i] for i in main_index]
+    persistence = baselines.get("persistence")
+    persistence_main = [persistence[i] for i in main_index] if persistence is not None else None
 
     by_lead: dict[str, Any] = {}
-    lead_groups: dict[int, list[int]] = defaultdict(list)
+    lead_groups: dict[str, list[int]] = defaultdict(list)
+    lead_order: dict[str, int] = {}
     for position, record in enumerate(main):
-        lead_groups[int(record.cell.lead_days or 0)].append(position)
-    for lead in sorted(lead_groups):
-        idx = lead_groups[lead]
+        days = record.cell.lead_days
+        name = str(int(days or 0)) if lead_key is None else lead_key(days)
+        lead_groups[name].append(position)
+        lead_order[name] = min(lead_order.get(name, 10**9), int(days if days is not None else 10**9))
+    for name in sorted(lead_groups, key=lambda n: (lead_order[n], n)):
+        idx = lead_groups[name]
         block = _block([main[i] for i in idx])
-        block["persistence"] = _block(
-            [main[i] for i in idx], [scoreboard.rule.is_hit(persistence_main[i], main[i].cell.actual) for i in idx]
-        )
-        by_lead[str(lead)] = block
+        if persistence_main is not None:
+            block["persistence"] = _block(
+                [main[i] for i in idx], [rule.is_hit(persistence_main[i], main[i].cell.actual) for i in idx]
+            )
+        by_lead[name] = block
 
-    eligibility = scoreboard.eligibility(as_of)
+    label = SYNTHETIC if source == "synthetic" else REAL
     notes: list[str] = []
     for other in SOURCES:
         entry = eligibility[other][stage]
         if entry["graded"] == 0:
             when = f" The next outcome is due on {entry['next_due_date']}." if entry["next_due_date"] else ""
             notes.append(f"{other} has no graded {stage} outcome as of {as_of.isoformat()}.{when}")
+    if not_held_out:
+        notes.append(
+            f"{len(not_held_out)} graded rows of the training split are left out. Only held out rows are graded "
+            f"here, so the band prior can be fitted on other sites ({label})."
+        )
     if short:
         notes.append(
-            f"{len(short)} graded rows have a lead under {LEAD_FLOOR_DAYS} days and are not called forecasts here (REAL)."
+            f"{len(short)} graded rows have a lead under {LEAD_FLOOR_DAYS} days and are not called forecasts here ({label})."
         )
     if late:
         notes.append(
             f"{len(late)} graded rows were dated after day {STAGE_DAYS[stage]} and are not {stage} forecasts. "
-            "They are a shorter lead, never this marker (REAL)."
+            f"They are a shorter lead, never this marker ({label})."
         )
     if source == "backtest":
         notes.append("Backtest labels are single monthly snapshots, not clean readings.")
@@ -176,14 +264,15 @@ def stage_report(
         "stage": stage,
         "confirmed_stage": stage == CONFIRMED_STAGE,
         "as_of": as_of.isoformat(),
-        "model_version": records[0].model_version if records else model_version,
-        "label": SYNTHETIC if source == "synthetic" else REAL,
-        "chain": status.to_dict(),
-        "grading_rule": scoreboard.rule.version,
-        "grading_rule_hash": scoreboard.rule.rule_hash(),
+        "model_version": model_version,
+        "label": label,
+        "chain": dict(chain),
+        "grading_rule": rule.version,
+        "grading_rule_hash": rule.rule_hash(),
         "lead_floor_days": LEAD_FLOOR_DAYS,
         "excluded_short_lead": len(short),
         "excluded_after_stage_day": len(late),
+        "excluded_not_held_out": len(not_held_out),
         "baselines_required": list(SPEC_BASELINES),
         "baselines_missing": missing_baselines,
         "band_prior": band_prior,
@@ -194,14 +283,182 @@ def stage_report(
         "by_difficulty": _group(main, lambda r: r.cell.difficulty or "unknown", DIFFICULTY_TERCILES),
         "by_niche": _group(main, lambda r: r.cell.niche or "unknown"),
         "by_lead_days": by_lead,
-        "built_by": _count(main, lambda r: r.built_by),
+        "built_by": _count(main, lambda r: r.built_by or "unknown"),
         "held_out": _held_out(main),
         "target_url": _target_url_block(main),
-        "core_updates": _core_update_block(scoreboard, main, as_of),
-        "regrades": _regrade_block(scoreboard, source, stage, as_of, model_version),
+        "core_updates": _core_update_block(core_updates, main, as_of),
+        "regrades": dict(regrades),
         "notes": notes,
     }
     return report
+
+
+@dataclass(frozen=True)
+class MemoryCell:
+    """One graded cell held in memory, with what the report needs beside it.
+
+    `cell` carries site, search, the PREDICTED point, the REAL position, the brand flag, source,
+    stage and lead_days (the real days from the forecast date to the outcome page). `split` is
+    "test" for a held-out row. `baselines` maps a baseline name to its point for this cell; every
+    cell must name the same baselines. "persistence" may be given here (there is no scoreboard to
+    compute it from); "always_nt50" and "band_prior" are reserved, they are computed by the report.
+    """
+
+    cell: GradedCell
+    split: str | None
+    baselines: Mapping[str, int] = field(default_factory=dict)
+    as_of: date | None = None
+    outcome_date: date | None = None
+    launch_date: date | None = None
+    built_by: str | None = None
+    target_url: str | None = None
+    target_url_position: int | None = None
+
+
+@dataclass(frozen=True)
+class _MemoryRow:
+    """A MemoryCell in the shape the shared report code reads from a GradedRecord."""
+
+    grade_id: str
+    cell: GradedCell
+    split: str | None
+    as_of: date | None
+    outcome_date: date | None
+    launch_date: date | None
+    built_by: str | None
+    target_url: str | None
+    target_url_position: int | None
+    target_url_hit: bool | None
+    hit: bool
+    baselines: Mapping[str, int]
+
+
+MEMORY_RESERVED_BASELINES = ("always_nt50", "band_prior")
+MEMORY_SOURCES = ("backtest", "synthetic")
+MEMORY_CHAIN_NOTE = "These cells were graded in memory. They are not stored in the scoreboard chain."
+
+
+def report_from_cells(
+    cells: Sequence[MemoryCell],
+    *,
+    source: str,
+    stage: str,
+    as_of: date,
+    model_version: str | None,
+    band_prior_training: Sequence[GradedCell] | None = None,
+    band_prior_unit: str = "site",
+    rule: GradingRule = RULE_V1,
+    cluster_by: str = "site",
+    lead_key: Callable[[int | None], str] | None = None,
+    core_updates: Sequence[Mapping[str, Any]] = (),
+    notes: Sequence[str] = (),
+    extra: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    """The stage report built from graded cells held in memory, with the keys stage_report gives.
+
+    The same rules as stage_report: one source, every cell of that source and stage; for a
+    backtest only the held-out split ("test") is graded and the rest is counted under
+    `excluded_not_held_out`; rows with a lead under the floor or dated after the stage day are left
+    out and counted; brand searches are shown apart; the band prior is fitted here on
+    `band_prior_training`, and a training cell that shares a `band_prior_unit` ("site", or
+    "search" when the split is by search) with a graded cell is refused. `cluster_by` sets the
+    headline intervals; when it is not "site", `headline_site_clusters` resamples sites too.
+    `lead_key` names the lead groups (exact days by default). `core_updates` are dicts with name,
+    kind, started_on, ended_on, source_url and recorded_at (None for a public calendar date).
+    The chain is not verified, because these cells are not in a chain: `chain.ok` is None.
+    """
+    _check_source_and_stage(source, stage)
+    if source not in MEMORY_SOURCES:
+        # Seed and pilot outcomes are graded in the scoreboard, whose chain every report verifies.
+        # Cells in memory carry no chain, so they never stand in for those reports.
+        raise PoolingRefused(f"report_from_cells writes {' or '.join(MEMORY_SOURCES)} reports only. "
+                             f"Seed and pilot reports come from the scoreboard (stage_report).")
+    if band_prior_unit not in ("site", "search"):
+        raise ValueError("band_prior_unit must be 'site' or 'search'")
+    items = list(cells)
+    sources = {item.cell.source for item in items if item.cell.source is not None}
+    stages = {item.cell.stage for item in items if item.cell.stage is not None}
+    if sources - {source}:
+        raise PoolingRefused(f"These cells mix sources {sorted(sources)}. Each source is reported apart.")
+    if stages - {stage}:
+        raise ScoreboardRefusal(f"These cells are for stages {sorted(stages)}, not only {stage}.")
+    names = {frozenset(item.baselines) for item in items}
+    if len(names) > 1:
+        raise ScoreboardRefusal("Every cell must name the same baselines, so they are compared on the same forecasts.")
+    reserved = sorted(set().union(*names) & set(MEMORY_RESERVED_BASELINES)) if names else []
+    if reserved:
+        raise ScoreboardRefusal(f"The baseline name {reserved[0]} is reserved. It is always computed here.")
+
+    rows = [
+        _MemoryRow(
+            grade_id=f"cell-{index}",
+            cell=item.cell,
+            split=item.split,
+            as_of=item.as_of,
+            outcome_date=item.outcome_date,
+            launch_date=item.launch_date,
+            built_by=item.built_by or source,
+            target_url=item.target_url,
+            target_url_position=item.target_url_position,
+            target_url_hit=(rule.is_hit(item.target_url_position, item.cell.actual)
+                            if item.target_url and item.target_url_position is not None else None),
+            hit=rule.is_hit(item.cell.point, item.cell.actual),
+            baselines=dict(item.baselines),
+        )
+        for index, item in enumerate(items)
+    ]
+    graded, not_held_out = held_out_records(rows, source)
+    late, short, records = _lead_filter(graded, stage)
+    baseline_names = sorted(next(iter(names))) if names else []
+    baselines = {name: [int(r.baselines[name]) for r in records] for name in baseline_names}
+    report = _assemble(
+        records=records,
+        short=short,
+        late=late,
+        not_held_out=not_held_out,
+        baselines=baselines,
+        band_prior_training=band_prior_training,
+        band_prior_unit=band_prior_unit,
+        rule=rule,
+        source=source,
+        stage=stage,
+        as_of=as_of,
+        model_version=model_version,
+        chain={"ok": None, "note": MEMORY_CHAIN_NOTE},
+        eligibility=_memory_eligibility(source, stage, graded=len(graded)),
+        core_updates=[u for u in core_updates if u.get("recorded_at") is None
+                      or str(u["recorded_at"])[:10] <= as_of.isoformat()],
+        regrades={"count": 0, "pairs": [], "note": "Cells held in memory are graded once."},
+        cluster_by=cluster_by,
+        lead_key=lead_key,
+    )
+    if cluster_by != "site":
+        # `baselines` now holds the band prior points too: _assemble adds them when it fits the prior.
+        report["headline_site_clusters"] = headline([r.cell for r in records], dict(baselines), rule, cluster_by="site")
+    leads = [r.cell.lead_days for r in records if r.cell.lead_days is not None]
+    report["every_graded_cell_held_out"] = source not in SPLIT_SOURCES or all(r.split == HELD_OUT_SPLIT for r in records)
+    report["single_snapshot_labels"] = source == "backtest"
+    report["real_lead_days"] = {
+        "count": len(leads),
+        "min": min(leads) if leads else None,
+        "median": float(statistics.median(leads)) if leads else None,
+        "max": max(leads) if leads else None,
+    }
+    report["notes"] = list(notes) + list(report["notes"])
+    if extra:
+        for key, value in extra.items():
+            if key in report:
+                raise ScoreboardRefusal(f"extra may not replace the report's own key {key}.")
+            report[key] = value
+    return report
+
+
+def _memory_eligibility(source: str, stage: str, *, graded: int) -> dict[str, dict[str, dict[str, Any]]]:
+    """Every held-out cell in memory was made, was due and is graded. Other sources have none here."""
+    table = {s: {st: {"made": 0, "due": 0, "graded": 0, "due_not_graded": 0, "not_yet_due": 0, "next_due_date": None}
+                 for st in STAGE_DAYS} for s in SOURCES}
+    table[source][stage].update({"made": graded, "due": graded, "graded": graded})
+    return table
 
 
 def _after_stage_day(record: GradedRecord, stage: str) -> bool:
@@ -232,15 +489,17 @@ def _target_url_block(records: Sequence[GradedRecord]) -> dict[str, Any]:
     return block
 
 
-def _core_update_block(scoreboard: Scoreboard, records: Sequence[GradedRecord], as_of: date) -> dict[str, Any]:
-    updates = [u for u in scoreboard.core_updates() if u["recorded_at"][:10] <= as_of.isoformat()]
+def _core_update_block(updates: Sequence[Mapping[str, Any]], records: Sequence[Any], as_of: date) -> dict[str, Any]:
+    """Hit rates on outcomes read during and outside the given updates. A row with no outcome date
+    is in neither block: it cannot be placed, so it is not counted as outside."""
     rows: list[dict[str, Any]] = []
     inside_any: set[str] = set()
+    records = [r for r in records if r.outcome_date is not None]
     for update in updates:
         start = date.fromisoformat(update["started_on"])
         end = date.fromisoformat(update["ended_on"]) if update["ended_on"] else None
         inside = [r for r in records if r.outcome_date >= start and (end is None or r.outcome_date <= end)]
-        spans = [r for r in records if r.as_of <= (end or as_of) and r.outcome_date >= start]
+        spans = [r for r in records if r.as_of is not None and r.as_of <= (end or as_of) and r.outcome_date >= start]
         inside_any.update(r.grade_id for r in inside)
         rows.append(
             {
@@ -248,8 +507,8 @@ def _core_update_block(scoreboard: Scoreboard, records: Sequence[GradedRecord], 
                 "kind": update["kind"],
                 "started_on": update["started_on"],
                 "ended_on": update["ended_on"],
-                "source_url": update["source_url"],
-                "recorded_at": update["recorded_at"],
+                "source_url": update.get("source_url"),
+                "recorded_at": update.get("recorded_at"),
                 "outcomes_inside": _block(inside),
                 "forecast_spans_overlapping": len(spans),
             }
@@ -262,8 +521,12 @@ def _core_update_block(scoreboard: Scoreboard, records: Sequence[GradedRecord], 
 def _regrade_block(
     scoreboard: Scoreboard, source: str, stage: str, as_of: date, model_version: str | None
 ) -> dict[str, Any]:
-    originals = {r.forecast_id: r for r in scoreboard.graded_records(source, stage, as_of, "original", model_version=model_version)}
-    regrades = scoreboard.graded_records(source, stage, as_of, "regrade", model_version=model_version)
+    def graded(kind: str) -> list[GradedRecord]:
+        # The same held-out rule as the headline: a backtest training row is never counted here either.
+        return held_out_records(scoreboard.graded_records(source, stage, as_of, kind, model_version=model_version), source)[0]
+
+    originals = {r.forecast_id: r for r in graded("original")}
+    regrades = graded("regrade")
     pairs = []
     for regrade in regrades:
         original = originals.get(regrade.forecast_id)
@@ -291,7 +554,7 @@ def _regrade_block(
             }
         )
     main = [p for p in pairs if not p["is_brand"]]
-    latest = scoreboard.graded_records(source, stage, as_of, "latest", model_version=model_version)
+    latest = graded("latest")
     main_original = [
         r for r in originals.values()
         if not r.cell.is_brand and (r.cell.lead_days or 0) >= LEAD_FLOOR_DAYS and not _after_stage_day(r, stage)
@@ -355,7 +618,11 @@ def render_text(report: Mapping[str, Any]) -> str:
     stage_words = f"{report['stage']}, the Confirmed forecast" if report["confirmed_stage"] else report["stage"]
     lines.append(f"Ranksim stage report. Source {report['source']}. Stage {stage_words}. As of {plain_date(report['as_of'])}.")
     lines.append(f"Model version {report['model_version'] or 'none'}. Grading rule {report['grading_rule']}.")
-    lines.append("The hash chains verify.")
+    chain = report.get("chain") or {}
+    if chain.get("ok") is True:
+        lines.append("The hash chains verify.")
+    else:
+        lines.append(str(chain.get("note") or "These rows were not checked against a hash chain."))
     if real == SYNTHETIC:
         lines.append("These are SYNTHETIC results. They test the code and are never accuracy.")
 
@@ -367,6 +634,8 @@ def render_text(report: Mapping[str, Any]) -> str:
         )
     if report.get("excluded_after_stage_day"):
         lines.append(f"Rows dated after the stage day left out: {report['excluded_after_stage_day']} ({real}).")
+    if report.get("excluded_not_held_out"):
+        lines.append(f"Training rows left out, only held out rows are graded: {report['excluded_not_held_out']} ({real}).")
     if report.get("baselines_missing"):
         lines.append(
             "Baselines the spec requires that are missing here: "
@@ -479,9 +748,12 @@ def persistence_label() -> str:
 
 
 __all__ = [
+    "MemoryCell",
     "combined_report",
+    "held_out_records",
     "persistence_label",
     "plain_date",
     "render_text",
+    "report_from_cells",
     "stage_report",
 ]

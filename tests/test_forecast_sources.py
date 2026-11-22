@@ -615,3 +615,52 @@ def test_the_discover_update_is_not_a_ranking_update_for_the_scoreboard_or_windo
     assert any(u.kind == "discover" for u in packaged), "the loaded list stays as Google lists it"
     assert not [r for r in updates.scoreboard_rows(packaged) if r["kind"] == "discover"]
     assert "February 2026 Discover update" not in [u.name for u in updates.overlaps("2026-02-10", "2026-02-20", packaged)]
+
+
+# ---------------------------------------------------------------------------
+# Follow-ups of the data-layer bug hunt
+
+
+def test_universe_uses_the_newest_month_of_a_keyword_history_file(tmp_path: Path) -> None:
+    from aeo.ranksim.forecast.sources import universe
+
+    record = {"keyword": "emergency plumber", "location": 2840, "language": "en", "keyword_info_history": {
+        "202501": {"search_volume": 10, "competition": 0.1, "cpc": 1.0, "time_update": "2025-02-10 00:00:00 +00:00"},
+        "202605": {"search_volume": 99, "competition": None, "cpc": 3.5, "time_update": "2026-06-10 00:00:00 +00:00"},
+        "202606": {"search_volume": 120, "competition": None, "cpc": None, "time_update": "2026-07-10 00:00:00 +00:00"},
+    }}
+    path = tmp_path / "google_history" / "keywords" / "US_en.json.gz"
+    path.parent.mkdir(parents=True)
+    path.write_bytes(gzip.compress((json.dumps(record) + "\n").encode()))
+    built = universe.build_universe(["plumber"], country="US", n=3, niche="x", dfs_keyword_files=[path])
+    row = next(item for item in built.candidates if item.keyword == "emergency plumber")
+    assert row.search_volume == 120, "the newest month supplies the volume"
+    assert row.cpc == 3.5, "a metric the newest month lacks comes from the next newest month"
+    assert row.competition == 0.1, "and from older months only when every newer month lacks it"
+    assert "NEWEST month" in universe.__doc__
+
+
+def test_start_estimates_file_carries_its_collection_date_and_refuses_an_earlier_as_of(tmp_path: Path) -> None:
+    out = tmp_path / "start_estimates.jsonl"
+    table = {"a.com": [_registered("2024-01-01"), _seen("2024-04-30", "opr")], "b.com": []}
+    counts = domain_age.write_start_estimates(out, table, collected_on=date(2026, 11, 22))
+    assert counts["sites"] == 2 and counts["evidence_collected_on"] == "2026-11-22"
+    rows = [json.loads(line) for line in out.read_text().splitlines()]
+    assert all(row["evidence_collected_on"] == "2026-11-22" and row["not_a_feature_before"] == "2026-11-22" for row in rows)
+    sidecar = json.loads(domain_age.sidecar_path(out).read_text())
+    assert "NOT safe as a feature" in sidecar["use"] and sidecar["evidence_collected_on"] == "2026-11-22"
+    assert set(domain_age.load_start_estimates(out, date(2026, 11, 22))) == {"a.com", "b.com"}
+    with pytest.raises(LeakError):
+        domain_age.load_start_estimates(out, date(2025, 6, 1))
+    reported = domain_age.load_start_estimates(out, date(2025, 6, 1), reporting_only=True)
+    assert all(row["label"] == domain_age.REPORTING_ONLY_LABEL for row in reported.values())
+    old = tmp_path / "old.jsonl"
+    old.write_text(json.dumps({"site": "a.com", "estimate": "2024-03-01"}) + "\n")
+    with pytest.raises(LeakError):
+        domain_age.load_start_estimates(old, date(2030, 1, 1))
+
+
+def test_updates_load_calendar_names_its_file_and_the_cache_never_targets_the_packaged_copy(tmp_path: Path) -> None:
+    payload, path = updates.load_calendar(root=tmp_path)
+    assert path == updates.PACKAGED_PATH and payload["count"] == len(payload["updates"])
+    assert updates.cache_path(tmp_path) != updates.PACKAGED_PATH

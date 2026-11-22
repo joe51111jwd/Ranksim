@@ -1480,7 +1480,8 @@ def read_clean(
         raise ValueError("pulls must be at least 1")
     if gap_seconds < 0:
         raise ValueError("gap_seconds cannot be negative")
-    if pulls > 1 and gap_seconds < MIN_PULL_GAP_SECONDS and provider_is_real(getattr(source, "name", None)):
+    fast = pulls > 1 and gap_seconds < MIN_PULL_GAP_SECONDS
+    if fast and provider_is_real(getattr(source, "name", None)):
         # The same floor pipeline.take_readings and the read command hold. Only a source whose answers
         # are not observations of Google (the synthetic world, the sandbox) may read faster.
         raise ValueError(
@@ -1545,6 +1546,10 @@ def read_clean(
             continue
         if round_reasons:
             reading = replace(reading, dropped=reading.dropped + tuple(round_reasons))
+        if fast and reading.label == REAL:
+            # Only a source that says it is not real may read under the floor. Pulls it served that claim
+            # a real provider are still never a REAL reading taken faster than the rule allows.
+            reading = replace(reading, label=SYNTHETIC)
         readings.append(reading)
     return ReadResult(readings=tuple(readings), pulls=tuple(every), failed_rounds=tuple(failed))
 

@@ -455,6 +455,57 @@ def test_export_then_import_round_trip_keeps_heads_and_bytes(board: Scoreboard, 
     rebuilt.close()
 
 
+def _rewrite_export_file(folder: Path, name: str, edit) -> None:
+    """Change one export file and put its new sha256 in HEADS.json, as a faulty producer would write it."""
+    import hashlib
+    import json
+
+    path = folder / name
+    rows = [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
+    rows = edit(rows)
+    from aeo.ranksim.forecast.chain import canonical_json
+
+    body = "".join(canonical_json(row) + "\n" for row in rows)
+    path.write_text(body, encoding="utf-8")
+    heads = json.loads((folder / "HEADS.json").read_text())
+    heads["files"][name] = hashlib.sha256(body.encode("utf-8")).hexdigest()
+    (folder / "HEADS.json").write_text(json.dumps(heads, sort_keys=True, indent=2) + "\n")
+
+
+def test_import_runs_the_reading_checks_and_refuses_a_bad_export(board: Scoreboard, clock: Clock, tmp_path: Path):
+    pulls = [_pull(f"p{i}", [("https://alpha.com/roof-repair", 4)]) for i in range(3)]
+    board.store_batch(pulls=pulls, readings=[reading("r90", 90, {"alpha.com": 4}, pull_ids=tuple(p.pull_id for p in pulls))])
+    board.export(tmp_path / "good")
+
+    cases = {
+        "missing_pull": ("pulls.jsonl", lambda rows: [r for r in rows if r["pull_id"] != "p1"], "not stored"),
+        "synthetic_pull": ("pulls.jsonl", lambda rows: [dict(r, provider="dataforseo-sandbox") if r["pull_id"] == "p0" else r
+                                                        for r in rows], "synthetic provider"),
+        "late_pull": ("pulls.jsonl", lambda rows: [dict(r, completed_at="2027-03-30T00:00:00Z") if r["pull_id"] == "p2" else r
+                                                   for r in rows], "never older than its pulls"),
+        "bad_label": ("readings.jsonl", lambda rows: [dict(r, label="PREDICTED") for r in rows], "REAL or SYNTHETIC"),
+        "too_few_kept": ("readings.jsonl", lambda rows: [dict(r, pulls_kept=2) for r in rows], "not marked degraded"),
+        "excluded_site": ("readings.jsonl", lambda rows: [dict(r, positions=r["positions"] + [
+            {"site": "www.smartcrewhq.com", "position": 9, "pull_positions": [9], "best_url": None}]) for r in rows], "excluded"),
+    }
+    import shutil
+
+    for name, (file_name, edit, message) in cases.items():
+        folder = tmp_path / name
+        shutil.copytree(tmp_path / "good", folder)
+        _rewrite_export_file(folder, file_name, edit)
+        fresh = Scoreboard(f"sqlite:///{tmp_path / (name + '.db')}", clock=clock)
+        with pytest.raises(ScoreboardRefusal, match=message):
+            fresh.import_export(folder)
+        with fresh.engine.connect() as connection:
+            assert connection.execute(text("SELECT COUNT(*) FROM readings")).scalar() == 0, name
+        fresh.close()
+
+    fine = Scoreboard(f"sqlite:///{tmp_path / 'fine.db'}", clock=clock)
+    assert fine.import_export(tmp_path / "good").ok and fine.reading("r90").pulls_kept == 3
+    fine.close()
+
+
 def test_import_refuses_an_edited_export(board: Scoreboard, clock: Clock, tmp_path: Path):
     _graded_board(board, clock)
     board.export(tmp_path / "a")
@@ -622,7 +673,7 @@ def test_degraded_or_synthetic_readings_may_still_name_pulls_kept_elsewhere(boar
     assert board.reading("r-deg").degraded and board.reading("r-syn").label == "SYNTHETIC"
 
 
-def test_target_url_position_is_none_when_a_dropped_pull_is_all_that_is_missing(board: Scoreboard, clock: Clock):
+def test_a_dropped_pull_need_not_be_stored_and_the_target_url_uses_kept_pulls(board: Scoreboard, clock: Clock, strict_pulls):
     """A dropped pull need not be stored. The target URL is worked out from the kept pulls only."""
     fid = made_at(board, clock, forecast(point=4), 60)
     pulls = [_pull(f"k{i}", [("https://alpha.com/roof-repair", 4)]) for i in range(3)]

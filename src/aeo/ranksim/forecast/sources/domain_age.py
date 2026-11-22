@@ -52,6 +52,12 @@ prove a site was not live, hence the lag. Without A it is U minus
 `FIRST_SEEN_LAG_DAYS`, uncertainty `FIRST_SEEN_UNCERTAINTY_DAYS`.
 The lag of 90 days reflects the catalog's measured OPR lag behind registration
 of about 1 to 6 months. It is a rough constant, not a fitted value.
+
+The convenience file start_estimates.jsonl (main estimate --out) is built from
+the evidence available on the day it is written, with no as_of. It is NOT a
+feature at a past date. Every row carries evidence_collected_on, a sidecar
+README says so, and load_start_estimates refuses an earlier as_of unless the
+caller asks for reporting only. Features call best_start_date with as_of.
 """
 
 from __future__ import annotations
@@ -486,6 +492,88 @@ def best_start_date(
                              upper=upper, flags=tuple(flags), evidence=tuple(items), ignored_after_as_of=tuple(ignored))
 
 
+# ---------------------------------------------------------------------------
+# The convenience file start_estimates.jsonl. NOT a feature at a past date.
+
+START_ESTIMATES_USE = (
+    "Convenience file for reporting. Built from evidence available on evidence_collected_on, with no as_of. "
+    "It is NOT safe as a feature for any date before evidence_collected_on: features must call best_start_date "
+    "with as_of. load_start_estimates refuses an earlier as_of unless reporting_only=True."
+)
+REPORTING_ONLY_LABEL = "REPORTING ONLY, NOT A FEATURE"
+
+
+def sidecar_path(path: str | Path) -> Path:
+    target = Path(path)
+    return target.with_name(target.name + ".README.json")
+
+
+def estimate_row(site: str, item: StartDateEstimate, collected_on: date) -> dict[str, Any]:
+    """One line of start_estimates.jsonl. Every row carries the date its evidence was collected."""
+    return {
+        "site": site, "estimate": item.estimate.isoformat() if item.estimate else None,
+        "uncertainty_days": item.uncertainty_days, "method": item.method,
+        "lower": item.lower.isoformat() if item.lower else None, "upper": item.upper.isoformat() if item.upper else None,
+        "flags": list(item.flags), "sources": [d.source for d in item.evidence], "label": item.kind,
+        "evidence_collected_on": collected_on.isoformat(), "not_a_feature_before": collected_on.isoformat(),
+    }
+
+
+def write_start_estimates(path: str | Path, table: dict[str, list[Dated]], *, collected_on: date | None = None) -> dict[str, Any]:
+    """Write start_estimates.jsonl (one row per site) and its sidecar README that says what the file is not for.
+
+    `collected_on` is the day the evidence was read (today by default). Every row
+    and the sidecar carry it. Returns the method and flag counts.
+    """
+    from collections import Counter
+
+    day = collected_on or datetime.now(timezone.utc).date()
+    target = Path(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    methods: Counter[str] = Counter()
+    flags: Counter[str] = Counter()
+    with open(target, "w", encoding="utf-8") as handle:
+        for site in sorted(table):
+            item = best_start_date(site, table[site])
+            methods[item.method] += 1
+            flags.update(item.flags)
+            handle.write(json.dumps(estimate_row(site, item, day), sort_keys=True) + "\n")
+    sidecar_path(target).write_text(json.dumps({"file": target.name, "evidence_collected_on": day.isoformat(), "use": START_ESTIMATES_USE,
+                                                "rows": len(table)}, indent=2, sort_keys=True), encoding="utf-8")
+    return {"sites": len(table), "methods": dict(methods), "flags": dict(flags), "evidence_collected_on": day.isoformat()}
+
+
+def load_start_estimates(path: str | Path, as_of: date | str, *, reporting_only: bool = False) -> dict[str, dict[str, Any]]:
+    """Rows of start_estimates.jsonl for use as of `as_of`.
+
+    Raises LeakError when `as_of` is earlier than a row's evidence_collected_on
+    (or a row has no such date, as in files written before it was added): the
+    file was built from evidence of that later day. `reporting_only=True` returns
+    the rows anyway, each labelled REPORTING ONLY, NOT A FEATURE, for a report
+    that says what is known today. Never pass such rows to a model.
+    """
+    from aeo.ranksim.forecast.asof import LeakError
+
+    limit = as_date(as_of)
+    out: dict[str, dict[str, Any]] = {}
+    for line in Path(path).read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        row = json.loads(line)
+        collected = row.get("evidence_collected_on")
+        unsafe = collected is None or as_date(collected) > limit
+        if unsafe and not reporting_only:
+            raise LeakError(
+                f"{Path(path).name}: the estimate for {row.get('site')} was built from evidence collected on "
+                f"{collected or 'an unknown day'}, after the forecast date {limit}. Use best_start_date with as_of instead. "
+                "Pass reporting_only=True only for a report, never for a feature."
+            )
+        if reporting_only:
+            row = {**row, "label": REPORTING_ONLY_LABEL}
+        out[str(row.get("site"))] = row
+    return out
+
+
 def main(argv: list[str] | None = None) -> int:
     """rdap: look up registration dates for a small list. estimate: summarise start-date estimates (cache only)."""
     import argparse
@@ -511,24 +599,17 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(dict(Counter(record["status"] for record in records.values())), sort_keys=True))
         return 0
     table = evidence(sites, args.root)
+    if args.out:
+        counts = write_start_estimates(args.out, table)
+        counts["note"] = START_ESTIMATES_USE
+        print(json.dumps(counts, sort_keys=True))
+        return 0
     methods: Counter[str] = Counter()
     flags: Counter[str] = Counter()
-    handle = open(args.out, "w", encoding="utf-8") if args.out else None
-    try:
-        for site in sorted(table):
-            item = best_start_date(site, table[site])
-            methods[item.method] += 1
-            flags.update(item.flags)
-            if handle:
-                handle.write(json.dumps({"site": site, "estimate": item.estimate.isoformat() if item.estimate else None,
-                                         "uncertainty_days": item.uncertainty_days, "method": item.method,
-                                         "lower": item.lower.isoformat() if item.lower else None,
-                                         "upper": item.upper.isoformat() if item.upper else None,
-                                         "flags": list(item.flags), "sources": [d.source for d in item.evidence],
-                                         "label": item.kind}) + "\n")
-    finally:
-        if handle:
-            handle.close()
+    for site in sorted(table):
+        item = best_start_date(site, table[site])
+        methods[item.method] += 1
+        flags.update(item.flags)
     print(json.dumps({"sites": len(table), "methods": dict(methods), "flags": dict(flags)}, sort_keys=True))
     return 0
 

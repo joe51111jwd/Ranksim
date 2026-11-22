@@ -208,7 +208,45 @@ python -m aeo.ranksim forecast sample ranked-keywords --sites some_sites.txt
 
 Note on past result pages: the budget guard reserves 1 page per search per month, the plan's own rate, so 5,000 searches over 24 months is 14.400000 USD. That is still on the safe side. DataForSEO's free history samples (117 locales, 12 months) hold 53,091 dated pages for 11,691 searches, about 0.38 pages per search per month, with a median gap of 62 days between two pages of one search. At that rate the same pull would be 5.449423 USD. Every dry run and `budget prices` print both figures. The $1 sample measures the real count before the big pull, and the provider's own cost field is what gets charged.
 
-The big pulls are coming in the next step. There is no command for them yet.
+Then build the free inputs. None of these costs money. Each writes under `data/forecast/cache/`.
+
+```
+python -m aeo.ranksim forecast panel build
+python -m aeo.ranksim forecast panel summary
+python -m aeo.ranksim forecast universe build --niche plumbing --seed-term plumber --seed-term "water heater" --n 300
+python -m aeo.ranksim forecast cohort build --name nov25 --repo cenk --start 2025-10-27 --end 2025-11-09 --before <crawl id before> --after <crawl id after>
+python -m aeo.ranksim forecast updates show
+```
+
+1. `panel build` turns the public DataForSEO sample files under `data/forecast/public/dataforseo_samples/` into the panel in `data/forecast/cache/panel/` (or `--out`). A new or empty folder is filled. A folder that already holds a panel is refused unless you add `--overwrite`. With `--overwrite` the new panel is built beside the old one and swapped in only when it is complete, so a failed build leaves the old panel as it was. `panel summary` prints the searches, pages, rows, dates and the pages at risk of being altered.
+2. `universe build` picks the searches of one niche in equal difficulty thirds. It reads the Kaggle keyword shards and the DataForSEO keyword samples under `data/forecast/public/`. Add `--download` to fetch a missing Kaggle shard. It uses the newest month of each search's metrics. They pick searches and are never launch-month features.
+3. `cohort build` collects the free evidence for newly registered domains (the public list, RDAP, DNS and Common Crawl) and applies the frozen rules. `--registrations <csv>` with the columns site and listed_on reads your own list instead. It then runs the spam and parking filter on the kept sites and prints how many each rule removed. The filter reads only the domain name, the launch page and a name server reading taken near the launch day. It never reads today's name servers on an older site, traffic or rankings. Every site stays in the table with its reason.
+4. `updates show` prints Google's ranking update calendar. `updates sync --fetch` refreshes the cached copy from Google's public status dashboard. Without `--fetch` it fetches nothing. The copy that ships with the code is never changed.
+5. `content score --search <search> --file <page>` scores one saved page and says which ran: the pinned local model or the lexical fallback.
+
+Then see what the big pulls cost and what is still missing:
+
+```
+python -m aeo.ranksim forecast pull plan
+python -m aeo.ranksim forecast pull plan --universe data/forecast/cache/universe/universe_plumbing_US.parquet --cohort data/forecast/cache/newsites/cohort_nov25.parquet
+```
+
+Without inputs it prices the plan's own counts: past result pages for 5,000 searches are 14.400000 USD over 24 months and 18.000000 USD over 30 months, traffic curves for 20,000 sites are 26.400000 USD, and exact positions for 2,000 sites at 100 rows are 48.000000 USD. It also prints what is approved and which $1 samples are still missing, with the command for each. Free.
+
+The three big pulls. Each is a dry run until you add `--execute`:
+
+```
+python -m aeo.ranksim forecast pull past-pages --universe data/forecast/cache/universe/universe_plumbing_US.parquet --months 24
+python -m aeo.ranksim forecast pull traffic --cohort data/forecast/cache/newsites/cohort_nov25.parquet
+python -m aeo.ranksim forecast pull positions --cohort data/forecast/cache/newsites/cohort_nov25.parquet --max-sites 2000
+```
+
+1. The dry run prints the cost of the whole job, how many calls already have a saved answer, what is still to pay, and what the budget guard would say. It sends nothing.
+2. With `--execute` the guard checks what is still to pay before the first call. Without an approval, or without the $1 sample of that kind when the pull costs more than $1, it stops with the approve command or the sample command and sends nothing.
+3. Each pull is a job with frozen dates. If it stops part way, run the same command again. Saved answers are read back and never paid twice.
+4. `--months` counts calendar months with this month included. 24 months asked on 22 November 2026 start on 1 December 2024.
+5. `pull traffic` and `pull positions` take the kept sites of the cohort by default. Add `--which all` to take every registered site. `--max-sites` picks the sites in a fixed order that does not look at how they did.
+6. Past result pages go into `data/forecast/cache/panel_labs/`, beside the free sample panel. Their estimated traffic column stays empty on older pages until a real response shows it is dated by the page.
 
 ## Step 5. Weeks 2 and 3. Trust model, marker 2
 

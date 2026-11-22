@@ -11,8 +11,13 @@ forecasts. The only forecasts this module makes are the persistence
 placeholders of `demo` (model version "persistence-v0"): each one copies the
 latest clean reading, and they exist only so the scoreboard path runs before
 the real models exist. What is SYNTHETIC: everything `demo` produces, and
-every reading taken with the synthetic source. Synthetic readings are labeled
-SYNTHETIC in the scoreboard and are never accuracy.
+every reading taken with the synthetic source. The reader labels a reading
+built from synthetic pulls SYNTHETIC, and such readings are never accuracy.
+
+Readings come two ways: `take_readings` runs every round of pulls in one
+process, and round mode spreads them over a day (`read_round` once per round,
+then `assemble` for the UTC date). Both pass each search's latest earlier clean
+reading as history and read the round suspects per round.
 
 Money: every amount is computed by `budget.py` from its price table, and every
 paid call goes through the spend ledger. The `plan_*` functions only read the
@@ -500,7 +505,7 @@ def plan_sample_serp(ledger: SpendLedger | None, provider: str, searches: int, *
 
 
 def plan_sample_historical_serps(ledger: SpendLedger | None, keywords: int, *, months_back: int) -> CostPlan:
-    """The $1 Historical SERPs sample, at the snapshots-per-month budgeting estimate of budget.py."""
+    """The $1 Historical SERPs sample, at the plan rate of budget.py (1 page per search per month). The notes give both rates."""
     per_call = historical_serps_estimate(months_back + 1)
     fit = _fit_under_cap(keywords, per_call)
     notes = (
@@ -733,7 +738,7 @@ class ReadingRunSummary:
     budget_refused: bool
     started_at: str
     finished_at: str
-    history_used: int = 0
+    history_used: int = 0  # searches given an earlier clean reading as history
     reader_version: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
@@ -812,6 +817,16 @@ def take_readings(
     readings = list(result.readings)
     scoreboard.store_batch(pulls=result.pulls, readings=readings)
     synthetic = label == SYNTHETIC or any(reading.label == SYNTHETIC for reading in readings)
+    first_pull: dict[tuple[str, int, str], datetime] = {}
+    for pull in result.pulls:
+        key = (pull.spec.search, int(pull.spec.location_code), pull.spec.device)
+        moment = parse_utc(pull.completed_at)
+        first_pull[key] = min(moment, first_pull.get(key, moment))
+    offered = sum(  # history the reader could use: same request, taken before that request's first pull
+        1 for item in past
+        if (key := (item.search, int(item.location_code), item.device)) in first_pull
+        and parse_utc(item.taken_at) < first_pull[key]
+    )
     reasons: Counter[str] = Counter()
     for reading in readings:
         for _pull_id, reason in reading.dropped:
@@ -835,7 +850,7 @@ def take_readings(
         budget_refused=any("BudgetError" in message for _index, message in result.failed_rounds),
         started_at=started,
         finished_at=utc_iso(chosen.now()),
-        history_used=len(past),
+        history_used=offered,
         reader_version=reader_version_name(version, overlap_rule=overlap_rule),
     )
 

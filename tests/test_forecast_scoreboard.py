@@ -1013,3 +1013,17 @@ def test_pulls_completed_between_filters_by_time_and_search(board: Scoreboard):
     found = board.pulls_completed_between(start, start + timedelta(days=1))
     assert [pull.pull_id for pull in found] == ["t1", "t2"]
     assert board.pulls_completed_between(start, start + timedelta(days=1), search_keys=["no such search"]) == []
+
+
+def test_a_real_reading_never_grades_a_synthetic_forecast(board: Scoreboard, clock: Clock):
+    board.add_site("synthsite.example", source="synthetic", launch_date=LAUNCH, launch_date_source="test", built_by="test")
+    board.add_search("synthsite.example", SEARCH, location_code=LOC)
+    fid = made_at(board, clock, forecast(site="synthsite.example"), 60)
+    board.add_reading(reading("real90", 90, {"synthsite.example": 4}))
+    clock.at_day(95)
+    with pytest.raises(ScoreboardRefusal, match="Only a SYNTHETIC reading"):
+        board.grade(fid, "real90")
+    summary = grade_job.run(board, LAUNCH + timedelta(days=95))
+    assert fid in summary["due_no_reading_in_window"]  # the job does not even offer the real reading
+    board.add_reading(reading("synth90", 90, {"synthsite.example": 4}, label="SYNTHETIC", hour=11))
+    assert fid in grade_job.run(board, LAUNCH + timedelta(days=95))["graded"]

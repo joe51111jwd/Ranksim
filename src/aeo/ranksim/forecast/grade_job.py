@@ -9,7 +9,8 @@ scoreboard's own injected clock.)
 Choice of reading: among the non-degraded readings of the forecast's search,
 location and device taken on days 87 to 93 after launch, taken after the
 forecast was made, and taken on or before `today`, the one closest to day 90.
-Ties go to the earlier reading.
+Ties go to the earlier reading. Only REAL readings grade a forecast whose
+source is not synthetic, and only SYNTHETIC readings grade a synthetic one.
 
 OUR READING of "closest": a reading chosen too early could be beaten by a
 closer one still to come, and an original grade can never be replaced. So a
@@ -29,7 +30,7 @@ from typing import Any
 from .asof import parse_utc
 from .config import OUTCOME_DAY
 from .scoreboard import WINDOW_LAST_DAY, Scoreboard, ScoreboardRefusal, WindowReading
-from .types import REAL
+from .types import REAL, SYNTHETIC
 
 SUMMARY_KEYS = (
     "graded",
@@ -68,8 +69,8 @@ def run(scoreboard: Scoreboard, today: date) -> dict[str, Any]:
             out["not_yet_due"].append(fid)
             continue
         window = scoreboard.window_readings(fid, taken_on_or_before=today)
-        if record.source != "synthetic":
-            window = [r for r in window if r.label == REAL]
+        wanted = SYNTHETIC if record.source == "synthetic" else REAL
+        window = [r for r in window if r.label == wanted]  # real outcomes for real forecasts, synthetic for synthetic
         window_closed = today > record.launch_date + timedelta(days=WINDOW_LAST_DAY)
         if not window:
             out["due_no_reading_in_window"].append(fid)

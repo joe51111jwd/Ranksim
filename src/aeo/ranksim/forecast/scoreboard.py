@@ -1293,6 +1293,10 @@ class Scoreboard:
             )
         if reading.label != REAL and forecast.source != "synthetic":
             raise ScoreboardRefusal(f"Reading {reading_id} is {reading.label}. Only a REAL reading grades a {forecast.source} forecast.")
+        if reading.label != SYNTHETIC and forecast.source == "synthetic":
+            raise ScoreboardRefusal(
+                f"Reading {reading_id} is {reading.label}. Only a SYNTHETIC reading grades a synthetic forecast."
+            )
         if reading.search_key != forecast.search_key:
             raise ScoreboardRefusal(f"Reading {reading_id} is for the search {reading.search!r}, not {forecast.search!r}.")
         if reading.location_code != forecast.location_code or reading.device != forecast.device:

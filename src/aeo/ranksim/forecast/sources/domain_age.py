@@ -337,36 +337,40 @@ def opr_first_month(sites: Iterable[str], root: str | Path | None = None) -> dic
 
 
 def cc_first_release(sites: Iterable[str], root: str | Path | None = None) -> dict[str, Dated]:
-    """The first materialised Common Crawl release (by data window) that contains the site.
+    """The materialised Common Crawl release with the earliest window END that contains the site.
 
-    Only releases whose searched list holds the site count. `left_censored` is True when the
-    earliest such release already has it. `absent_in` names the last searched release without it.
+    Only releases whose searched list holds the site count. Absence counts as evidence only
+    from a searched release whose window ended before the first-seen window started
+    (`absent_in`, `absent_by`). Without such a release the site is `left_censored`: it may
+    have been linked before the earliest window that has it. Overlapping windows (for
+    example a 1-crawl and a 3-crawl release ending on the same day) say nothing about absence.
     """
     cc = CommonCrawlDomainRanks(default_root(root))
     known = cc.releases()
-    order = sorted(cc.materialised_releases(), key=lambda rid: known[rid]["data_end"])
+    order = sorted(cc.materialised_releases(), key=lambda rid: (known[rid]["data_end"], known[rid]["data_start"], rid))
     wanted = wanted_sites(sites)
-    searched_before: set[str] = set()
-    last_absent: dict[str, str] = {}
-    out: dict[str, Dated] = {}
+    absent: dict[str, list[str]] = {}
+    first: dict[str, str] = {}
     for release in order:
         searched = cc.searched(release) & wanted
         parquet_path = cc.cache_dir / f"{release}.parquet"
         present = set(pq.read_table(parquet_path, columns=["site"]).column("site").to_pylist()) if parquet_path.exists() else set()
-        info = known[release]
         for site in searched:
-            if site in out:
+            if site in first:
                 continue
             if site in present:
-                absent = last_absent.get(site)
-                out[site] = Dated(value={"date": info["data_end"].isoformat(), "kind": "first_seen", "release": release,
-                                         "absent_in": absent,
-                                         "absent_by": known[absent]["data_end"].isoformat() if absent else None,
-                                         "left_censored": site not in searched_before},
-                                  source=SOURCE_CC, snapshot_date=info["published"])
+                first[site] = release
             else:
-                last_absent[site] = release
-        searched_before |= searched
+                absent.setdefault(site, []).append(release)
+    out: dict[str, Dated] = {}
+    for site, release in first.items():
+        info = known[release]
+        before = [rid for rid in absent.get(site, []) if known[rid]["data_end"] < info["data_start"]]
+        last = max(before, key=lambda rid: known[rid]["data_end"]) if before else None
+        out[site] = Dated(value={"date": info["data_end"].isoformat(), "kind": "first_seen", "release": release,
+                                 "absent_in": last, "absent_by": known[last]["data_end"].isoformat() if last else None,
+                                 "left_censored": last is None},
+                          source=SOURCE_CC, snapshot_date=info["published"])
     return out
 
 

@@ -10,3 +10,6 @@ data/
 *.egg-info/
 dist/
 build/
+
+# The forecast package ships a small offline copy of the Google update calendar.
+!src/aeo/ranksim/forecast/sources/data/

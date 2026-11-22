@@ -554,3 +554,28 @@ def test_packaged_calendar_loads_offline(tmp_path: Path) -> None:
     rows = updates.scoreboard_rows(calendar[:1])
     assert rows == [{"name": "December 2021 product reviews update", "kind": "reviews", "started_on": "2021-12-01",
                      "ended_on": "2021-12-21", "source_url": "https://status.search.google.com/incidents/hgwP7ei5H1uKbYSeZrBZ"}]
+
+
+def test_cc_absence_counts_only_from_a_window_that_ended_before(tmp_path: Path) -> None:
+    full = gzip.decompress((FIXTURES / "cc_domain_ranks_sample.txt.gz").read_bytes())
+    without_shop = gzip.compress(b"\n".join(line for line in full.split(b"\n") if b"example-shop" not in line))
+    with_shop = gzip.compress(full)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = without_shop if OLD_RELEASE in str(request.url) else with_shop
+        return httpx.Response(200, stream=_Stream(body), headers={"content-length": str(len(body))})
+
+    cc = CommonCrawlDomainRanks(root=tmp_path, client=httpx.Client(transport=httpx.MockTransport(handler)))
+    cc.materialise([SITE], [OLD_RELEASE, NEW_RELEASE])  # NEW's window overlaps OLD's: absence in OLD says nothing
+    first = domain_age.cc_first_release([SITE], tmp_path)[SITE]
+    assert first.value["release"] == NEW_RELEASE and first.value["left_censored"] is True
+    assert first.value["absent_by"] is None
+    later = "cc-main-2025-apr-may-jun"  # window starts 2025-04-17, after OLD ended on 2025-03-28
+    shutil.rmtree(tmp_path / "cache")
+    cc = CommonCrawlDomainRanks(root=tmp_path, client=httpx.Client(transport=httpx.MockTransport(handler)))
+    cc.materialise([SITE], [OLD_RELEASE, later])
+    first = domain_age.cc_first_release([SITE], tmp_path)[SITE]
+    assert first.value["release"] == later and first.value["left_censored"] is False
+    assert first.value["absent_in"] == OLD_RELEASE and first.value["absent_by"] == "2025-03-28"
+    estimate = domain_age.best_start_date(SITE, [first])
+    assert estimate.method == "between_last_absent_and_first_seen" and estimate.upper == date(2025, 6, 25)

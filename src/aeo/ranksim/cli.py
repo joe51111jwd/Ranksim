@@ -42,7 +42,29 @@ from aeo.ranksim.serp import resolve_serp
 from aeo.ranksim.store import open_session
 
 
+def _forecast_argv(argv: list[str]) -> list[str] | None:
+    """The arguments after `forecast` when forecast is the command, else None. Only --database comes before a command."""
+    index = 0
+    while index < len(argv):
+        token = argv[index]
+        if token == "--database":
+            index += 2
+            continue
+        if token.startswith("--database="):
+            index += 1
+            continue
+        if token.startswith("-"):
+            return None
+        return argv[index + 1 :] if token == "forecast" else None
+    return None
+
+
 def main(argv: list[str] | None = None) -> None:
+    forwarded = _forecast_argv(list(sys.argv[1:] if argv is None else argv))
+    if forwarded is not None:
+        from aeo.ranksim.forecast.cli import main as forecast_main
+
+        raise SystemExit(forecast_main(forwarded))
     parser = argparse.ArgumentParser(prog="ranksim", description="SmartCrew Google rank simulator")
     parser.add_argument("--database", default=None, help="SQLAlchemy URL. Default is RANKSIM_DATABASE_URL.")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -254,6 +276,12 @@ def main(argv: list[str] | None = None) -> None:
     optimize_cmd.add_argument("--serp", default="smartcrew/serp.csv", help="Labeled Google file")
 
     _add_project_parser(sub)
+    forecast = sub.add_parser(
+        "forecast",
+        add_help=False,
+        help="The build plan's measuring commands. Run: python -m aeo.ranksim forecast --help",
+    )
+    forecast.add_argument("forecast_args", nargs=argparse.REMAINDER)
     _add_index_parser(sub)
 
     serve = sub.add_parser("serve", help="Serve the web UI: projects, Pull now, Test a page. The old demo is at /demo.")
@@ -466,6 +494,10 @@ def main(argv: list[str] | None = None) -> None:
                 raise SystemExit(2) from exc
             if code:
                 raise SystemExit(code)
+        elif args.command == "forecast":
+            from aeo.ranksim.forecast.cli import main as forecast_main
+
+            raise SystemExit(forecast_main(list(args.forecast_args)))
         else:
             parser.error(f"Unknown command {args.command}")
     except ProviderConfigError as exc:

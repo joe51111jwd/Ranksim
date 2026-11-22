@@ -603,12 +603,33 @@ def test_target_url_position_is_never_better_than_the_sites_clean_position(board
     assert grade.target_url_position == NT50 and grade.target_url_hit is False
 
 
-def test_target_url_position_is_none_when_pulls_are_missing(board: Scoreboard, clock: Clock):
+def test_real_reading_whose_kept_pulls_are_not_stored_is_refused(board: Scoreboard, clock: Clock, strict_pulls):
+    """A REAL, non-degraded reading must arrive with its pulls, so no outcome rests on pulls nobody can see."""
+    with pytest.raises(ScoreboardRefusal, match="not stored in this scoreboard"):
+        board.add_reading(reading("r90", 90, {"alpha.com": 2}, pull_ids=("not-stored-1", "not-stored-2", "not-stored-3")))
+    stored = [_pull(f"s{i}", [("https://alpha.com/", 2)]) for i in range(3)]
+    board.store_batch(pulls=stored[:2], readings=())
+    with pytest.raises(ScoreboardRefusal, match="s2, which is not stored"):
+        board.add_reading(reading("r90", 90, {"alpha.com": 2}, pull_ids=tuple(p.pull_id for p in stored)))
+    # The same reading with all its pulls in one batch is stored.
+    board.store_batch(pulls=stored, readings=[reading("r90", 90, {"alpha.com": 2}, pull_ids=tuple(p.pull_id for p in stored))])
+    assert board.reading("r90").pulls_kept == 3
+
+
+def test_degraded_or_synthetic_readings_may_still_name_pulls_kept_elsewhere(board: Scoreboard, strict_pulls):
+    board.add_reading(reading("r-deg", 90, {"alpha.com": 2}, degraded=True))
+    board.add_reading(reading("r-syn", 90, {"alpha.com": 2}, label="SYNTHETIC"))
+    assert board.reading("r-deg").degraded and board.reading("r-syn").label == "SYNTHETIC"
+
+
+def test_target_url_position_is_none_when_a_dropped_pull_is_all_that_is_missing(board: Scoreboard, clock: Clock):
+    """A dropped pull need not be stored. The target URL is worked out from the kept pulls only."""
     fid = made_at(board, clock, forecast(point=4), 60)
-    board.add_reading(reading("r90", 90, {"alpha.com": 2}, pull_ids=("not-stored-1", "not-stored-2", "not-stored-3")))
+    pulls = [_pull(f"k{i}", [("https://alpha.com/roof-repair", 4)]) for i in range(3)]
+    ids = tuple(p.pull_id for p in pulls) + ("gone",)
+    board.store_batch(pulls=pulls, readings=[reading("r90", 90, {"alpha.com": 4}, pull_ids=ids, dropped=(("gone", "poisoned"),))])
     clock.at_day(91)
-    grade = board.grade(fid, "r90")
-    assert grade.target_url_position is None and grade.target_url_hit is None
+    assert board.grade(fid, "r90").target_url_position == 4
 
 
 def test_target_url_absent_from_every_kept_pull_is_nt50(board: Scoreboard, clock: Clock):

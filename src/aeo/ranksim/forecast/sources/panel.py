@@ -1061,15 +1061,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 0
     if args.command == "summary":
         folder = Path(args.panel_dir) if args.panel_dir else default_panel_dir()
-        names = sorted({part.parent.parent.name.split("=", 1)[1] for part in _parts(folder, None, None)})
-        payload = {"label": "REAL DataForSEO result pages, country level, single pulls", "datasets": {}}
-        summary_columns = ["dataset", "locale", "keyword_id", "snapshot_time", "snapshot_date", "rank", "site", POISON_RISK_COLUMN]
-        for name in names:  # one dataset at a time keeps memory down
-            panel = load_panel(summary_columns, datasets=[name], panel_dir=folder)
-            payload["datasets"].update(summary(panel)["datasets"])
-            if name == dfs.DATASET_HISTORY:
-                payload["new_sites_history"] = new_site_report(panel)
-            del panel
+        payload = panel_summary(folder)
         if args.out:
             Path(args.out).parent.mkdir(parents=True, exist_ok=True)
             Path(args.out).write_text(json.dumps(payload, indent=2, default=_json_default), encoding="utf-8")

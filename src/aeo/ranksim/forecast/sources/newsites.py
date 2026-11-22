@@ -574,7 +574,7 @@ def registrations_from(daily: Iterable[DailyList], *, tlds: Sequence[str] | None
     for item in daily:
         domains = gzip.decompress(Path(item.path).read_bytes()).decode("utf-8").split()
         chosen = [d for d in domains if (wanted is None or d.rsplit(".", 1)[-1] in wanted)]
-        chosen = [d for d in chosen if site_key(d) == d and d not in EXCLUDED_SITES]
+        chosen = [d for d in chosen if site_key(d) == d and site_key(d.strip().lower()) not in EXCLUDED_SITES]
         chosen.sort(key=cap_order)
         if cap_per_day is not None:
             chosen = chosen[:cap_per_day]
@@ -1460,7 +1460,8 @@ def cohort(
     for crawl_id in plan.before + plan.after:
         if crawl_id not in crawl_map:
             raise ValueError(f"crawl {crawl_id} is not in the crawl list")
-    regs = sorted({reg.site: reg for reg in registrations if reg.site not in EXCLUDED_SITES}.values(), key=lambda r: r.site)
+    regs = sorted({reg.site: reg for reg in registrations if site_key(str(reg.site).strip().lower()) not in EXCLUDED_SITES}.values(),
+                  key=lambda r: r.site)
     sites = [reg.site for reg in regs]
     bootstrap = dict(RDAP_VERISIGN)
     dns_json = public / "rdap" / "dns.json"

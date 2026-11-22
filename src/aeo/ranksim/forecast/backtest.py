@@ -613,10 +613,25 @@ class PanelDesign:
     seed: int = SEED
 
 
+_ACTIVE_SPLIT: list[Any] = []
+
+
 def _split():
+    """The split in force: strength.DEFAULT_SPLIT, or the rehearsal split while a rehearsal runs."""
     from .strength import DEFAULT_SPLIT
 
-    return DEFAULT_SPLIT
+    return _ACTIVE_SPLIT[-1] if _ACTIVE_SPLIT else DEFAULT_SPLIT
+
+
+def rehearsal_pages(sp: pd.DataFrame, pages: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Only the TRAINING side of the real split (training searches, pages before the cutoff), re-split by the
+    rehearsal split. Used to debug the run without reading any held-out outcome."""
+    from .strength import DEFAULT_SPLIT, REHEARSAL_SPLIT
+
+    keep = pages[(~pages["test_search"]) & (pages["date"] < DEFAULT_SPLIT.cutoff)].copy()
+    keep["test_search"] = keep["keyword"].map({k: REHEARSAL_SPLIT.search_is_test(k) for k in set(keep["keyword"])}).astype(bool)
+    rows = sp.merge(keep[["keyword_id", "page_idx"]], on=["keyword_id", "page_idx"])
+    return rows, keep.reset_index(drop=True)
 
 
 def panel_cache_dir() -> Path:
@@ -1062,16 +1077,40 @@ def _subset_block(frame: pd.DataFrame, points: Mapping[str, Sequence[int]], mode
     return report
 
 
-def run_panel(design: PanelDesign = PanelDesign(), *, root: str | Path | None = None,
+def run_panel(design: PanelDesign = PanelDesign(), *, root: str | Path | None = None, rehearsal: bool = False,
               log: Callable[[str], None] | None = None) -> dict[str, Any]:
-    """Score tests A, B, C and the ceiling once on the REAL panel and write versioned reports. Needs the frozen preregs."""
-    from .features import StartEvidence
-    from .markers import evaluate_marker
+    """Score tests A, B, C and the ceiling once on the REAL panel and write versioned reports. Needs the frozen preregs.
+
+    With `rehearsal` the whole run happens inside the training side of the real split (training searches, pages
+    before the cutoff), re-split by strength.REHEARSAL_SPLIT, and writes under data/forecast/cache/backtest/. No
+    held-out outcome is read. Use it to debug before the one scored run.
+    """
 
     sp, pages = load_panel_pages(log=log)
     gaps, cuts = consecutive_gaps(pages), difficulty_cuts(pages)
     specs = panel_specs(design, gaps=gaps, cuts=cuts)
+    if rehearsal:
+        from .strength import REHEARSAL_SPLIT
+
+        sp, pages = rehearsal_pages(sp, pages)
+        _ACTIVE_SPLIT.append(REHEARSAL_SPLIT)
+        root = Path(root) if root else panel_cache_dir() / "rehearsal_evals"
+        specs = {k: BacktestSpec(**{**asdict(v), "name": "rehearsal_" + v.name}) for k, v in specs.items()}
+        shas = {key: freeze_spec(spec, root) for key, spec in specs.items()}
+        try:
+            return _run_panel_body(sp, pages, design, specs, shas, cuts, root, log)
+        finally:
+            _ACTIVE_SPLIT.pop()
     shas = {key: require_spec(spec, root) for key, spec in specs.items()}
+    return _run_panel_body(sp, pages, design, specs, shas, cuts, root, log)
+
+
+def _run_panel_body(sp: pd.DataFrame, pages: pd.DataFrame, design: PanelDesign, specs: Mapping[str, BacktestSpec],
+                    shas: Mapping[str, str], cuts: Sequence[float], root: str | Path | None,
+                    log: Callable[[str], None] | None) -> dict[str, Any]:
+    from .features import StartEvidence
+    from .markers import evaluate_marker
+
     score, strength_fc, trust_model = _load_models(log)
     evidence = StartEvidence.load(sorted(set(sp["site"])))
     results: dict[str, Any] = {}
@@ -1654,7 +1693,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m aeo.ranksim.forecast.backtest")
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("prereg", help="freeze the panel designs before scoring")
-    sub.add_parser("run", help="score the panel designs once (REAL), versioned reports")
+    run_cmd = sub.add_parser("run", help="score the panel designs once (REAL), versioned reports")
+    run_cmd.add_argument("--rehearsal", action="store_true", help="debug inside the training side only")
     syn = sub.add_parser("synthetic", help="SYNTHETIC end to end run and the seed spread at plan size")
     syn.add_argument("--seeds", type=int, default=20)
     syn.add_argument("--seed", type=int, default=3)
@@ -1663,7 +1703,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(json.dumps(prereg_panel(log=_log), indent=2))
         return 0
     if args.command == "run":
-        print(json.dumps(_clean(run_panel(log=_log)), indent=1, default=str)[:20000])
+        print(json.dumps(_clean(run_panel(rehearsal=args.rehearsal, log=_log)), indent=1, default=str)[:20000])
         return 0
     base = SyntheticDesign(seed=args.seed)
     seeds = list(range(100, 100 + args.seeds))

@@ -1,0 +1,142 @@
+"""Offline tests for part 7, the early-reading updater (forecast/updater.py).
+
+Hand-made frames only. Every number here tests the code. None is accuracy.
+"""
+
+from __future__ import annotations
+
+from datetime import date
+
+import numpy as np
+import pandas as pd
+import pytest
+
+from aeo.ranksim.forecast import updater as U
+from aeo.ranksim.forecast.asof import LeakError
+from aeo.ranksim.forecast.config import NT50
+from aeo.ranksim.forecast.placement import band_mass, dist_median
+from aeo.ranksim.forecast.types import REAL, SYNTHETIC
+
+
+def _prior(band_probs: list[float]) -> np.ndarray:
+    dist = np.zeros(51)
+    for (low, high), p in zip(((1, 3), (4, 10), (11, 20), (21, 50), (51, 51)), band_probs):
+        dist[low - 1:high] += p / (high - low + 1)
+    return dist
+
+
+def _rows(n: int = 600, seed: int = 0) -> pd.DataFrame:
+    rng = np.random.default_rng(seed)
+    out = np.where(rng.random(n) < 0.6, NT50, rng.integers(1, 51, n))
+    read = np.where(rng.random(n) < 0.7, out, rng.integers(1, 52, n)).astype(float)
+    read = np.minimum(read, NT50)
+    return pd.DataFrame({"reading_position": read, "prior_band": "NT50", "lead_days": 60, "new_to_search": True,
+                         "position_out": out, "search_group": [f"g{i % 60}" for i in range(n)],
+                         "keyword_id": [f"g{i % 60}" for i in range(n)], "site": [f"s{i}" for i in range(n)]})
+
+
+def test_reading_after_the_forecast_date_is_refused():
+    readings = [U.Reading(position=5, taken_on=date(2026, 1, 10))]
+    with pytest.raises(LeakError):
+        U.usable_readings(readings, date(2026, 1, 9))
+    with pytest.raises(LeakError):
+        U.reading_columns(readings, date(2026, 1, 9))
+
+
+def test_search_console_positions_are_never_readings():
+    with pytest.raises(U.UpdaterError):
+        U.Reading(position=4, taken_on=date(2026, 1, 1), label="GSC")
+    with pytest.raises(U.UpdaterError):
+        U.Reading(position=0, taken_on=date(2026, 1, 1))
+
+
+def test_reading_columns_give_the_move_between_the_last_two():
+    got = U.reading_columns([U.Reading(30, date(2026, 1, 1)), U.Reading(None, date(2026, 1, 5)),
+                             U.Reading(12, date(2026, 1, 8))], date(2026, 1, 9))
+    assert got == {"reading_position": 12.0, "reading_in_top50": 1.0, "reading_move": 18.0, "readings_count": 2.0}
+    one = U.reading_columns([U.Reading(NT50, date(2026, 1, 1))], date(2026, 1, 9))
+    assert one["reading_in_top50"] == 0.0 and np.isnan(one["reading_move"])
+    none = U.reading_columns([], date(2026, 1, 9))
+    assert np.isnan(none["reading_position"]) and none["readings_count"] == 0.0
+
+
+def test_lead_buckets_and_negative_lead():
+    assert U.lead_bucket(30) == "28-45" and U.lead_bucket(83) == "76-130"
+    with pytest.raises(U.UpdaterError):
+        U.lead_bucket(-1)
+
+
+def test_table_works_with_a_handful_of_rows_and_smooths_to_the_pool():
+    rows = _rows(8)
+    table = U.fit_table(rows, training_label=SYNTHETIC)
+    probs = table.outcome_probs("4-10", "NT50", "46-75", "new")
+    assert np.isclose(probs.sum(), 1.0) and (probs > 0).all()
+    unseen = table.outcome_probs("1-3", "1-3", "131+", "unknown")  # a key never seen falls back to the pooled table
+    assert np.isclose(unseen.sum(), 1.0)
+
+
+def test_no_reading_returns_the_prior_and_a_reading_moves_it_by_bayes():
+    rows = _rows(2000, seed=1)
+    table = U.fit_table(rows, training_label=SYNTHETIC)
+    prior = np.array([0.05, 0.1, 0.1, 0.15, 0.6])
+    assert np.allclose(table.update_bands(prior, U.NO_READING, "NT50", "46-75", "new"), prior)
+    post = table.update_bands(prior, "4-10", "NT50", "46-75", "new")
+    assert post[1] > prior[1] and np.isclose(post.sum(), 1.0)
+    # With the prior equal to the table's own base rate, Bayes' rule returns the table's answer.
+    base = table.base_probs("NT50", "46-75", "new")
+    assert np.allclose(table.update_bands(base, "4-10", "NT50", "46-75", "new"),
+                       table.outcome_probs("4-10", "NT50", "46-75", "new"))
+
+
+def test_updated_distribution_centres_on_the_reading_inside_its_band():
+    rows = _rows(2000, seed=2)
+    table = U.fit_table(rows, training_label=SYNTHETIC)
+    updater = U.Updater(table, None, "table", "test")
+    prior = np.vstack([_prior([0.05, 0.1, 0.1, 0.15, 0.6])] * 2)
+    frame = pd.DataFrame({"reading_position": [7.0, np.nan], "lead_days": [60, 60], "new_to_search": [True, True]})
+    dists = updater.distributions(frame, prior)
+    assert np.allclose(dists.sum(axis=1), 1.0)
+    assert dists[0][6] == dists[0][3:10].max()  # most mass at position 7 inside 4 to 10
+    assert np.allclose(dists[1], prior[1])  # no reading: the prior stands
+    fc = updater.forecast(dists[0], site="a", search="s", stage="d30", as_of=date(2026, 1, 1))
+    assert fc.notes["updater_in_use"] == "table" and fc.range_low <= fc.point <= fc.range_high
+
+
+def test_choose_version_keeps_the_table_unless_the_model_wins_with_an_interval_above_zero():
+    rows = _rows(1500, seed=3)
+    prior = np.vstack([_prior([0.05, 0.1, 0.1, 0.15, 0.6])] * len(rows))
+    cols = U.prior_columns(prior)
+    for col in cols.columns:
+        rows[col] = cols[col].to_numpy()
+    rows["prior_band"] = cols["prior_band"]
+    table = U.fit_table(rows, training_label=SYNTHETIC)
+    chosen = U.choose_version(table, None, rows, prior)
+    assert chosen.in_use == "table" and "no version 2" in chosen.reason
+    model = U.fit_model(rows, training_label=SYNTHETIC)
+    chosen = U.choose_version(table, model, rows, prior)
+    low = chosen.comparison["model_minus_table"]["difference_interval"][0]
+    assert (chosen.in_use == "model") == (low is not None and low > 0)
+    assert chosen.reason
+
+
+def test_model_needs_enough_rows_and_refuses_opr_features():
+    rows = _rows(50)
+    with pytest.raises(U.UpdaterError):
+        U.fit_model(rows, training_label=SYNTHETIC)
+    with pytest.raises(ValueError):
+        U.fit_model(_rows(400).assign(st_s_opr=1.0), training_label=REAL, features=["reading_position", "st_s_opr"])
+
+
+def test_missing_outcome_is_refused():
+    rows = _rows(20).astype({"position_out": float})
+    rows.loc[0, "position_out"] = np.nan
+    with pytest.raises(U.UpdaterError):
+        U.fit_table(rows, training_label=SYNTHETIC)
+
+
+def test_prior_columns_follow_the_median():
+    prior = np.vstack([_prior([0.0, 0.0, 0.0, 0.3, 0.7]), _prior([0.6, 0.4, 0, 0, 0])])
+    cols = U.prior_columns(prior)
+    assert list(cols["prior_band"]) == ["NT50", "1-3"]
+    assert cols["prior_point"].tolist() == [float(dist_median(prior[0])), float(dist_median(prior[1]))]
+    assert np.allclose(band_mass(prior)[:, -1], cols["prior_p_NT50"])

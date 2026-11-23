@@ -13,17 +13,25 @@ A SYNTHETIC number is never accuracy and never a marker result.
 
 The join (`join_upload_cells`), one row per (site, target search):
 
-- The forecast date is the launch date D. The site's own launch page counts as known on D (it is
-  the page being uploaded). Every other input is dated on or before the EARLIEST plausible launch
-  date, D minus the launch uncertainty, so the site's own later pages cannot be in it. That date
-  is the row's `as_of`.
-- The input page is the latest stored page of the search dated on or before `as_of`, at most
+- The launch date D is an estimate: the day of the first Common Crawl capture of real content, the
+  true launch up to the uncertainty earlier. The result page, strength and start-date evidence are
+  dated on or before the EARLIEST plausible launch date, D minus the launch uncertainty, so the
+  site's own later pages cannot be in them. That date is the row's `inputs_as_of`.
+- OUR READING: the site's own launch page text counts as known on the day it was captured, never
+  after D (it is the page being uploaded; text captured after D raises LeakError). Its capture day
+  is stored per row as `content_date`. The row's `as_of` is the newest date of any input it used:
+  max(inputs_as_of, content_date). So every input is dated on or before `as_of`, as spec section 2
+  asks, and `lead_days` (outcome date minus `as_of`) is never overstated by the launch uncertainty.
+  A row with no text used (or a join without features) has as_of = inputs_as_of.
+- The input page is the latest stored page of the search dated on or before `inputs_as_of`, at most
   JoinRule.input_max_age_days old, not at poison risk, and read to depth 50. A cell with no such
   page is dropped and counted by reason. It is never guessed.
 - The outcome is the site's position on the page of the search closest to D + 90 days inside
-  JoinRule.outcome_window_days (not at poison risk). A site absent from a page read to depth 50 is
-  NOT IN TOP 50, a REAL observation. A site absent from a shallower page is UNKNOWN: the cell is
-  dropped and counted. Never-ranked cells are kept: they are the point of this data.
+  JoinRule.outcome_window_days, not at poison risk and read to depth 50. The page is chosen without
+  looking at the site, so whether a cell is kept never depends on its outcome: a cell whose window
+  holds no clean page at least 50 deep is dropped and counted (outcome_pages_shallow), whether or
+  not the site is on a shorter page. A site absent from the chosen page is NOT IN TOP 50, a REAL
+  observation. Never-ranked cells are kept: they are the point of this data.
 - A cell whose launch uncertainty is unknown or larger than JoinRule.max_launch_uncertainty_days
   is dropped and counted.
 - Features are the live provider's own (forecasting.feature_row) on a page built from the input
@@ -39,14 +47,20 @@ The join (`join_upload_cells`), one row per (site, target search):
   a live score only from that same backend (forecasting.content_feature), and the cohort backtest
   refuses to score with another backend: scores of two backends are on different scales.
 - Brand searches (backtest.is_brand_search) are flagged, left out of training and of the headline.
-  Excluded sites are refused.
+  Excluded sites are refused. A cell table that repeats a (site, search), puts a site or a search
+  group on both sides of the split, or whose split the frozen split rule does not reproduce, is refused.
 
 Training (`train_paid`) reads the 'train' split only, and only rows whose outcome page is dated
 before the time cutoff: the earliest `as_of` of any 'test' row. So the bundle never learned an
 outcome dated after a forecast it is scored on. The 'test' split is never joined by training.
 
 The cohort backtest (`freeze_design`, `score_design`) follows the scored-run protocol of spec
-section 6 through features.freeze_prereg, begin_scored_run and finish_scored_run. Its report is
+section 6 through features.freeze_prereg, begin_scored_run and finish_scored_run. Each graded cell's
+held-out flag is computed (a site and a search group not on the train side, a forecast date on or
+after the cutoff), never assumed. The held-out test rows of one training set are scored once,
+whatever the design name: a later look at the same rows (same test-row keys, or the same cell
+table) needs design version 2 or later with its reason, and is reported as a SECOND LOOK, PROVISIONAL,
+with no marker verdict. Its report is
 built by backtest.backtest_report, which calls report.report_from_cells. On REAL tables the
 report's source is backtest and markers.evaluate_marker(3, report) decides. On SYNTHETIC tables the
 source is synthetic, every line says SYNTHETIC and the marker result is NOT A MARKER RESULT.
@@ -102,6 +116,7 @@ DROP_REASONS: tuple[str, ...] = (
     "input_pages_shallow",
     "no_outcome_page_in_window",
     "outcome_pages_poison_risk",
+    "outcome_pages_shallow",
     "outcome_unknown_shallow_page",
     "outcome_on_or_after_test_cutoff",
 )
@@ -117,6 +132,7 @@ DROP_TEXT: dict[str, str] = {
     "input_pages_shallow": "every usable earlier page stops before rank 50",
     "no_outcome_page_in_window": "no page of the search falls in the outcome window",
     "outcome_pages_poison_risk": "every page in the outcome window is at poison risk",
+    "outcome_pages_shallow": "every clean page in the outcome window stops before rank 50, so the outcome is unknown",
     "outcome_unknown_shallow_page": "the site is absent from an outcome page that stops before rank 50, so the outcome is unknown",
     "outcome_on_or_after_test_cutoff": "a training outcome dated on or after the earliest test forecast date",
 }
@@ -139,11 +155,14 @@ class JoinRule:
     would have seen), max_launch_uncertainty_days 45 (the Common Crawl gap that still keeps day 90
     inside the plan's month 3), the outcome window of days 60 to 120 after the launch date (the
     plan's month 3 stand-in for day 90: a month either side, because past pages come about once a
-    month or less; closest to day 90 wins, ties go to the earlier page, the real day is stored), and
-    the month 1 reading for the updater on days 14 to 45 (closest to day 30).
+    month or less; closest to day 90 wins among clean pages at least 50 deep, ties go to the earlier
+    page, the real day is stored), and the month 1 reading for the updater on days 14 to 45 (closest
+    to day 30). v2: the outcome page must be 50 deep before it is chosen (v1 dropped only the sites
+    absent from a short page, so the kept set depended on the outcome), and the row's as_of covers
+    the launch page text it used.
     """
 
-    version: str = "join-rule-v1"
+    version: str = "join-rule-v2"
     input_max_age_days: int = 62
     max_launch_uncertainty_days: int = 45
     outcome_day: int = OUTCOME_DAY
@@ -202,13 +221,42 @@ def _labels_of(frame: pd.DataFrame | None) -> set[str]:
     return {str(v) for v in frame["label"].dropna().unique()}
 
 
+def check_cell_table(cells: pd.DataFrame, meta: Mapping[str, Any], where: str | Path = "the cell table") -> None:
+    """Refuse a cell table the frozen rules did not write: one row per (site, search), split train, test or excluded,
+    no site and no search group on both sides, the split rule recorded in the meta file the frozen one, and the split
+    column exactly what that rule gives on these cells (trainingset.assign_split). The split is never trusted as written."""
+    repeated = cells[cells.duplicated(["site", "keyword_id"], keep=False)]
+    if len(repeated):
+        first = repeated.iloc[0]
+        raise PaidSetRefusal(f"{where}: {len(repeated)} rows repeat a (site, search), for example {first['site']} and "
+                             f"{first['keyword']!r}. A cell is one (site, search): it is never trained or graded twice.")
+    unknown = sorted({str(v) for v in cells["split"].unique()} - set(ts.SPLITS))
+    if unknown:
+        raise PaidSetRefusal(f"{where}: unknown split values {unknown}. A split is one of {', '.join(ts.SPLITS)}.")
+    both = ts.check_split(cells)
+    if both["sites_on_both_sides"] or both["groups_on_both_sides"]:
+        raise PaidSetRefusal(f"{where}: {both['sites_on_both_sides']} sites and {both['groups_on_both_sides']} search groups "
+                             "are on both sides of the split. A held-out cell is a held-out site on a held-out search group.")
+    expected = ts.DEFAULT_SPLIT_RULE.rule_hash()
+    if meta.get("split_rule_hash") != expected:
+        raise PaidSetRefusal(f"{where}: the meta file records split rule {str(meta.get('split_rule_hash'))[:12]}, not the frozen "
+                             f"one ({expected[:12]}). Write the folder again with the frozen rule.")
+    again = ts.assign_split(cells.to_dict("records"), ts.DEFAULT_SPLIT_RULE)
+    differ = sum(a != str(b) for a, b in zip(again, cells["split"]))
+    if differ:
+        raise PaidSetRefusal(f"{where}: the frozen split rule gives another split for {differ} cells than the table holds. "
+                             "The split column was edited or written by another rule. The folder is refused.")
+
+
 def open_training_set(folder: str | Path, *, panel_dir: str | Path | None = None,
                       paths: ForecastPaths | None = None) -> TrainingSetFiles:
     """Read a training-set folder (trainingset.write_cells_set or synthetic_training_set) and check its labels.
 
     The label is REAL when REAL.json is there and SYNTHETIC when SYNTHETIC.json is there. Both, or a
     cells, universe, traffic or positions table whose label column says otherwise, is refused: labels
-    are never mixed. A cell of an excluded site is refused. The panel is `panel_dir`, else the folder's
+    are never mixed. A cell of an excluded site is refused, and so is a cell table check_cell_table refuses
+    (a repeated (site, search), a site or search group on both sides, a split the frozen rule does not
+    reproduce). The panel is `panel_dir`, else the folder's
     own panel/ subfolder, else (REAL only) cache/panel_labs.
     """
     base = Path(folder)
@@ -246,6 +294,7 @@ def open_training_set(folder: str | Path, *, panel_dir: str | Path | None = None
     if bad:
         raise PaidSetRefusal(f"The cells hold an excluded site ({len(bad)} of them). Excluded sites are never used to "
                              "train or test. The folder is refused.")
+    check_cell_table(cells, meta, base)
     if panel_dir is not None:
         panel = Path(panel_dir)
     elif (base / "panel").is_dir():
@@ -346,7 +395,8 @@ def _choose_input(pages: Sequence[Page], as_of: date, rule: JoinRule) -> tuple[P
 
 
 def _choose_outcome(pages: Sequence[Page], launch: date, rule: JoinRule) -> tuple[Page | None, str | None]:
-    """The page closest to launch + outcome_day inside the outcome window, not at poison risk. Ties: the earlier page."""
+    """The page closest to launch + outcome_day inside the outcome window, not at poison risk, at least 50 deep.
+    Ties: the earlier page. It never looks at any site on the page, so the keep or drop decision is outcome-blind."""
     low, high = rule.outcome_window_days
     inside = [p for p in pages if low <= (p.day - launch).days <= high]
     if not inside:
@@ -354,7 +404,10 @@ def _choose_outcome(pages: Sequence[Page], launch: date, rule: JoinRule) -> tupl
     clean = [p for p in inside if not p.poison]
     if not clean:
         return None, "outcome_pages_poison_risk"
-    return min(clean, key=lambda p: (abs((p.day - launch).days - rule.outcome_day), p.time)), None
+    deep = [p for p in clean if p.depth >= rule.min_depth]
+    if not deep:
+        return None, "outcome_pages_shallow"
+    return min(deep, key=lambda p: (abs((p.day - launch).days - rule.outcome_day), p.time)), None
 
 
 def _choose_reading(pages: Sequence[Page], launch: date, before: date, rule: JoinRule) -> Page | None:
@@ -472,7 +525,7 @@ def _content_page(row: Mapping[str, Any]) -> Any:
 
 UPLOAD_ID_COLUMNS: tuple[str, ...] = (
     "site", "keyword", "search", "keyword_id", "locale", "niche", "split", "label", "search_group", "difficulty",
-    "is_brand", "launch_date", "launch_uncertainty_days", "as_of", "input_date", "input_time", "input_depth",
+    "is_brand", "launch_date", "launch_uncertainty_days", "as_of", "inputs_as_of", "content_date", "input_date", "input_time", "input_depth",
     "input_page_age_days", "strength_date", "rank_in", "position_in", "outcome_date", "outcome_days_since_launch",
     "outcome_depth", "rank_out", "position_out", "lead_days", "never_ranked_to_outcome", "content_match",
     "content_match_backend", "reading_date", "reading_rank", "reading_depth",
@@ -584,7 +637,7 @@ def _join_one(cell: Mapping[str, Any], pages: Sequence[Page], rule: JoinRule, *,
     if not pages:
         return None, "search_has_no_pages"
     launch_day = as_date(launch)
-    as_of = launch_day - timedelta(days=int(unc))
+    as_of = launch_day - timedelta(days=int(unc))  # inputs_as_of; join_upload_cells moves as_of to the text date it uses
     page_in, reason = _choose_input(pages, as_of, rule)
     if page_in is None:
         return None, reason
@@ -595,13 +648,13 @@ def _join_one(cell: Mapping[str, Any], pages: Sequence[Page], rule: JoinRule, *,
     rank_out = page_out.rank_of(site)
     try:
         position_out = outcome_position(rank_out, page_out.depth)
-    except ShallowOutcome:
+    except ShallowOutcome:  # unreachable: _choose_outcome takes pages at least 50 deep only
         return None, "outcome_unknown_shallow_page"
     rank_in = page_in.rank_of(site)
     position_in = rank_in if rank_in is not None and rank_in <= TOP_DEPTH else NT50  # the input page is at least 50 deep
     never = all((p.rank_of(site) is None or p.rank_of(site) > TOP_DEPTH) for p in pages if p.day <= page_out.day)
     row: dict[str, Any] = {
-        "as_of": as_of, "input_date": page_in.day, "input_time": page_in.time, "input_depth": page_in.depth,
+        "as_of": as_of, "inputs_as_of": as_of, "content_date": None, "input_date": page_in.day, "input_time": page_in.time, "input_depth": page_in.depth,
         "input_page_age_days": (as_of - page_in.day).days, "strength_date": as_of,
         "rank_in": float(rank_in) if rank_in is not None else math.nan, "position_in": int(position_in),
         "outcome_date": page_out.day, "outcome_days_since_launch": (page_out.day - launch_day).days,
@@ -696,7 +749,7 @@ def join_upload_cells(
         prefetched = PrefetchedStrength(inner)
         pairs = []
         for row in joined:
-            for page, day in ((row["_input_page"], row["as_of"]), (row.get("_reading_page"), row.get("reading_date"))):
+            for page, day in ((row["_input_page"], row["inputs_as_of"]), (row.get("_reading_page"), row.get("reading_date"))):
                 if page is None:
                     continue
                 pairs.extend((s, page.day) for s, r in page.ranks.items() if r <= TOP_DEPTH and not is_excluded_site(s))
@@ -720,15 +773,16 @@ def join_upload_cells(
             return feature_row(inputs, site=site, search=keyword, day=day, page=reading, trust=None, meta=meta,
                                difficulty_metric=PANEL_DIFFICULTY_METRIC, form_answers=None)
 
+        late_text = 0
         for number, row in enumerate(joined, start=1):
             page = row.pop("_input_page")
-            row.update(features_on(page, row["site"], row["keyword"], row["as_of"]))
+            row.update(features_on(page, row["site"], row["keyword"], row["inputs_as_of"]))
             page_r = row.pop("_reading_page", None)
             if page_r is not None:  # what a stage forecast on the month 1 day would see: that page, on that day
                 readings.append({"site": row["site"], "keyword_id": row["keyword_id"],
                                  **features_on(page_r, row["site"], row["keyword"], as_date(row["reading_date"]))})
             texts = files.page_texts.get(row["site"], [])
-            guard = AsOfGuard(row["launch_date"])  # the site's own launch page is known on its launch date, never later
+            guard = AsOfGuard(row["launch_date"])  # the site's own launch page is known when captured, never after D
             taken = [guard.take(Dated(t, str(t.get("source") or "page_text"), t["captured_on"])) for t in texts]
             row["content_match"] = math.nan
             row["content_match_backend"] = None
@@ -742,9 +796,21 @@ def join_upload_cells(
                 row["content_match"] = math.nan if score.value is None else float(score.value)
                 row["content_match_backend"] = score.mode
                 backend, model = score.mode, score.model
+                if score.value is not None:
+                    # The text is an input of this row: as_of is the newest input date, and lead_days runs from it.
+                    text_day = as_date(latest["captured_on"])
+                    row["content_date"] = text_day
+                    if text_day > row["as_of"]:
+                        late_text += 1
+                        row["as_of"] = text_day
+                        row["lead_days"] = (as_date(row["outcome_date"]) - text_day).days
             if log and number % 500 == 0:
                 log(f"features for {number} of {len(joined)} cells")
         notes.extend(sorted(set(inputs.notes)))
+        if late_text:
+            notes.append(f"{late_text} cells use launch page text captured after the earliest plausible launch date. Their "
+                         "as_of is the text's capture day and lead_days runs from it; the result page, strength and "
+                         "start evidence stay dated on or before inputs_as_of.")
     else:
         for row in joined:
             row.pop("_input_page", None)
@@ -844,8 +910,9 @@ def train_paid(
 ) -> Any:
     """Fit a bundle on the 'train' split of a training-set folder through forecasting.fit_bundle.
 
-    The bundle includes never-ranked upload cells (includes_never_ranked True), so the live path uses
-    it with no appearance gate. Calibration and validation rows come from the training side by search
+    The bundle is trained only when its kept training rows include searches where the site never
+    ranked (includes_never_ranked True, counted from those rows), so the live path uses it with no
+    appearance gate. With none kept, nothing is trained and the refusal says why. Calibration and validation rows come from the training side by search
     group, as the panel bundle does it. The 'test' split is never joined. A bundle from SYNTHETIC tables
     is labelled SYNTHETIC, which the live path refuses for a seed or pilot site.
     """
@@ -861,6 +928,11 @@ def train_paid(
         return TrainResult(None, "paid", join.label, counts={"join": join.to_dict()}, refusal=(
             f"No training cell survived the join of {join.folder}. Dropped: "
             + (", ".join(f"{k} {v}" for k, v in join.dropped.items()) or "none") + "."))
+    never_kept = int(rows["never_ranked_to_outcome"].astype(bool).sum())
+    if never_kept == 0:
+        return TrainResult(None, "paid", join.label, counts={"join": join.to_dict()}, refusal=(
+            f"None of the {len(rows)} kept training cells is a search where the site never ranked in the top 50. A bundle "
+            "from them would skip the appearance gate without having learned never-ranked searches. Nothing was trained."))
     cutoff = max(as_date(d) for d in rows["outcome_date"])
     if join.time_cutoff is not None and cutoff >= join.time_cutoff:
         raise LeakError(f"a training outcome on {cutoff} is on or after the earliest test forecast date {join.time_cutoff}")
@@ -875,7 +947,7 @@ def train_paid(
         "time_cutoff": join.time_cutoff.isoformat() if join.time_cutoff else None,
         "rows_read_by_split": {"train": int(join.asked_by_split.get("train", 0)), "test": 0},
         "dropped": join.dropped, "brand_cells_left_out": int(join.cells["is_brand"].sum()),
-        "never_ranked": join.never_ranked(),
+        "never_ranked": join.never_ranked(), "never_ranked_training_rows": never_kept,
         "content_match_backend": join.content_match_backend, "content_match_model": join.content_match_model,
         # The same test fit_bundle applies to every listed feature: listed, and at least one finite value.
         "content_match_is_model_input": bool(CONTENT_COLUMN in PLACEMENT_FEATURES and CONTENT_COLUMN in rows
@@ -884,7 +956,7 @@ def train_paid(
     split_note = (f"the train split of the frozen split rule only (by launch cohort in time, then by site, no search group "
                   f"on both sides); outcomes before {join.time_cutoff or 'no test cutoff'}; no test row is read")
     updater = updater_rows(rows, join.label, join.reading_features)
-    common = dict(label=join.label, source=source, includes_never_ranked=True, training_cutoff=cutoff, group_col="search_group",
+    common = dict(label=join.label, source=source, includes_never_ranked=never_kept > 0, training_cutoff=cutoff, group_col="search_group",
                   trust=None, difficulty_metric=PANEL_DIFFICULTY_METRIC if kd_known else None, split_note=split_note,
                   extra_manifest=extra)
     notes: list[str] = []
@@ -1055,6 +1127,59 @@ def design_payload(
     return payload, train_cells
 
 
+LOOKS_FILE = "scored_looks.jsonl"  # in the training-set folder: every scored look at its test rows, whatever the root
+
+
+def _same_rows(record: Mapping[str, Any], keys_sha: str, cells_sha: str) -> bool:
+    keys = record.get("test_rows_keys_sha256")
+    if keys:
+        return keys == keys_sha
+    return bool(record.get("cells_sha256")) and record.get("cells_sha256") == cells_sha
+
+
+def earlier_looks(folder: str | Path, root: str | Path | None, name: str, *, keys_sha: str, cells_sha: str) -> list[dict[str, Any]]:
+    """Every scored run that already read these held-out test rows, under any design name.
+
+    Looked for in every manifest-v*.json of every design folder under the backtest root (the given one and the
+    default one) and in the training-set folder's own record of scored looks (LOOKS_FILE). A run matches when it
+    names the same test-row keys, or (older manifests without them) the same cell table.
+    """
+    from .backtest import backtest_dir
+
+    found: dict[str, dict[str, Any]] = {}
+    bases = {design_root(root, name).parent, backtest_dir(name, None).parent}
+    for base in sorted(bases):
+        if not base.is_dir():
+            continue
+        for path in sorted(base.glob("*/manifest-v*.json")):
+            try:
+                record = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                continue
+            if isinstance(record, dict) and _same_rows(record, keys_sha, cells_sha):
+                report = path.parent / str(record.get("report_file") or "")
+                found[str(report.resolve())] = {"design": path.parent.name, "design_version": record.get("design_version"),
+                                                "report_file": str(report), "written_at": record.get("written_at")}
+    ledger = Path(folder) / LOOKS_FILE
+    if ledger.is_file():
+        for line in ledger.read_text(encoding="utf-8").splitlines():
+            try:
+                record = json.loads(line)
+            except ValueError:
+                continue
+            if isinstance(record, dict) and _same_rows(record, keys_sha, cells_sha):
+                report = str(record.get("report_file") or "")
+                found.setdefault(str(Path(report).resolve()) if report else line, {
+                    "design": record.get("design"), "design_version": record.get("design_version"),
+                    "report_file": report, "written_at": record.get("written_at")})
+    return sorted(found.values(), key=lambda r: (str(r.get("written_at") or ""), str(r["report_file"])))
+
+
+def _record_look(folder: str | Path, entry: Mapping[str, Any]) -> None:
+    with (Path(folder) / LOOKS_FILE).open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(dict(entry), sort_keys=True, default=str) + "\n")
+
+
 def freeze_design(
     paths: ForecastPaths,
     *,
@@ -1082,7 +1207,10 @@ def freeze_design(
     body = versioned_payload(payload, name=name, version=version, reason=reason)
     target = prereg_file(design_root(root, name), version)
     digest = freeze_prereg(target, body, code=True)
-    return {"prereg_file": str(target), "sha256": digest, "payload": body, "label": payload["label"], "version": int(version)}
+    looks = earlier_looks(folder, root, name, keys_sha=payload["test_rows"]["keys_sha256"],
+                          cells_sha=payload["training_set"]["cells_sha256"])
+    return {"prereg_file": str(target), "sha256": digest, "payload": body, "label": payload["label"], "version": int(version),
+            "earlier_looks": looks}
 
 
 def scorer_for_bundle(bundle: Any, given: Any | None) -> Any | None:
@@ -1126,15 +1254,18 @@ def score_design(
     Every refusal comes before any test outcome is read (features.begin_scored_run): the design must be
     frozen and unchanged, the forecast source must match the freeze, this version must not be scored,
     and with `check_git` the source tree is exactly HEAD and the design file is committed and pushed.
-    `check_git` False is refused for REAL tables.
+    `check_git` False is refused for REAL tables. Held-out flags are computed per graded cell. When these
+    test rows were already scored (earlier_looks, any design name), version 1 is refused; a later version
+    (with its frozen reason) is scored and reported as a SECOND LOOK: PROVISIONAL, no marker verdict.
     """
     from .backtest import backtest_report, forecast_frame
-    from .features import begin_scored_run, finish_scored_run, versioned_payload
+    from .features import PROVISIONAL, begin_scored_run, finish_scored_run, mark_provisional, versioned_payload
     from .forecasting import NO_GATE, live_models, load_bundle
     from .markers import evaluate_marker
     from .placement import dist_median
 
-    if not check_git and open_training_set(folder, panel_dir=panel_dir, paths=paths).label == REAL:
+    files = open_training_set(folder, panel_dir=panel_dir, paths=paths)
+    if not check_git and files.label == REAL:
         raise PaidSetRefusal("A scored run on REAL tables always checks git: the design must be committed and pushed and "
                              "the source tree clean.")
     payload, train_cells = design_payload(paths, folder=folder, bundle_name=bundle_name, name=name, panel_dir=panel_dir,
@@ -1144,6 +1275,25 @@ def score_design(
     bundle = load_bundle(paths, bundle_name)
     content_scorer = scorer_for_bundle(bundle, content_scorer)
     context = begin_scored_run(design_root(root, name), version, body, check_git=check_git)
+    keys_sha, cells_sha = payload["test_rows"]["keys_sha256"], payload["training_set"]["cells_sha256"]
+    looks = earlier_looks(folder, root, name, keys_sha=keys_sha, cells_sha=cells_sha)
+    if looks and int(version) < 2:
+        where = ", ".join(f"{look['design']} version {look['design_version']}" for look in looks)
+        raise PaidSetRefusal(f"These held-out test rows were already scored ({where}). A test is scored once, whatever the "
+                             "design name. A second look needs --design-version 2 or later with --reason, and is reported as "
+                             "a second look.")
+    second_look = None
+    if looks:
+        second_look = {"label": PROVISIONAL, "earlier_looks": looks,
+                       "reason_for_new_version": body.get("reason_for_new_version"),
+                       "reason": (f"SECOND LOOK: these held-out test rows were already scored {len(looks)} time(s) (first in "
+                                  f"{looks[0]['report_file']}). Its numbers are PROVISIONAL, not fresh held-out accuracy, and "
+                                  "carry no marker verdict.")}
+    train_split = files.cells[files.cells["split"] == "train"]
+    train_sites = {str(s) for s in train_split["site"]}
+    train_groups = {ts.search_group(str(k)) for k in train_split["keyword"]}
+    cutoff_text = payload.get("time_cutoff")
+    held_cutoff = date.fromisoformat(cutoff_text) if cutoff_text else None
     # From here on the test split is read, once.
     join = join_upload_cells(folder, splits=("test",), panel_dir=panel_dir, paths=paths, strength=strength, evidence=evidence,
                              content_scorer=content_scorer, rule=rule, log=log)
@@ -1194,17 +1344,31 @@ def score_design(
                                       "max": int(rows["outcome_days_since_launch"].max())},
         "reason_for_new_version": body.get("reason_for_new_version"),
     }
+    # Held out on every side, computed per cell: a site and a search group not on the train side, dated on or after the cutoff.
+    held_out = [str(r["site"]) not in train_sites and ts.search_group(str(r["keyword"])) not in train_groups
+                and (held_cutoff is None or as_date(r["as_of"]) >= held_cutoff) for r in rows.to_dict("records")]
     report = backtest_report(cells, {"persistence": [int(p) for p in rows["position_in"]], "site_strength": strength_points},
                              stage=STAGE, as_of=max(outcome_dates), model_version=bundle.version, outcome_dates=outcome_dates,
                              as_ofs=[as_date(d) for d in rows["as_of"]], band_prior_training=train_cells, source=source,
                              notes=[f"Every number here is {label}. Forecasts are {PREDICTED}."], extra=extra,
-                             held_out=[True] * len(cells), stand_in_reason=None)
-    marker = evaluate_marker(3, report)
-    report["marker_3"] = marker
+                             held_out=held_out, stand_in_reason=None)
+    report["marker_3"] = evaluate_marker(3, report)
+    report["test_rows_keys_sha256"] = keys_sha
+    report["second_look"] = second_look
+    if second_look is not None:
+        report = mark_provisional(report, second_look)
+    marker = report["marker_3"]
     files = {role: dict(item) for role, item in (bundle.manifest.get("files") or {}).items()}
     manifest = finish_scored_run(context, report, extra={
         "bundle": bundle.name, "bundle_sha256": bundle.sha256, "model_files": files, "cells_sha256": join.cells_sha256,
-        "panel_fingerprint": join.panel_fingerprint, "label": label})
+        "panel_fingerprint": join.panel_fingerprint, "label": label, "design": name, "test_rows_keys_sha256": keys_sha,
+        "second_look": second_look is not None})
+    try:
+        _record_look(folder, {"design": name, "design_version": int(version), "report_file": str(context["report_file"]),
+                              "test_rows_keys_sha256": keys_sha, "cells_sha256": cells_sha, "label": label,
+                              "written_at": manifest.get("written_at")})
+    except OSError:
+        pass  # the manifest written above still names these rows, and earlier_looks reads every manifest
     return {"report": report, "manifest": manifest, "marker": marker, "report_file": str(context["report_file"]),
             "manifest_file": str(context["manifest_file"]), "label": label}
 
@@ -1248,6 +1412,9 @@ def score_lines(result: Mapping[str, Any]) -> list[str]:
         lines.append(f"Never-ranked cells: {nr['never_ranked']} of {nr['cells']} ({pct(nr.get('never_ranked_share'))}) {tag}.")
     for reason, count in (report.get("dropped_cells") or {}).items():
         lines.append(f"Dropped test cells, {DROP_TEXT.get(reason, reason)}: {count} {tag}.")
+    if report.get("second_look"):
+        lines.append(f"{report['second_look']['reason']} Reason for this version: "
+                     f"{report['second_look'].get('reason_for_new_version')} {tag}.")
     lines.extend(render_marker_text(result["marker"]).splitlines())
     lines.append(f"Wrote {result['report_file']} and {result['manifest_file']}. They are never overwritten.")
     if label == SYNTHETIC:

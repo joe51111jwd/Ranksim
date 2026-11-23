@@ -946,6 +946,39 @@ def test_stage_calendar_lists_stages_due_soon_and_stages_missed(tmp_path):
     board.close()
 
 
+def _upload(board: Scoreboard, search: str, as_of: date) -> None:
+    board.record_forecast(Forecast(site="seedone.example", search=search, stage="upload", as_of=as_of, point=12,
+                                   range_low=8, range_high=20, label="contested", model_version="m1"))
+
+
+def test_a_stage_stays_due_for_the_searches_without_a_forecast_and_is_missed_for_exactly_those(tmp_path):
+    clock = pipeline.VirtualClock(datetime(2026, 11, 27, 9, 0, tzinfo=timezone.utc))
+    board = _board(tmp_path, clock)
+    pipeline.register_manifest(board, _manifest(launch=date(2026, 11, 30)))
+    board.register_model_version("m1", description="test", frozen_at=clock.now())
+    # The upload run on 27 November found a clean reading for one of the three searches only.
+    _upload(board, "plumber prices", date(2026, 11, 27))
+    on_launch = [i for i in pipeline.stage_calendar(board, date(2026, 11, 30))["due"] if i["stage"] == "upload"]
+    assert len(on_launch) == 1 and on_launch[0]["searches_open"] == ["emergency plumber", "seedone plumbing"]
+    assert on_launch[0]["searches_recorded"] == 1 and on_launch[0]["recorded"] is False
+    missed = [i for i in pipeline.stage_calendar(board, date(2026, 12, 5))["missed"] if i["stage"] == "upload"]
+    assert len(missed) == 1 and missed[0]["searches_open"] == ["emergency plumber", "seedone plumbing"]
+    board.close()
+
+
+def test_a_stage_with_every_search_forecast_is_neither_due_nor_missed(tmp_path):
+    clock = pipeline.VirtualClock(datetime(2026, 11, 27, 9, 0, tzinfo=timezone.utc))
+    board = _board(tmp_path, clock)
+    pipeline.register_manifest(board, _manifest(launch=date(2026, 11, 30)))
+    board.register_model_version("m1", description="test", frozen_at=clock.now())
+    for search in ("plumber prices", "emergency plumber", "seedone plumbing"):
+        _upload(board, search, date(2026, 11, 27))
+    for day in (date(2026, 11, 30), date(2026, 12, 5)):
+        calendar = pipeline.stage_calendar(board, day)
+        assert not [i for i in calendar["due"] + calendar["missed"] if i["stage"] == "upload"]
+    board.close()
+
+
 # ---------------------------------------------------------------------------------------------
 # Baselines of markers 3 to 5
 

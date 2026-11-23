@@ -764,3 +764,19 @@ def test_read_round_says_the_paid_pulls_of_a_round_that_failed_part_way_are_stor
     code, out, _ = run(["read-round", "--search", "plumber 0", "--location-code", "1026201", "--execute"], tmp_path / "d")
     assert code == 1
     assert "failed part way" in out and "were paid for and are stored" in out and "stored nothing" not in out
+
+
+@pytest.mark.parametrize("error", [httpx.ConnectError("name resolution failed"), ConnectionResetError("reset by peer"),
+                                   httpx.ReadTimeout("timed out")])
+def test_a_network_error_in_any_command_ends_in_one_sentence_and_exit_1(tmp_path, monkeypatch, error):
+    """No traceback: the shared catch in main covers core commands and plug-in commands alike."""
+
+    def boom(ctx, args):
+        raise error
+
+    monkeypatch.setattr(cli, "cmd_grade", boom)
+    code, out, err = run(["grade", "--date", "2026-12-01"], tmp_path)
+    assert code == cli.EXIT_CHECK_FAILED
+    assert out == ""
+    assert err.count("\n") == 1 and err.startswith("A network request failed (") and "run the same command again" in err
+    assert "Traceback" not in err

@@ -875,7 +875,7 @@ def cmd_grade(ctx: Context, args: argparse.Namespace) -> int:
 
 def cmd_report(ctx: Context, args: argparse.Namespace) -> int:
     result = pipeline.stage_marker(ctx.scoreboard(), source=args.source, stage=args.stage, as_of=_today(ctx, args.as_of),
-                                   model_version=args.model_version)
+                                   model_version=args.model_version, paths=ctx.paths)
     ctx.emit(result["report"], pipeline.report_module.render_text(result["report"]).splitlines())
     return EXIT_OK
 
@@ -891,7 +891,7 @@ def cmd_marker(ctx: Context, args: argparse.Namespace) -> int:
         return ctx.fail(f"Marker {args.number} is judged on one source. Add --source seed, pilot, backtest or synthetic.")
     stage = {3: "upload", 4: "d30", 5: "d60"}[args.number]
     result = pipeline.stage_marker(ctx.scoreboard(), source=args.source, stage=stage, as_of=_today(ctx, args.as_of),
-                                   model_version=args.model_version)
+                                   model_version=args.model_version, paths=ctx.paths)
     evaluation = result["evaluation"]
     ctx.emit(evaluation, pipeline.markers_module.render_marker_text(evaluation).splitlines())
     return EXIT_OK if evaluation["passed"] is True else EXIT_CHECK_FAILED
@@ -1298,6 +1298,13 @@ def _plugin_registrars() -> tuple[Callable[[Any, argparse.ArgumentParser], None]
     return tuple(found)
 
 
+def network_failure(error: BaseException) -> str:
+    """One plain sentence for a network error. The detail is cut short. Output is scrubbed of keys anyway."""
+    detail = " ".join(str(error).split())[:200] or "no detail"
+    return (f"A network request failed ({type(error).__name__}: {detail}). Nothing more was done. Check the connection "
+            "and run the same command again.")
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog=PROG, description="Ranksim forecast: the commands of the build plan.")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -1363,6 +1370,9 @@ def main(
     except (ProviderConfigError, ProviderError, ScoreboardRefusal, ScoreboardError, ManifestError, FileNotFoundError,
             FileExistsError, ValueError) as error:
         return ctx.fail(str(error))
+    except (ConnectionError, httpx.HTTPError) as error:
+        # One plain sentence for every command, plug-ins included. Never a traceback.
+        return ctx.fail(network_failure(error), EXIT_CHECK_FAILED)
     finally:
         ctx.close()
 

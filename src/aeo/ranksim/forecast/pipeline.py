@@ -1760,24 +1760,41 @@ def stage_calendar(scoreboard: Scoreboard, today: date, *, window_days: int = ST
     scoreboard refuses one dated later or written more than a day after its date. So the stage job
     must run on or before the stage day, or at the latest FORECAST_FROZEN_GAP_DAYS after it with the
     forecast dated on the stage day: such a stage is still listed as due, with `last_day_to_record`.
-    A stage with no forecast on the scoreboard whose last day to record has passed is MISSED: it is
-    reported, and it is never backfilled (a later forecast would be a shorter lead, never that stage).
+
+    One forecast per site, search and stage (spec section 9): a stage is recorded for a site only when
+    every registered search of the site has a forecast at that stage. Until then it stays due, and
+    `searches_open` names the searches still without one (a run that skipped some searches leaves the
+    others alone; re-running the site fills only the open ones). A stage whose last day to record has
+    passed with open searches is MISSED for exactly those searches: it is reported, and it is never
+    backfilled (a later forecast would be a shorter lead, never that stage). A site with no registered
+    search counts as recorded once it has any forecast at the stage.
     """
     from .config import FORECAST_FROZEN_GAP_DAYS
 
     with Session(scoreboard.engine) as session:
         sites = session.scalars(select(SiteRow).where(SiteRow.source.in_(("seed", "pilot"))).order_by(SiteRow.site)).all()
-        made = {(row.site, row.stage) for row in session.scalars(select(ForecastRow)).all()}
+        made: dict[tuple[str, str], set[str]] = {}
+        for row in session.scalars(select(ForecastRow)).all():
+            made.setdefault((row.site, row.stage), set()).add(row.search_key)
+        registered: dict[str, dict[str, str]] = {}
+        for row in session.scalars(select(SearchRow)).all():
+            registered.setdefault(row.site, {})[row.search_key] = row.search
         site_rows = [(row.site, row.source, date.fromisoformat(row.launch_date)) for row in sites]
     due: list[dict[str, Any]] = []
     missed: list[dict[str, Any]] = []
     for site, source, launch in site_rows:
+        searches = registered.get(site, {})
         for stage, offset in STAGE_DAYS.items():
             day = launch + timedelta(days=offset)
             last = day + timedelta(days=FORECAST_FROZEN_GAP_DAYS)
+            done = made.get((site, stage), set())
+            open_searches = sorted(searches[key] for key in searches if key not in done)
+            recorded = not open_searches if searches else bool(done)
             entry = {"site": site, "source": source, "stage": stage, "stage_date": day.isoformat(),
-                     "last_day_to_record": last.isoformat(), "recorded": (site, stage) in made}
-            if entry["recorded"]:
+                     "last_day_to_record": last.isoformat(), "recorded": recorded,
+                     "searches_open": open_searches, "searches_recorded": len(set(searches) & done),
+                     "searches_registered": len(searches)}
+            if recorded:
                 continue
             if last < today:
                 missed.append(entry)

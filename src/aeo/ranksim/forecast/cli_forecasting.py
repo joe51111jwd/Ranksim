@@ -198,9 +198,14 @@ def _forecast(ctx: Context, args: argparse.Namespace, stage: str) -> int:
     runs = []
     lines: list[str] = []
     for item in chosen.missed:
-        lines.append(f"MISSED: {item['site']} ({item['source']}) {stage} was due on {item['stage_date']}, and the last day "
-                     f"to record a forecast dated then was {item['last_day_to_record']}. Nothing is recorded. A missed "
-                     "stage is never backfilled.")
+        open_searches = item.get("searches_open") or []
+        which = ""
+        if open_searches and item.get("searches_recorded"):
+            which = (f" for {len(open_searches)} of its {item.get('searches_registered')} searches "
+                     f"({', '.join(open_searches)})")
+        lines.append(f"MISSED: {item['site']} ({item['source']}) {stage}{which} was due on {item['stage_date']}, and the "
+                     f"last day to record a forecast dated then was {item['last_day_to_record']}. Nothing is recorded. A "
+                     "missed stage is never backfilled.")
     for item in chosen.later:
         lines.append(f"Not yet: {item['site']} ({item['source']}) {stage} is on {item['stage_date']}. Run it on that day, "
                      "after that day's clean reading is assembled. Nothing was built for it now.")

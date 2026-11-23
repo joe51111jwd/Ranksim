@@ -1131,6 +1131,11 @@ def select_targets(
     dropped however it is spelled, and two spellings of one site make one
     entry (the first in sorted order). page_text is matched on the normalised
     site too.
+
+    A search (keyword_id) listed more than once, for example in two niche
+    universes, is one search: it enters each pool once (the first listing, in
+    the order given), so a site gets at most one cell per search. How many
+    searches sit in more than one niche is counted.
     """
     rule = rule.with_scorer(score_fn)
     rule_hash = rule.rule_hash()
@@ -1139,9 +1144,20 @@ def select_targets(
     without_launch: list[str] = []
     without_pool: list[str] = []
     by_niche: dict[Any, list[Any]] = {}
+    in_niche: dict[Any, set[str]] = {}
+    niches_of: dict[str, set[str]] = {}
+    all_searches: list[Any] = []
+    seen_ids: set[str] = set()
     for search in universe:
-        by_niche.setdefault(_get(search, "niche"), []).append(search)
-    all_searches = list(universe)
+        kid = str(_get(search, "keyword_id"))
+        niche_key = _get(search, "niche")
+        niches_of.setdefault(kid, set()).add(str(niche_key))
+        if kid not in in_niche.setdefault(niche_key, set()):
+            in_niche[niche_key].add(kid)
+            by_niche.setdefault(niche_key, []).append(search)
+        if kid not in seen_ids:
+            seen_ids.add(kid)
+            all_searches.append(search)
     texts_by_site: dict[str, list[Dated]] = {}
     for key, items in page_text.items():
         texts_by_site.setdefault(_site(key), []).extend(items)
@@ -1178,6 +1194,8 @@ def select_targets(
         "sites_without_text": len(without_text),
         "sites_without_launch_date": len(without_launch),
         "sites_whose_niche_has_no_searches": len(without_pool),
+        "repeated_search_listings": len(universe) - len(all_searches),
+        "searches_in_more_than_one_niche": sum(len(n) > 1 for n in niches_of.values()),
     }
     return TargetSelection(rows, rule, rule_hash, without_text, without_launch, counts, without_pool)
 
@@ -1387,6 +1405,33 @@ def _universe_frame(universe: Sequence[Any]) -> pd.DataFrame:
     return pd.DataFrame.from_records([{n: _get(row, n) for n in names} for row in universe], columns=names)
 
 
+SYNTHETIC_MARKERS: dict[str, frozenset[str]] = {
+    "launch_date_source": frozenset({"synthetic_truth"}),
+    "source": frozenset({"synthetic-nrd"}),
+    "registered_on_source": frozenset({"synthetic"}),
+}
+
+
+def refuse_synthetic_inputs(cohort: pd.DataFrame, universe: Sequence[Any]) -> None:
+    """Raise ValueError when a cohort table or universe rows are SYNTHETIC. Labels are never mixed."""
+    if "label" in cohort.columns:
+        labels = sorted({str(v) for v in cohort["label"].dropna().unique()} - {"REAL"})
+        if labels:
+            raise ValueError(f"the cohort table is labelled {labels}. A REAL training set is written from REAL rows only; "
+                             "SYNTHETIC rows stay SYNTHETIC (paid synthetic writes their own folder).")
+    for column, values in SYNTHETIC_MARKERS.items():
+        if column in cohort.columns:
+            found = sorted({str(v) for v in cohort[column].dropna().unique()} & values)
+            if found:
+                raise ValueError(f"the cohort table has {column} {found}, which only the synthetic world writes. A REAL "
+                                 "training set is never written from SYNTHETIC rows.")
+    for row in universe:
+        if (str(_get(row, "label") or "REAL") != "REAL" or _get(row, "locale") == SYNTHETIC_LOCALE
+                or _get(row, "sources") == "synthetic" or _get(row, "difficulty_proxy_source") == "synthetic_difficulty"):
+            raise ValueError(f"the universe holds a SYNTHETIC search ({_get(row, 'keyword')!r}). A REAL training set is never "
+                             "written from SYNTHETIC rows.")
+
+
 def write_cells_set(
     out_dir: Path,
     cohort: pd.DataFrame,
@@ -1407,6 +1452,10 @@ def write_cells_set(
     searches are picked by the frozen label-blind rule (select_targets) and split by the frozen split
     rule (cohort_cells). Nothing here reads a ranking. Every value is REAL except the launch date, an
     estimate with its uncertainty.
+
+    A SYNTHETIC cohort or universe is refused (ValueError), so synthetic rows never become a REAL
+    folder: a label column holding anything but REAL, launch_date_source synthetic_truth, source
+    synthetic-nrd, or a universe row in the synthetic locale or from the synthetic sources.
     """
     out = Path(out_dir)
     if which not in ("kept", "all"):
@@ -1414,6 +1463,7 @@ def write_cells_set(
     frame = cohort.copy()
     if "site" not in frame.columns:
         raise ValueError("the cohort table has no site column")
+    refuse_synthetic_inputs(frame, universe)
     if which == "kept":
         column = "kept_after_filter" if "kept_after_filter" in frame.columns else "kept"
         if column not in frame.columns:

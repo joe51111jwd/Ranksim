@@ -28,6 +28,7 @@ from aeo.ranksim.forecast.sources import dfs_samples as dfs
 from aeo.ranksim.forecast.sources import newsites as ns
 from aeo.ranksim.forecast.sources import panel as panel_mod
 from aeo.ranksim.forecast.sources.universe import SearchRow
+from aeo.ranksim.forecast.synth import World
 from aeo.ranksim.forecast.types import REAL, SYNTHETIC
 
 LEXICAL = ContentScorer("lexical")
@@ -82,13 +83,23 @@ def _cell(**extra: Any) -> dict[str, Any]:
     return {"site": "new.com", "launch_date": date(2025, 3, 10), "launch_uncertainty_days": 5, **extra}
 
 
-def test_a_site_absent_from_a_shallow_outcome_page_is_unknown_and_dropped_never_not_in_top_50():
+def test_a_shallow_outcome_page_drops_every_cell_on_it_whatever_its_outcome_never_not_in_top_50():
     launch = date(2025, 3, 10)
-    pages = [page(date(2025, 3, 1)), page(launch + timedelta(days=90), depth=30)]
-    assert paidset._join_one(_cell(), pages, RULE, want_reading=False) == (None, "outcome_unknown_shallow_page")
-    pages = [page(date(2025, 3, 1)), page(launch + timedelta(days=90), depth=30, ranks={"new.com": 12})]
-    row, reason = paidset._join_one(_cell(), pages, RULE, want_reading=False)
-    assert reason is None and row["position_out"] == 12  # present on a short page: its position is known
+    pages = [page(date(2025, 3, 1)), page(launch + timedelta(days=90), depth=30, ranks={"ranker.com": 12})]
+    ranker = paidset._join_one(_cell(site="ranker.com"), pages, RULE, want_reading=False)
+    absent = paidset._join_one(_cell(site="absent.com"), pages, RULE, want_reading=False)
+    # Kept or dropped together: the keep decision never depends on the outcome, and absence from a short page is not NT50.
+    assert ranker == absent == (None, "outcome_pages_shallow")
+
+
+def test_the_outcome_page_is_the_closest_one_at_least_50_deep_chosen_without_looking_at_the_site():
+    launch = date(2025, 3, 10)
+    pages = [page(date(2025, 3, 1)), page(launch + timedelta(days=90), depth=30, ranks={"ranker.com": 12}),
+             page(launch + timedelta(days=110), depth=50, ranks={"ranker.com": 20})]
+    ranker, _ = paidset._join_one(_cell(site="ranker.com"), pages, RULE, want_reading=False)
+    absent, _ = paidset._join_one(_cell(site="absent.com"), pages, RULE, want_reading=False)
+    assert ranker["outcome_days_since_launch"] == absent["outcome_days_since_launch"] == 110
+    assert ranker["position_out"] == 20 and absent["position_out"] == NT50
 
 
 def test_a_site_absent_from_a_deep_outcome_page_is_a_real_not_in_top_50_and_the_cell_is_kept():
@@ -245,11 +256,13 @@ def test_real_format_pages_and_cells_join_into_real_upload_cells_with_never_rank
     assert cells["pg_sites_top10"].notna().all()
 
 
-def test_a_shallow_outcome_page_in_real_format_is_counted_and_dropped(real_set):
+def test_a_shallow_outcome_page_in_real_format_is_passed_over_for_the_next_deep_page(real_set):
     paths = forecast_paths(real_set["data"])
     join = paidset.join_upload_cells(real_set["folder"], splits=("train", "test"), paths=paths, build_features=False)
-    assert join.dropped_by_split["train"].get("outcome_unknown_shallow_page") == 1
-    assert not ((join.cells["site"] == "rooferco.com") & (join.cells["keyword"] == real_set["shallow"])).any()
+    assert not join.dropped_by_split["train"].get("outcome_unknown_shallow_page")
+    cell = join.cells[(join.cells["site"] == "rooferco.com") & (join.cells["keyword"] == real_set["shallow"])]
+    # 1 June (day 83) stops at rank 30, so the 1 July page (day 113, 50 deep) is the outcome, as for every other cell.
+    assert len(cell) == 1 and int(cell["outcome_days_since_launch"].iloc[0]) == 113
     assert join.dropped_by_split["train"]["split_excluded"] > 0  # search groups of the test site leave train cells out
 
 
@@ -376,6 +389,102 @@ def test_a_real_scored_run_never_skips_the_git_checks(real_set):
                              root=real_set["data"] / "designs", check_git=False)
 
 
+def test_every_input_of_an_upload_cell_is_dated_on_or_before_its_stored_as_of(real_set):
+    join = paidset.join_upload_cells(real_set["folder"], splits=("train",), paths=forecast_paths(real_set["data"]),
+                                     strength=nan_strength, content_scorer=LEXICAL)
+    cells = join.cells
+    texts = ts.load_page_texts(real_set["folder"] / ts.PAGE_TEXT_FILE)
+    used = cells[cells["content_match"].notna()]
+    assert len(used) and used["content_date"].notna().all()
+    for row in used.to_dict("records"):
+        assert row["content_date"] == max(t["captured_on"] for t in texts[row["site"]]) <= row["as_of"]
+    # The result page and strength stay dated on or before the earliest plausible launch date.
+    launch_minus = [d - timedelta(days=int(u)) for d, u in zip(cells["launch_date"], cells["launch_uncertainty_days"])]
+    assert list(cells["inputs_as_of"]) == launch_minus and list(cells["strength_date"]) == launch_minus
+    assert (cells["input_date"] <= cells["inputs_as_of"]).all() and (cells["as_of"] >= cells["inputs_as_of"]).all()
+    # lead_days runs from the stored as_of, so it is never overstated by the launch uncertainty.
+    assert list(cells["lead_days"]) == [(o - a).days for o, a in zip(cells["outcome_date"], cells["as_of"])]
+    assert any("captured after the earliest plausible launch date" in note for note in join.notes)
+
+
+def test_a_cell_table_that_repeats_a_site_and_search_is_refused(real_set):
+    cells = pd.read_parquet(real_set["folder"] / ts.CELLS_FILE)
+    pd.concat([cells, cells.iloc[[0]]], ignore_index=True).to_parquet(real_set["folder"] / ts.CELLS_FILE, index=False)
+    with pytest.raises(paidset.PaidSetRefusal, match="repeat a \\(site, search\\)"):
+        paidset.open_training_set(real_set["folder"], paths=forecast_paths(real_set["data"]))
+
+
+def test_a_split_with_a_search_group_on_both_sides_or_not_from_the_frozen_rule_is_refused(real_set):
+    paths = forecast_paths(real_set["data"])
+    path = real_set["folder"] / ts.CELLS_FILE
+    original = pd.read_parquet(path)
+    edited = original.copy()
+    edited.loc[edited["split"] == "excluded", "split"] = "train"  # train sites on the test site's search groups
+    assert ts.check_split(edited)["groups_on_both_sides"] > 0
+    edited.to_parquet(path, index=False)
+    with pytest.raises(paidset.PaidSetRefusal, match="both sides"):
+        paidset.join_upload_cells(real_set["folder"], splits=("train",), paths=paths, build_features=False)
+    edited = original.copy()
+    edited.loc[edited["site"] == "floristco.com", "split"] = "excluded"  # no overlap, but not what the frozen rule gives
+    edited.to_parquet(path, index=False)
+    with pytest.raises(paidset.PaidSetRefusal, match="frozen split rule gives another split"):
+        paidset.open_training_set(real_set["folder"], paths=paths)
+    original.to_parquet(path, index=False)
+    meta_path = real_set["folder"] / ts.REAL_META_FILE
+    meta = json.loads(meta_path.read_text())
+    meta_path.write_text(json.dumps({**meta, "split_rule_hash": "an-older-rule"}))
+    with pytest.raises(paidset.PaidSetRefusal, match="not the frozen"):
+        paidset.open_training_set(real_set["folder"], paths=paths)
+
+
+def test_a_search_listed_in_two_niche_universes_gives_one_cell_per_site(tmp_path):
+    def universe(niche: str, keywords: list[str]) -> list[SearchRow]:
+        return [SearchRow(keyword=k, keyword_id=dfs.keyword_id(LOCALE, k), locale=LOCALE, country="US", niche=niche,
+                          seed_term="", search_volume=100, competition=None, cpc=None, kd=None, intent=None, sources="test",
+                          difficulty_proxy=float(i), difficulty_proxy_source="test", stratum="easy")
+                for i, k in enumerate(keywords)]
+
+    shared = "plumber near me"
+    plumbing = universe("plumbing", [shared, "plumber prices", "plumber reviews"])
+    drains = universe("drains", [shared, "plumber services", "plumber emergency"])
+    result = ts.write_cells_set(tmp_path / "cells", _cohort_frame(), _launch_pages(), plumbing + drains)
+    cells = pd.read_parquet(tmp_path / "cells" / ts.CELLS_FILE)
+    assert not cells.duplicated(["site", "keyword_id"]).any()
+    assert (cells["keyword"] == shared).sum() == cells.loc[cells["keyword"] == shared, "site"].nunique() > 0
+    assert result["meta"]["counts"]["searches_in_more_than_one_niche"] == 1
+    assert result["meta"]["counts"]["repeated_search_listings"] == 1
+
+
+def test_a_synthetic_cohort_or_universe_never_becomes_a_real_training_set(tmp_path):
+    syn = tmp_path / "syn"
+    ts.synthetic_training_set(World(5, niches=2, searches_per_niche=30, new_sites=12), out_dir=syn)
+    cohort = pd.read_parquet(syn / "cohort.parquet")
+    texts = ts.load_page_texts(syn / ts.PAGE_TEXT_FILE)
+    pages = {site: {"captured_at": rows[0]["captured_on"].isoformat() + "T00:00:00Z", "crawl": "SYN", "url": None,
+                    "title": rows[0]["title"], "h1": (), "meta_description": None, "text": None}
+             for site, rows in texts.items()}
+    from aeo.ranksim.forecast.sources.universe import load_universe
+
+    universe = load_universe(syn / ts.UNIVERSE_FILE)
+    with pytest.raises(ValueError, match="labelled"):
+        ts.write_cells_set(tmp_path / "a", cohort, pages, universe)
+    with pytest.raises(ValueError, match="synthetic world"):
+        ts.write_cells_set(tmp_path / "b", cohort.drop(columns=["label"]), pages, universe)
+    with pytest.raises(ValueError, match="SYNTHETIC search"):
+        ts.write_cells_set(tmp_path / "c", _cohort_frame(), _launch_pages(), universe)
+    assert not any((tmp_path / name / ts.REAL_META_FILE).exists() for name in "abc")
+
+
+def test_a_paid_bundle_is_never_trained_without_never_ranked_cells(tmp_path, monkeypatch):
+    rows = pd.DataFrame([{"split": "train", "is_brand": False, "site": "a.com", "never_ranked_to_outcome": False,
+                          "outcome_date": date(2025, 4, 1), "position_out": 7}])
+    join = paidset.JoinResult(REAL, rows, {"train": {}}, {"train": 1}, RULE, None, None, "f", "p", "c", "x", None)
+    monkeypatch.setattr(paidset, "join_upload_cells", lambda *a, **k: join)
+    result = paidset.train_paid(forecast_paths(tmp_path), "paid-rankers-only", folder=tmp_path)
+    assert result.bundle is None and "never ranked" in result.refusal
+    assert not (tmp_path / "models" / "paid-rankers-only").exists()
+
+
 # ---------------------------------------------------------------------------------------------
 # The whole path on SYNTHETIC tables, from the command line in a temporary folder
 
@@ -475,7 +584,12 @@ def test_the_scored_run_is_refused_until_the_design_is_committed_and_pushed(synt
     monkeypatch.setattr(features, "repo_root", lambda: repo)
     paths = forecast_paths(synthetic_run["data"])
     root = repo / "evals"
-    kwargs = dict(folder=synthetic_run["folder"], bundle_name="syn-paid", root=root, name="cohort-git")
+    # A fresh copy of the cell set, without the record of scored looks another test may have left in the shared one.
+    import shutil
+
+    folder = tmp_path / "fresh_set"
+    shutil.copytree(synthetic_run["folder"], folder, ignore=shutil.ignore_patterns(paidset.LOOKS_FILE))
+    kwargs = dict(folder=folder, bundle_name="syn-paid", root=root, name="cohort-git")
     paidset.freeze_design(paths, **kwargs)
     with pytest.raises(features.ProvenanceRefusal, match="not committed"):
         paidset.score_design(paths, content_scorer=LEXICAL, **kwargs)
@@ -519,3 +633,36 @@ def test_the_design_refuses_a_changed_join_rule_or_a_bundle_from_another_cell_ta
     cells.drop(index=cells.index[-1]).to_parquet(copy / ts.CELLS_FILE, index=False)
     with pytest.raises(paidset.PaidSetRefusal, match="another cell table"):
         paidset.freeze_design(paths, folder=copy, bundle_name="syn-paid", root=root, name="cohort-other")
+
+
+def test_the_same_held_out_rows_are_scored_once_whatever_the_design_name_and_a_second_look_is_provisional(
+        synthetic_run, tmp_path):
+    import shutil
+
+    paths = forecast_paths(synthetic_run["data"])
+    folder = tmp_path / "fresh_set"
+    shutil.copytree(synthetic_run["folder"], folder, ignore=shutil.ignore_patterns(paidset.LOOKS_FILE))
+    root = tmp_path / "designs"
+    first = dict(folder=folder, bundle_name="syn-paid", root=root, name="cohort-a")
+    paidset.freeze_design(paths, **first)
+    scored = paidset.score_design(paths, content_scorer=LEXICAL, check_git=False, **first)
+    assert scored["report"]["second_look"] is None and scored["report"]["every_graded_cell_held_out"] is True
+    # Same cells, same test split, same bundle, another design name: never a fresh version 1.
+    again = dict(folder=folder, bundle_name="syn-paid", root=root, name="cohort-b")
+    frozen = paidset.freeze_design(paths, **again)
+    assert [look["design"] for look in frozen["earlier_looks"]] == ["cohort-a"]
+    with pytest.raises(paidset.PaidSetRefusal, match="already scored"):
+        paidset.score_design(paths, content_scorer=LEXICAL, check_git=False, **again)
+    # Another root does not hide it either: the training set keeps its own record of scored looks.
+    elsewhere = dict(folder=folder, bundle_name="syn-paid", root=tmp_path / "other_root", name="cohort-c")
+    paidset.freeze_design(paths, **elsewhere)
+    with pytest.raises(paidset.PaidSetRefusal, match="already scored"):
+        paidset.score_design(paths, content_scorer=LEXICAL, check_git=False, **elsewhere)
+    # A later version with its reason is scored, and reported as a second look: PROVISIONAL, no marker verdict.
+    later = dict(again, version=2, reason="looked again after a fix")
+    paidset.freeze_design(paths, **later)
+    second = paidset.score_design(paths, content_scorer=LEXICAL, check_git=False, **later)
+    report = second["report"]
+    assert report["second_look"]["earlier_looks"][0]["design"] == "cohort-a" and report["provisional"] is True
+    assert second["marker"]["passed"] is None and second["manifest"]["second_look"] is True
+    assert any("SECOND LOOK" in line for line in paidset.score_lines(second))

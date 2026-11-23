@@ -66,9 +66,12 @@ def cmd_paid_cells(ctx: Context, args: argparse.Namespace) -> int:
     universe = [row for path in args.universe for row in load_universe(path)]
     if not universe:
         return ctx.fail("The universe tables hold no search.")
-    result = ts.write_cells_set(out, cohort, pages, universe, which=args.which,
-                                sources={"cohort": str(args.cohort), "pages": str(args.pages),
-                                         "universe": ";".join(str(p) for p in args.universe)})
+    try:
+        result = ts.write_cells_set(out, cohort, pages, universe, which=args.which,
+                                    sources={"cohort": str(args.cohort), "pages": str(args.pages),
+                                             "universe": ";".join(str(p) for p in args.universe)})
+    except ValueError as error:
+        return ctx.fail(str(error))
     meta = result["meta"]
     lines = [f"Wrote the REAL training-set folder {out}: {result['cells']} cells (site, target search) {_tag(REAL)}.",
              "Target searches were picked by the frozen label-blind rule from launch-era page text. No ranking was read.",
@@ -77,6 +80,8 @@ def cmd_paid_cells(ctx: Context, args: argparse.Namespace) -> int:
              f"{meta['split']['groups_on_both_sides']}.",
              f"Sites without launch-era text: {meta['counts']['sites_without_text']}. Sites without a launch date: "
              f"{meta['counts']['sites_without_launch_date']}.",
+             f"Searches listed in more than one niche: {meta['counts'].get('searches_in_more_than_one_niche', 0)}. Each is "
+             "one search: a site gets at most one cell for it.",
              "Launch dates are ESTIMATES with their uncertainty in days.",
              f"Next: {PROG} paid join --set {out}"]
     ctx.emit({**result, "label": REAL}, lines)
@@ -147,6 +152,12 @@ def cmd_cohort_freeze(ctx: Context, args: argparse.Namespace) -> int:
              f"Band prior fitted on {payload['band_prior']['training_cells']} training cells: {payload['band_prior']['points']} "
              f"{_tag(label)}.",
              f"sha256 {frozen['sha256']}. The forecast source hash is stored beside it."]
+    looks = frozen.get("earlier_looks") or []
+    if looks:
+        where = ", ".join(f"{look['design']} version {look['design_version']}" for look in looks)
+        lines.append(f"These held-out test rows were already scored ({where}). A score of this design is a SECOND LOOK: it "
+                     "needs design version 2 or later with its reason, and its numbers are PROVISIONAL with no marker "
+                     f"verdict {_tag(label)}.")
     if label == REAL:
         lines.append(f"Commit and push {frozen['prereg_file']}, keep the source tree clean, then run: {PROG} cohort-backtest "
                      f"score --bundle {args.bundle}" + (f" --design-version {args.design_version}" if args.design_version > 1 else ""))

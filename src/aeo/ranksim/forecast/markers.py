@@ -230,6 +230,29 @@ def stand_in_sentence(report: Mapping[str, Any]) -> str:
             "so what the bars would give does not count as a pass or a fail.")
 
 
+PROVISIONAL = "PROVISIONAL"
+SECOND_LOOK = "SECOND LOOK: PROVISIONAL"
+PROVISIONAL_DEFAULT_REASON = "its held-out rows were already read by an earlier version"
+
+
+def is_provisional_report(report: Mapping[str, Any]) -> bool:
+    """True when the report says it is a second look (`provisional` true): its held-out rows were already read."""
+    return bool(report.get("provisional"))
+
+
+def _provisional_reason(report: Mapping[str, Any]) -> str:
+    """The stored reason, kept whole for the JSON output."""
+    return str(report.get("provisional_reason") or "").strip() or PROVISIONAL_DEFAULT_REASON
+
+
+def provisional_sentence(report: Mapping[str, Any]) -> str:
+    """One plain sentence that says the numbers are a second look, PROVISIONAL, and why they count for nothing."""
+    reason = _provisional_reason(report)
+    first = reason.split(":", 1)[0].split(". ", 1)[0].strip().rstrip(".") or PROVISIONAL_DEFAULT_REASON
+    return (f"This is a second look and {PROVISIONAL} ({first}), so its numbers are not fresh held-out accuracy and "
+            "what the bars would give does not count as a pass or a fail.")
+
+
 def evaluate_marker(number: int, report: Mapping[str, Any]) -> dict[str, Any]:
     """Judge one marker on one report. passed is True, False, or None when it is not measurable yet.
 
@@ -237,6 +260,9 @@ def evaluate_marker(number: int, report: Mapping[str, Any]) -> dict[str, Any]:
     The computed value is kept under synthetic_check_passed.
     On a stand-in report (`stand_in` true, `stand_in_reason` says why) passed is None too and the
     computed value is kept under stand_in_passed. A stand-in never passes or fails the plan's marker.
+    On a provisional report (`provisional` true: a second look at held-out rows an earlier version
+    already read, `provisional_reason` says why) passed is None for every marker and the computed
+    value is kept under provisional_passed. A report can be a stand-in and provisional at once.
     For marker 2 the report may carry `gain_over_link_count` (the verdict, the plan's wording) and
     `gain_over_best_single_measure` (stricter, printed beside it with no bar).
     """

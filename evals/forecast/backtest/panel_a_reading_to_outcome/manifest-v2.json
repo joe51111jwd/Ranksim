@@ -1,0 +1,89 @@
+{
+ "code_revision": "4e6cf24223473a87ec80f4000370a3e9f10045b0",
+ "design_version": 2,
+ "dirty_files": [],
+ "git": {
+  "head": "4e6cf24223473a87ec80f4000370a3e9f10045b0",
+  "prereg_commit": "3ec234d8e1d0bd0a2a420c73b3476f1d99f62c89"
+ },
+ "git_checked": true,
+ "label": "REAL",
+ "models_loaded": {
+  "strength_forecaster": {
+   "file": "data/forecast/models/strength/strength-v2-forecaster.json",
+   "sha256": "a7c04d6853675189de83322aa79deb31f556073c0001a0f4fe11831565c78743"
+  },
+  "strength_score": {
+   "file": "data/forecast/models/strength/strength-v2-score.json",
+   "sha256": "b832ded728a25c943335c53efc0e9ad33223cc7f8d4838dce633c2fcc1548aa2"
+  },
+  "trust": {
+   "file": "data/forecast/models/trust/trust-v2-free-lexical-all.json",
+   "sha256": "4f0ade8609c2012f8e5f137ab70f5409aacfa32ccd2cf0b3c7bee45877544385"
+  }
+ },
+ "name": "panel_a_reading_to_outcome",
+ "panel_fingerprint": "970545ea915baa15ad8febebe0b42eb73238b23935798982dfbe627164939581",
+ "prereg_sha256": "f380f8445971f17b5c6be6ce1cb2e88d15d72200e21e7fec55e5ffcb151d5a3a",
+ "rehearsal": false,
+ "report_file": "report-v2.json",
+ "report_sha256": "918fa671cb960ae428e40a1c1bf1290d16dfa3347a33d4c58f45ce1bec3cb502",
+ "run_version": 2,
+ "source_dirty": false,
+ "source_sha256": {
+  "__init__.py": "b173190d83ce537be8e34a557c514ad657b503d6cb434fe7845dcb46b860e51a",
+  "agency_form.py": "50f531bea1e096c004bfc975763b7aeb78e5408020ac0b4d3a0c760a1b6bc5f9",
+  "asof.py": "f18c590dd3ae56dc48a0746d65a1c4ce8a94294e4e33e6598faf333b4c413c85",
+  "backtest.py": "73b1fe9722b41e6e35c71165dd23714cb7ff1f8cd14417f6f3ea17fa9ef93ef4",
+  "budget.py": "7de141b53e8a20d0d918d4214d00dc28ee1545ed8bb0041046ffe989ba2a737a",
+  "chain.py": "bbc29f8893bb4912aba6ad3a615bf727a8a15aa058743eed496d8a1875b2de0a",
+  "cli.py": "21b0f438e56c73e57f22c96c36f0fe843c810ce9299bf1f87cfd65e1b0dfa792",
+  "cli_data.py": "28e11e0b5677fc7a3ac235a5072c5689884b425ba18adadd0cb98bf384daf915",
+  "cli_forecasting.py": "3beba61d3c2691a6a6d38a75b70f476bf29d38a2d4f41be5b352ef9ec1a83334",
+  "cli_paid.py": "c44cd850f876e6cc6b6fa5499a70a066dea2568c09becadea44c2890059a35a1",
+  "config.py": "7170ee68b544d610edec2683203eabcc6a6c879e071e7429385fd1a7653722e4",
+  "content.py": "ffea51db47a06f1e3d92198ae8f2e888c5b847f72b3efec0c81838bcd2a9ddef",
+  "content_eval.py": "c0444e88b7cfe3625e1edd25ad58c76bf68bad3b7a937b99796c7712e35d45c6",
+  "dataforseo.py": "ee22f8a36131c04122202be19082b7e51998a31a5e0588f54e8c2dd084ab9de7",
+  "features.py": "a2c0683e583948634f633a11ae6870629df7ca918762fb0457ae739e52692c8c",
+  "forecasting.py": "5037a27f701974fd3b3b2d4425367ba6e1c283ba6563c2a00be8a37437c7124c",
+  "grade_job.py": "d7f3bc05ba4c4fbc3256a593586e51dff3fa2283400666d3b606eca7daf5d859",
+  "grading.py": "72445371bea1eaf5dc9a5a7f521ba6ba3693aa5f723b8e752ad4e0bd1dd27b6b",
+  "gsc.py": "221ebd1d8db789c84b02c60481f8ebdbc530b294cb453f1aa500732e593aa239",
+  "markers.py": "b9473d98add9bbc74d6d3fb02bcd02afe573e5f97532a30da43674ac14f593cf",
+  "noise.py": "e9c7385cc5f225704c9a16beddd5460884811cd8526475448b1d66de83babcfd",
+  "paidset.py": "860ad2835abdc2c9e7c1d0af3308f2eafb7bb12b2d4253abc6084258e5acb390",
+  "pipeline.py": "310c40fae38cc9a98dc5dac86c19c77309625ecde8b0c895cc8b90e1e2ffacb7",
+  "placement.py": "4ef61562c0c0d7a025e23e89dd9d384acda72c04fec456cb07f058275ec1509c",
+  "reader.py": "937f4f8117aeaffdacaaa6aa9be35429b98f42480b905793a1db3522997c1406",
+  "report.py": "d93c8785d9c9968f3dffcfb8c5b2866b973592edfbfd13a780bf38cc9f4a09ee",
+  "scoreboard.py": "d94c1f6da00da9e66f987f79cb065bc00cdd8b587131e442d632d7429d8c944d",
+  "seeds.py": "f1d1d79b1db93c1b94c1c82b298b46b79ea30202238e3d29febbf659e059a2fa",
+  "serper.py": "7d7f9f749ba97567b397c1d2f5c0cdbdb103002c9ce4ad06fe0119747aa37225",
+  "sources/__init__.py": "87be272d7e270db8d62d8da8dc3c63dcce4ec20614e7a88ac67281a970b0099f",
+  "sources/dfs_samples.py": "dfc79f28c590553e0849a10d7636dee10c1a85f67859b6c65855ce58cfada686",
+  "sources/domain_age.py": "a0bab2c4e5be5d0ce5e844e3d9eed2189c699ec14e524cfbc420857b6913ad02",
+  "sources/newsites.py": "89d76b693a2766d3b66b9578d4eea51dcd436e27a0c7a4c36e22b5221ed0aedb",
+  "sources/noise_sets.py": "fc1ee8790273ca6008d89adb7d5148a238e95069d5b378eec10cb1f8a89e1f1b",
+  "sources/panel.py": "3f1a53e88353180258f4c130d835b8564363c0727d3bc951c092b9772417451f",
+  "sources/strength_lists.py": "2676a0b8f9fc18c24503ffd4bf229b31b7b6dd57cd360ae0d982613879f6b300",
+  "sources/universe.py": "7aa70dd4445843a0ccc17bc25466ca0a010e50e6a9dc22181e71e7b0efd590eb",
+  "sources/updates.py": "fd7b79aa9f459d77e80886dda5d20c65e9a82379fb014cf05b2b1b71554447c3",
+  "stats.py": "bf0d4e22f27136b9770dc2ef63a50c7a3204ab9c662ddc419208d11e4f415658",
+  "strength.py": "351fb93a78e354e0314e1bb8c551ea9c92efc8fab1ba95a04483b90bd61ea389",
+  "synth.py": "4d7baebea3a017835da871890b8bd54676fd0484a0cd1ab49208f419647feeb9",
+  "trainingset.py": "908acecdd4b39ad72706508fb537ebc8c03ddf51be5f048cea72c75e93c443b7",
+  "trust.py": "ac7e43da0a0e64533562d07c674d4d150858f3ce5ad1b8eb8fd00e35b0cd2526",
+  "types.py": "a4f9eb3a0a18e1788540e742ed871123ba2170c38c04ee148745b34ea042c5fc",
+  "updater.py": "274ccfd67dd631690fbada1a736f57744787a3f7ea83c82fbbe8099a922690ce"
+ },
+ "source_tree_sha256": "369d7dfa83ca247c43f10c68ce0ff5c866c0df35b5c0ec56f2bf46e44d04b6a7",
+ "stage_seconds": {
+  "A_lead_28_74": 995.4,
+  "A_lead_75_130": 506.1,
+  "C": 291.9,
+  "ceiling": 12.7,
+  "models_and_inputs": 316.3
+ },
+ "written_at": "2026-11-23T01:57:17Z"
+}

@@ -10,7 +10,6 @@ from __future__ import annotations
 import io
 import json
 import math
-from dataclasses import replace
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
@@ -1118,3 +1117,53 @@ def test_a_network_error_in_a_forecast_command_ends_in_one_sentence_and_exit_1(t
     monkeypatch.setattr(forecasting, "due", lambda *_a, **_k: (_ for _ in ()).throw(ConnectionError("reset")))
     code, _, err = run_cli(["due"], tmp_path / "data")
     assert code == 1 and "ConnectionError: reset" in err
+
+
+def test_a_saved_bundle_keeps_the_rule_for_sites_new_to_a_search(tmp_path, monkeypatch):
+    """The rule is chosen on validation rows at training time and must survive save and load."""
+    from aeo.ranksim.forecast import trust
+
+    monkeypatch.setattr(trust, "default_models_dir", lambda: tmp_path / "no-trust")
+    monkeypatch.setattr(forecasting, "newest_trust_report", lambda root=None: None)
+    paths = forecast_paths(tmp_path / "data")
+    made = forecasting.train(paths, data="panel", name="p-rule", frame_path=_panel_like_frame(tmp_path / "f.parquet")).bundle
+    rule = made.manifest["counts"]["updater"]["new_to_search_rule"]
+    assert rule is not None and rule["winner"] in ("always_nt50", "table", "model")
+    loaded = forecasting.load_bundle(paths, "p-rule")
+    assert loaded.updater is not None
+    assert loaded.updater.segment_rules == made.updater.segment_rules
+    assert loaded.updater.segment_rules.get("new_to_search") == rule["winner"]
+    assert loaded.updater.sha256() == made.updater.sha256()
+
+
+def test_an_updater_file_round_trips_with_its_segment_rules_and_range_calibration(tmp_path):
+    from aeo.ranksim.forecast.updater import TransitionTable, Updater
+
+    table = TransitionTable(counts={"*": [1.0, 1.0, 1.0, 1.0, 1.0]}, base_counts={"*": [1.0, 1.0, 1.0, 1.0, 1.0]}, alpha=10.0,
+                            spreads={}, rows=5, training_label=REAL)
+    made = Updater(table=table, model=None, in_use="table", reason="test", range_level=0.8,
+                   segment_rules={"new_to_search": "always_nt50"}, segment_comparison={"new_to_search": {"winner": "always_nt50"}},
+                   range_calibration={"rows": 3})
+    path = tmp_path / "updater.json"
+    forecasting.save_updater(made, path)
+    loaded = forecasting.load_updater(path)
+    assert loaded.segment_rules == {"new_to_search": "always_nt50"}
+    assert loaded.range_calibration == {"rows": 3}
+    assert loaded.sha256() == made.sha256()
+
+
+def test_due_names_the_searches_still_open_when_a_stage_is_partly_recorded():
+    result = {"today": "2026-12-08", "window_days": 3,
+              "due": [{"site": "a.example", "source": "seed", "stage": "d7", "stage_date": "2026-12-08",
+                       "searches_open": ["roof repair", "roof leak"], "searches_recorded": 3, "searches_registered": 5},
+                      {"site": "b.example", "source": "seed", "stage": "d7", "stage_date": "2026-12-08",
+                       "searches_open": ["x", "y"], "searches_recorded": 0, "searches_registered": 2}],
+              "missed": [{"site": "c.example", "source": "seed", "stage": "d7", "stage_date": "2026-12-01",
+                          "searches_open": ["gutter cleaning"], "searches_recorded": 4, "searches_registered": 5}]}
+    lines = forecasting.due_lines(result)
+    partly = next(line for line in lines if line.startswith("  a.example"))
+    assert "3 of 5 searches have a forecast. Still open: roof repair, roof leak." in partly and "Run: " in partly
+    untouched = next(line for line in lines if line.startswith("  b.example"))
+    assert "Still open" not in untouched
+    missed = next(line for line in lines if line.startswith("  c.example"))
+    assert "4 of 5 searches have a forecast. Still open: gutter cleaning." in missed

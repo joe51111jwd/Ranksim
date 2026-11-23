@@ -330,13 +330,15 @@ def cmd_status(ctx: Context, args: argparse.Namespace) -> int:
     if calendar["due"]:
         lines.append(f"Stage forecasts due in the next {pipeline.STAGE_DUE_WINDOW_DAYS} days. Each must be made on or before "
                      "its stage day:")
-        lines.extend(f"  {item['site']} ({item['source']}) {item['stage']} on {item['stage_date']}." for item in calendar["due"])
+        lines.extend(f"  {item['site']} ({item['source']}) {item['stage']} on {item['stage_date']}.{_open_searches(item)}"
+                     for item in calendar["due"])
     else:
         lines.append(f"No stage forecast is due in the next {pipeline.STAGE_DUE_WINDOW_DAYS} days.")
     if calendar["missed"]:
         lines.append("Stages MISSED (no forecast, and the last day to record one dated the stage day has passed). "
                      "A missed stage is never backfilled:")
-        lines.extend(f"  {item['site']} ({item['source']}) {item['stage']} was due on {item['stage_date']}." for item in calendar["missed"])
+        lines.extend(f"  {item['site']} ({item['source']}) {item['stage']} was due on {item['stage_date']}.{_open_searches(item)}"
+                     for item in calendar["missed"])
     ctx.emit(payload, lines)
     return EXIT_OK if chain.ok and state.ok else EXIT_CHECK_FAILED
 
@@ -1296,6 +1298,15 @@ def _plugin_registrars() -> tuple[Callable[[Any, argparse.ArgumentParser], None]
             continue
         found.extend(module.REGISTRARS)
     return tuple(found)
+
+
+def _open_searches(item: dict[str, Any]) -> str:
+    """For a stage where some searches already have a forecast: one sentence naming the searches still open."""
+    still = list(item.get("searches_open") or [])
+    if not still or not item.get("searches_recorded"):
+        return ""
+    total = item.get("searches_registered", len(still) + item["searches_recorded"])
+    return f" {item['searches_recorded']} of {total} searches have a forecast. Still open: {', '.join(str(s) for s in still)}."
 
 
 def network_failure(error: BaseException) -> str:

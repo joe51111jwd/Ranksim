@@ -625,7 +625,6 @@ from aeo.ranksim.forecast.reader import (  # noqa: E402
     READER_VERSION,
     UBIQUITY_MIN_SLOTS,
     RoundFailed,
-    RoundSuspects,
     assemble_readings,
     clean_reading_with_verdict,
     cluster_pulls,

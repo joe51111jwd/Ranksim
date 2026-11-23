@@ -81,7 +81,6 @@ from .types import (
     PREDICTED,
     REAL,
     SYNTHETIC,
-    SYNTHETIC_PROVIDERS,
     CleanReading,
     Forecast,
     OrganicHit,

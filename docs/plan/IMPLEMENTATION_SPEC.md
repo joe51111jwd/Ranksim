@@ -137,6 +137,14 @@ Rules added after the bug hunts (each has a test):
 - **The DataForSEO sandbox is SYNTHETIC** (`types.SYNTHETIC_PROVIDERS`). `read_clean` holds the 60 second gap floor for real providers.
 - **Cluster bootstrap draws** are made in chunks of 200. The intervals are bit for bit those of one block of draws with the same seed.
 
+Rules of design version 2 (each has a test):
+
+- **A second look is PROVISIONAL.** A design version whose held-out rows were already read by an earlier scored version says so in its design file and in every report. Its marker verdicts are neither passed nor failed. The free panel ends on 30 April 2026, so every later version of the free-panel designs is a second look. Fresh evidence needs fresh rows: the paid cohort or the seed sites.
+- **Out-of-fold model inputs (OUR READING).** Search groups and sites are each cut into 3 folds by a hash. A training or validation row takes its trust input from a model fitted without its search fold and without its site fold, and its strength score from a score fitted without its search fold. Held-out rows take the main models. The report counts, apart, the rows whose strength score was fitted on pages that hold the row's own site. That count is not 0: the strength design splits by search and time only.
+- **Sites new to a search.** On validation rows where the site is new to the search, the updater version in use stays unless always NT50, the table or the model beats it with a search-cluster lower bound above 0. Among those the largest gain wins. A winning always NT50 rule is a real forecast with all probability on NT50: point, range, label and probabilities all say NT50. The idea came from the version 1 held-out result, and the design file says so.
+- **Recent calibration slice.** The range level and the temperature are set on training rows whose outcome date is in the last 90 days before the cutoff, when there are at least 2,000 such rows, else on every calibration row. The rule reads dates only. The idea came from the version 1 held-out result, and the design file says so.
+- **Design files name their models.** A version 2 design names the strength and trust models the run loads, and the run refuses a mismatch before it reads an outcome. Every report of a run is written at the end, so a crash writes nothing and does not use the version up.
+
 ## 7. Markers (frozen in `markers.py`)
 
 | Marker | Passes when | Also printed, no bar |
@@ -197,6 +205,26 @@ Downloads go under `data/forecast/public/` (ignored by git). Every loader record
 
 **Search Console signals.** Only frozen exports fetched on or before the forecast date are read. A stored copy whose hash no longer matches its freeze is skipped and counted.
 
-## 10. Findings about the plan itself
+**List lookups for new sites (`forecast strength sync`).** A site that was searched in a list release and is absent gets the floor value, a REAL and knowable fact. A site that was never searched gets a missing value. The sync command collects the site and every site on the pages its forecast will use, names for each list the release published on or before the date, and with `--fetch` downloads it. Sites are marked searched only when the release was read to its end. A cached row stored before the lookup never hides the lookup. Open PageRank is not synced: its absence is never a floor. **OUR READING:** the Tranco release for a date is the first-of-month list on or before it, and when the newest list is not published yet the fetch tries up to 3 earlier months and never a later one.
+
+**Band prior for seed and pilot reports.** Each bundle stores a band prior fitted on its own training rows only, with the sites and search groups it was fitted on. A seed or pilot report uses the band prior of the bundle that made its forecasts. A fitting site that is graded in the same report is refused. A conditional bundle's band prior is conditional on appearing, and the report says so. Forecasts from more than one bundle in one report get no band prior rather than a mixed one.
+
+**Content match as a model input.** A bundle may carry the feature `content_match`. The live path feeds it only when the live scorer's backend is the one named in the bundle manifest. Otherwise the value is missing and a note says why.
+
+**Stage calendar.** A stage counts as recorded only when every registered search of the site has a forecast at that stage. Otherwise it stays due, or is MISSED, for exactly the open searches, and the commands name them.
+
+## 10. The paid cohort path (`paidset.py`, `forecast paid ...`, `forecast cohort-backtest ...`)
+
+This is the plan's route to marker 3: an upload-day forecast for a brand-new site, trained and tested on past new sites, with the searches a site never ranked for kept in. No paid data exists yet. The path is proven end to end on SYNTHETIC tables only, and a SYNTHETIC run never passes a marker.
+
+**Upload cells (join rule v2, OUR READING).** One cell per cohort site and target search. The forecast date is the estimated launch date. The launch date is an estimate, so the result page, strength and start evidence are held to the earliest plausible launch date (launch minus its uncertainty, `inputs_as_of`). The site's own launch page text counts as known on the day it was captured, never after the estimated launch date. The stored `as_of` is the later of the two, and the lead time runs from it. Frozen limits: the input page is at most 62 days old; a launch uncertainty that is unknown or over 45 days drops the cell; the outcome is the clean page at least 50 deep closest to day 90 inside days 60 to 120, chosen without looking at the site, and its real day is stored; the month 1 page for the updater is the one closest to day 30 inside days 14 to 45. A site absent from an outcome page at least 50 deep is NOT IN TOP 50, a REAL observation. A window with no page that deep drops the cell. Every drop is counted by reason. Nothing unknown becomes NOT IN TOP 50.
+
+**Split and time.** The split is the frozen rule of `trainingset.py`: by launch cohort in time, then by site, with no search group on both sides. A cell table that does not reproduce that rule is refused. A training cell whose outcome page is dated on or after the earliest held-out forecast date is dropped and counted. Training never reads a held-out row.
+
+**Training.** `forecast train --data paid` fits a bundle on the train split only. The bundle is refused unless its training rows include never-ranked cells. Such a bundle needs no appearance gate. A bundle from SYNTHETIC tables is labeled SYNTHETIC and never forecasts a seed or pilot site. Traffic curves and exact positions are not placement inputs or outcomes, so the join does not need them.
+
+**The frozen cohort backtest.** `cohort-backtest freeze` writes the design: the hash of the held-out row keys, the split and target rule hashes, the join rule, the bundle hash, the band prior fitted on training cells, the grading rule and the markers. `cohort-backtest score` scores the held-out split once under the scored-run protocol of section 6. The same held-out rows are scored once whatever the design is called. A later version is a second look and is PROVISIONAL. On REAL tables the report is the plan's marker 3 and is not a stand-in.
+
+## 11. Findings about the plan itself
 
 The audit of the plan is in `docs/plan/PLAN_AUDIT.md`. The code is built so that each finding is either fixed by a refusal or printed in the reports.

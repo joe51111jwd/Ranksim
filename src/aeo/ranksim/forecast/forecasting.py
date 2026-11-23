@@ -45,7 +45,7 @@ import hashlib
 import json
 import math
 import re
-from dataclasses import asdict, dataclass, field, replace
+from dataclasses import dataclass, field, replace
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping, Sequence
@@ -64,7 +64,7 @@ from .features import MODEL_MEASURES, START_COLUMNS, SYNTHETIC_FOOTPRINT_COLUMNS
 from .placement import PlacementModel, dist_median, load_model, save_model
 from .scoreboard import ForecastRow, GradeRow, Scoreboard, ScoreboardRefusal, SearchRow, SiteRow, search_key
 from .types import PREDICTED, REAL, SYNTHETIC, CleanReading, Forecast, is_excluded_site
-from .updater import GSC_FEATURES, Reading, TransitionTable, Updater, UpdaterModel
+from .updater import GSC_FEATURES, Reading, Updater
 
 FORECASTING_VERSION = "forecasting-v1"
 BUNDLE_MANIFEST = "bundle.json"
@@ -389,15 +389,8 @@ def save_updater(updater: Updater, path: Path) -> str:
 
 
 def load_updater(path: Path) -> Updater:
-    data = json.loads(path.read_text(encoding="utf-8"))
-    table = dict(data["table"])
-    model = dict(data["model"]) if data.get("model") else None
-    for item in (table, model):
-        if item is not None:
-            item.pop("_cached", None)
-    return Updater(table=TransitionTable(**table), model=UpdaterModel(**model) if model else None,
-                   in_use=str(data["in_use"]), reason=str(data["reason"]), range_level=float(data["range_level"]),
-                   comparison=dict(data.get("comparison") or {}))
+    """Read an updater written by save_updater, with its rule for sites new to a search and its range calibration."""
+    return Updater.from_payload(json.loads(path.read_text(encoding="utf-8")))
 
 
 def bundle_hash(manifest: Mapping[str, Any]) -> str:
@@ -665,7 +658,7 @@ def fit_bundle(
     from .backtest import VALIDATION_SHARE, cross_fitted_prior, sample_training
     from .features import stable_share
     from .placement import fit_placement
-    from .updater import UpdaterError, choose_version, fit_model, fit_table, prior_columns
+    from .updater import UpdaterError, choose_segment, choose_version, fit_model, fit_table, prior_columns
 
     if label not in (REAL, SYNTHETIC):
         raise ForecastingRefusal("a training label is REAL or SYNTHETIC")
@@ -700,8 +693,13 @@ def fit_bundle(
             model = None
         search_col = "search" if "search" in val_rows else ("keyword" if "keyword" in val_rows else group_col)
         updater = choose_version(table, model, val_rows, prior[is_val], search_col=search_col)
+        # The rule for sites new to a search, chosen on validation rows only, as in the version 2 backtest design.
+        segment = (choose_segment(updater, val_rows, prior[is_val], search_col=search_col)
+                   if len(val_rows) and "new_to_search" in val_rows else None)
         updater_counts = {"rows": int(len(rows)), "fit_rows": int(len(fit_rows)), "validation_rows": int(len(val_rows)),
-                          "in_use": updater.in_use, "reason": updater.reason}
+                          "in_use": updater.in_use, "reason": updater.reason,
+                          "new_to_search_rule": None if segment is None else
+                          {"winner": segment["winner"], "validation_rows": segment["validation_rows"], "why": segment["why"]}}
     counts = {"upload_rows": int(len(upload_rows)),
               "sites": int(upload_rows["site"].nunique()) if "site" in upload_rows else None,
               "searches": int(upload_rows["search"].nunique()) if "search" in upload_rows else None,
@@ -2194,6 +2192,15 @@ def due(scoreboard: Scoreboard, today: date, *, window_days: int = 3) -> dict[st
     return {"today": today.isoformat(), "window_days": window_days, **calendar}
 
 
+def open_searches(item: Mapping[str, Any]) -> str:
+    """For a stage where some searches already have a forecast: one sentence naming the searches still open."""
+    still = list(item.get("searches_open") or [])
+    if not still or not item.get("searches_recorded"):
+        return ""
+    return (f" {item['searches_recorded']} of {item.get('searches_registered', len(still) + item['searches_recorded'])} "
+            f"searches have a forecast. Still open: {', '.join(str(s) for s in still)}.")
+
+
 def due_lines(result: Mapping[str, Any]) -> list[str]:
     lines = [f"As of {result['today']}, stage forecasts due in the next {result['window_days']} days:"]
     if not result["due"]:
@@ -2207,12 +2214,12 @@ def due_lines(result: Mapping[str, Any]) -> list[str]:
                          f"{item['stage_date']}, after that day's clean reading: python -m aeo.ranksim forecast {command} "
                          f"--site {item['site']} --record")
             continue
-        lines.append(f"  {item['site']} ({item['source']}) {item['stage']} on {item['stage_date']}. "
+        lines.append(f"  {item['site']} ({item['source']}) {item['stage']} on {item['stage_date']}.{open_searches(item)} "
                      f"Run: python -m aeo.ranksim forecast {command} --site {item['site']} --record")
     if result["missed"]:
         lines.append("Stages MISSED (no forecast, and the last day to record one dated the stage day has passed). "
                      "A missed stage is never backfilled:")
-        lines.extend(f"  {item['site']} ({item['source']}) {item['stage']} was due on {item['stage_date']}."
+        lines.extend(f"  {item['site']} ({item['source']}) {item['stage']} was due on {item['stage_date']}.{open_searches(item)}"
                      for item in result["missed"])
     else:
         lines.append("No stage was missed.")

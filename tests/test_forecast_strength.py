@@ -305,3 +305,9 @@ def test_strength_rehearsal_models_are_written_under_the_cache_in_the_scored_lay
     files["score"].write_text(files["score"].read_text().replace('"c_value"', '"c_value" ', 1))
     with pytest.raises(ValueError, match="sha256"):
         S.load_strength_score(files["score"])
+
+
+def test_strength_design_version_2_says_its_held_out_rows_were_already_read_by_version_1():
+    assert "held_out_rows" not in S.prereg_payload()  # version 1 is the frozen file, unchanged
+    record = S.prereg_payload(version=2, reason="out-of-fold inputs")["held_out_rows"]
+    assert record["label"] == "PROVISIONAL" and "already read by version 1" in record["reason"]

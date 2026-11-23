@@ -351,3 +351,9 @@ def test_training_labels_read_training_pages_only_and_are_cached(tmp_path: Path,
     again, meta2 = T.training_labels(DEFAULT_SPLIT, tag="t")
     assert seen["loads"] == 1 and meta2["sha256"] == meta["sha256"] and len(again) == len(labels)
     assert str(tmp_path / "data" / "cache" / "oof") in str(T.label_cache_dir())
+
+
+def test_trust_design_version_2_says_its_held_out_rows_were_already_read_by_version_1():
+    assert "held_out_rows" not in T.prereg_payload()  # version 1 is the frozen file, unchanged
+    record = T.prereg_payload(version=2, reason="out-of-fold inputs")["held_out_rows"]
+    assert record["label"] == "PROVISIONAL" and "already read by version 1" in record["reason"]

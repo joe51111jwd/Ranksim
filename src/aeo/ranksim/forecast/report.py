@@ -29,7 +29,8 @@ from .config import (
     SPEC_BASELINES,
     STAGE_DAYS,
 )
-from .grading import RULE_V1, GradedCell, GradingRule, band_prior_points, fit_band_prior, headline
+from .config import NT50
+from .grading import BAND_PRIOR_ALL, RULE_V1, GradedCell, GradingRule, band_prior_points, fit_band_prior, headline
 from .scoreboard import GradedRecord, PoolingRefused, Scoreboard, ScoreboardRefusal, mapping_points
 from .types import REAL, SYNTHETIC
 
@@ -68,6 +69,33 @@ def combined_report(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
     raise PoolingRefused("A combined report would pool sources. Run stage_report once per source.")
 
 
+@dataclass(frozen=True)
+class FittedBandPrior:
+    """A band prior fitted elsewhere on training rows only, with the names of what it was fitted on.
+
+    `table` maps a difficulty tercile (and grading.BAND_PRIOR_ALL) to one point. `sites` and
+    `search_groups` are the training sites and search groups. `source` is one sentence saying where
+    it came from; the report prints it. A fitting site graded in the same report is refused.
+    """
+
+    table: Mapping[str, int]
+    sites: frozenset[str]
+    search_groups: frozenset[str]
+    source: str
+
+    def checked_table(self, cells: Sequence[GradedCell]) -> dict[str, int]:
+        table = {str(k): int(v) for k, v in self.table.items()}
+        if BAND_PRIOR_ALL not in table or any(not 1 <= v <= NT50 for v in table.values()):
+            raise ScoreboardRefusal(f"A fitted band prior needs the key {BAND_PRIOR_ALL!r} and points 1 to {NT50}.")
+        overlap = sorted(self.sites & {c.site for c in cells})
+        if overlap:
+            raise ScoreboardRefusal(
+                f"The band prior was fitted on {len(overlap)} site(s) that are graded here ({', '.join(overlap[:3])}). "
+                "It is fitted on training data only."
+            )
+        return table
+
+
 def _baseline_points(name: str, spec: BaselineSpec, records: Sequence[GradedRecord]) -> list[int]:
     if callable(spec):
         return [int(spec(record.cell)) for record in records]
@@ -83,15 +111,18 @@ def stage_report(
     extra_baselines: Mapping[str, BaselineSpec] | None = None,
     model_version: str | None = None,
     band_prior_training: Sequence[GradedCell] | None = None,
+    band_prior_fitted: FittedBandPrior | None = None,
 ) -> dict[str, Any]:
     """Every number for one source and one stage as of a date, on the original grades.
 
     `extra_baselines` maps a name to either forecast id -> point, or a function of the cell.
     The site strength only baseline comes in here as "site_strength".
     always_nt50 and persistence are always added. The band prior is fitted here on
-    `band_prior_training`, graded cells of the TRAINING split; a training cell on a site
-    that is in the headline is refused. The report lists the spec baselines it lacks under
-    `baselines_missing`, and markers 3 to 5 are never passed while one is missing.
+    `band_prior_training`, graded cells of the TRAINING split, or given already fitted as
+    `band_prior_fitted` with the names of the sites and search groups it was fitted on (a model
+    bundle's own training rows). Either way a fitting site that is in the headline is refused.
+    The report lists the spec baselines it lacks under `baselines_missing`, and markers 3 to 5
+    are never passed while one is missing.
     """
     _check_source_and_stage(source, stage)
     status = scoreboard.require_verified()
@@ -113,6 +144,7 @@ def stage_report(
         baselines=baselines,
         band_prior_training=band_prior_training,
         band_prior_unit="site",
+        band_prior_fitted=band_prior_fitted,
         rule=scoreboard.rule,
         source=source,
         stage=stage,
@@ -180,6 +212,7 @@ def _assemble(
     band_prior_training: Sequence[GradedCell] | None,
     band_prior_unit: str,
     rule: GradingRule,
+    band_prior_fitted: FittedBandPrior | None = None,
     source: str,
     stage: str,
     as_of: date,
@@ -194,7 +227,14 @@ def _assemble(
     """The report body shared by stage_report (rows from the scoreboard) and report_from_cells (rows in memory)."""
     cells = [r.cell for r in records]
     band_prior: dict[str, int] | None = None
-    if band_prior_training is not None:
+    band_prior_source: str | None = None
+    if band_prior_training is not None and band_prior_fitted is not None:
+        raise ScoreboardRefusal("Give the band prior training cells or an already fitted band prior, not both.")
+    if band_prior_fitted is not None:
+        band_prior = band_prior_fitted.checked_table(cells)
+        baselines["band_prior"] = band_prior_points(band_prior, cells)
+        band_prior_source = band_prior_fitted.source
+    elif band_prior_training is not None:
         training = list(band_prior_training)
         overlap = sorted({getattr(c, band_prior_unit) for c in training} & {getattr(c, band_prior_unit) for c in cells})
         if overlap:
@@ -207,6 +247,8 @@ def _assemble(
         except ValueError as error:
             raise ScoreboardRefusal(f"The band prior cannot be fitted: {error}.") from error
         baselines["band_prior"] = band_prior_points(band_prior, cells)
+        band_prior_source = (f"The band prior was fitted here on {len(training)} training cells from "
+                             f"{len({c.site for c in training})} sites, none of them graded here.")
     head = headline(cells, baselines, rule, cluster_by=cluster_by)
     missing_baselines = [name for name in SPEC_BASELINES if name not in head["baselines"]]
 
@@ -276,6 +318,7 @@ def _assemble(
         "baselines_required": list(SPEC_BASELINES),
         "baselines_missing": missing_baselines,
         "band_prior": band_prior,
+        "band_prior_source": band_prior_source,
         "minimum_count": REPORT_MIN_COUNT,
         "headline": head,
         "eligibility": eligibility,
@@ -642,6 +685,8 @@ def render_text(report: Mapping[str, Any]) -> str:
             + ", ".join(name.replace("_", " ") for name in report["baselines_missing"])
             + f". Markers 3 to 5 are not passed on this report ({real})."
         )
+    if report.get("band_prior_source"):
+        lines.append(_plain_note(str(report["band_prior_source"])))
     if head["forecasts"] == 0:
         lines.append(f"There are zero graded outcomes, so no rate is measurable yet ({real}).")
     hit = summary["hit"]

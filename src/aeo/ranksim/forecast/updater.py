@@ -50,7 +50,9 @@ Version 2 additions (both chosen on training-side rows only, never on held-out r
   the table, the model) beats it on the segment's validation rows with a cluster
   interval over searches whose lower bound is above zero; among those the
   largest gain wins. `Updater.segment_rules` records the winner and
-  `Updater.segment_comparison` the validation numbers.
+  `Updater.segment_comparison` the validation numbers. An always NT50 rule is a
+  distribution (every probability on NT50), so each forecast's point, range,
+  label and probabilities come from the one distribution it issues.
 """
 
 from __future__ import annotations
@@ -449,6 +451,13 @@ def fit_model(frame: pd.DataFrame, *, outcome_col: str = "position_out", group_c
 # the updater in use
 
 
+def nt50_mass() -> np.ndarray:
+    """A 51-outcome distribution with every probability on NT50 (the always NT50 segment rule as a distribution)."""
+    out = np.zeros(TOP_DEPTH + 1, dtype=float)
+    out[-1] = 1.0
+    return out
+
+
 def segment_mask(frame: pd.DataFrame, segment: str) -> np.ndarray:
     """True per row inside the segment (its column equals 1). A missing value is outside: unknown is not new."""
     col = SEGMENT_COLUMNS.get(segment, segment)
@@ -521,16 +530,22 @@ class Updater:
         """Updated 51-outcome distributions. PREDICTED.
 
         `which` ("table" or "model") gives that version alone. Without it the version in use is applied, and on rows
-        inside a segment whose rule names the other version (`segment_rules`) that version is used there instead.
+        inside a segment whose rule names the other version (`segment_rules`) that version is used there instead. On
+        rows inside a segment whose rule is always NT50 the distribution is all mass on NT50.
         """
         if which is not None:
             return self._version_distributions(frame, prior_dists, which)
         out = self._version_distributions(frame, prior_dists, self.in_use)
         for segment, winner in self.segment_rules.items():
-            if winner in ("table", "model") and winner != self.in_use:
-                mask = segment_mask(frame, segment)
-                if mask.any():
-                    out[mask] = self._version_distributions(frame[mask].reset_index(drop=True), prior_dists[mask], winner)
+            mask = segment_mask(frame, segment)
+            if not mask.any():
+                continue
+            if winner == "always_nt50":
+                # The rule is a distribution, not a point overwrite: every probability on NT50, so the point is its
+                # median, the range its own central interval and the label agrees (IMPLEMENTATION_SPEC 6, part 6).
+                out[mask] = nt50_mass()
+            elif winner in ("table", "model") and winner != self.in_use:
+                out[mask] = self._version_distributions(frame[mask].reset_index(drop=True), prior_dists[mask], winner)
         return out
 
     def point_rule(self, segments: Mapping[str, bool] | None = None) -> str | None:
@@ -545,33 +560,28 @@ class Updater:
         """A types.Forecast from one updated distribution. PREDICTED.
 
         `segments` says which segments the row is in (for example {"new_to_search": True}). When the rule for one of
-        them is always NT50, the point is NT50; the range is the distribution's central interval widened to hold the
-        point, and the label still comes from the distribution.
+        them is always NT50, the distribution is replaced by all mass on NT50 (as `distributions` does), so the point
+        is its median (NT50), the range is [NT50, NT50], the label is out_of_reach and the probabilities agree. The
+        point, range, label and probabilities always come from one and the same distribution.
         """
         tail = (1.0 - self.range_level) / 2.0
-        point = dist_median(dist)
         rule = self.point_rule(segments)
         if rule == "always_nt50":
-            point = NT50
+            dist = nt50_mass()
+        point = dist_median(dist)
         bands = band_mass(dist)
         extra = {"updater_in_use": self.in_use, "updater_reason": self.reason}
         if rule:
             extra["segment_rule"] = rule
         extra.update(dict(notes or {}))
         return Forecast(site=site, search=search, stage=stage, as_of=as_of, point=int(point),
-                        range_low=int(min(dist_quantile(dist, tail), point)),
-                        range_high=int(max(dist_quantile(dist, 1 - tail), point)), label=label_for(bands),
-                        model_version=self.version(), probs={b: float(v) for b, v in zip(FINE_BANDS, bands)}, notes=extra)
+                        range_low=int(dist_quantile(dist, tail)), range_high=int(dist_quantile(dist, 1 - tail)),
+                        label=label_for(bands), model_version=self.version(),
+                        probs={b: float(v) for b, v in zip(FINE_BANDS, bands)}, notes=extra)
 
     def points(self, frame: pd.DataFrame, prior_dists: np.ndarray) -> list[int]:
         """The points of the updater in use, segment rules included, one per row."""
-        dists = self.distributions(frame, prior_dists)
-        flags = segment_flags(frame)
-        out = []
-        for i, dist in enumerate(dists):
-            rule = self.point_rule({k: bool(v[i]) for k, v in flags.items()})
-            out.append(NT50 if rule == "always_nt50" else dist_median(dist))
-        return out
+        return [dist_median(d) for d in self.distributions(frame, prior_dists)]
 
     def payload(self) -> dict[str, Any]:
         return {"table": self.table.payload(), "model": self.model.payload() if self.model else None,
@@ -716,5 +726,5 @@ __all__ = [
     "LEAD_BUCKETS", "MODEL_FEATURES", "NO_READING", "Reading", "TransitionTable", "UPDATER_MODEL_VERSION",
     "UPDATER_TABLE_VERSION", "Updater", "UpdaterError", "UpdaterModel", "choose_segment", "choose_version", "fit_model",
     "fit_spreads", "fit_table", "lead_bucket", "prior_columns", "reading_band", "reading_columns", "segment_flags",
-    "segment_mask", "shape_with_reading", "usable_readings", "SEGMENT_COLUMNS", "SEGMENT_RULE", "SEGMENT_ORIGIN",
+    "nt50_mass", "segment_mask", "shape_with_reading", "usable_readings", "SEGMENT_COLUMNS", "SEGMENT_RULE", "SEGMENT_ORIGIN",
 ]

@@ -66,7 +66,7 @@ import re
 import subprocess
 import sys
 from collections import defaultdict
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
@@ -86,9 +86,12 @@ from .config import (
     forecast_paths,
 )
 from .features import (
+    PROVISIONAL,
     code_provenance,
     evals_dir,
     freeze_prereg,
+    held_out_already_read,
+    mark_provisional,
     prereg_file,
     require_clean_source,
     require_prereg,
@@ -109,6 +112,7 @@ from .placement import (
     CALIBRATION_RECENT_DAYS,
     CALIBRATION_RECENT_MIN_ROWS,
     PlacementModel,
+    central_interval,
     dist_median,
     fit_placement,
     point_diagnostics,
@@ -987,6 +991,11 @@ class ModelInputs:
     `main_excludes_search` and `main_excludes_site` say whether the main models were fitted without a given search or
     site. Each fold model carries the exact search groups (and sites) it was fitted on, so the in-sample check reads
     what was fitted, not the fold rule.
+
+    The strength scores are split by SEARCH only: `fold_score_sites[a]` holds the sites on the pages fold score a was
+    fitted on (the row's own site on other searches is among them), and `main_score_sites` the sites on the training
+    pages the main score was fitted on (held-out sites on training searches before the cutoff are among them). None
+    means not recorded: the in-sample check then cannot certify the row and counts it as unknown.
     """
 
     main_score: Any
@@ -999,11 +1008,15 @@ class ModelInputs:
     folds: int = OOF_FOLDS
     labels_end: date | None = None
     record: Mapping[str, Any] | None = None
+    fold_score_sites: Mapping[int, frozenset] | None = None
+    main_score_sites: frozenset | None = None
 
 
 INPUT_MODE_COL = "_inputs"  # "main" (test rows) or "fold" (training and validation rows)
 IN_SAMPLE_SEARCH_COL = "inputs_own_search_in_fit"
-IN_SAMPLE_SITE_COL = "inputs_own_site_in_fit"
+IN_SAMPLE_SITE_COL = "inputs_own_site_in_fit"  # trust OR strength model fitted on the row's own site (or not known)
+IN_SAMPLE_TRUST_SITE_COL = "inputs_trust_own_site_in_fit"
+IN_SAMPLE_STRENGTH_SITE_COL = "inputs_strength_own_site_in_fit"  # 1, 0, or NaN when the strength sites are not recorded
 INPUTS_MODEL_COL = "inputs_model"
 
 
@@ -1124,7 +1137,8 @@ def _oof_scores(out: pd.DataFrame, page_rows: pd.DataFrame, pages: pd.DataFrame,
     # trust: one column of page scores per serving model, so a row's gap uses the same model as its own value
     trust_cols: dict[str, np.ndarray] = {}
     own_trust = np.full(len(out), np.nan)
-    serving = np.array(["main"] * len(out), dtype=object)
+    # a training row with no trust fold model is still served out of fold by its strength fold score
+    serving = np.array(["main" if m else f"strength-fold-a{int(a)}" for m, a in zip(out_main, out_a)], dtype=object)
     if inputs.main_trust is not None:
         col = np.full(len(page_rows), np.nan)
         if page_main.any():
@@ -1166,11 +1180,15 @@ def _oof_scores(out: pd.DataFrame, page_rows: pd.DataFrame, pages: pd.DataFrame,
     # what served each row, and whether that model's fit included the row's own search or site
     keywords = out["keyword_id"].map(keyword_of).astype(str).to_numpy()
     own_search = np.zeros(len(out), dtype=bool)
-    own_site = np.zeros(len(out), dtype=bool)
+    trust_site = np.zeros(len(out), dtype=bool)
+    strength_site = np.full(len(out), np.nan)  # NaN: the strength score's sites are not recorded
     sites = out["site"].astype(str).to_numpy()
+    fold_sites = inputs.fold_score_sites or {}
     for i in np.flatnonzero(out_main):
         own_search[i] = not inputs.main_excludes_search(keywords[i])
-        own_site[i] = inputs.main_trust is not None and not inputs.main_excludes_site(sites[i])
+        trust_site[i] = inputs.main_trust is not None and not inputs.main_excludes_site(sites[i])
+        if inputs.main_score_sites is not None:
+            strength_site[i] = float(sites[i] in inputs.main_score_sites)
     for i in np.flatnonzero(~out_main):
         a, b = int(out_a[i]), int(out_b[i])
         group = str(out_group[i])
@@ -1178,10 +1196,15 @@ def _oof_scores(out: pd.DataFrame, page_rows: pd.DataFrame, pages: pd.DataFrame,
         in_strength = group in inputs.fold_score_groups.get(a, frozenset())
         in_trust = fold_model is not None and group in fold_model.search_groups
         own_search[i] = in_strength or in_trust
-        own_site[i] = fold_model is not None and sites[i] in fold_model.sites
+        trust_site[i] = fold_model is not None and sites[i] in fold_model.sites
+        if a in fold_sites:
+            strength_site[i] = float(sites[i] in fold_sites[a])
     out[INPUTS_MODEL_COL] = [s if m == "fold" else "main" for s, m in zip(serving, mode)]
     out[IN_SAMPLE_SEARCH_COL] = own_search
-    out[IN_SAMPLE_SITE_COL] = own_site
+    out[IN_SAMPLE_TRUST_SITE_COL] = trust_site
+    out[IN_SAMPLE_STRENGTH_SITE_COL] = strength_site
+    # an unrecorded strength site set cannot certify the row, so it counts as in sample here and as unknown apart
+    out[IN_SAMPLE_SITE_COL] = trust_site | ~(strength_site == 0.0)
     return out, page_rows
 
 
@@ -1193,8 +1216,9 @@ def mark_model_labels_end(frame: pd.DataFrame, labels_end: date) -> pd.DataFrame
 
     Every model (main or out of fold) was fitted on training pages dated before the cutoff, so its predictions carry
     facts up to the day before it. A graded (test) row must have its forecast date after that day:
-    `check_model_inputs_dated` raises LeakError otherwise. Training rows dated earlier see labels of LATER pages,
-    of other searches and other sites only when their inputs are out of fold; `in_sample_model_inputs` counts both.
+    `check_model_inputs_dated` raises LeakError otherwise. Training rows dated earlier see labels of LATER pages:
+    with out-of-fold inputs, trust labels of other searches and other sites, and strength labels of other searches
+    that include the row's OWN site (strength is split by search only); `in_sample_model_inputs` counts both.
     """
     out = frame.copy()
     out[MODEL_DATE_COL] = labels_end
@@ -1210,11 +1234,14 @@ def check_model_inputs_dated(test: pd.DataFrame) -> None:
 def in_sample_model_inputs(frame: pd.DataFrame) -> dict[str, Any]:
     """How many rows took trust or strength inputs from a model whose fit included their own search group or site.
 
-    With out-of-fold inputs (version 2) this reads, per row, whether the model that served it was fitted on the
-    row's own search group (`inputs_own_search_in_fit`) or own site (`inputs_own_site_in_fit`); it must be 0 on
-    training, validation and test rows. `later_labels` counts rows whose models were fitted on labels dated after
-    the row's forecast date: for out-of-fold rows these are pages of OTHER searches and OTHER sites only. Without
-    those columns (version 1) a row counts when the models' labels end after its forecast date.
+    With out-of-fold inputs (version 2) this reads, per row, whether the models that served it were fitted on the
+    row's own search group (`inputs_own_search_in_fit`) or own site (`inputs_own_site_in_fit`: the trust model's or
+    the strength score's). Trust is split by search and site, so `trust_own_site_in_fit` must be 0. Strength is split
+    by SEARCH only: a training row's strength fold score is fitted on its own site's pages on other searches, and the
+    main score that serves test rows on training pages that hold the held-out sites, so `strength_own_site_in_fit`
+    counts them (most rows). A row whose strength sites were not recorded is counted in `rows` and shown apart as
+    `strength_own_site_unknown`. `later_labels` counts rows whose models were fitted on labels dated after the row's
+    forecast date. Without those columns (version 1) a row counts when the models' labels end after its forecast date.
     """
     if len(frame) == 0:
         return {"rows": 0, "of": 0}
@@ -1225,14 +1252,24 @@ def in_sample_model_inputs(frame: pd.DataFrame) -> dict[str, Any]:
         own_search = frame[IN_SAMPLE_SEARCH_COL].astype(bool).to_numpy()
         own_site = frame[IN_SAMPLE_SITE_COL].astype(bool).to_numpy()
         served = frame[INPUTS_MODEL_COL].astype(str).value_counts().to_dict() if INPUTS_MODEL_COL in frame else {}
-        return {"rows": int((own_search | own_site).sum()), "of": int(len(frame)),
-                "own_search_in_fit": int(own_search.sum()), "own_site_in_fit": int(own_site.sum()),
-                "later_labels_other_searches_and_sites": later, "served_by": served,
-                "note": ("rows counts those whose trust or strength model was fitted on labels of their own search "
-                         "group or their own site. Training and validation rows take out-of-fold models fitted "
-                         "without both; test rows take the models fitted on training searches and training sites "
-                         "only. later_labels counts rows whose models also learned from pages dated after the row's "
-                         "forecast date, on other searches and other sites (none for test rows).")}
+        out = {"rows": int((own_search | own_site).sum()), "of": int(len(frame)),
+               "own_search_in_fit": int(own_search.sum()), "own_site_in_fit": int(own_site.sum()),
+               "later_labels": later, "served_by": served}
+        if IN_SAMPLE_STRENGTH_SITE_COL in frame:
+            strength = pd.to_numeric(frame[IN_SAMPLE_STRENGTH_SITE_COL], errors="coerce").to_numpy(dtype=float)
+            out["trust_own_site_in_fit"] = int(frame[IN_SAMPLE_TRUST_SITE_COL].astype(bool).sum())
+            out["strength_own_site_in_fit"] = int((strength == 1.0).sum())
+            out["strength_own_site_unknown"] = int((~np.isfinite(strength)).sum())
+        out["note"] = ("rows counts those whose trust or strength model was fitted on labels of their own search group "
+                       "or their own site. Trust is split by search and site: training and validation rows take trust "
+                       "models fitted without their search fold and site fold, test rows the trust model fitted on "
+                       "training searches and training sites only, so trust_own_site_in_fit is 0. Strength is split by "
+                       "search only: training and validation rows take a strength score fitted without their search "
+                       "fold but WITH their own site's pages on other searches (later ones too), and test rows the main "
+                       "score, fitted on training pages before the cutoff that hold held-out sites on training searches; "
+                       "strength_own_site_in_fit counts them. later_labels counts rows whose models learned from pages "
+                       "dated after the row's forecast date (none for test rows).")
+        return out
     if MODEL_DATE_COL not in frame:
         return {"rows": 0, "of": int(len(frame))}
     return {"rows": int(later or 0), "of": int(len(frame)),
@@ -1376,7 +1413,12 @@ def _panel_specs_v2(design: PanelDesign, *, gaps: Mapping[str, Any], cuts: Seque
                           "models); the sites on their input page are scored by the same models; test cells take the "
                           "models fitted on every training row before the cutoff"),
                  "fit": "the same procedure and training label table as the scored models (training pages only)",
-                 "report": "in_sample_model_inputs counts rows whose model saw their own search group or site: 0 expected"},
+                 "report": ("in_sample_model_inputs counts rows whose trust or strength model saw their own search group "
+                            "or site. own_search_in_fit and trust_own_site_in_fit: 0 expected. Strength is split by "
+                            "search only, so strength_own_site_in_fit is NOT 0: a training or validation row's strength "
+                            "score was fitted on its own site's pages on other searches (later ones too), and the main "
+                            "score that serves test rows was fitted on training pages that hold the held-out sites on "
+                            "training searches before the cutoff")},
              "calibration": {"rule": (f"placement temperature and range level, the updater model's temperature and the "
                                       f"updater range level are set on rows whose outcome date is in the last "
                                       f"{CALIBRATION_RECENT_DAYS} days before the cutoff, at least "
@@ -1389,16 +1431,50 @@ def _panel_specs_v2(design: PanelDesign, *, gaps: Mapping[str, Any], cuts: Seque
                                              "searches whose lower bound is above 0; among those the largest gain wins"),
                                     "origin": SEGMENT_ORIGIN},
              "report_code": "report.report_from_cells; every panel report is marked stand_in with its reason",
+             "held_out_rows": held_out_already_read(asdict(_split()), version) or "fresh: the split's cutoff is after "
+                              "every date design version 1 graded",
              "reports_written": "every report of a run is written after every test is scored, so a crash writes none"}
+    used = models_for_design(version)
+    sv = used["strength_version"]
+    models = {"strength_score": (f"strength-v{sv} (data/forecast/models/strength/strength-v{sv}-score.json, fitted on "
+                                 "training pages)"),
+              "strength_only_forecaster": (f"strength-v{sv} forecaster (data/forecast/models/strength/"
+                                           f"strength-v{sv}-forecaster.json, fitted on training cells)"),
+              "trust": f"{used['trust_name']} (fitted on training searches and training sites before the cutoff)",
+              "out_of_fold": (f"{OOF_FOLDS} strength fold scores (without the row's search fold) and "
+                              f"{OOF_FOLDS * OOF_FOLDS} trust fold models (without the row's search fold and site fold), "
+                              "fitted in the run on training pages; they serve training and validation rows"),
+              "placement": "placement-v1, fitted here on training cells, temperature and range level on the recent slice",
+              "updater": ("updater-table-v1 and updater-model-v2, fitted here; model temperature and range level on the "
+                          "recent slice; the rule for sites new to the search chosen on validation rows")}
+    provisional = held_out_already_read(asdict(_split()), version)
     out = {}
     for key, spec in base.items():
         data = asdict(spec)
         data["version"] = f"backtest-v{version}"
         data["cells"] = spec.cells + (sides if key != "ceiling" else "")
         data["thresholds"] = {**dict(spec.thresholds), f"version_{version}_rules": rules}
+        if spec.model_versions:
+            data["model_versions"] = dict(models)
         data["notes"] = [*spec.notes, f"Design version {version}. Reason for the new version: {str(reason).strip()}"]
+        if provisional:
+            data["notes"].append(f"{PROVISIONAL}: {provisional['reason']}")
         out[key] = BacktestSpec(**data)
     return out
+
+
+def check_models_match_specs(specs: Mapping[str, BacktestSpec], design_version: int) -> None:
+    """BacktestRefusal unless every design that names models names the strength version and trust model the run
+    loads (models_for_design). Read before any outcome."""
+    used = models_for_design(design_version)
+    strength = f"strength-v{used['strength_version']}"
+    for key, spec in specs.items():
+        mv = dict(spec.model_versions or {})
+        if not mv:
+            continue
+        if strength not in str(mv.get("strength_score", "")) or used["trust_name"] not in str(mv.get("trust", "")):
+            raise BacktestRefusal(f"the design {key} names models {mv.get('strength_score')!r} and {mv.get('trust')!r}, "
+                                  f"but the run loads {strength} and {used['trust_name']}")
 
 
 TRUST_MODEL_NAME = "trust-v2-free-lexical-all"  # the trust model the version 2 panel designs name (from `trust run --design-version 2`)
@@ -1561,6 +1637,7 @@ def build_model_inputs(sp: pd.DataFrame, pages: pd.DataFrame, *, score: Any, tru
     folds = np.array([oof_search_fold(g) for g in rows["search_group"].astype(str)])
     scores = fit_fold_scores(rows, folds, OOF_FOLDS)
     groups = {k: frozenset(rows.loc[folds != k, "search_group"].astype(str)) for k in range(OOF_FOLDS)}
+    score_sites = {k: frozenset(rows.loc[folds != k, "site"].astype(str)) for k in range(OOF_FOLDS)}
     _note(log, f"strength folds fitted on {len(rows)} training page rows")
     if rehearsal:
         from .strength import REHEARSAL_SPLIT
@@ -1579,11 +1656,16 @@ def build_model_inputs(sp: pd.DataFrame, pages: pd.DataFrame, *, score: Any, tru
             "strength_training_rows": int(len(rows)), "trust_labels": {k: meta.get(k) for k in ("key", "rows", "pages",
                                                                                                   "latest_page_date", "sha256")},
             "trust_folds": record, "folds": OOF_FOLDS, "seed": OOF_SEED,
-            "scheme": ("training and validation rows: strength from the score fitted without their search fold, trust "
-                       "from the model fitted without their search fold and their site fold; test rows: the main models")}
+            "scheme": ("training and validation rows: strength from the score fitted without their search fold (their "
+                       "own site's pages on other searches are in it), trust from the model fitted without their search "
+                       "fold and their site fold; test rows: the main models (the main strength score's training pages "
+                       "hold held-out sites on training searches)"),
+            "main_score_sites_from": ("the sites on the training page rows of the split in force (strength_training_rows), "
+                                      "the rows the main score's procedure is fitted on")}
     return ModelInputs(main_score=score, main_trust=trust_model, main_excludes_search=split.search_is_test,
                        main_excludes_site=split.site_is_test, fold_scores=scores, fold_score_groups=groups,
-                       fold_trust=trust_folds, folds=OOF_FOLDS, labels_end=split.cutoff - timedelta(days=1), record=full)
+                       fold_trust=trust_folds, folds=OOF_FOLDS, labels_end=split.cutoff - timedelta(days=1), record=full,
+                       fold_score_sites=score_sites, main_score_sites=frozenset(rows["site"].astype(str)))
 
 
 def prereg_panel(design: PanelDesign = PanelDesign(), *, root: str | Path | None = None,
@@ -1662,8 +1744,20 @@ def _range_block(frame: pd.DataFrame) -> dict[str, Any]:
     if len(frame) == 0 or "range_low" not in frame:
         return {"rows": 0, "coverage": None}
     actual = frame["position_out"].astype(int).to_numpy()
-    inside = (frame["range_low"].astype(int).to_numpy() <= actual) & (actual <= frame["range_high"].astype(int).to_numpy())
-    return {"rows": int(len(frame)), "coverage": float(inside.mean())}
+    low, high = frame["range_low"].astype(int).to_numpy(), frame["range_high"].astype(int).to_numpy()
+    inside = (low <= actual) & (actual <= high)
+    return {"rows": int(len(frame)), "coverage": float(inside.mean()), "mean_width": float(np.mean(high - low + 1))}
+
+
+def _range_block_from_dists(dists: np.ndarray, actual: Sequence[int], level: float) -> dict[str, Any]:
+    """_range_block for ranges that are each distribution's own central interval at `level` (no rule applied)."""
+    if len(actual) == 0:
+        return {"rows": 0, "coverage": None}
+    bounds = np.array([central_interval(d, level) for d in dists], dtype=int).reshape(len(actual), 2)
+    real = np.minimum(np.asarray(actual, dtype=int), NT50)
+    inside = (bounds[:, 0] <= real) & (real <= bounds[:, 1])
+    return {"rows": int(len(actual)), "coverage": float(inside.mean()),
+            "mean_width": float(np.mean(bounds[:, 1] - bounds[:, 0] + 1))}
 
 
 def _calibration_kwargs(design: PanelDesign, design_version: int) -> dict[str, Any]:
@@ -1741,6 +1835,8 @@ def _run_panel_body(sp: pd.DataFrame, pages: pd.DataFrame, design: PanelDesign, 
 
     started = datetime.now(timezone.utc)
     models_used = models_for_design(design_version)
+    if design_version >= 2:
+        check_models_match_specs(specs, design_version)
     dirs = rehearsal_model_dirs() if (rehearsal and design_version >= 2) else {}
     score, strength_fc, trust_model = _load_models(log, **models_used, **dirs)
     loaded = model_hashes(model_paths(**models_used, **dirs))
@@ -1874,6 +1970,12 @@ def _run_panel_body(sp: pd.DataFrame, pages: pd.DataFrame, design: PanelDesign, 
                                                                 zip(v, test["position_out"])])) if len(test) else None
                                               for k, v in versions.items()},
                  "range_on_test": _range_block(test),
+                 # The same ranges without the rule for sites new to the search, so a coverage change from the rule
+                 # (an NT50 point mass on those rows) is shown apart from calibration.
+                 "range_on_test_without_new_to_search_rule": (
+                     _range_block_from_dists(updater.distributions(test, test_prior, updater.in_use),
+                                             test["position_out"].astype(int).tolist(), updater.range_level)
+                     if segment is not None else None),
                  "range_on_validation_at_updater_level": {
                      "rows": int(len(val)),
                      "coverage": range_coverage(updater.distributions(val, val_prior), val["position_out"].to_numpy(),
@@ -1907,7 +2009,10 @@ def _run_panel_body(sp: pd.DataFrame, pages: pd.DataFrame, design: PanelDesign, 
     clock = _tick("C", clock)
 
     # ---- every report is written only now, after every test is scored
+    provisional = None if rehearsal else held_out_already_read(asdict(split), design_version)
+
     def _write(key: str, report: Mapping[str, Any]) -> dict[str, Any]:
+        report = mark_provisional(dict(report), provisional)
         extra = {"models_loaded": loaded, "design_version": design_version, "rehearsal": rehearsal,
                  "git": (git_info or {}).get(key), "git_checked": bool(git_info), "stage_seconds": dict(stage_times),
                  **panel_info}
@@ -1924,6 +2029,7 @@ def _run_panel_body(sp: pd.DataFrame, pages: pd.DataFrame, design: PanelDesign, 
         results["B"]["summary"] = pending["B"].get("summary")
     results["C"]["summary"] = pending["C"].get("summary")
     results["stage_seconds"] = stage_times
+    results["provisional"] = provisional
     return results
 
 

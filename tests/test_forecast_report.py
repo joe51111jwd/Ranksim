@@ -15,6 +15,7 @@ from aeo.ranksim.forecast.config import NT50
 from aeo.ranksim.forecast.grading import GradedCell
 from aeo.ranksim.forecast.markers import evaluate_marker
 from aeo.ranksim.forecast.report import (
+    FittedBandPrior,
     MemoryCell,
     held_out_records,
     render_text,
@@ -202,6 +203,33 @@ def test_report_from_cells_checks_the_band_prior_on_the_split_unit():
     with pytest.raises(ScoreboardRefusal, match="search"):
         report_from_cells(held, source="backtest", stage="upload", as_of=date(2026, 12, 21), model_version="m1",
                           band_prior_training=same_search, band_prior_unit="search")
+
+
+def test_an_already_fitted_band_prior_is_used_and_its_source_is_printed_in_one_line(split_board):
+    board, _ = split_board
+    fitted = FittedBandPrior({"all": NT50, "easy": 5}, frozenset({"panelsite.example"}), frozenset({"g1"}),
+                             "The band prior comes from bundle b1, fitted on its own training rows.")
+    report = stage_report(board, source="backtest", stage="d30", as_of=date(2027, 3, 15), band_prior_fitted=fitted)
+    assert report["band_prior"] == {"all": NT50, "easy": 5}
+    assert "band_prior" in report["headline"]["baselines"] and "band_prior" not in report["baselines_missing"]
+    assert report["band_prior_source"] == fitted.source
+    assert render_text(report).count("comes from bundle b1") == 1
+
+
+def test_an_already_fitted_band_prior_whose_fitting_site_is_graded_here_is_refused(split_board):
+    board, _ = split_board
+    fitted = FittedBandPrior({"all": 5}, frozenset({"held3.example"}), frozenset(), "a bundle")
+    with pytest.raises(ScoreboardRefusal, match="fitted on training data only"):
+        stage_report(board, source="backtest", stage="d30", as_of=date(2027, 3, 15), band_prior_fitted=fitted)
+
+
+def test_a_fitted_band_prior_and_training_cells_together_are_refused(split_board):
+    board, _ = split_board
+    fitted = FittedBandPrior({"all": 5}, frozenset(), frozenset(), "a bundle")
+    training = [GradedCell(site="t.example", search="q", point=5, actual=5)]
+    with pytest.raises(ScoreboardRefusal, match="not both"):
+        stage_report(board, source="backtest", stage="d30", as_of=date(2027, 3, 15), band_prior_fitted=fitted,
+                     band_prior_training=training)
 
 
 def test_a_synthetic_report_from_cells_is_labeled_synthetic_and_never_passes():

@@ -80,6 +80,8 @@ from .features import (
     finish_scored_run,
     freeze_prereg,
     frozen_reason,
+    held_out_already_read,
+    mark_provisional,
     prereg_file,
     search_group,
     stable_share,
@@ -674,6 +676,8 @@ def prereg_payload(split: SplitRule = DEFAULT_SPLIT, *, version: int = 1, reason
         payload["stand_in"] = ("the report is marked stand_in: " + STAND_IN_REASON
                                + "; markers.evaluate_marker never passes or fails marker 2 on it")
         payload["panel"] = "data/forecast/cache/panel rebuilt with the fixed parsers (see PANEL_VERSIONS.md)"
+        payload["held_out_rows"] = held_out_already_read(split, version) or ("fresh: the split's cutoff is after every "
+                                                                            "date design version 1 graded")
     return payload
 
 
@@ -1072,6 +1076,10 @@ def run(split: SplitRule = DEFAULT_SPLIT, *, out_dir: str | Path | None = None, 
     }
     from .strength import _clean, _json_default
 
+    provisional = None if rehearsal else held_out_already_read(split, version)
+    if provisional:  # held-out rows version 1 already scored and read: marker 2 passes or fails nothing on them
+        report["marker2_text_free"] = f"PROVISIONAL: {provisional['reason']} {report['marker2_text_free']}"
+        report = mark_provisional(report, provisional)
     report = _clean(report)
     if context is None:  # rehearsal: rerunnable, under the cache only
         folder.mkdir(parents=True, exist_ok=True)

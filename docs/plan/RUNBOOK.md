@@ -180,6 +180,26 @@ python -m aeo.ranksim forecast due
 
 It lists every seed and pilot stage due today or in the next 3 days, with the command to run for each, and every stage that was missed. Free. Exit code 1 when a stage was missed.
 
+### Look new sites up in the strength lists
+
+A brand-new site is in no stored strength list, and neither are many of the sites on its result pages. Before each forecast, after that day's clean reading is assembled, look them up:
+
+```
+python -m aeo.ranksim forecast strength sync --site one.com --date 2026-11-30
+python -m aeo.ranksim forecast strength sync --site one.com --date 2026-11-30 --fetch
+python -m aeo.ranksim forecast strength sync --all-due --fetch
+```
+
+1. It collects the site and every site on the clean readings the forecast for that date would use (the same pages `upload` and `update` read).
+2. For each list (Common Crawl domain ranks, the Chrome UX Report top list, the Tranco list) it names the release published on or before the date, never a later one, and how many sites still need a lookup in it.
+3. Without `--fetch` it is a dry run and downloads nothing. It says what a fetch would download: the Common Crawl ranks file is large (about 2.5 GB, streamed once and not stored, tens of minutes); a CrUX month is about 9 MB; a Tranco list is about 23 MB. A file already on disk is read again, not downloaded.
+4. With `--fetch` it downloads these free public files, resumes a broken download, and marks a site as looked up only when the whole release was read. A failed or cut download marks nothing and says FAILED; run the same command again to resume. Exit code 1 when a list failed.
+5. When the newest list for the date is not published yet (lists come out weeks after their data), it uses the newest one on or before the date. The forecast then says how many days old each list is.
+6. Open PageRank is not looked up: its file holds only today's top sites, so it is never a model input.
+7. `--all-due` takes every site whose upload forecast is due in the next 3 days and every site whose stage forecast is due today or in its grace day. With `--all-due`, `--date` is today.
+
+What a missing list value means. A site that was looked up in a list release and is not in it gets that list's floor, the value of a site weaker than every listed site. That is a real fact: the site is not listed. A site that was never looked up in a release has a missing value (NaN), never zero and never the floor, because nobody checked. `upload` and `update` print one line naming the exact `strength sync` command when sites on the page were never looked up, and each forecast line still says how many model features are missing.
+
 ### What a missed stage day means
 
 A stage forecast must be dated on or before its stage day and written within one day of its date. On the day after the stage day `due` still lists it, and `upload` or `update` dates it on the stage day. Once that day has passed with no forecast, the stage is missed for that site. `due`, `status`, `upload` and `update` say MISSED and nothing is recorded. It is never backfilled, because a forecast made later has seen later readings and is a shorter lead. Report it as missing. The next stage still counts.
@@ -269,10 +289,10 @@ python -m aeo.ranksim forecast train --data paid --name paid-v1
 python -m aeo.ranksim forecast marker --number 2
 ```
 
-1. `train` fits the trust, placement and updater models on one source and writes a bundle to `data/forecast/models/<name>/` with a manifest: what it was trained on, the label (REAL or SYNTHETIC), whether its cells include searches a site never ranked for, the training cutoff, the features and a sha256 over every file. Loading a bundle checks the hash. A bundle is never replaced: a second run with the same `--name` is refused with exit code 2.
+1. `train` fits the trust, placement and updater models on one source and writes a bundle to `data/forecast/models/<name>/` with a manifest: what it was trained on, the label (REAL or SYNTHETIC), whether its cells include searches a site never ranked for, the training cutoff, the features, the band prior fitted on its own training rows (step 6) and a sha256 over every file. Loading a bundle checks the hash. A bundle is never replaced: a second run with the same `--name` is refused with exit code 2.
 2. `--data panel` reads the panel frame under `data/forecast/cache/features/` (build it first with `python -m aeo.ranksim.forecast.features build-panel`), keeps the training side of the frozen split only, and uses the frozen trust model. The panel only holds sites that appeared on a search, so this bundle is conditional and every upload forecast made with it passes the appearance gate (step 6). It prints the marker 2 verdict read from the scored trust report.
 3. `--data synthetic` trains on the simulated world in about 30 seconds. Its bundle is SYNTHETIC and is refused for any seed or pilot site. It prints a SYNTHETIC marker 2 check that can never pass.
-4. `--data paid` needs the three paid pulls of step 4 on disk. Without them it names the missing pulls and the command for each, trains nothing and exits with code 1. With them it still exits with code 1 today: the step that joins the pulls into upload cells is not built yet.
+4. `--data paid` trains on past new sites: the cell table in `data/forecast/cache/trainingset/cells/` (written by `paid cells`, step 6) joined with the past result pages in `data/forecast/cache/panel_labs/` (written by `pull past-pages`). Pass `--frame <folder>` to use another training-set folder. Without the pages or the cell table it names what is missing and the command for each, trains nothing and exits with code 1. The traffic curves and exact positions are not needed by this bundle: they are for the trust model. With both inputs it joins the train split only into upload cells, searches where a site never ranked included, and writes a bundle that forecasts with no appearance gate. It prints the kept cells, every dropped cell by reason, the share of never-ranked cells and the content match backend. The cohort backtest part of step 6 has the details.
 5. `marker --number 2` reads the newest scored report under `evals/forecast/trust` and judges it. Nothing is rescored. It prints the pair accuracy, the gain over link count alone (the plan's measure, which decides the verdict) and the gain over the best single measure (stricter, printed beside it). The free panel version is a stand-in for the plan's 20,000 new sites, so it prints NOT A MARKER RESULT (STAND-IN) with what the bars would give, and exits with code 1. On 22 November that was 61.0% of pairs against the 70% bar. When no scored report exists it says so and exits with code 1.
 
 ## Step 6. Weeks 3 and 4. Scoring parts and the backtest, marker 3
@@ -293,9 +313,10 @@ python -m aeo.ranksim forecast backtest run --reason "<why the designs are looke
 
 It first prints that this is another look at the same held-out rows. The first run freezes the next design version (prereg-v2.json beside the old files, with the reason inside), scores nothing and exits with code 1. Commit and push those files, then run the same command with the same reason: it scores the designs once and writes report-v2.json beside report-v1.json. It refuses a dirty source tree, a design that is not committed and pushed, and a design already scored. Free, but ask the lead before running it.
 
-The upload forecast. Run it on or before each site's launch day, after a clean reading of its searches:
+The upload forecast. Run it on or before each site's launch day, after a clean reading of its searches and after `strength sync` (step 3):
 
 ```
+python -m aeo.ranksim forecast strength sync --site one.com --fetch
 python -m aeo.ranksim forecast upload --site one.com
 python -m aeo.ranksim forecast upload --site one.com --record
 python -m aeo.ranksim forecast upload --all-due --record
@@ -304,8 +325,9 @@ python -m aeo.ranksim forecast upload --all-due --record
 1. Without `--record` it is a dry run. It prints each forecast (point, range, label and model version, all PREDICTED), the appearance gate, the searches it skipped and why, and how many forecasts it would record. It records nothing. With `--record` the forecasts are frozen on the scoreboard. Free.
 2. The appearance gate. The REAL bundles trained so far only know sites that appeared on a search. A new site has appeared nowhere, so each forecast is the chance the site is in the top 50 on day 90 times where it would land if it did, with the rest on NOT IN TOP 50. That chance comes from at least 100 graded seed and pilot outcomes from at least 10 sites once they exist. Until then it is a prior that was not fitted, 0.16, worked out from published numbers in `forecasting.py`. With that prior nearly every point is NOT IN TOP 50, and the command says so in one sentence. That is the honest answer until the paid training data exists.
 3. The bundle is the newest one under `data/forecast/models/` unless you pass `--bundle <name>`. A SYNTHETIC bundle is refused for a seed or pilot site. A bundle trained on outcomes later than the forecast date is refused.
-4. A search with no clean reading on or before the date that is not degraded is skipped and named. It is never called NOT IN TOP 50. Each forecast line also says how many model features are missing. A brand-new site is usually absent from the stored strength lists, so most of its strength features are missing (NaN, never zero). A cell that already has a forecast at that stage is listed and left alone: a forecast is never replaced.
-5. What it refuses and what to do: an upload dated after launch (too late, it cannot be made), a seed or pilot forecast more than one day after its date (run it on the day), an unregistered site (run `seeds register`), no bundle (run `train`). Exit code 1 when any search was skipped, refused or blocked, 2 when the command was used wrong.
+4. A search with no clean reading on or before the date that is not degraded is skipped and named. It is never called NOT IN TOP 50. Each forecast line also says how many model features are missing. Until `strength sync --fetch` has run for the date, a brand-new site and many sites on its pages were never looked up in the strength lists, so most strength features are missing (NaN, never zero). The command then prints one line with the exact `strength sync` command to run. After the sync, a site that is not in a list gets the list's floor. A line also says, for each list, how many days before the date its release was published. A cell that already has a forecast at that stage is listed and left alone: a forecast is never replaced.
+5. Content match. A bundle trained with the content match score as a feature (the paid training set) gets the live score from the site's own page text only when the live scorer ran the same backend the bundle was trained on. Otherwise that input is missing (NaN) and the forecast's notes say why. Other bundles never use the score; it is only recorded.
+6. What it refuses and what to do: an upload dated after launch (too late, it cannot be made), a seed or pilot forecast more than one day after its date (run it on the day), an unregistered site (run `seeds register`), no bundle (run `train`). Exit code 1 when any search was skipped, refused or blocked, 2 when the command was used wrong.
 
 Then judge marker 3:
 
@@ -316,13 +338,62 @@ python -m aeo.ranksim forecast marker --number 3 --source backtest --as-of 2026-
 
 `report` prints the hit rate, the baselines, page one precision and recall, and every rate under 30 forecasts as NOT MEASURABLE. `marker` prints the verdict. Exit code 0 only when the marker passed. Free. The frozen backtests write their reports to `evals/forecast/backtest/`, not to the scoreboard, so `report --source backtest` finds no graded forecast until backtest forecasts are recorded on the scoreboard, and says so.
 
-The spec requires four baselines on the same forecasts: always NT50, persistence, the band prior by difficulty and site strength only. The band prior is fitted on graded backtest forecasts of the training split, on sites not graded in the report; when there are none, the report says the band prior is missing and why. The site strength only point is stored with every forecast `upload` and `update` make, from the bundle's strength-only model on the same date and through the same gate. Forecasts made another way have none, and the report says how many lack it. Markers 3 to 5 cannot pass while a baseline is missing.
+The spec requires four baselines on the same forecasts: always NT50, persistence, the band prior by difficulty and site strength only. Where the band prior comes from:
+
+1. Seed and pilot reports use the band prior stored in the model bundle that made the forecasts (found from the forecasts' model version). Every bundle trained from now on fits it at training time on its own training rows only: per difficulty third, the one point that is a hit most often under the grading rule. The bundle stores the table, the cut points of the difficulty thirds, the number of rows, the grading rule and one sentence saying which rows it came from. For a panel bundle those rows are sites that appeared on the search, so the band prior is conditional on appearing, and the sentence says so.
+2. The report prints one line saying where the band prior came from.
+3. If one of the bundle's training sites is graded in the same report, the report is refused.
+4. If the forecasts come from more than one bundle, the report says so and uses none, rather than mix. A bundle trained before band priors were stored still works, and the report says the band prior is missing.
+5. Backtest reports, and seed reports whose forecasts were not made by a model bundle, fit it on graded backtest forecasts of the training split, on sites not graded in the report. When there are none, the report says the band prior is missing and why. The site strength only point is stored with every forecast `upload` and `update` make, from the bundle's strength-only model on the same date and through the same gate. Forecasts made another way have none, and the report says how many lack it. Markers 3 to 5 cannot pass while a baseline is missing.
+
+### The cohort backtest on past new sites (the plan's marker 3)
+
+This is the plan's real test of marker 3: upload-day forecasts for past new sites, trained on some of them and graded on the others, searches where a site never ranked included. It needs the paid past result pages. Everything below the pulls is free and calls no service.
+
+```
+python -m aeo.ranksim forecast pull past-pages --universe data/forecast/cache/universe/universe_plumbing_US.parquet --months 30 --execute
+python -m aeo.ranksim forecast paid cells --cohort data/forecast/cache/newsites/cohort_nov25.parquet --pages data/forecast/cache/newsites/pages_nov25.jsonl --universe data/forecast/cache/universe/universe_plumbing_US.parquet
+python -m aeo.ranksim forecast paid join
+python -m aeo.ranksim forecast paid train --name paid-v1
+python -m aeo.ranksim forecast cohort-backtest freeze --bundle paid-v1
+git add evals/forecast/backtest/cohort-upload/prereg.json && git commit && git push
+python -m aeo.ranksim forecast cohort-backtest score --bundle paid-v1
+```
+
+1. `pull past-pages` (step 4) is the only paid step. Run its dry run first, with its $1 sample and an approval. The pages go to `data/forecast/cache/panel_labs/`. Use `--months 30` when cohort sites started 24 to 30 months ago (PLAN_AUDIT B9).
+2. `paid cells` writes the training-set folder `data/forecast/cache/trainingset/cells/`: the target searches of each kept cohort site, picked by the frozen label-blind rule from its launch-era page text, the frozen split (by launch month, then by site, no search group on both sides), the universe and the launch page text. It reads no ranking. It prints the split counts and how many sites had no launch text or no launch date. Repeat `--universe` for more niches. It never replaces a folder that holds a cell table: pass a new `--out`.
+3. `paid join` joins the train split with its past result pages and prints what it kept and why each other cell was dropped. Nothing is trained or written. The rules are frozen in `paidset.JoinRule` and hashed into every bundle and design. The forecast date is the estimated launch date. The input page is the latest page dated on or before the earliest plausible launch date (the launch date minus its uncertainty), at most 62 days old, not at poison risk and 50 deep. The outcome is the site's position on the page closest to day 90, between day 60 and day 120. A site missing from a page at least 50 deep is NOT IN TOP 50, a REAL observation, and the cell is kept. A site missing from a shorter page is unknown and the cell is dropped. A launch date more uncertain than 45 days, or with no stated uncertainty, drops the cell. A training outcome dated on or after the earliest test forecast date drops the cell, so the model never learns from a later fact. Brand searches are counted and left out of training.
+4. `paid train --name <name>` does the join and fits the bundle (`train --data paid` does the same on the default folders). It never reads a test row. It prints what `train` prints plus the join counts. A bundle from `paid synthetic` tables is SYNTHETIC and every line says so.
+5. `cohort-backtest freeze --bundle <name>` writes `evals/forecast/backtest/cohort-upload/prereg.json`. It holds the test rows (their count and a hash of their keys), the split and target rule hashes, the panel fingerprint, the join rule, the bundle hash and its features, the band prior fitted on training cells, the grading rule, the four baselines and the hash of the source code. It reads no test outcome and scores nothing.
+6. Commit and push the prereg file and keep the source tree under `src/aeo/ranksim/forecast` clean.
+7. `cohort-backtest score --bundle <name>` scores the test split once and writes `report.json` and `manifest-v1.json` beside the prereg. They are never overwritten. It prints the hit rate with its site cluster interval, the four baselines (always NOT IN TOP 50, persistence on the input page, the band prior, site strength only), the skill over the best one, page one precision and recall (NOT MEASURABLE under 30 cases), range coverage, the share of never-ranked cells, every dropped test cell by reason, and the marker 3 verdict from `markers.evaluate_marker`. On REAL tables this is the plan's marker 3, not a stand-in. Exit code 0 only when marker 3 passed.
+
+When it refuses, and what to do:
+
+1. "is not committed", "differs from HEAD" or "on no remote branch": commit and push the prereg file, then score again.
+2. "the forecast source differs" or "the forecast source code changed after": the code changed after the freeze. Commit it, then freeze a new design version: `cohort-backtest freeze --bundle <name> --design-version 2 --reason "<why>"`, commit and push it, and score with the same `--design-version 2`.
+3. "does not match the code's design": the cells, the pages, the bundle or the join rule changed after the freeze. Freeze a new design version with the reason.
+4. "was already scored": a design version is scored once. A second look needs a new version with its reason, and is reported as a second look.
+5. "was trained on another cell table" or "labels are never mixed": train the bundle again on the same folder, and never mix REAL and SYNTHETIC files.
+6. "learned content_match from ... scores": pass `--content-backend` with the backend the bundle was trained on.
+
+To see the whole path work first, use the SYNTHETIC tables. Nothing they produce is accuracy, every line says SYNTHETIC and the marker result is NOT A MARKER RESULT (SYNTHETIC). A SYNTHETIC design is written only under `--root`, and only a SYNTHETIC run may skip the commit and push checks:
+
+```
+python -m aeo.ranksim forecast paid synthetic --niches 3 --searches-per-niche 60 --new-sites 45
+python -m aeo.ranksim forecast paid train --set data/forecast/cache/trainingset/synthetic --name syn-paid
+python -m aeo.ranksim forecast cohort-backtest freeze --set data/forecast/cache/trainingset/synthetic --bundle syn-paid --root /tmp/designs
+python -m aeo.ranksim forecast cohort-backtest score --set data/forecast/cache/trainingset/synthetic --bundle syn-paid --root /tmp/designs --skip-git-check
+```
+
+The synthetic run takes about a minute. The real join builds the live features for every cell, about a tenth of a second each, so 20,000 cells take about 40 minutes.
 
 ## Step 7. Weeks 5 to 8. Early reading updater, marker 4
 
-The stage forecasts. Run each on its stage day (day 7, 14, 30 and 60 after launch), after that day's clean reading is assembled:
+The stage forecasts. Run each on its stage day (day 7, 14, 30 and 60 after launch), after that day's clean reading is assembled and after the strength sync for that day (new sites appear on the pages as they move):
 
 ```
+python -m aeo.ranksim forecast strength sync --all-due --fetch
 python -m aeo.ranksim forecast update --site one.com --stage d7
 python -m aeo.ranksim forecast update --site one.com --stage d7 --record
 python -m aeo.ranksim forecast update --all-due --stage d30 --record
@@ -332,7 +403,7 @@ It works like `upload`: a dry run without `--record`, the same gate, the same sk
 
 The gate also holds after the update. The updater of a conditional bundle learned from sites that appeared, so on a search where no clean reading on or before the date has shown the site inside the top 50, the updated chance of the top 50 is capped at the gate value. Once a reading shows the site inside the top 50, the updater's answer is used as it is. The model version says so (`stage-cap-gate-...`). A bundle with no updater is refused for a stage forecast, because the forecast would ignore the readings.
 
-`--all-due` takes only sites whose stage day is today, or was yesterday (the grace day, dated on the stage day), so every stage forecast it records is dated on its stage day and uses that day's reading. A site whose stage day is still to come is listed as "Not yet" and nothing is built for it, because a forecast recorded early could never be replaced. A site whose stage was missed is listed as MISSED and the command exits with code 1. It is safe to run the `--all-due` line every day from a scheduler. `due` prints the command to run now only for stages due today or in grace, and "Run it on <date>" for later ones.
+`--all-due` takes only sites whose stage day is today, or was yesterday (the grace day, dated on the stage day), so every stage forecast it records is dated on its stage day and uses that day's reading. A site whose stage day is still to come is listed as "Not yet" and nothing is built for it, because a forecast recorded early could never be replaced. A site whose stage was missed is listed as MISSED and the command exits with code 1. It is safe to run the `--all-due` line every day from a scheduler. With `--all-due`, `--date` is the calendar's today, not the forecast date: on the grace day, `--date <grace day>` still dates each stage forecast on its stage day and records it. With `--site`, `--date` is the forecast date. `due` prints the command to run now only for stages due today or in grace, and "Run it on <date>" for later ones.
 
 Judge marker 4 on 22 January:
 
@@ -376,11 +447,12 @@ python -m aeo.ranksim forecast export
 python -m aeo.ranksim forecast verify
 ```
 
-Seed, pilot and backtest results are always reported apart. Marker 5 passes only on real day 90 outcomes.
+Seed, pilot and backtest results are always reported apart. Marker 5 passes only on real day 90 outcomes. The seed and pilot reports print one line saying which bundle the band prior came from (step 6).
 
 ## When something goes wrong
 
 1. A paid command says Refused by the budget guard. Either the approved amount is used up or the $1 sample of that kind is not recorded yet. The message names the command to run, for example `python -m aeo.ranksim forecast budget approve --amount <USD> --by <name> --note <why>`.
 2. `verify` says the chains do not verify, or the export is not a prefix of the database. Stop. Do not record or grade anything. Tell the engineer what it printed.
 3. A command says DataForSEO needs a login. Set `DATAFORSEO_LOGIN` and `DATAFORSEO_PASSWORD` and run it again.
-4. `import` rebuilds an empty scoreboard from a committed export: `python -m aeo.ranksim forecast import --from evals/scoreboard`. It refuses a scoreboard that already holds rows.
+4. `train`, `backtest`, `upload`, `update`, `due` or `strength sync` says a network request failed. That is one sentence and exit code 1. Nothing more was done. Check the connection and run the same command again.
+5. `import` rebuilds an empty scoreboard from a committed export: `python -m aeo.ranksim forecast import --from evals/scoreboard`. It refuses a scoreboard that already holds rows.

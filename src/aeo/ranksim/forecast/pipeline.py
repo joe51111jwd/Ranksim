@@ -88,6 +88,7 @@ from .config import (
     STAGE_DAYS,
     TOP_DEPTH,
     ForecastPaths,
+    forecast_paths,
 )
 from .noise import (
     MARKER1_SAMPLE_SEED,
@@ -1663,6 +1664,20 @@ def band_prior_training(
     return cells, why
 
 
+def scoreboard_paths(scoreboard: Scoreboard) -> ForecastPaths:
+    """The data folder of a scoreboard kept at <folder>/scoreboard.db (the default layout and --dir), else the default.
+
+    The model bundles live in that folder's models/. A scoreboard elsewhere (RANKSIM_SCOREBOARD_URL)
+    falls back to forecast_paths(), which honours RANKSIM_FORECAST_DIR.
+    """
+    url = str(getattr(scoreboard, "url", "") or "")
+    if url.startswith("sqlite:///"):
+        file = Path(url.removeprefix("sqlite:///"))
+        if file.name == "scoreboard.db":
+            return ForecastPaths(file.parent)
+    return forecast_paths()
+
+
 def stage_marker(
     scoreboard: Scoreboard,
     *,
@@ -1672,33 +1687,58 @@ def stage_marker(
     model_version: str | None = None,
     training_cells: Sequence[Any] | None = None,
     training_note: str | None = None,
+    paths: ForecastPaths | None = None,
 ) -> dict[str, Any]:
     """The stage report for one source and stage, and the marker judged on it when the stage has one (3, 4 or 5).
 
     All four spec baselines are handed to report.stage_report when they can be built:
-    always NT50 and persistence (always), the band prior by difficulty fitted on graded training
-    cells (`band_prior_training`, or `training_cells` given by the caller with `training_note`,
-    for example a bundle's own training cells; sites must differ from the graded ones, which the
-    report checks), and the site strength only points each forecast stored when it was made
-    (`site_strength_points`). `baseline_notes` says in plain sentences where each came from or why
-    it is missing; the report and the marker never pass while one is missing.
+    always NT50 and persistence (always), the band prior by difficulty, and the site strength only
+    points each forecast stored when it was made (`site_strength_points`).
+
+    The band prior. Given `training_cells` (with `training_note`), it is fitted on those. For a seed
+    or pilot report whose forecasts were made by a live model bundle it is the band prior stored in
+    that bundle (forecasting.report_band_prior, found from the forecasts' model version under
+    `paths`, default the folder that holds the scoreboard): fitted at training time on that bundle's
+    own training rows. Forecasts from more than one bundle, or an old bundle without one, leave it
+    missing. Otherwise (backtest and synthetic reports, and forecasts not made by a live bundle) it
+    is fitted on graded training-split cells (`band_prior_training`).
+    In every case a fitting site graded in the report is refused. `baseline_notes` says in plain
+    sentences where each baseline came from or why it is missing; the report and the marker never
+    pass while one is missing.
     """
+    from .forecasting import bundle_ref, report_band_prior
+
     scoreboard.require_verified()
+    training: list[Any] = []
+    fitted = None
+    records = (scoreboard.graded_records(source, stage, as_of, "original", model_version=model_version)
+               if training_cells is None and source in ("seed", "pilot") else [])
     if training_cells is not None:
         training = list(training_cells)
         band_note = training_note or (f"The band prior by difficulty is fitted on {len(training)} training cells given "
                                       "by the caller.")
+    elif any(bundle_ref(r.model_version) for r in records):
+        found = report_band_prior(records, paths or scoreboard_paths(scoreboard))
+        band_note = found["note"]
+        if found["table"] is not None:
+            fitted = report_module.FittedBandPrior(found["table"], frozenset(found["sites"]),
+                                                   frozenset(found["search_groups"]), band_note)
     else:
         training, band_note = band_prior_training(scoreboard, source=source, stage=stage, as_of=as_of,
                                                   model_version=model_version)
     strength, strength_note = site_strength_points(scoreboard, source=source, stage=stage, as_of=as_of,
                                                    model_version=model_version)
     report = report_module.stage_report(scoreboard, source=source, stage=stage, as_of=as_of, model_version=model_version,
-                                        band_prior_training=training or None,
+                                        band_prior_training=training or None, band_prior_fitted=fitted,
                                         extra_baselines={"site_strength": strength} if strength is not None else None)
     notes = [band_note, strength_note]
     report["baseline_notes"] = notes
-    report["notes"] = list(report.get("notes") or []) + notes
+    if report.get("band_prior") is not None:
+        report["band_prior_source"] = band_note  # printed once, as the band prior's own line
+        report["notes"] = list(report.get("notes") or []) + [strength_note]
+    else:
+        report["band_prior_source"] = None
+        report["notes"] = list(report.get("notes") or []) + notes
     number = STAGE_MARKERS.get(stage)
     evaluation = markers_module.evaluate_marker(number, report) if number is not None else None
     if evaluation is not None:

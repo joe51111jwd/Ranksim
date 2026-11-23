@@ -1395,6 +1395,159 @@ def coverage_report(sites: Iterable[str], root: str | Path | None = None) -> lis
     return rows
 
 
+# ---------------------------------------------------------------------------
+# Complete reads only (forecast strength sync)
+#
+# A site is marked searched in a release only when the release was read to its end. A stream
+# that stops early would otherwise mark sites searched that were never compared with the rest of
+# the file, and absence would then look like the list's floor.
+
+
+class IncompleteRead(ValueError):
+    """A list file or stream ended before its end. Nothing read from it is marked searched."""
+
+
+def stream_gzip_lines_strict(chunks: Iterable[bytes]) -> Iterator[bytes]:
+    """Lines of a gzip stream, like stream_gzip_lines, but IncompleteRead when it stops inside a member.
+
+    An empty stream is incomplete too: a release file always holds at least one member.
+    """
+    decoder = zlib.decompressobj(wbits=47)
+    pending = b""
+    inside = False
+    members = 0
+    for chunk in chunks:
+        data = chunk
+        while data:
+            inside = True
+            out = decoder.decompress(data)
+            if out:
+                pending += out
+                if b"\n" in pending:
+                    lines = pending.split(b"\n")
+                    pending = lines.pop()
+                    yield from lines
+            if decoder.eof:
+                members += 1
+                inside = False
+                data = decoder.unused_data
+                decoder = zlib.decompressobj(wbits=47)
+            else:
+                data = b""
+    if inside or members == 0:
+        raise IncompleteRead("the gzip stream ended before its end marker")
+    if pending:
+        yield from pending.split(b"\n")
+
+
+def materialise_cc_release_strict(cc: CommonCrawlDomainRanks, sites: Iterable[str], release: str) -> dict[str, Any]:
+    """CommonCrawlDomainRanks.materialise for one release, marking sites searched only after a complete read.
+
+    The stream must reach the gzip end marker and, when the server gave a length, every byte of it.
+    On IncompleteRead, an HTTP error or a broken stream nothing is written: the sites stay unsearched.
+    """
+    wanted = wanted_sites(sites)
+    known = cc.releases()
+    if release not in known:
+        raise ValueError(f"unknown Common Crawl release {release}")
+    parquet_path, searched_path = cc._paths(release)
+    done = _read_searched(searched_path)
+    missing = wanted - done
+    if not missing:
+        return {"status": "cached", "asked": len(wanted), "streamed_bytes": 0, "seconds": 0.0}
+    started = time.monotonic()
+    stream = _ResumingStream(cc._http(), known[release]["url"], log=cc.log)
+    wanted_rev = {reverse_domain(site).encode("utf-8") for site in missing}
+    rows: list[dict[str, Any]] = []
+    for domain, hc_pos, hc_val, pr_pos, pr_val, n_hosts in filter_rank_lines(stream_gzip_lines_strict(stream), wanted_rev):
+        rows.append({"site": domain, "harmonicc_pos": hc_pos, "harmonicc_val": hc_val,
+                     "pr_pos": pr_pos, "pr_val": pr_val, "n_hosts": n_hosts})
+    if stream.total is not None and stream.offset < stream.total:
+        raise IncompleteRead(f"{release}: {stream.offset} of {stream.total} bytes were read")
+    old = pq.read_table(parquet_path) if parquet_path.exists() else None
+    _write_parquet_atomic(_merge_rows(old, rows, CC_SCHEMA), parquet_path)
+    _write_searched(searched_path, done | missing)
+    seconds = time.monotonic() - started
+    record_source(cc.cache_dir, release, {
+        "url": known[release]["url"],
+        "fetched_at": utc_iso(datetime.now(timezone.utc)),
+        "bytes_streamed": stream.offset,
+        "sha256_of_stream": stream.sha256.hexdigest(),
+        "last_modified": stream.last_modified,
+        "published_used": known[release]["published"].isoformat(),
+        "sites_searched_total": len(done | missing),
+        "read_to_end": True,
+    })
+    cc._loaded.pop(release, None)
+    return {"status": "streamed", "asked": len(missing), "found": len(rows), "streamed_bytes": stream.offset,
+            "seconds": round(seconds, 1)}
+
+
+def gzip_file_complete(path: str | Path) -> None:
+    """Read a local gzip file to its end. IncompleteRead when it is cut short or is not gzip."""
+    try:
+        with gzip.open(path, "rb") as handle:
+            while handle.read(CHUNK_BYTES):
+                pass
+    except (EOFError, zlib.error, OSError) as error:
+        raise IncompleteRead(f"{path} is not a complete gzip file ({error})") from error
+
+
+def tranco_file_complete(path: str | Path, expected_rows: int | None = None) -> int:
+    """Check a downloaded Tranco CSV: ranks run 1, 2, 3 ... with no gap, and `expected_rows` rows when given.
+
+    Returns the row count. IncompleteRead otherwise, so a cut download is never read as the whole list.
+    """
+    count = 0
+    with open(path, encoding="utf-8", errors="replace") as handle:
+        for line in handle:
+            text = line.strip()
+            if not text:
+                continue
+            rank_text, _, domain = text.partition(",")
+            if not rank_text.isdigit() or int(rank_text) != count + 1 or not domain:
+                raise IncompleteRead(f"{path}: row {count + 1} is {text[:60]!r}, not rank {count + 1}")
+            count += 1
+    if count == 0 or (expected_rows is not None and count != expected_rows):
+        raise IncompleteRead(f"{path} holds {count} rows, not {expected_rows if expected_rows is not None else 'any'}")
+    return count
+
+
+def crux_candidate_snapshots(as_of: date | str, months_back: int = 24) -> list[Snapshot]:
+    """Every CrUX month from `months_back` months before `as_of` to its own month, published or not yet.
+
+    pick_snapshot over this list gives the newest month published on or before `as_of`; a month
+    published later is in the list and is never picked.
+    """
+    day = as_date(as_of)
+    out = []
+    for step in range(months_back, -1, -1):
+        start = add_months(day, -step)
+        key = start.strftime("%Y%m")
+        out.append(Snapshot(f"crux-{key}", start, add_months(start, 1) - timedelta(days=1), crux_month_published(key),
+                            CRUX_URL.format(month=key)))
+    return out
+
+
+def tranco_candidate_snapshots(as_of: date | str, index: dict[str, dict[str, Any]], months_back: int = 24) -> list[Snapshot]:
+    """The first-of-month Tranco lists from `months_back` months before `as_of` to its own month.
+
+    A list already in the cached API index carries its own created_on date. One not fetched yet is
+    taken as created on its day (every cached list was created that day at 22:00 UTC) and has no id.
+    """
+    day = as_date(as_of)
+    out = []
+    for step in range(months_back, -1, -1):
+        first = add_months(day, -step)
+        record = index.get(first.isoformat())
+        if record and record.get("created_on"):
+            out.append(Snapshot(f"tranco-{record['list_id']}", None, first, as_date(record["created_on"]), record.get("download"),
+                                note=first.isoformat()))
+        else:
+            out.append(Snapshot(f"tranco-for-{first.isoformat()}", None, first, first, None, note=first.isoformat()))
+    return out
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m aeo.ranksim.forecast.sources.strength_lists",
                                      description="Materialise dated site-strength lists for a list of sites.")

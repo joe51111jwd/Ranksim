@@ -48,7 +48,7 @@ import re
 from dataclasses import asdict, dataclass, field, replace
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Callable, Mapping, Sequence
+from typing import Any, Callable, Iterable, Mapping, Sequence
 
 import numpy as np
 import pandas as pd
@@ -57,7 +57,7 @@ from sqlalchemy.orm import Session
 
 from aeo.ranksim.site_history import site_key
 
-from .asof import LeakError, as_date, parse_utc, utc_iso
+from .asof import LeakError, add_months, as_date, parse_utc, utc_iso
 from .chain import canonical_json, sha256_text
 from .config import NT50, OUTCOME_DAY, STAGE_DAYS, TOP_DEPTH, ForecastPaths, forecast_paths
 from .features import MODEL_MEASURES, START_COLUMNS, SYNTHETIC_FOOTPRINT_COLUMNS
@@ -97,7 +97,10 @@ PAGE_FEATURES: tuple[str, ...] = ("pg_sites_top10", "pg_sites_top50", "pg_top10_
 START_FEATURES: tuple[str, ...] = tuple(c for c in START_COLUMNS if c != "sd_young")
 FORM_FEATURES: tuple[str, ...] = SYNTHETIC_FOOTPRINT_COLUMNS
 TRUST_FEATURE = "trust_pred"
-PLACEMENT_FEATURES: tuple[str, ...] = (*STRENGTH_FEATURES, *PAGE_FEATURES, *START_FEATURES, *FORM_FEATURES, TRUST_FEATURE)
+# content_match is kept only when the training rows carry it (the paid training set). The panel and the
+# synthetic world have no score from the site's own page text, so their bundles list it as dropped.
+PLACEMENT_FEATURES: tuple[str, ...] = (*STRENGTH_FEATURES, *PAGE_FEATURES, *START_FEATURES, *FORM_FEATURES, TRUST_FEATURE,
+                                       "content_match")
 STRENGTH_ONLY_FEATURES: tuple[str, ...] = STRENGTH_FEATURES  # the site strength only baseline sees nothing else
 
 # ---------------------------------------------------------------------------
@@ -319,6 +322,7 @@ class ModelBundle:
     strength_only: PlacementModel
     updater: Updater | None
     trust: Any | None
+    band_prior: dict[str, Any] | None = None  # band_prior.json: fitted on this bundle's own training rows only
 
     @property
     def sha256(self) -> str:
@@ -403,8 +407,13 @@ def bundle_hash(manifest: Mapping[str, Any]) -> str:
 
 
 def save_bundle(paths: ForecastPaths, name: str, *, placement: PlacementModel, strength_only: PlacementModel,
-                updater: Updater | None, trust: Any | None, manifest: Mapping[str, Any]) -> ModelBundle:
-    """Write a new bundle under data/forecast/models/<name>/. An existing bundle is never replaced."""
+                updater: Updater | None, trust: Any | None, manifest: Mapping[str, Any],
+                band_prior: Mapping[str, Any] | None = None) -> ModelBundle:
+    """Write a new bundle under data/forecast/models/<name>/. An existing bundle is never replaced.
+
+    `band_prior` (fit_bundle_band_prior) is written to band_prior.json with its sha256 in the manifest,
+    and a summary without the site and search lists goes into the manifest itself.
+    """
     from .trust import save_trust_model
 
     name = check_bundle_name(name)
@@ -424,7 +433,12 @@ def save_bundle(paths: ForecastPaths, name: str, *, placement: PlacementModel, s
         trust_dir = folder / "trust"
         path, _digest = save_trust_model(trust, {"bundle": name, "label": PREDICTED}, trust_dir)
         files["trust"] = {"file": str(path.relative_to(folder)), "sha256": _file_sha(path)}
-    body = {**_json_safe(dict(manifest)), "bundle_format": FORECASTING_VERSION, "name": name, "files": files,
+    summary: dict[str, Any] = {}
+    if band_prior is not None:
+        (folder / BAND_PRIOR_FILE).write_text(json.dumps(_json_safe(dict(band_prior)), sort_keys=True), encoding="utf-8")
+        files["band_prior"] = {"file": BAND_PRIOR_FILE, "sha256": _file_sha(folder / BAND_PRIOR_FILE)}
+        summary = {"band_prior": {k: v for k, v in _json_safe(dict(band_prior)).items() if k not in BAND_PRIOR_LISTS}}
+    body = {**_json_safe(dict(manifest)), **summary, "bundle_format": FORECASTING_VERSION, "name": name, "files": files,
             "created_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")}
     body["bundle_sha256"] = bundle_hash(body)
     with open(folder / BUNDLE_MANIFEST, "x", encoding="utf-8") as handle:
@@ -455,10 +469,12 @@ def load_bundle(paths: ForecastPaths, name: str) -> ModelBundle:
     strength_only = load_model(folder / files["strength_only"]["file"])
     updater = load_updater(folder / files["updater"]["file"]) if "updater" in files else None
     trust = load_trust_model(folder / files["trust"]["file"]) if "trust" in files else None
+    band_prior = json.loads((folder / files["band_prior"]["file"]).read_text(encoding="utf-8")) \
+        if "band_prior" in files else None
     if placement.training_label != manifest.get("training_label"):
         raise ForecastingRefusal(f"The placement model says {placement.training_label} and the manifest says "
                                  f"{manifest.get('training_label')}. The bundle is refused.")
-    return ModelBundle(name, folder, manifest, placement, strength_only, updater, trust)
+    return ModelBundle(name, folder, manifest, placement, strength_only, updater, trust, band_prior)
 
 
 def list_bundles(paths: ForecastPaths) -> list[str]:
@@ -479,6 +495,50 @@ def newest_bundle(paths: ForecastPaths, *, label: str | None = None) -> str | No
         if best is None or key > best:
             best = key
     return best[1] if best else None
+
+
+BUNDLE_VERSION_PATTERN = re.compile(rf"^{re.escape(FORECASTING_VERSION)}:([a-z0-9][a-z0-9_.-]{{0,63}}):([0-9a-f]{{12}})(?:\||$)")
+
+
+def bundle_ref(model_version: str | None) -> tuple[str, str] | None:
+    """(bundle name, first 12 hex of its sha256) from a live forecast's model version, or None for any other version."""
+    found = BUNDLE_VERSION_PATTERN.match(str(model_version or ""))
+    return (found.group(1), found.group(2)) if found else None
+
+
+def report_band_prior(records: Sequence[Any], paths: ForecastPaths) -> dict[str, Any]:
+    """The band prior of the ONE bundle that made these graded forecasts, read from the bundle on disk.
+
+    Returns {"table", "sites", "search_groups", "note", "bundle"}. table is None, with a note saying
+    why, when the forecasts come from more than one bundle (never mixed), from no live bundle, from a
+    bundle that is missing or changed on disk, or from an old bundle without a stored band prior.
+    """
+    def missing(why: str) -> dict[str, Any]:
+        return {"table": None, "sites": set(), "search_groups": set(), "bundle": None,
+                "note": f"The band prior by difficulty is missing: {why}"}
+
+    if not records:
+        return missing("there is no graded forecast to report.")
+    refs = {bundle_ref(r.model_version) for r in records}
+    if None in refs:
+        return missing("some graded forecasts were not made by a live model bundle, so no bundle's training rows are known.")
+    if len(refs) > 1:
+        names = ", ".join(sorted(f"{n} ({h})" for n, h in refs if n))
+        return missing(f"the graded forecasts come from {len(refs)} bundles ({names}). One band prior is never mixed "
+                       "from several bundles, so none is used.")
+    name, short = next(iter(refs))
+    try:
+        bundle = load_bundle(paths, name)
+    except ForecastingRefusal as error:
+        return missing(f"bundle {name} under {paths.models} cannot be read ({error})")
+    if not bundle.sha256.startswith(short):
+        return missing(f"bundle {name} on disk has sha256 {bundle.sha256[:12]}, not the {short} the forecasts name.")
+    prior = bundle.band_prior
+    if not prior or not prior.get("table"):
+        return missing(f"bundle {name} was trained before bundles stored a band prior. Train a new bundle to get one.")
+    return {"table": {str(k): int(v) for k, v in prior["table"].items()}, "sites": set(prior.get("fitted_sites") or ()),
+            "search_groups": set(prior.get("fitted_search_groups") or ()), "bundle": name,
+            "note": f"The band prior comes from bundle {name}, the bundle that made these forecasts. {prior.get('from')}"}
 
 
 # ---------------------------------------------------------------------------
@@ -516,6 +576,67 @@ def _usable_features(frame: pd.DataFrame, wanted: Sequence[str]) -> tuple[list[s
         else:
             dropped.append(name)
     return kept, dropped
+
+
+BAND_PRIOR_FILE = "band_prior.json"
+BAND_PRIOR_LISTS = ("fitted_sites", "fitted_search_groups")  # kept in band_prior.json, left out of the manifest summary
+
+
+def fit_bundle_band_prior(rows: pd.DataFrame, *, includes_never_ranked: bool, source: str, label: str,
+                          difficulty_metric: str | None, split_note: str) -> dict[str, Any] | None:
+    """The band prior baseline fitted on the bundle's own training rows only (grading.fit_band_prior, rule v1).
+
+    Spec section 6: per search difficulty tercile, the one constant point that hits most often on
+    training cells under the grading rule. Terciles: the rows' own labels when they carry a
+    `difficulty` text column (the synthetic world), else cut points of `pg_kd` over the training
+    searches (one value per search, so a search with many cells does not move the cuts). Brand
+    searches are left out when the rows flag them. None when no row has an outcome.
+    """
+    from .backtest import difficulty_of
+    from .features import search_group
+    from .grading import RULE_V1, GradedCell, fit_band_prior
+
+    if rows.empty or "position_out" not in rows:
+        return None
+    outcome = pd.to_numeric(rows["position_out"], errors="coerce")
+    usable = rows[outcome.notna()].reset_index(drop=True)
+    if usable.empty:
+        return None
+    searches = usable["search"].astype(str) if "search" in usable else usable["keyword"].astype(str)
+    cuts: list[float] | None = None
+    if "difficulty" in usable and usable["difficulty"].map(lambda v: isinstance(v, str)).any():
+        terciles = [v if isinstance(v, str) else None for v in usable["difficulty"]]
+        how = "the training rows' own difficulty terciles"
+    elif "pg_kd" in usable and pd.to_numeric(usable["pg_kd"], errors="coerce").notna().any():
+        kd = pd.to_numeric(usable["pg_kd"], errors="coerce")
+        per_search = kd.groupby(searches).median().dropna()
+        cuts = [float(np.quantile(per_search, 1 / 3)), float(np.quantile(per_search, 2 / 3))]
+        terciles = [difficulty_of(v, cuts) for v in kd]
+        how = f"terciles of {difficulty_metric or 'pg_kd'} cut on the training searches at {cuts[0]:.2f} and {cuts[1]:.2f}"
+    else:
+        terciles = [None] * len(usable)
+        how = "no difficulty value, so one point for every search"
+    brand = usable["is_brand"].fillna(False).astype(bool).tolist() if "is_brand" in usable else [False] * len(usable)
+    cells = [GradedCell(site=str(s), search=str(q), point=int(a), actual=int(min(int(a), NT50)), is_brand=b, difficulty=t)
+             for s, q, a, b, t in zip(usable["site"], searches, outcome[outcome.notna()].astype(int), brand, terciles)]
+    try:
+        table = fit_band_prior(cells, RULE_V1)
+    except ValueError:
+        return None
+    rows_used = sum(1 for c in cells if not c.is_brand)
+    which = ("cells of sites that appeared on the search, so this band prior is conditional on appearing"
+             if not includes_never_ranked else "upload cells that include searches a site never ranked for")
+    sentence = (f"The band prior was fitted on this bundle's own {rows_used} training rows ({label} {source} data, "
+                f"{split_note}). They are {which}. Difficulty: {how}.")
+    return {
+        "table": {str(k): int(v) for k, v in table.items()},
+        "tercile_cuts": cuts, "difficulty_metric": difficulty_metric, "difficulty_terciles": how,
+        "rows": rows_used, "sites": len({c.site for c in cells}), "searches": len(set(searches)),
+        "grading_rule": RULE_V1.version, "grading_rule_hash": RULE_V1.rule_hash(),
+        "conditional_on_appearing": not includes_never_ranked, "label": label, "from": sentence,
+        "fitted_sites": sorted({c.site for c in cells}),
+        "fitted_search_groups": sorted({search_group(q) for q in set(searches)}),
+    }
 
 
 def fit_bundle(
@@ -599,8 +720,10 @@ def fit_bundle(
                                              "features": list(getattr(trust, "features", []))},
         **dict(extra_manifest or {}),
     }
+    band_prior = fit_bundle_band_prior(upload_rows, includes_never_ranked=includes_never_ranked, source=source,
+                                       label=label, difficulty_metric=difficulty_metric, split_note=split_note)
     return save_bundle(paths, name, placement=placement, strength_only=strength_only, updater=updater, trust=trust,
-                       manifest=manifest)
+                       manifest=manifest, band_prior=band_prior)
 
 
 def _graded_training_cells(rows: pd.DataFrame, *, source: str, stage: str = "upload") -> list[Any]:
@@ -897,16 +1020,11 @@ def train(paths: ForecastPaths, *, data: str, name: str | None = None, world: An
         return train_synthetic(paths, made, name=chosen, sites=sites)
     if data == "panel":
         return train_panel(paths, name=chosen, frame_path=frame_path, log=log)
-    status = paid_files_status(paths)
-    missing = [k for k, ok in status.items() if not ok]
-    if missing:
-        commands = "; ".join(f"{k}: {PAID_PULL_COMMANDS[k]}" for k in missing)
-        return TrainResult(None, "paid", REAL, refusal=(
-            f"The paid training set is not on disk. Missing: {', '.join(missing)}. Make it with: {commands}. "
-            "Each pull is a dry run without --execute and needs an approval and its $1 sample first."))
-    return TrainResult(None, "paid", REAL, refusal=(
-        "The paid pull files exist, but the step that joins them into upload cells with never-ranked searches is not "
-        "built yet. Nothing was trained. Tell the engineer."))
+    # The paid cohort path (paidset.py): the cell table joined with past result pages into upload cells, the
+    # train split only. Missing inputs are named with the pull or build command that makes each.
+    from .paidset import train_paid_from_cache
+
+    return train_paid_from_cache(paths, name=chosen, folder=frame_path, log=log)
 
 
 # ---------------------------------------------------------------------------
@@ -916,17 +1034,563 @@ def train(paths: ForecastPaths, *, data: str, name: str | None = None, world: An
 StrengthFn = Callable[[pd.DataFrame], pd.DataFrame]
 
 
-def real_strength_fn(paths: ForecastPaths) -> StrengthFn:
-    """Dated REAL strength through features.cached_strength (every value through an AsOfGuard)."""
-    from .features import cached_strength
+# The dated lists that feed model features. Open PageRank is left out on purpose: its file holds only
+# today's top sites, so its values are never a model input (features.SURVIVORSHIP_LIMITED) and a site's
+# absence from it is never a floor.
+SYNC_SOURCES: tuple[str, ...] = ("commoncrawl_domain_ranks", "crux_top_lists", "tranco")
+SOURCE_PREFIX: dict[str, str] = {"commoncrawl_domain_ranks": "cc", "crux_top_lists": "crux", "tranco": "tranco"}
+SOURCE_WORDS: dict[str, str] = {"commoncrawl_domain_ranks": "Common Crawl domain ranks",
+                                "crux_top_lists": "Chrome UX Report top list", "tranco": "Tranco list"}
+CRUX_FILE_MB = 9  # the April 2026 global file was 8.7 MB on disk
+TRANCO_FILE_MB = 23  # a top 1 million list was 22.7 MB on disk
+LIST_LAG_MONTHS = 3  # how many earlier months a sync tries when the newest list is not published yet
+STRENGTH_CACHE_NAME = "strength_by_site_date.parquet"
 
-    def strength(site_dates: pd.DataFrame) -> pd.DataFrame:
-        out = cached_strength(site_dates, cache_path=paths.cache / "features" / "strength_by_site_date.parquet",
-                              root=paths.root)
-        out["as_of"] = [as_date(d) for d in out["as_of"]]
+
+def strength_cache_path(paths: ForecastPaths) -> Path:
+    return paths.cache / "features" / STRENGTH_CACHE_NAME
+
+
+def live_strength_sources(paths: ForecastPaths, client: Any | None = None) -> list[Any]:
+    """The dated strength sources, made once so their loaded files are reused. Order as default_sources."""
+    from .sources import strength_lists as sl
+
+    return [sl.CommonCrawlDomainRanks(paths.root, client=client), sl.OpenPageRankHistory(paths.root, client=client),
+            sl.CruxTopLists(paths.root, client=client), sl.TrancoByDate(paths.root, client=client)]
+
+
+def _num(value: Any) -> float:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return math.nan
+    return number if math.isfinite(number) else math.nan
+
+
+@dataclass
+class RealStrength:
+    """Dated REAL strength for the live path, every value through an AsOfGuard (features.strength_for_dates).
+
+    features.cached_strength reuses a stored (site, date) row for ever. A row stored before the site
+    was looked up holds missing values, and reusing it would hide a later `strength sync`. So a
+    cached row is used only when it is current: for each list that has a release on or before the
+    date, the row must say whether the site is in it, from the newest release this machine can read.
+    Any other row is looked up again from the lists (never from later releases). A list that was
+    searched and does not hold the site gives the floor (a real, knowable fact); a list never
+    searched for the site gives NaN, never zero.
+    """
+
+    paths: ForecastPaths
+    sources: list[Any] | None = None
+    memo: dict[tuple[str, date], dict[str, Any]] = field(default_factory=dict)
+    _snaps: dict[tuple[str, date], Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        if self.sources is None:
+            self.sources = live_strength_sources(self.paths)
+
+    def _source(self, name: str) -> Any | None:
+        return next((s for s in self.sources or [] if getattr(s, "name", None) == name), None)
+
+    def newest(self, name: str, day: date) -> Any | None:
+        """The newest release of a list published on or before `day` that this machine can read (pick_snapshot)."""
+        from .sources.strength_lists import pick_snapshot
+
+        key = (name, day)
+        if key not in self._snaps:
+            source = self._source(name)
+            self._snaps[key] = pick_snapshot(source.snapshots(), day) if source is not None else None
+        return self._snaps[key]
+
+    def _current(self, row: Mapping[str, Any]) -> bool:
+        day = as_date(row["as_of"])
+        for name in SYNC_SOURCES:
+            snap = self.newest(name, day)
+            if snap is None:
+                continue
+            prefix = SOURCE_PREFIX[name]
+            if math.isnan(_num(row.get(f"{prefix}_present"))):
+                return False
+            if _num(row.get(f"{prefix}_snapshot_age_days")) != float((day - snap.published).days):
+                return False
+        return True
+
+    def __call__(self, site_dates: pd.DataFrame) -> pd.DataFrame:
+        from .features import MEASURES, RAW_STRENGTH_KEYS, cached_strength, strength_for_dates
+
+        want = site_dates[["site", "as_of"]].copy().reset_index(drop=True)
+        want["as_of"] = [as_date(d) for d in want["as_of"]]
+        todo = sorted({(s, d) for s, d in zip(want["site"], want["as_of"]) if (s, d) not in self.memo})
+        if todo:
+            frame = pd.DataFrame(todo, columns=["site", "as_of"])
+            got = cached_strength(frame, cache_path=strength_cache_path(self.paths), sources=self.sources,
+                                  root=self.paths.root)
+            got["as_of"] = [as_date(d) for d in got["as_of"]]
+            stale = np.array([not self._current(row) for row in got.to_dict("records")], dtype=bool)
+            if stale.any():
+                fresh = strength_for_dates(got.loc[stale, ["site", "as_of"]].reset_index(drop=True), sources=self.sources,
+                                           root=self.paths.root)
+                fresh["as_of"] = [as_date(d) for d in fresh["as_of"]]
+                got = pd.concat([got.loc[~stale], fresh], ignore_index=True)
+            for row in got.to_dict("records"):
+                self.memo[(row["site"], as_date(row["as_of"]))] = row
+        columns = ["site", "as_of", *RAW_STRENGTH_KEYS, *MEASURES]
+        rows = [{c: self.memo[(s, d)].get(c, math.nan) for c in columns} for s, d in zip(want["site"], want["as_of"])]
+        out = pd.DataFrame(rows, columns=columns)
+        for col in (*RAW_STRENGTH_KEYS, *MEASURES):
+            out[col] = pd.to_numeric(out[col], errors="coerce").astype(float)
         return out
 
-    return strength
+    def never_searched(self, site: str, day: date) -> list[str]:
+        """The lists with a release on or before `day` in which the site was never looked up."""
+        row = self.memo.get((site, day))
+        if row is None:
+            return []
+        return [name for name in SYNC_SOURCES if self.newest(name, day) is not None
+                and math.isnan(_num(row.get(f"{SOURCE_PREFIX[name]}_present")))]
+
+    def age_line(self, site: str, day: date) -> str:
+        """One sentence: which release of each list the site's own values come from, and how old it is."""
+        from .sources import strength_lists as sl
+
+        row = self.memo.get((site, day)) or {}
+        parts = []
+        for name in SYNC_SOURCES:
+            words = SOURCE_WORDS[name]
+            snap = self.newest(name, day)
+            if snap is None:
+                parts.append(f"{words}: no release on or before the date is on file")
+                continue
+            age = _num(row.get(f"{SOURCE_PREFIX[name]}_snapshot_age_days"))
+            if math.isnan(age):
+                parts.append(f"{words}: never looked up for this site")
+                continue
+            text = f"{words}: published {int(age)} days before the date"
+            expected = (day - snap.published).days
+            if int(age) > expected:
+                text += f" (an older release: the newest one, published {snap.published}, was not looked up for this site)"
+            calendar = None
+            if name == "crux_top_lists":
+                calendar = sl.pick_snapshot(sl.crux_candidate_snapshots(day), day)
+            elif name == "tranco":
+                source = self._source(name)
+                calendar = sl.pick_snapshot(sl.tranco_candidate_snapshots(day, source._index() if source else {}), day)
+            if calendar is not None and calendar.published > day - timedelta(days=int(age)):
+                text += f" (a newer list, due {calendar.published}, is not on file yet)"
+            parts.append(text)
+        return f"Strength lists for {site} as of {day}: " + "; ".join(parts) + "."
+
+
+def real_strength_fn(paths: ForecastPaths) -> StrengthFn:
+    """Dated REAL strength for live forecasts (RealStrength). Every value goes through an AsOfGuard."""
+    return RealStrength(paths)
+
+
+def strength_pairs(site: str, day: date, pages: Iterable[CleanReading]) -> set[tuple[str, date]]:
+    """The (site, date) strength lookups a forecast makes: the site on its date, each page site on its page's date."""
+    out = {(site, day)}
+    for page in pages:
+        page_day = parse_utc(page.taken_at).date()
+        out.update((p.site, page_day) for p in page.positions if p.position <= TOP_DEPTH and not is_excluded_site(p.site))
+    return out
+
+
+def sync_command(paths: ForecastPaths, site: str, day: date) -> str:
+    """The exact command that looks a site and its pages up in the strength lists."""
+    folder = "" if Path(paths.root).resolve() == Path(forecast_paths().root).resolve() else f" --dir {paths.root}"
+    return f"python -m aeo.ranksim forecast strength sync --site {site} --date {day} --fetch{folder}"
+
+
+def strength_notes(strength: RealStrength, paths: ForecastPaths, site: str, day: date,
+                   pairs: set[tuple[str, date]]) -> list[str]:
+    """The age of each list the site's values come from, and one line when sites were never looked up."""
+    notes = [strength.age_line(site, day)]
+    never = sorted({s for s, d in pairs if s != site and strength.never_searched(s, d)})
+    own = bool(strength.never_searched(site, day))
+    if never or own:
+        who = (f"{len(never)} of {len({s for s, _ in pairs if s != site})} sites on these pages"
+               + (" and the site itself" if own else "")) if never else "The site itself"
+        notes.append(f"{who} were never looked up in at least one strength list, so those values are missing (NaN), "
+                     f"never a floor. Run: {sync_command(paths, site, day)}")
+    return notes
+
+
+# ---------------------------------------------------------------------------
+# strength sync: look brand-new sites up in the dated lists
+
+
+@dataclass
+class SyncItem:
+    """One release of one list: the sites a forecast needs from it, and what a fetch did. REAL list values."""
+
+    source: str
+    release: str | None
+    published: date | None
+    dates: list[date]
+    sites: list[str]
+    missing: list[str]
+    download: str
+    status: str = "planned"
+    note: str = ""
+    found: int | None = None
+    used_release: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"source": self.source, "release": self.release,
+                "published": self.published.isoformat() if self.published else None,
+                "dates": [d.isoformat() for d in self.dates], "sites": len(self.sites), "missing": len(self.missing),
+                "missing_sites": list(self.missing), "download": self.download, "status": self.status,
+                "note": self.note, "found": self.found, "used_release": self.used_release}
+
+
+@dataclass
+class StrengthSync:
+    """What `forecast strength sync` planned or did. Nothing here is PREDICTED."""
+
+    targets: list[tuple[str, date]]
+    fetch: bool
+    pairs: int
+    items: list[SyncItem] = field(default_factory=list)
+    notes: list[str] = field(default_factory=list)
+    purged: int = 0
+
+    @property
+    def failed(self) -> bool:
+        return any(item.status == "failed" for item in self.items)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"targets": [{"site": s, "date": d.isoformat()} for s, d in self.targets], "fetch": self.fetch,
+                "lookups": self.pairs, "items": [item.to_dict() for item in self.items], "notes": self.notes,
+                "cache_rows_cleared": self.purged, "failed": self.failed}
+
+
+def strength_targets(scoreboard: Scoreboard, paths: ForecastPaths, targets: Sequence[tuple[str, date]],
+                     now: datetime) -> tuple[set[tuple[str, date]], list[str]]:
+    """Every (site, date) lookup the forecasts of `targets` would make, from the pages latest_page picks."""
+    pairs: set[tuple[str, date]] = set()
+    notes: list[str] = []
+    for site, day in targets:
+        name, source, _launch = _site_row(scoreboard, site)
+        if source not in ("seed", "pilot"):
+            raise ForecastingRefusal(f"{name} is a {source} site. Strength sync is for seed and pilot sites, which use "
+                                     "the REAL lists.")
+        inputs = LiveInputs(scoreboard, paths, strength=lambda frame: frame, label=REAL, now=now)
+        pages = []
+        without = 0
+        for search, _key, location, device, _target in _searches(scoreboard, name):
+            page = latest_page(inputs, search, location, device, day)
+            if page is None:
+                without += 1
+            else:
+                pages.append(page)
+        pairs |= strength_pairs(name, day, pages)
+        if without:
+            notes.append(f"{name}: {without} searches have no stored clean reading on or before {day}, so their pages "
+                         "are not looked up yet. Run this again after that reading is assembled.")
+    return pairs, notes
+
+
+def _searched_in(source: Any, release: str | None) -> set[str]:
+    from .sources import strength_lists as sl
+
+    if release is None:
+        return set()
+    if source.name == "commoncrawl_domain_ranks":
+        return source.searched(release)
+    if source.name == "crux_top_lists":
+        return sl._read_searched(source._paths(release.removeprefix("crux-"))[2])
+    if release.startswith("tranco-for-"):
+        return set()
+    return sl._read_searched(source.cache_dir / f"{release.removeprefix('tranco-')}.searched.txt.gz")
+
+
+def _pick_release(source: Any, day: date) -> Any | None:
+    """The release a sync uses for a date: the newest published on or before it (pick_snapshot), never later."""
+    from .sources import strength_lists as sl
+
+    if source.name == "commoncrawl_domain_ranks":
+        return sl.pick_snapshot(source.snapshots(), day)
+    if source.name == "crux_top_lists":
+        return sl.pick_snapshot(sl.crux_candidate_snapshots(day), day)
+    return sl.pick_snapshot(sl.tranco_candidate_snapshots(day, source._index()), day)
+
+
+def _download_words(source: Any, release: str, count: int) -> str:
+    if not count:
+        return "nothing: every site was already searched in this release"
+    if source.name == "commoncrawl_domain_ranks":
+        size = source.releases()[release]["bytes"] / 1e9
+        return (f"streams the release's ranks file once ({size:.1f} GB, large) and keeps only these sites. The file is "
+                "not stored. It takes tens of minutes")
+    if source.name == "crux_top_lists":
+        raw = source._paths(release.removeprefix("crux-"))[0]
+        if raw.exists():
+            return f"reads the local copy {raw.name}, no download"
+        return f"downloads one monthly file, about {CRUX_FILE_MB} MB"
+    if release.startswith("tranco-for-"):
+        return f"asks the free Tranco API for this list, then downloads it, about {TRANCO_FILE_MB} MB"
+    raw = source.public_dir / f"tranco_{release.removeprefix('tranco-')}.csv"
+    if raw.exists():
+        return f"reads the local copy {raw.name}, no download"
+    return f"downloads the list, about {TRANCO_FILE_MB} MB"
+
+
+def plan_strength_sync(paths: ForecastPaths, pairs: set[tuple[str, date]], *,
+                       sources: Sequence[Any] | None = None) -> list[SyncItem]:
+    """Per list and release, the sites not yet searched in it. Reads local files only."""
+    from .sources.strength_lists import normalise_site
+
+    chosen = {getattr(s, "name", None): s for s in (sources or live_strength_sources(paths))}
+    by_day: dict[date, set[str]] = {}
+    for site, day in pairs:
+        norm = normalise_site(site)
+        if norm:
+            by_day.setdefault(day, set()).add(norm)
+    items: list[SyncItem] = []
+    for name in SYNC_SOURCES:
+        source = chosen.get(name)
+        if source is None:
+            continue
+        groups: dict[str | None, tuple[Any, list[date], set[str]]] = {}
+        for day in sorted(by_day):
+            snap = _pick_release(source, day)
+            key = snap.snapshot_id if snap is not None else None
+            entry = groups.setdefault(key, (snap, [], set()))
+            entry[1].append(day)
+            entry[2].update(by_day[day])
+        for key, (snap, days, sites) in groups.items():
+            if snap is None:
+                items.append(SyncItem(name, None, None, days, sorted(sites), [], "nothing: no release is published on or "
+                                      "before these dates, so the values stay missing (NaN)", status="no release"))
+                continue
+            missing = sorted(sites - _searched_in(source, key))
+            items.append(SyncItem(name, key, snap.published, days, sorted(sites), missing,
+                                  _download_words(source, key, len(missing))))
+    return items
+
+
+def _drop_partial(path: Path) -> None:
+    for item in (path, path.with_name(path.name + ".meta.json")):
+        if item.exists():
+            item.unlink()
+
+
+def _fetch_crux(source: Any, item: SyncItem, limiter: Any, log: Callable[[str], None] | None) -> str:
+    """Download (or reuse) the newest CrUX month published on or before every date of the item, then read it."""
+    import httpx
+
+    from .sources import strength_lists as sl
+
+    month = str(item.release).removeprefix("crux-")
+    first = date(int(month[:4]), int(month[4:6]), 1)
+    tried = []
+    for back in range(LIST_LAG_MONTHS + 1):
+        key = add_months(first, -back).strftime("%Y%m")
+        if sl.crux_month_published(key) > min(item.dates):
+            continue
+        raw = source._paths(key)[0]
+        if not raw.exists():
+            try:
+                meta = sl.download_resumable(source._http(), sl.CRUX_URL.format(month=key), raw, limiter=limiter, log=log)
+            except httpx.HTTPStatusError as error:
+                if error.response is not None and error.response.status_code == 404:
+                    tried.append(key)
+                    continue
+                raise
+            sl.record_source(source.public_dir, raw.name, meta)
+        try:
+            sl.gzip_file_complete(raw)
+        except sl.IncompleteRead:
+            _drop_partial(raw)
+            raise
+        source.materialise(item.missing, [key])
+        if tried:
+            item.note = (f"The month {', '.join(tried)} list is not published on the mirror yet. Used month {key}, "
+                         f"published {sl.crux_month_published(key)}.")
+        return f"crux-{key}"
+    raise sl.IncompleteRead(f"no CrUX month from {first:%Y%m} back {LIST_LAG_MONTHS} months is published on the mirror")
+
+
+def _fetch_tranco(source: Any, item: SyncItem, log: Callable[[str], None] | None) -> str:
+    """Ask the Tranco API for the first-of-month list (or an earlier one), check the download is whole, then read it."""
+    from .sources import strength_lists as sl
+
+    first = min(item.dates).replace(day=1)
+    for back in range(LIST_LAG_MONTHS + 1):
+        day = add_months(first, -back)
+        if day > min(item.dates):
+            continue
+        try:
+            record = source.list_for_date(day)
+        except ValueError:
+            continue  # no list for that day yet
+        if as_date(record["created_on"]) > min(item.dates):
+            continue  # a list created after a forecast date is never used for it
+        list_id = str(record["list_id"])
+        raw = source.public_dir / f"tranco_{list_id}.csv"
+        if not raw.exists():
+            meta = sl.download_resumable(source._http(), record["download"], raw, limiter=source.limiter, log=log)
+            sl.record_source(source.public_dir, raw.name, meta)
+        tail = str(record.get("download") or "").rstrip("/").rpartition("/")[2]
+        try:
+            sl.tranco_file_complete(raw, int(tail) if tail.isdigit() else None)
+        except sl.IncompleteRead:
+            _drop_partial(raw)
+            raise
+        source.materialise(item.missing, [day.isoformat()])
+        if back:
+            item.note = f"No Tranco list for {first} was available. Used the list for {day}, created {record['created_on']}."
+        return f"tranco-{list_id}"
+    raise sl.IncompleteRead(f"no Tranco list from {first} back {LIST_LAG_MONTHS} months was created on or before the date")
+
+
+def purge_missing_strength_rows(path: Path, sites: Iterable[str]) -> int:
+    """Drop cached strength rows of these sites that hold a missing list value, so the next forecast looks them up.
+
+    Same lock and atomic replace as features.merge_into_parquet, so rows other processes add are kept.
+    """
+    from .sources.strength_lists import normalise_site
+
+    target = Path(path)
+    if not target.is_file():
+        return 0
+    wanted = {s for s in sites}
+    lock = open(target.with_name(target.name + ".lock"), "a+")
+    try:
+        try:
+            import fcntl
+
+            fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+        except (ImportError, OSError):
+            pass
+        frame = pd.read_parquet(target)
+        names = frame["site"].astype(str)
+        mine = names.isin(wanted) | names.map(lambda s: normalise_site(s) in wanted)
+        flags = [f"{SOURCE_PREFIX[n]}_present" for n in SYNC_SOURCES if f"{SOURCE_PREFIX[n]}_present" in frame]
+        partial = frame[flags].isna().any(axis=1) if flags else pd.Series(False, index=frame.index)
+        drop = mine & partial
+        if not drop.any():
+            return 0
+        kept = frame[~drop].reset_index(drop=True)
+        tmp = target.with_name(f".{target.name}.{datetime.now(timezone.utc).strftime('%H%M%S%f')}.tmp")
+        try:
+            kept.to_parquet(tmp, index=False)
+            tmp.replace(target)
+        finally:
+            if tmp.exists():
+                tmp.unlink()
+        return int(drop.sum())
+    finally:
+        lock.close()
+
+
+def strength_sync(scoreboard: Scoreboard, paths: ForecastPaths, targets: Sequence[tuple[str, date]], *, now: datetime,
+                  fetch: bool = False, sources: Sequence[Any] | None = None, client: Any | None = None,
+                  log: Callable[[str], None] | None = None) -> StrengthSync:
+    """Look registered seed and pilot sites, and every site on the pages their forecasts use, up in the dated lists.
+
+    Without `fetch` nothing is downloaded: the plan names, per list, the release pick_snapshot chooses
+    for each date (published on or before it, never later), how many sites need a lookup, and what
+    would be downloaded. With `fetch` each release is read through the list's own materialise. A site
+    is marked searched only when the release was read to its end, so a failed or partial download
+    leaves it unsearched and its value missing, never a floor. Then the cached strength rows of these
+    sites that hold a missing value are cleared, so the next forecast sees the new values.
+    """
+    import httpx
+
+    from .sources import strength_lists as sl
+
+    chosen = list(sources) if sources is not None else live_strength_sources(paths, client=client)
+    pairs, notes = strength_targets(scoreboard, paths, targets, now)
+    result = StrengthSync(list(targets), fetch, len(pairs), notes=notes)
+    result.items = plan_strength_sync(paths, pairs, sources=chosen)
+    if not fetch:
+        return result
+    by_name = {getattr(s, "name", None): s for s in chosen}
+    limiter = sl.RateLimiter()
+    done_sites: set[str] = set()
+    for item in result.items:
+        if item.status != "planned":
+            continue
+        if not item.missing:
+            item.status = "already searched"
+            continue
+        source = by_name[item.source]
+        try:
+            if item.source == "commoncrawl_domain_ranks":
+                report = sl.materialise_cc_release_strict(source, item.missing, str(item.release))
+                item.found = report.get("found")
+                item.used_release = item.release
+            elif item.source == "crux_top_lists":
+                item.used_release = _fetch_crux(source, item, limiter, log)
+            else:
+                item.used_release = _fetch_tranco(source, item, log)
+        except (httpx.HTTPError, ConnectionError, OSError, RuntimeError, ValueError, KeyError) as error:
+            # sl.IncompleteRead is a ValueError. A failed or partial read marks nothing searched.
+            item.status = "failed"
+            item.note = (f"{type(error).__name__}: {error}. Nothing from this release was marked searched, so these "
+                         "sites stay missing (NaN), never a floor. Run the same command again to resume.")
+            continue
+        item.status = "done"
+        if item.found is None:
+            item.found = _found_in(source, item)
+        done_sites.update(item.missing)
+    if done_sites:
+        result.purged = purge_missing_strength_rows(strength_cache_path(paths), done_sites)
+    return result
+
+
+def _found_in(source: Any, item: SyncItem) -> int | None:
+    import pyarrow.parquet as pq
+
+    release = item.used_release or item.release
+    if release is None:
+        return None
+    if source.name == "crux_top_lists":
+        path = source._paths(release.removeprefix("crux-"))[1]
+    else:
+        path = source.cache_dir / f"{release.removeprefix('tranco-')}.parquet"
+    if not path.exists():
+        return 0
+    present = set(pq.read_table(path, columns=["site"]).column("site").to_pylist())
+    return len(present & set(item.missing))
+
+
+def strength_sync_lines(result: StrengthSync) -> list[str]:
+    """The sync in short plain sentences. List values are REAL; nothing is PREDICTED."""
+    targets = ", ".join(f"{s} on {d}" for s, d in result.targets) or "no site"
+    lines = [f"Strength list lookups for the forecasts of {targets}: {result.pairs} (site, date) lookups."]
+    for item in result.items:
+        words = SOURCE_WORDS.get(item.source, item.source)
+        days = ", ".join(d.isoformat() for d in item.dates)
+        if item.release is None:
+            lines.append(f"{words}: no release published on or before {days}. Those values stay missing (NaN).")
+            continue
+        age = (max(item.dates) - item.published).days if item.published else None
+        lines.append(f"{words}: release {item.release}, published {item.published} ({age} days before {max(item.dates)}), "
+                     f"for {days}. {len(item.missing)} of {len(item.sites)} sites need a lookup. A fetch {item.download}.")
+        if result.fetch and item.status != "planned":
+            if item.status == "done":
+                used = f" from {item.used_release}" if item.used_release and item.used_release != item.release else ""
+                lines.append(f"  Done{used}: {item.found if item.found is not None else 'some'} of {len(item.missing)} "
+                             "sites are in the list. The others were searched and are not in it, so they get the list's "
+                             "floor (REAL: the site is not listed).")
+            elif item.status == "failed":
+                lines.append(f"  FAILED: {item.note}")
+            else:
+                lines.append(f"  {item.status.capitalize()}.")
+            if item.note and item.status == "done":
+                lines.append(f"  {item.note}")
+    lines.append("Open PageRank is not looked up: its file holds only today's top sites, so it is never a model input.")
+    lines.extend(result.notes)
+    if result.fetch:
+        lines.append(f"Cleared {result.purged} cached strength rows that held a missing value, so the next forecast "
+                     "looks those sites up again.")
+        if result.failed:
+            lines.append("Some lists failed. Their sites stay missing (NaN). Run the same command again to resume.")
+    else:
+        lines.append("Dry run. Nothing was downloaded. These lists are free public files. Add --fetch to download them.")
+    return lines
 
 
 @dataclass
@@ -1061,6 +1725,29 @@ def gsc_columns(inputs: LiveInputs, site: str, search: str, launch: date, day: d
         "sc_avg_position_target": num(signals.get(gsc.signal_key("sc_avg_position", search))),
         "sc_impressions_slope": num(signals.get("sc_impressions_weekly_slope")),
     }, f"{used} Search Console exports{skipped}"
+
+
+CONTENT_FEATURE = "content_match"  # a model input only in bundles trained with it (the paid training set)
+CONTENT_BACKEND_KEY = "content_match_backend"  # the manifest key naming the scorer backend the training column used
+
+
+def content_feature(scored: Mapping[str, Any], trained_backend: Any) -> tuple[float, str]:
+    """(value fed to the model, note). The live score is used only when its backend is the one the bundle trained on.
+
+    A score from another backend is on another scale, so it is NaN, never converted. NaN also when no
+    page text is on file or the manifest does not name a backend.
+    """
+    value = _num(scored.get("value"))
+    backend = scored.get("backend")
+    if backend is None or math.isnan(value):
+        return math.nan, "no page text on file, so the content match input is missing (NaN)"
+    if not trained_backend:
+        return math.nan, ("the bundle's manifest does not name the content match backend it was trained with, so the "
+                          "live score is not used (NaN)")
+    if str(backend) != str(trained_backend):
+        return math.nan, (f"the live scorer ran {backend} and the bundle was trained on {trained_backend} scores, so the "
+                          "live score is not used (NaN)")
+    return value, f"model input: the live {backend} score, the backend the bundle was trained on"
 
 
 def content_match(inputs: LiveInputs, site: str, search: str, day: date) -> dict[str, Any]:
@@ -1331,6 +2018,8 @@ def plan_forecasts(
     dates: dict[str, dict[str, date | None]] = {}
     readings: dict[str, list[Reading]] = {}
     extras: dict[str, dict[str, Any]] = {}
+    pages: dict[str, CleanReading] = {}
+    todo = []
     for search, key, location, device, target_url in _searches(scoreboard, name):
         if key in already:
             run.already.append({"search": search, "model_version": already[key]})
@@ -1340,6 +2029,15 @@ def plan_forecasts(
             run.skipped.append({"search": search, "reason": f"no stored clean reading on or before {as_of} that is not "
                                                             "degraded. The cell is skipped, not called NOT IN TOP 50."})
             continue
+        pages[search] = page
+        todo.append((search, key, location, device, target_url))
+    pairs = strength_pairs(name, as_of, pages.values())
+    if isinstance(inputs.strength, RealStrength) and pairs:
+        # One lookup for every site on every page, so each list file is read once per run.
+        _strength_rows(inputs, pd.DataFrame(sorted(pairs), columns=["site", "as_of"]))
+    content_wanted = CONTENT_FEATURE in bundle.placement.features
+    for search, key, location, device, target_url in todo:
+        page = pages[search]
         values = feature_row(inputs, site=name, search=search, day=as_of, page=page, trust=bundle.trust,
                              meta=meta.get((name, key)), difficulty_metric=bundle.manifest.get("difficulty_metric"),
                              form_answers=form)
@@ -1355,7 +2053,10 @@ def plan_forecasts(
             sc, sc_note = gsc_columns(inputs, name, search, launch, as_of)
             values.update(sc)
             extras.setdefault(search, {})["search_console"] = sc_note
-        extras.setdefault(search, {})["content_match"] = content_match(inputs, name, search, as_of)
+        scored = content_match(inputs, name, search, as_of)
+        if content_wanted:
+            values[CONTENT_FEATURE], scored["note"] = content_feature(scored, bundle.manifest.get(CONTENT_BACKEND_KEY))
+        extras.setdefault(search, {})["content_match"] = scored
         extras[search]["target_url"] = target_url
         rows[search] = values
         dates[search] = {"input_date": parse_utc(page.taken_at).date(), "strength_date": as_of,
@@ -1363,6 +2064,8 @@ def plan_forecasts(
         readings[search] = got
         run.inputs[search] = sorted(ids)
     run.notes.extend(inputs.notes)
+    if isinstance(inputs.strength, RealStrength) and pairs:
+        run.notes.extend(strength_notes(inputs.strength, paths, name, as_of, pairs))
     if form_name is None:
         run.notes.append("No agency form filled in on or before the date is frozen. Footprint features are missing.")
     if not rows:

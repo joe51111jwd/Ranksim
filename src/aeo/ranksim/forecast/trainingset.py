@@ -105,6 +105,9 @@ __all__ = [
     "select_targets",
     "synthetic_training_set",
     "token_overlap_score",
+    "load_page_texts",
+    "write_cells_set",
+    "write_page_texts",
 ]
 
 DEFAULT_WINDOWS = (24, 30)
@@ -1314,6 +1317,146 @@ def check_split(frame: pd.DataFrame) -> dict[str, int]:
 
 
 # ----------------------------------------------------------------------------------------------
+# The files of one training-set folder (what paidset.py joins into upload cells).
+# ----------------------------------------------------------------------------------------------
+
+CELLS_FILE = "cells.parquet"
+TARGETS_FILE = "targets.parquet"
+UNIVERSE_FILE = "universe.parquet"
+PAGE_TEXT_FILE = "page_text.jsonl"
+REAL_META_FILE = "REAL.json"
+SYNTHETIC_META_FILE = "SYNTHETIC.json"
+PAGE_TEXT_COLUMNS: tuple[str, ...] = ("site", "captured_on", "source", "url", "title", "h1", "meta_description", "body")
+
+
+def write_page_texts(path: Path, rows: Iterable[Mapping[str, Any]]) -> str:
+    """Write the launch-era page text of each site, one JSON line per page, sorted by site.
+
+    Each row has PAGE_TEXT_COLUMNS. captured_on is the day the text was captured. A reader
+    takes it through an AsOfGuard, so text captured after a forecast date cannot be used.
+    """
+    target = Path(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    records = []
+    for row in rows:
+        site = _site(row.get("site"))
+        if not site or site in EXCLUDED_SITES:
+            continue
+        day = _as_date(row.get("captured_on"))
+        if day is None:
+            raise ValueError(f"the page text of {site} has no capture date. Undated text is never written.")
+        record = {name: row.get(name) for name in PAGE_TEXT_COLUMNS}
+        record.update({"site": site, "captured_on": day.isoformat()})
+        records.append(record)
+    records.sort(key=lambda r: (r["site"], r["captured_on"], str(r.get("url") or "")))
+    tmp = target.with_name(target.name + ".tmp")
+    with tmp.open("w", encoding="utf-8") as handle:
+        for record in records:
+            handle.write(json.dumps(record, sort_keys=True) + "\n")
+    os.replace(tmp, target)
+    return str(target)
+
+
+def load_page_texts(path: Path) -> dict[str, list[dict[str, Any]]]:
+    """Page text rows per site from write_page_texts. captured_on comes back as a date. Excluded sites are dropped."""
+    out: dict[str, list[dict[str, Any]]] = {}
+    target = Path(path)
+    if not target.is_file():
+        return out
+    for line in target.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        row = json.loads(line)
+        site = _site(row.get("site"))
+        if not site or site in EXCLUDED_SITES:
+            continue
+        row["site"] = site
+        row["captured_on"] = date.fromisoformat(str(row["captured_on"]))
+        out.setdefault(site, []).append(row)
+    return out
+
+
+def page_text_dated(row: Mapping[str, Any]) -> Dated:
+    """The text select_targets reads (title, meta description, headings), dated by its capture day."""
+    parts = [row.get("title") or "", row.get("meta_description") or "", row.get("h1") or ""]
+    return Dated(" | ".join(str(p) for p in parts if p), str(row.get("source") or "page_text"), _as_date(row["captured_on"]))
+
+
+def _universe_frame(universe: Sequence[Any]) -> pd.DataFrame:
+    names = list(SearchRow.__dataclass_fields__)
+    return pd.DataFrame.from_records([{n: _get(row, n) for n in names} for row in universe], columns=names)
+
+
+def write_cells_set(
+    out_dir: Path,
+    cohort: pd.DataFrame,
+    pages: Mapping[str, Any],
+    universe: Sequence[Any],
+    *,
+    which: str = "kept",
+    rule: TargetRule = DEFAULT_TARGET_RULE,
+    split_rule: SplitRule = DEFAULT_SPLIT_RULE,
+    score_fn: Callable[[str, str], float] = token_overlap_score,
+    sources: Mapping[str, str] | None = None,
+) -> dict[str, Any]:
+    """Write the REAL training-set folder paidset.py joins: cells, targets, universe, launch-era page text, REAL.json.
+
+    `cohort` is a table written by cohort build. `which` is "kept" (kept_after_filter when the spam
+    filter ran, else kept) or "all". `pages` maps a site to its launch-era page (sources.newsites.PageText,
+    from pages_<name>.jsonl). `universe` holds universe rows (sources.universe.SearchRow). The target
+    searches are picked by the frozen label-blind rule (select_targets) and split by the frozen split
+    rule (cohort_cells). Nothing here reads a ranking. Every value is REAL except the launch date, an
+    estimate with its uncertainty.
+    """
+    out = Path(out_dir)
+    if which not in ("kept", "all"):
+        raise ValueError("which is kept or all")
+    frame = cohort.copy()
+    if "site" not in frame.columns:
+        raise ValueError("the cohort table has no site column")
+    if which == "kept":
+        column = "kept_after_filter" if "kept_after_filter" in frame.columns else "kept"
+        if column not in frame.columns:
+            raise ValueError("the cohort table has no kept column. Use which='all'.")
+        frame = frame[frame[column].fillna(False).astype(bool)]
+    frame = frame[[not (_site(s) in EXCLUDED_SITES or not _site(s)) for s in frame["site"]]]
+    cohort_rows = frame.to_dict("records")
+    page_rows: list[dict[str, Any]] = []
+    for key, page in sorted(pages.items()):
+        site = _site(key)
+        if not site or site in EXCLUDED_SITES:
+            continue
+        captured = _as_date(_get(page, "captured_at"))
+        h1 = _get(page, "h1") or ()
+        page_rows.append({
+            "site": site, "captured_on": captured, "source": f"commoncrawl:{_get(page, 'crawl')}:{_get(page, 'url')}",
+            "url": _get(page, "url"), "title": _get(page, "title"), "h1": h1[0] if h1 else None,
+            "meta_description": _get(page, "meta_description"), "body": _get(page, "text"),
+        })
+    texts = {row["site"]: [page_text_dated(row)] for row in page_rows if row["captured_on"] is not None}
+    entries = [{"site": _site(r.get("site")), "launch_date": r.get("launch_date"), "niche": r.get("niche")} for r in cohort_rows]
+    targets = select_targets(entries, list(universe), texts, score_fn, rule=rule)
+    cells = cohort_cells(cohort_rows, targets, split_rule=split_rule)
+    out.mkdir(parents=True, exist_ok=True)
+    cells_out = cells.copy()
+    cells_out["label"] = "REAL"
+    cells_out.to_parquet(out / CELLS_FILE, index=False)
+    target_frame = targets.frame()
+    target_frame["label"] = "REAL"
+    target_frame.to_parquet(out / TARGETS_FILE, index=False)
+    _universe_frame(universe).assign(label="REAL").to_parquet(out / UNIVERSE_FILE, index=False)
+    write_page_texts(out / PAGE_TEXT_FILE, [r for r in page_rows if r["captured_on"] is not None])
+    meta = {
+        "label": "REAL", "which": which, "target_rule_hash": targets.rule_hash, "split_rule_hash": split_rule.rule_hash(),
+        "counts": targets.counts, "split": check_split(cells), "split_counts": cells["split"].value_counts().to_dict(),
+        "cohort_sites": int(len(cohort_rows)), "sources": dict(sources or {}), "written_at": utc_iso(_utcnow()),
+    }
+    (out / REAL_META_FILE).write_text(json.dumps(meta, indent=2, sort_keys=True, default=str), encoding="utf-8")
+    return {"folder": str(out), "cells": int(len(cells)), "meta": meta,
+            "paths": {name: str(out / name) for name in (CELLS_FILE, TARGETS_FILE, UNIVERSE_FILE, PAGE_TEXT_FILE, REAL_META_FILE)}}
+
+
+# ----------------------------------------------------------------------------------------------
 # The synthetic end-to-end path.
 # ----------------------------------------------------------------------------------------------
 
@@ -1482,10 +1625,24 @@ def synthetic_training_set(
     target_frame = targets.frame()
     target_frame["label"] = SYNTHETIC
     target_frame.to_parquet(paths["targets"], index=False)
+    paths["universe"] = str(out / UNIVERSE_FILE)
+    _universe_frame(universe).assign(label=SYNTHETIC).to_parquet(paths["universe"], index=False)
+    paths["page_text"] = write_page_texts(out / PAGE_TEXT_FILE, [
+        {"site": site, "captured_on": items[0].snapshot_date, "source": items[0].source, "url": None,
+         "title": str(items[0].value), "h1": None, "meta_description": None, "body": None}
+        for site, items in sorted(pages.items())])
+    from .synth import DEFAULT_KNOBS
+
     meta = {
         "label": SYNTHETIC, "world_seed": world.seed, "target_rule_hash": targets.rule_hash,
         "split_rule_hash": split_rule.rule_hash(), "counts": targets.counts, "split": check_split(cells),
         "split_counts": cells["split"].value_counts().to_dict(), "panel_rows": panel_rows,
+        # What rebuilds the same world (paidset.py reads the world's dated strength lists from it).
+        "world_params": {"seed": int(world.seed), "niches": len(world.niches),
+                         "searches_per_niche": len(world.searches) // max(1, len(world.niches)),
+                         "established_sites": len(world.sites) - len(world.new_sites), "new_sites": len(world.new_sites),
+                         "start_month": world.start.isoformat(), "months": int(world.months),
+                         "location_code": int(world.location_code), "knobs_default": world.knobs == DEFAULT_KNOBS},
     }
     (out / "SYNTHETIC.json").write_text(json.dumps(meta, indent=2, sort_keys=True, default=str), encoding="utf-8")
     paths["meta"] = str(out / "SYNTHETIC.json")

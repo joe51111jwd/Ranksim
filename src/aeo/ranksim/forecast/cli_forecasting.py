@@ -1,4 +1,4 @@
-"""The forecasting commands: python -m aeo.ranksim forecast train|backtest|upload|update|due.
+"""The forecasting commands: python -m aeo.ranksim forecast train|backtest|upload|update|due|strength sync.
 
 What is REAL in the output: graded outcomes and the evidence files of the frozen backtests.
 What is PREDICTED: every forecast point, range and label. What is SYNTHETIC: a bundle trained
@@ -7,6 +7,8 @@ on the synthetic world and anything it forecasts. Each line with a number says w
 Every command here is free. None spends, and none scores a held-out row: `backtest run` only
 freezes the next design version and hands over to backtest.run_panel, which refuses until that
 design is committed and pushed. upload and update are dry runs unless --record is passed.
+strength sync downloads free public list files only with --fetch. A network error in any of these
+commands ends in one plain sentence and exit code 1 (`guarded`).
 
 The logic lives in forecasting.py. This module parses arguments and prints. cli.py imports it
 when it builds the parser; it imports cli.py, never the other way round at import time.
@@ -15,11 +17,14 @@ when it builds the parser; it imports cli.py, never the other way round at impor
 from __future__ import annotations
 
 import argparse
+import functools
 import json
 from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
 from typing import Any, Callable
+
+import httpx
 
 from . import forecasting
 from .cli import EXIT_CHECK_FAILED, EXIT_OK, PROG, Context, _iso_date, _today
@@ -27,6 +32,27 @@ from .config import STAGE_DAYS
 from .types import REAL, SYNTHETIC
 
 UPDATE_STAGES: tuple[str, ...] = tuple(stage for stage in STAGE_DAYS if stage != "upload")
+NETWORK_ERRORS: tuple[type[BaseException], ...] = (ConnectionError, httpx.HTTPError)
+
+
+def network_failure(error: BaseException) -> str:
+    """One plain sentence for a network error. The error text is cut short; output is scrubbed of keys anyway."""
+    detail = " ".join(str(error).split())[:200] or "no detail"
+    return (f"A network request failed ({type(error).__name__}: {detail}). Nothing more was done. Check the connection "
+            "and run the same command again.")
+
+
+def guarded(handler: Callable[[Context, argparse.Namespace], int]) -> Callable[[Context, argparse.Namespace], int]:
+    """The shared catch for these commands: a network error ends in one plain sentence and exit code 1, not a traceback."""
+
+    @functools.wraps(handler)
+    def run(ctx: Context, args: argparse.Namespace) -> int:
+        try:
+            return handler(ctx, args)
+        except NETWORK_ERRORS as error:
+            return ctx.fail(network_failure(error), EXIT_CHECK_FAILED)
+
+    return run
 
 
 # ---------------------------------------------------------------------------
@@ -126,38 +152,41 @@ def _bundle(ctx: Context, name: str | None) -> forecasting.ModelBundle:
 
 @dataclass
 class _Chosen:
-    """The sites a forecast command runs for, and (with --all-due) the stage entries it does not run."""
+    """The sites a forecast command runs for, each with its forecast date, and (with --all-due) the entries it skips."""
 
     sites: list[str]
     later: list[dict[str, Any]] = field(default_factory=list)  # stage day still to come: never recorded early
     missed: list[dict[str, Any]] = field(default_factory=list)  # last day to record has passed: never backfilled
+    dates: dict[str, date | None] = field(default_factory=dict)  # site -> forecast date (None: the default)
 
 
 def _sites_for(ctx: Context, args: argparse.Namespace, stage: str) -> _Chosen:
     """--site, or with --all-due every site whose `stage` forecast should be made today.
 
-    An upload forecast is due from three days before launch (it must be dated on or before launch). A
-    stage forecast (d7 to d60) is taken only on its stage day or its grace day, so it is dated on the
-    stage day and uses that day's reading: one whose day is still to come is listed, never recorded
-    early (a forecast is never replaced, so an early one would stand for that stage for good). A stage
-    whose last day to record has passed is listed as MISSED.
+    With --site, --date is the forecast date. With --all-due, --date is the calendar's today, never the
+    forecast date: each forecast is dated on its stage day, or on today for an upload forecast made
+    before launch. An upload forecast is due from three days before launch (it must be dated on or
+    before launch). A stage forecast (d7 to d60) is taken only on its stage day or its grace day, so it
+    is dated on the stage day and uses that day's reading: one whose day is still to come is listed,
+    never recorded early (a forecast is never replaced, so an early one would stand for that stage for
+    good). A stage whose last day to record has passed is listed as MISSED.
     """
     if args.site:
-        return _Chosen([args.site])
+        return _Chosen([args.site], dates={args.site: args.date})
     if not args.all_due:
         raise ValueError("Give --site SITE, or --all-due for every site whose stage is due.")
     today = _today(ctx, args.date)
     calendar = forecasting.due(ctx.scoreboard(), today)
     chosen = _Chosen([])
-    names: set[str] = set()
     for item in calendar["due"]:
         if item["stage"] != stage:
             continue
-        if stage != "upload" and date.fromisoformat(item["stage_date"]) > today:
+        stage_day = date.fromisoformat(item["stage_date"])
+        if stage != "upload" and stage_day > today:
             chosen.later.append(item)
         else:
-            names.add(item["site"])
-    chosen.sites = sorted(names)
+            chosen.dates[item["site"]] = min(today, stage_day)
+    chosen.sites = sorted(chosen.dates)
     chosen.missed = [item for item in calendar["missed"] if item["stage"] == stage]
     return chosen
 
@@ -180,8 +209,8 @@ def _forecast(ctx: Context, args: argparse.Namespace, stage: str) -> int:
     elif not chosen.sites and args.all_due:
         lines.append(f"No {stage} forecast is due today.")
     for site in chosen.sites:
-        run = forecasting.upload_or_update(board, ctx.paths, bundle=bundle, site=site, stage=stage, day=args.date,
-                                           now=ctx.clock.now(), record=bool(args.record))
+        run = forecasting.upload_or_update(board, ctx.paths, bundle=bundle, site=site, stage=stage,
+                                           day=chosen.dates.get(site), now=ctx.clock.now(), record=bool(args.record))
         runs.append(run)
         lines.extend(forecasting.run_lines(run, record=bool(args.record)))
     payload = {"stage": stage, "record": bool(args.record), "bundle": bundle.version,
@@ -208,6 +237,37 @@ def cmd_due(ctx: Context, args: argparse.Namespace) -> int:
     result = forecasting.due(ctx.scoreboard(), _today(ctx, args.date), window_days=int(args.window))
     ctx.emit(result, forecasting.due_lines(result))
     return EXIT_CHECK_FAILED if result["missed"] else EXIT_OK
+
+
+# ---------------------------------------------------------------------------
+# strength sync
+
+
+def _sync_targets(ctx: Context, args: argparse.Namespace) -> list[tuple[str, date]]:
+    """(site, forecast date) pairs. --all-due: upload forecasts due in the window, dated today (at the latest
+    launch day), and stage forecasts due today or in grace, dated on their stage day, as --all-due forecasts are."""
+    today = _today(ctx, args.date)
+    if args.site:
+        return [(args.site, today)]
+    if not args.all_due:
+        raise ValueError("Give --site SITE, or --all-due for every site whose forecast is due.")
+    out: set[tuple[str, date]] = set()
+    for item in forecasting.due(ctx.scoreboard(), today)["due"]:
+        stage_day = date.fromisoformat(item["stage_date"])
+        if item["stage"] == "upload" or stage_day <= today:
+            out.add((item["site"], min(today, stage_day)))
+    return sorted(out)
+
+
+def cmd_strength_sync(ctx: Context, args: argparse.Namespace) -> int:
+    targets = _sync_targets(ctx, args)
+    if not targets:
+        ctx.emit({"targets": [], "fetch": bool(args.fetch)}, ["No seed or pilot forecast is due, so nothing needs a lookup."])
+        return EXIT_OK
+    result = forecasting.strength_sync(ctx.scoreboard(), ctx.paths, targets, now=ctx.clock.now(), fetch=bool(args.fetch),
+                                       client=ctx.http_client, log=lambda message: ctx.err.write(message + "\n"))
+    ctx.emit(result.to_dict(), forecasting.strength_sync_lines(result))
+    return EXIT_CHECK_FAILED if result.failed else EXIT_OK
 
 
 # ---------------------------------------------------------------------------
@@ -244,20 +304,20 @@ def _register_train(sub: Any, common: argparse.ArgumentParser) -> None:
                        help="panel (REAL, training side only), synthetic (SYNTHETIC) or paid (REAL, the paid pulls)")
     train.add_argument("--name", default=None, help="the bundle folder under data/forecast/models (default <data>-<time>)")
     train.add_argument("--frame", default=None, help="the panel frame parquet (default: the newest under the cache)")
-    train.set_defaults(handler=cmd_train)
+    train.set_defaults(handler=guarded(cmd_train))
 
 
 def _register_backtest(sub: Any, common: argparse.ArgumentParser) -> None:
     bt = sub.add_parser("backtest", parents=[common], help="list the frozen backtest designs and their evidence files "
                                                            "(scores nothing)")
     bt.add_argument("--root", default=None, help="the backtest evidence folder (default evals/forecast/backtest)")
-    bt.set_defaults(handler=cmd_backtest_list)
+    bt.set_defaults(handler=guarded(cmd_backtest_list))
     inner = bt.add_subparsers(dest="backtest_command", required=False)
     run = inner.add_parser("run", parents=[common], help="look at the same held-out rows again under the next design "
                                                          "version (reported as another look)")
     run.add_argument("--reason", required=True, help="why the frozen designs are looked at again. It is recorded.")
     run.add_argument("--root", default=None, help="the backtest evidence folder (default evals/forecast/backtest)")
-    run.set_defaults(handler=cmd_backtest_run)
+    run.set_defaults(handler=guarded(cmd_backtest_run))
 
 
 def _add_forecast_args(parser: argparse.ArgumentParser) -> None:
@@ -266,7 +326,8 @@ def _add_forecast_args(parser: argparse.ArgumentParser) -> None:
                         help="every site whose forecast at this stage is due today (an upload forecast from 3 days "
                              "before launch; a stage forecast on its stage day or grace day)")
     parser.add_argument("--date", type=_iso_date, default=None,
-                        help="the forecast date (default: the stage day, or today when that is earlier)")
+                        help="with --site the forecast date (default: the stage day, or today when that is earlier); "
+                             "with --all-due today, and each forecast is dated on its stage day")
     parser.add_argument("--bundle", default=None, help="the model bundle (default: the newest)")
     parser.add_argument("--record", action="store_true", help="freeze the forecasts on the scoreboard. Without it this is "
                                                               "a dry run.")
@@ -275,19 +336,35 @@ def _add_forecast_args(parser: argparse.ArgumentParser) -> None:
 def _register_upload(sub: Any, common: argparse.ArgumentParser) -> None:
     upload = sub.add_parser("upload", parents=[common], help="the upload forecast of a site (dry run unless --record)")
     _add_forecast_args(upload)
-    upload.set_defaults(handler=cmd_upload)
+    upload.set_defaults(handler=guarded(cmd_upload))
     update = sub.add_parser("update", parents=[common], help="the stage forecast of a site at day 7, 14, 30 or 60 "
                                                              "(dry run unless --record)")
     _add_forecast_args(update)
     update.add_argument("--stage", choices=UPDATE_STAGES, required=True)
-    update.set_defaults(handler=cmd_update)
+    update.set_defaults(handler=guarded(cmd_update))
 
 
 def _register_due(sub: Any, common: argparse.ArgumentParser) -> None:
     due = sub.add_parser("due", parents=[common], help="stage forecasts due soon and stages missed (free)")
     due.add_argument("--date", type=_iso_date, default=None, help="today, as a UTC date (default: now)")
     due.add_argument("--window", type=int, default=3, help="days ahead to look (default 3)")
-    due.set_defaults(handler=cmd_due)
+    due.set_defaults(handler=guarded(cmd_due))
+
+
+def _register_strength(sub: Any, common: argparse.ArgumentParser) -> None:
+    group = sub.add_parser("strength", help="the dated site strength lists the live forecasts read")
+    inner = group.add_subparsers(dest="strength_command", required=True)
+    sync = inner.add_parser("sync", parents=[common], help="look new sites and the sites on their pages up in the dated "
+                                                           "strength lists (free; a dry run unless --fetch)")
+    sync.add_argument("--site", default=None, help="a registered seed or pilot site")
+    sync.add_argument("--all-due", action="store_true",
+                      help="every site whose upload forecast is due in the next 3 days or whose stage forecast is due "
+                           "today")
+    sync.add_argument("--date", type=_iso_date, default=None,
+                      help="with --site the forecast date, with --all-due today (default: today, UTC)")
+    sync.add_argument("--fetch", action="store_true", help="download the free public list files and read them. "
+                                                           "Without it nothing is downloaded.")
+    sync.set_defaults(handler=guarded(cmd_strength_sync))
 
 
 REGISTRARS: tuple[Callable[[Any, argparse.ArgumentParser], None], ...] = (
@@ -295,6 +372,7 @@ REGISTRARS: tuple[Callable[[Any, argparse.ArgumentParser], None], ...] = (
     _register_backtest,
     _register_upload,
     _register_due,
+    _register_strength,
 )
 
 __all__ = ["REGISTRARS", "marker2", "train_lines"]

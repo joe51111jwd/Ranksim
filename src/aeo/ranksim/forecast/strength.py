@@ -69,6 +69,8 @@ from .features import (
     finish_scored_run,
     freeze_prereg,
     frozen_reason,
+    held_out_already_read,
+    mark_provisional,
     prereg_file,
     search_group,
     stable_share,
@@ -702,7 +704,11 @@ def prereg_payload(split: SplitRule = DEFAULT_SPLIT, *, version: int = 1, reason
     Version 1 is the design already frozen in evals/forecast/strength/prereg.json (unchanged, so its sha256 still
     reproduces). Version k >= 2 adds its version name and the reason for the new version, and goes to prereg-v<k>.json.
     """
-    return versioned_payload(_prereg_payload_v1(split), name="strength", version=version, reason=reason)
+    payload = versioned_payload(_prereg_payload_v1(split), name="strength", version=version, reason=reason)
+    if int(version) >= 2:
+        payload["held_out_rows"] = held_out_already_read(split, version) or ("fresh: the split's cutoff is after every "
+                                                                            "date design version 1 graded")
+    return payload
 
 
 def _prereg_payload_v1(split: SplitRule) -> dict[str, Any]:
@@ -1070,6 +1076,10 @@ def run(split: SplitRule = DEFAULT_SPLIT, *, out_dir: str | Path | None = None, 
         ],
     }
     report["verdict"] = verdict_lines(report)
+    provisional = None if rehearsal else held_out_already_read(split, version)
+    if provisional:  # held-out rows version 1 already scored and read: no fresh accuracy claim is made on them
+        report["verdict"] = [f"PROVISIONAL: {provisional['reason']}", *report["verdict"]]
+        report = mark_provisional(report, provisional)
     report = _clean(report)
     if rehearsal:  # rehearsals stay rerunnable and write only under the cache
         folder.mkdir(parents=True, exist_ok=True)

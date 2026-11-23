@@ -258,6 +258,67 @@ def versioned_payload(payload: Mapping[str, Any], *, name: str, version: int, re
     return out
 
 
+# The held-out rows every design version 1 (strength, trust, panel backtest) scored and published: the test side of
+# strength-split-v1 (cutoff 2026-01-01) on the panel, whose last graded outcome is dated 2026-04-30
+# (evals/forecast/backtest/panel_*/report-v1.json). Later versions were designed after those numbers were read.
+V1_HELD_OUT_SPLIT_VERSION = "strength-split-v1"
+V1_HELD_OUT_READ_THROUGH = date(2026, 4, 30)
+PROVISIONAL = "PROVISIONAL"
+
+
+def held_out_already_read(split: Any, version: int) -> dict[str, Any] | None:
+    """The record a design version k >= 2 carries when its held-out rows were already scored by version 1, else None.
+
+    MISSION: held-out data are scored once; master plan rules 12 and 13: a result on data already read is
+    PROVISIONAL, and a failed test's data becomes design data. A version k >= 2 whose split cutoff is on or before
+    the last date version 1 graded (V1_HELD_OUT_READ_THROUGH) grades rows version 1 already read, whatever its seed:
+    its numbers are PROVISIONAL, not fresh held-out accuracy, and carry no marker verdict or headline accuracy claim.
+    Only a split whose cutoff is after that date gives fresh held-out rows. `split` is a SplitRule or its asdict.
+    """
+    if int(version) < 2:
+        return None
+    record = dict(split) if isinstance(split, Mapping) else asdict(split)
+    cutoff = as_date(record.get("time_cutoff"))
+    if cutoff > V1_HELD_OUT_READ_THROUGH:
+        return None
+    return {"label": PROVISIONAL, "already_read_by": "design version 1",
+            "split": record.get("version"), "time_cutoff": record.get("time_cutoff"),
+            "version_1_split": V1_HELD_OUT_SPLIT_VERSION, "version_1_read_through": V1_HELD_OUT_READ_THROUGH.isoformat(),
+            "reason": (f"held-out rows already read by version 1: design version {int(version)} grades rows of split "
+                       f"{record.get('version')} (cutoff {record.get('time_cutoff')}) that design version 1 already "
+                       f"graded and published (through {V1_HELD_OUT_READ_THROUGH.isoformat()}), and its changes were "
+                       "chosen after those numbers were read. Its numbers are PROVISIONAL, not fresh held-out accuracy: "
+                       "no marker verdict and no headline accuracy claim is made on them. Fresh held-out rows need a "
+                       f"split whose cutoff is after {V1_HELD_OUT_READ_THROUGH.isoformat()}.")}
+
+
+def mark_provisional(report: Any, record: Mapping[str, Any] | None, *, _top: bool = True) -> Any:
+    """Mark a report PROVISIONAL with `record`: the report itself, every nested report (a dict with a headline) and
+    every marker result in it (a dict under a key starting with "marker" that has `passed`). A marker result keeps
+    the value the bars would give under `provisional_passed` and passes or fails nothing (`passed` None). A copy is
+    returned; None or an empty record returns the report unchanged."""
+    if not record:
+        return report
+    if isinstance(report, list):
+        return [mark_provisional(v, record, _top=False) for v in report]
+    if not isinstance(report, dict):
+        return report
+    out = {}
+    for key, value in report.items():
+        if isinstance(value, dict) and str(key).startswith("marker") and "passed" in value:
+            value = dict(value)
+            value.setdefault("provisional_passed", value.get("stand_in_passed", value.get("passed")))
+            value["passed"] = None
+            value["provisional"] = True
+            value["provisional_reason"] = record["reason"]
+        out[key] = mark_provisional(value, record, _top=False) if isinstance(value, (dict, list)) else value
+    if _top or "headline" in out:
+        out["provisional"] = True
+        out["provisional_reason"] = record["reason"]
+        out["held_out_already_read"] = dict(record)
+    return out
+
+
 def frozen_reason(folder: str | Path, version: int) -> str | None:
     """The reason recorded in a frozen version k >= 2 prereg, or None when there is none."""
     path = prereg_file(folder, version)

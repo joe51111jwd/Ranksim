@@ -173,7 +173,8 @@ def test_new_site_rule_switches_to_always_nt50_only_when_it_beats_the_version_in
     dist = updater.distributions(val.iloc[:1], _flat_prior(1))[0]
     new = updater.forecast(dist, site="a", search="q", stage="d30", as_of=date(2025, 9, 1), segments={"new_to_search": True})
     old = updater.forecast(dist, site="a", search="q", stage="d30", as_of=date(2025, 9, 1), segments={"new_to_search": False})
-    assert new.point == NT50 and new.range_high == NT50 and new.notes["segment_rule"] == "always_nt50"
+    assert new.point == NT50 and new.range_low == new.range_high == NT50 and new.notes["segment_rule"] == "always_nt50"
+    assert new.label == "out_of_reach" and new.probs["NT50"] == 1.0
     assert old.point == dist_median(dist) and "segment_rule" not in old.notes
     points = updater.points(val, _flat_prior(len(val)))
     assert all(p == NT50 for p in points[400:]) and points[:400] != [NT50] * 400
@@ -231,3 +232,37 @@ def test_updater_payload_round_trips_with_its_segment_rules():
     assert again.segment_rules == updater.segment_rules and again.sha256() == updater.sha256()
     legacy = {k: v for k, v in updater.payload().items() if k not in ("segment_rules", "segment_comparison", "range_calibration")}
     assert U.Updater.from_payload(legacy).segment_rules == {}
+
+
+def test_always_nt50_rule_is_a_distribution_so_point_range_label_and_probabilities_agree():
+    """IMPLEMENTATION_SPEC 6, part 6: the point is the median of the predicted distribution, the range its 80%
+    interval, and the label comes from the same distribution. The rule must never leave a locked top-3 label beside
+    an NT50 point, or widen a range to 51 to hold an imposed point."""
+    from types import SimpleNamespace
+
+    updater = U.Updater(table=SimpleNamespace(version="updater-table-v1", payload=lambda: {"v": 1}), model=None,
+                        in_use="table", reason="r", segment_rules={"new_to_search": "always_nt50"})
+    dist = np.zeros(51)
+    dist[1] = 0.95  # position 2
+    dist[50] = 0.05  # NT50
+    fc = updater.forecast(dist, site="s.com", search="q", stage="d30", as_of=date(2026, 3, 1),
+                          segments={"new_to_search": True})
+    assert fc.point == NT50 and (fc.range_low, fc.range_high) == (NT50, NT50)
+    assert fc.label == "out_of_reach" and fc.probs == {"1-3": 0.0, "4-10": 0.0, "11-20": 0.0, "21-50": 0.0, "NT50": 1.0}
+    outside = updater.forecast(dist, site="s.com", search="q", stage="d30", as_of=date(2026, 3, 1),
+                               segments={"new_to_search": False})
+    assert outside.point == dist_median(dist) == 2 and outside.label == "locked" and outside.range_high < NT50
+
+
+def test_distributions_in_use_put_every_probability_on_nt50_on_rows_of_an_always_nt50_segment():
+    train = pd.concat([_persistence_rows(800, 1, new=0.0), _persistence_rows(800, 2, new=1.0, prefix="r")], ignore_index=True)
+    table = U.fit_table(train, training_label=REAL)
+    val = pd.concat([_persistence_rows(400, 3, new=0.0, prefix="v"),
+                     _persistence_rows(400, 4, new=1.0, outcome_nt50=True, prefix="w")], ignore_index=True)
+    updater = U.choose_version(table, None, val, _flat_prior(len(val)))
+    U.choose_segment(updater, val, _flat_prior(len(val)))
+    dists = updater.distributions(val, _flat_prior(len(val)))
+    assert np.allclose(dists[400:], U.nt50_mass()) and not np.allclose(dists[:400], U.nt50_mass())
+    alone = updater.distributions(val, _flat_prior(len(val)), "table")  # the version alone, without the rule
+    assert np.allclose(alone[:400], dists[:400]) and not np.allclose(alone[400:], U.nt50_mass())
+    assert updater.points(val, _flat_prior(len(val))) == [dist_median(d) for d in dists]

@@ -1002,3 +1002,33 @@ def test_an_error_page_is_never_saved_as_the_crawl_list_and_retries_do_not_reall
     with pytest.raises(ConnectionError):
         ns.load_crawls(target, http=httpx.Client(transport=httpx.MockTransport(down)), sleep=slept.append)
     assert slept and not target.exists()
+
+
+def test_page_text_without_a_capture_date_is_never_written_and_excluded_sites_are_dropped(tmp_path):
+    path = tmp_path / "page_text.jsonl"
+    with pytest.raises(ValueError, match="no capture date"):
+        ts.write_page_texts(path, [{"site": "ok.com", "captured_on": None, "title": "t"}])
+    ts.write_page_texts(path, [{"site": "www.SmartCrewHQ.com", "captured_on": date(2025, 1, 1), "title": "x"},
+                               {"site": "https://www.ok.com/", "captured_on": date(2025, 1, 2), "title": "Ok"}])
+    texts = ts.load_page_texts(path)
+    assert list(texts) == ["ok.com"] and texts["ok.com"][0]["captured_on"] == date(2025, 1, 2)
+    assert ts.page_text_dated(texts["ok.com"][0]).snapshot_date == date(2025, 1, 2)
+
+
+def test_the_synthetic_training_set_writes_its_universe_launch_text_and_what_rebuilds_its_world(tmp_path):
+    world = World(4, niches=3, searches_per_niche=30, new_sites=12)
+    made = ts.synthetic_training_set(world, out_dir=tmp_path / "syn")
+    meta = json.loads((tmp_path / "syn" / ts.SYNTHETIC_META_FILE).read_text())
+    params = meta["world_params"]
+    assert params["seed"] == 4 and params["new_sites"] == 12 and params["searches_per_niche"] == 30 and params["knobs_default"]
+    rebuilt = World(params["seed"], niches=params["niches"], searches_per_niche=params["searches_per_niche"],
+                    established_sites=params["established_sites"], new_sites=params["new_sites"],
+                    start_month=date.fromisoformat(params["start_month"]), months=params["months"],
+                    location_code=params["location_code"])
+    assert sorted(rebuilt.new_sites) == sorted(world.new_sites)
+    universe = pd.read_parquet(made.paths["universe"])
+    assert set(universe["label"]) == {"SYNTHETIC"} and len(universe) == len(world.searches)
+    texts = ts.load_page_texts(Path(made.paths["page_text"]))
+    alive = {site for site, info in world.new_sites.items() if info.alive}
+    assert set(texts) == alive
+    assert all(rows[0]["captured_on"] == world.new_sites[site].launch_date for site, rows in texts.items())

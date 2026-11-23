@@ -1,0 +1,2645 @@
+{
+  "computed_at": "2026-11-23T01:20:28Z",
+  "design_version": 2,
+  "held_out_already_read": {
+    "already_read_by": "design version 1",
+    "label": "PROVISIONAL",
+    "reason": "held-out rows already read by version 1: design version 2 grades rows of split strength-split-v1 (cutoff 2026-01-01) that design version 1 already graded and published (through 2026-04-30), and its changes were chosen after those numbers were read. Its numbers are PROVISIONAL, not fresh held-out accuracy: no marker verdict and no headline accuracy claim is made on them. Fresh held-out rows need a split whose cutoff is after 2026-04-30.",
+    "split": "strength-split-v1",
+    "time_cutoff": "2026-01-01",
+    "version_1_read_through": "2026-04-30",
+    "version_1_split": "strength-split-v1"
+  },
+  "label": "REAL",
+  "marker2_input_free": {
+    "counts": {
+      "missing": 0,
+      "right": 22428,
+      "tied": 11,
+      "wrong": 14155
+    },
+    "gain_over_best_single_measure": {
+      "baseline": "st_s_cc_pr",
+      "difference": 0.02085041263595125,
+      "difference_interval": [
+        -0.004692928643870236,
+        0.04887757381085357
+      ],
+      "note": "the best free single strength measure, chosen on these pairs, so stricter; printed beside the verdict with no bar"
+    },
+    "gain_over_link_count": {
+      "baseline": "st_s_cc_hosts",
+      "difference": 0.0427119199868831,
+      "difference_interval": [
+        0.013744449423505212,
+        0.0758972250990409
+      ],
+      "note": "the plain link count (Common Crawl linked hosts) on the same pairs; decides the verdict"
+    },
+    "label": "REAL",
+    "pairs": {
+      "count": 36594,
+      "rate": 0.613037656446412,
+      "two_way_interval": [
+        0.5886227327199495,
+        0.6375428820002003
+      ]
+    },
+    "stand_in": true,
+    "stand_in_reason": "its pairs are sites that already rank in the free public panel, with result titles standing in for page content, not the plan's 20,000 new sites with traffic curves"
+  },
+  "marker2_input_free_plus_mdr": {
+    "counts": {
+      "missing": 0,
+      "right": 22311,
+      "tied": 6,
+      "wrong": 14277
+    },
+    "gain_over_best_single_measure": {
+      "baseline": "st_s_cc_pr",
+      "difference": 0.017584849975405804,
+      "difference_interval": [
+        -0.009905316352650113,
+        0.046636491406412676
+      ],
+      "note": "the best free single strength measure, chosen on these pairs, so stricter; printed beside the verdict with no bar"
+    },
+    "gain_over_link_count": {
+      "baseline": "st_s_cc_hosts",
+      "difference": 0.03944635732633765,
+      "difference_interval": [
+        0.00891620395166359,
+        0.0733610498275156
+      ],
+      "note": "the plain link count (Common Crawl linked hosts) on the same pairs; decides the verdict"
+    },
+    "label": "REAL",
+    "pairs": {
+      "count": 36594,
+      "rate": 0.6097720937858665,
+      "two_way_interval": [
+        0.5845089729262367,
+        0.6344930365123486
+      ]
+    },
+    "stand_in": true,
+    "stand_in_reason": "its pairs are sites that already rank in the free public panel, with result titles standing in for page content, not the plan's 20,000 new sites with traffic curves"
+  },
+  "marker2_text_free": "PROVISIONAL: held-out rows already read by version 1: design version 2 grades rows of split strength-split-v1 (cutoff 2026-01-01) that design version 1 already graded and published (through 2026-04-30), and its changes were chosen after those numbers were read. Its numbers are PROVISIONAL, not fresh held-out accuracy: no marker verdict and no headline accuracy claim is made on them. Fresh held-out rows need a split whose cutoff is after 2026-04-30. Marker 2, Trust model: NOT A MARKER RESULT (STAND-IN). What the bars would give on the stand-in: NOT PASSED (REAL).\nCheck pair accuracy: 61.3% against 70.0%, not met (REAL).\nCheck lower bound of gain over link count: 1.4% against 0.0%, met (REAL).\nGain over link count alone, the plan's measure (st_s_cc_hosts): 4.3%, interval 1.4% to 7.6% (REAL).\nGain over the best single measure, stricter and with no bar (st_s_cc_pr): 2.1%, interval -0.5% to 4.9% (REAL).\nThis is a stand-in, not the plan's marker: its pairs are sites that already rank in the free public panel, with result titles standing in for page content, not the plan's 20,000 new sites with traffic curves, so what the bars would give does not count as a pass or a fail.",
+  "marker2_verdict_free": {
+    "checks": [
+      {
+        "name": "pair accuracy",
+        "ok": false,
+        "target": 0.7,
+        "value": 0.613037656446412
+      },
+      {
+        "name": "lower bound of gain over link count",
+        "ok": true,
+        "target": 0.0,
+        "value": 0.013744449423505212
+      }
+    ],
+    "counts": {
+      "missing": 0,
+      "right": 22428,
+      "tied": 11,
+      "wrong": 14155
+    },
+    "date": "2026-12-14",
+    "gain_over_best_single_measure": {
+      "baseline": "st_s_cc_pr",
+      "difference": 0.02085041263595125,
+      "difference_interval": [
+        -0.004692928643870236,
+        0.04887757381085357
+      ]
+    },
+    "gain_over_link_count": {
+      "baseline": "st_s_cc_hosts",
+      "difference": 0.0427119199868831,
+      "difference_interval": [
+        0.013744449423505212,
+        0.0758972250990409
+      ]
+    },
+    "label": "REAL",
+    "marker": 2,
+    "markers_hash": "97095e561a44ed877e0c0be5c28f1a2fbb0988a7b5c9aa52f0d36d624befa69f",
+    "name": "Trust model",
+    "notes": [
+      "This is a stand-in, not the plan's marker: its pairs are sites that already rank in the free public panel, with result titles standing in for page content, not the plan's 20,000 new sites with traffic curves, so what the bars would give does not count as a pass or a fail."
+    ],
+    "passed": null,
+    "provisional": true,
+    "provisional_passed": false,
+    "provisional_reason": "held-out rows already read by version 1: design version 2 grades rows of split strength-split-v1 (cutoff 2026-01-01) that design version 1 already graded and published (through 2026-04-30), and its changes were chosen after those numbers were read. Its numbers are PROVISIONAL, not fresh held-out accuracy: no marker verdict and no headline accuracy claim is made on them. Fresh held-out rows need a split whose cutoff is after 2026-04-30.",
+    "stand_in": true,
+    "stand_in_passed": false,
+    "stand_in_reason": "its pairs are sites that already rank in the free public panel, with result titles standing in for page content, not the plan's 20,000 new sites with traffic curves"
+  },
+  "marker2_verdict_free_plus_mdr": {
+    "checks": [
+      {
+        "name": "pair accuracy",
+        "ok": false,
+        "target": 0.7,
+        "value": 0.6097720937858665
+      },
+      {
+        "name": "lower bound of gain over link count",
+        "ok": true,
+        "target": 0.0,
+        "value": 0.00891620395166359
+      }
+    ],
+    "counts": {
+      "missing": 0,
+      "right": 22311,
+      "tied": 6,
+      "wrong": 14277
+    },
+    "date": "2026-12-14",
+    "gain_over_best_single_measure": {
+      "baseline": "st_s_cc_pr",
+      "difference": 0.017584849975405804,
+      "difference_interval": [
+        -0.009905316352650113,
+        0.046636491406412676
+      ]
+    },
+    "gain_over_link_count": {
+      "baseline": "st_s_cc_hosts",
+      "difference": 0.03944635732633765,
+      "difference_interval": [
+        0.00891620395166359,
+        0.0733610498275156
+      ]
+    },
+    "label": "REAL",
+    "marker": 2,
+    "markers_hash": "97095e561a44ed877e0c0be5c28f1a2fbb0988a7b5c9aa52f0d36d624befa69f",
+    "name": "Trust model",
+    "notes": [
+      "This is a stand-in, not the plan's marker: its pairs are sites that already rank in the free public panel, with result titles standing in for page content, not the plan's 20,000 new sites with traffic curves, so what the bars would give does not count as a pass or a fail."
+    ],
+    "passed": null,
+    "provisional": true,
+    "provisional_passed": false,
+    "provisional_reason": "held-out rows already read by version 1: design version 2 grades rows of split strength-split-v1 (cutoff 2026-01-01) that design version 1 already graded and published (through 2026-04-30), and its changes were chosen after those numbers were read. Its numbers are PROVISIONAL, not fresh held-out accuracy: no marker verdict and no headline accuracy claim is made on them. Fresh held-out rows need a split whose cutoff is after 2026-04-30.",
+    "stand_in": true,
+    "stand_in_passed": false,
+    "stand_in_reason": "its pairs are sites that already rank in the free public panel, with result titles standing in for page content, not the plan's 20,000 new sites with traffic curves"
+  },
+  "name": "trust",
+  "pair_comparison": ">",
+  "prereg_sha256": "ba8dfdeec42e75126b36b9c167d7fdb872160a88f0bfe8bc4c7106233bde1d3e",
+  "primary": "cross_encoder_en",
+  "provisional": true,
+  "provisional_reason": "held-out rows already read by version 1: design version 2 grades rows of split strength-split-v1 (cutoff 2026-01-01) that design version 1 already graded and published (through 2026-04-30), and its changes were chosen after those numbers were read. Its numbers are PROVISIONAL, not fresh held-out accuracy: no marker verdict and no headline accuracy claim is made on them. Fresh held-out rows need a split whose cutoff is after 2026-04-30.",
+  "reason_for_new_version": "Version 2 is a second look at the same held-out searches, sites and dates that version 1 was scored on, made after the version 1 result was seen, so it is not a fresh held-out test. The data layer was fixed and the panel rebuilt: search volume counts as known only 45 days after its month ends, and intent and etv are null on pages older than their record date. Bug-hunt fixes: marker 2 pairs need labels that differ by more than 10 places, not exactly 10; registration records fetched today are left out, so sd_registration_known is always 0 and is dropped; every scored run must be committed, pushed, clean and scored once. The report now gives the gain over the plain link count, which decides the verdict as the plan says, and prints the stricter gain over the best single measure beside it. Version 1 fed the stricter gain to the verdict. The report is marked a stand-in, because its pairs are sites that already rank in the free panel, not the 20,000 new sites of the plan, so marker 2 can neither pass nor fail on it.",
+  "rehearsal": false,
+  "runs": {
+    "cross_encoder_en": {
+      "config": {
+        "backend": "cross_encoder",
+        "language": "en"
+      },
+      "content_backend": "cross_encoder",
+      "content_model": "minilm-l6@233902d25c44",
+      "counts": {
+        "search_groups_on_both_sides": 0,
+        "sites_on_both_sides": 0,
+        "test_rows": 12386,
+        "test_searches": 768,
+        "test_sites": 5379,
+        "train_pages": 4832,
+        "train_rows": 122927,
+        "train_rows_missing_title": 0,
+        "train_searches": 1502,
+        "train_sites": 29097
+      },
+      "evaluation": {
+        "models": {
+          "free_gbt": {
+            "best_single_measure": "st_s_cc_pr",
+            "both_sites_young": {
+              "best_single_measure": {
+                "clusters": 23,
+                "count": 35,
+                "rate": 0.5857142857142857,
+                "rate_decided_only": 0.6,
+                "right": 18,
+                "search_interval": [
+                  0.45588235294117646,
+                  0.7241379310344828
+                ],
+                "site_interval": [
+                  0.42424242424242425,
+                  0.7352941176470589
+                ],
+                "sites": 54,
+                "tied": 5,
+                "two_way_interval": [
+                  0.23326923076923078,
+                  0.9412581699346401
+                ],
+                "wrong": 12
+              },
+              "gain_over_best_single_measure": {
+                "count": 35,
+                "difference": -0.014285714285714285,
+                "difference_interval": [
+                  -0.5170254237288135,
+                  0.4616071428571425
+                ],
+                "interval_method": "two-way bootstrap over searches and sites",
+                "search_interval": [
+                  -0.18333333333333332,
+                  0.15517241379310345
+                ]
+              },
+              "median_start_uncertainty_days": 93.0,
+              "model": {
+                "clusters": 23,
+                "count": 35,
+                "rate": 0.5714285714285714,
+                "rate_decided_only": 0.5714285714285714,
+                "right": 20,
+                "search_interval": [
+                  0.4284821428571428,
+                  0.7308333333333329
+                ],
+                "site_interval": [
+                  0.40540540540540543,
+                  0.75
+                ],
+                "sites": 54,
+                "tied": 0,
+                "two_way_interval": [
+                  0.16666666666666666,
+                  0.961666666666666
+                ],
+                "wrong": 15
+              },
+              "pairs": 35
+            },
+            "gain_over_best_single_measure": {
+              "count": 36594,
+              "difference": 0.02085041263595125,
+              "difference_interval": [
+                -0.004692928643870236,
+                0.04887757381085357
+              ],
+              "interval_method": "two-way bootstrap over searches and sites",
+              "search_interval": [
+                0.008274388163165993,
+                0.03372280822838477
+              ]
+            },
+            "gain_over_link_count": {
+              "count": 36594,
+              "difference": 0.0427119199868831,
+              "difference_interval": [
+                0.013744449423505212,
+                0.0758972250990409
+              ],
+              "interval_method": "two-way bootstrap over searches and sites",
+              "search_interval": [
+                0.028176807781309546,
+                0.05710051167224976
+              ]
+            },
+            "pairs": {
+              "clusters": 734,
+              "count": 36594,
+              "rate": 0.613037656446412,
+              "rate_decided_only": 0.6130716452997294,
+              "right": 22428,
+              "search_interval": [
+                0.6002046722703217,
+                0.6248436435379818
+              ],
+              "site_interval": [
+                0.5770785274400633,
+                0.6495707191904745
+              ],
+              "sites": 5270,
+              "tied": 11,
+              "two_way_interval": [
+                0.5886227327199495,
+                0.6375428820002003
+              ],
+              "wrong": 14155
+            }
+          },
+          "free_plus_mdr_gbt": {
+            "best_single_measure": "st_s_cc_pr",
+            "both_sites_young": {
+              "best_single_measure": {
+                "clusters": 23,
+                "count": 35,
+                "rate": 0.5857142857142857,
+                "rate_decided_only": 0.6,
+                "right": 18,
+                "search_interval": [
+                  0.45588235294117646,
+                  0.7241379310344828
+                ],
+                "site_interval": [
+                  0.42424242424242425,
+                  0.7352941176470589
+                ],
+                "sites": 54,
+                "tied": 5,
+                "two_way_interval": [
+                  0.23326923076923078,
+                  0.9412581699346401
+                ],
+                "wrong": 12
+              },
+              "gain_over_best_single_measure": {
+                "count": 35,
+                "difference": 0.014285714285714285,
+                "difference_interval": [
+                  -0.5100588235294117,
+                  0.46774193548387094
+                ],
+                "interval_method": "two-way bootstrap over searches and sites",
+                "search_interval": [
+                  -0.17857142857142858,
+                  0.19122660427807459
+                ]
+              },
+              "median_start_uncertainty_days": 93.0,
+              "model": {
+                "clusters": 23,
+                "count": 35,
+                "rate": 0.6,
+                "rate_decided_only": 0.6,
+                "right": 21,
+                "search_interval": [
+                  0.4375,
+                  0.7575757575757576
+                ],
+                "site_interval": [
+                  0.42424242424242425,
+                  0.7647058823529411
+                ],
+                "sites": 54,
+                "tied": 0,
+                "two_way_interval": [
+                  0.16666666666666666,
+                  0.9744680851063824
+                ],
+                "wrong": 14
+              },
+              "pairs": 35
+            },
+            "gain_over_best_single_measure": {
+              "count": 36594,
+              "difference": 0.017584849975405804,
+              "difference_interval": [
+                -0.009905316352650113,
+                0.046636491406412676
+              ],
+              "interval_method": "two-way bootstrap over searches and sites",
+              "search_interval": [
+                0.004911202418414025,
+                0.029657015941887247
+              ]
+            },
+            "gain_over_link_count": {
+              "count": 36594,
+              "difference": 0.03944635732633765,
+              "difference_interval": [
+                0.00891620395166359,
+                0.0733610498275156
+              ],
+              "interval_method": "two-way bootstrap over searches and sites",
+              "search_interval": [
+                0.025508540501992555,
+                0.05372103996489058
+              ]
+            },
+            "pairs": {
+              "clusters": 734,
+              "count": 36594,
+              "rate": 0.6097720937858665,
+              "rate_decided_only": 0.6097900951131519,
+              "right": 22311,
+              "search_interval": [
+                0.5975905440631523,
+                0.621586789137232
+              ],
+              "site_interval": [
+                0.5703683892106952,
+                0.64770677075969
+              ],
+              "sites": 5270,
+              "tied": 6,
+              "two_way_interval": [
+                0.5845089729262367,
+                0.6344930365123486
+              ],
+              "wrong": 14277
+            }
+          },
+          "free_plus_mdr_ridge": {
+            "best_single_measure": "st_s_cc_pr",
+            "both_sites_young": {
+              "best_single_measure": {
+                "clusters": 23,
+                "count": 35,
+                "rate": 0.5857142857142857,
+                "rate_decided_only": 0.6,
+                "right": 18,
+                "search_interval": [
+                  0.45588235294117646,
+                  0.7241379310344828
+                ],
+                "site_interval": [
+                  0.42424242424242425,
+                  0.7352941176470589
+                ],
+                "sites": 54,
+                "tied": 5,
+                "two_way_interval": [
+                  0.23326923076923078,
+                  0.9412581699346401
+                ],
+                "wrong": 12
+              },
+              "gain_over_best_single_measure": {
+                "count": 35,
+                "difference": 0.04285714285714286,
+                "difference_interval": [
+                  -0.42857142857142855,
+                  0.47062908496732003
+                ],
+                "interval_method": "two-way bootstrap over searches and sites",
+                "search_interval": [
+                  -0.129115275142315,
+                  0.2000595238095235
+                ]
+              },
+              "median_start_uncertainty_days": 93.0,
+              "model": {
+                "clusters": 23,
+                "count": 35,
+                "rate": 0.6285714285714286,
+                "rate_decided_only": 0.6285714285714286,
+                "right": 22,
+                "search_interval": [
+                  0.47058823529411764,
+                  0.7857142857142857
+                ],
+                "site_interval": [
+                  0.45714285714285713,
+                  0.7878787878787878
+                ],
+                "sites": 54,
+                "tied": 0,
+                "two_way_interval": [
+                  0.22215447154471543,
+                  1.0
+                ],
+                "wrong": 13
+              },
+              "pairs": 35
+            },
+            "gain_over_best_single_measure": {
+              "count": 36594,
+              "difference": 0.017762474722632125,
+              "difference_interval": [
+                -0.006388425839825767,
+                0.043748029215227066
+              ],
+              "interval_method": "two-way bootstrap over searches and sites",
+              "search_interval": [
+                0.0052701973524664995,
+                0.029648889235160684
+              ]
+            },
+            "gain_over_link_count": {
+              "count": 36594,
+              "difference": 0.03962398207356397,
+              "difference_interval": [
+                0.012243721690196357,
+                0.07138856296927479
+              ],
+              "interval_method": "two-way bootstrap over searches and sites",
+              "search_interval": [
+                0.025456884542664208,
+                0.0526959600675501
+              ]
+            },
+            "pairs": {
+              "clusters": 734,
+              "count": 36594,
+              "rate": 0.6099497185330929,
+              "rate_decided_only": 0.6099587330217813,
+              "right": 22319,
+              "search_interval": [
+                0.5972877109029533,
+                0.6215532325795696
+              ],
+              "site_interval": [
+                0.5723295573726406,
+                0.6437251025099001
+              ],
+              "sites": 5270,
+              "tied": 3,
+              "two_way_interval": [
+                0.5834646089007975,
+                0.6351061732548315
+              ],
+              "wrong": 14272
+            }
+          },
+          "free_ridge": {
+            "best_single_measure": "st_s_cc_pr",
+            "both_sites_young": {
+              "best_single_measure": {
+                "clusters": 23,
+                "count": 35,
+                "rate": 0.5857142857142857,
+                "rate_decided_only": 0.6,
+                "right": 18,
+                "search_interval": [
+                  0.45588235294117646,
+                  0.7241379310344828
+                ],
+                "site_interval": [
+                  0.42424242424242425,
+                  0.7352941176470589
+                ],
+                "sites": 54,
+                "tied": 5,
+                "two_way_interval": [
+                  0.23326923076923078,
+                  0.9412581699346401
+                ],
+                "wrong": 12
+              },
+              "gain_over_best_single_measure": {
+                "count": 35,
+                "difference": -0.014285714285714285,
+                "difference_interval": [
+                  -0.5385775862068966,
+                  0.466792452830188
+                ],
+                "interval_method": "two-way bootstrap over searches and sites",
+                "search_interval": [
+                  -0.1935483870967742,
+                  0.19123576850094842
+                ]
+              },
+              "median_start_uncertainty_days": 93.0,
+              "model": {
+                "clusters": 23,
+                "count": 35,
+                "rate": 0.5714285714285714,
+                "rate_decided_only": 0.5714285714285714,
+                "right": 20,
+                "search_interval": [
+                  0.4089987714987715,
+                  0.7586206896551724
+                ],
+                "site_interval": [
+                  0.39021002710027103,
+                  0.7647058823529411
+                ],
+                "sites": 54,
+                "tied": 0,
+                "two_way_interval": [
+                  0.16666666666666666,
+                  1.0
+                ],
+                "wrong": 15
+              },
+              "pairs": 35
+            },
+            "gain_over_best_single_measure": {
+              "count": 36594,
+              "difference": 0.01829534896431109,
+              "difference_interval": [
+                -0.0044121474770710415,
+                0.043637285033943575
+              ],
+              "interval_method": "two-way bootstrap over searches and sites",
+              "search_interval": [
+                0.007197366627144544,
+                0.029335635327024673
+              ]
+            },
+            "gain_over_link_count": {
+              "count": 36594,
+              "difference": 0.040156856315242934,
+              "difference_interval": [
+                0.011997794881368718,
+                0.07104591321074344
+              ],
+              "interval_method": "two-way bootstrap over searches and sites",
+              "search_interval": [
+                0.02663530951244854,
+                0.05331904134624384
+              ]
+            },
+            "pairs": {
+              "clusters": 734,
+              "count": 36594,
+              "rate": 0.6104825927747718,
+              "rate_decided_only": 0.6104946706750478,
+              "right": 22338,
+              "search_interval": [
+                0.5977698956921796,
+                0.622278014510746
+              ],
+              "site_interval": [
+                0.5655038546638692,
+                0.653333867772569
+              ],
+              "sites": 5270,
+              "tied": 4,
+              "two_way_interval": [
+                0.5849468904066459,
+                0.6364724657736195
+              ],
+              "wrong": 14252
+            }
+          }
+        },
+        "pages": 1168,
+        "pair_comparison": ">",
+        "pairs": 36594,
+        "single_measures": {
+          "st_mdr_before": {
+            "clusters": 734,
+            "count": 36594,
+            "rate": 0.5663906651363612,
+            "rate_decided_only": 0.5774243921093725,
+            "right": 18119,
+            "search_interval": [
+              0.5551577257865385,
+              0.5775296758020226
+            ],
+            "site_interval": [
+              0.507814106250535,
+              0.6248685186283365
+            ],
+            "sites": 5270,
+            "tied": 5215,
+            "two_way_interval": [
+              0.5403188991130932,
+              0.5908728423322706
+            ],
+            "wrong": 13260
+          },
+          "st_s_cc_hc": {
+            "clusters": 734,
+            "count": 36594,
+            "rate": 0.5868038476252938,
+            "rate_decided_only": 0.5869107225915894,
+            "right": 21451,
+            "search_interval": [
+              0.5745364049527509,
+              0.5995265774157744
+            ],
+            "site_interval": [
+              0.5213147130813532,
+              0.6512363120635363
+            ],
+            "sites": 5270,
+            "tied": 45,
+            "two_way_interval": [
+              0.5584341914847288,
+              0.612773760312334
+            ],
+            "wrong": 15098
+          },
+          "st_s_cc_hosts": {
+            "clusters": 734,
+            "count": 36594,
+            "rate": 0.5703257364595289,
+            "rate_decided_only": 0.5756533497956904,
+            "right": 19582,
+            "search_interval": [
+              0.5577951710469718,
+              0.5823212843007717
+            ],
+            "site_interval": [
+              0.5066459364124347,
+              0.6315884506064185
+            ],
+            "sites": 5270,
+            "tied": 2577,
+            "two_way_interval": [
+              0.5406648664869222,
+              0.5971725675522086
+            ],
+            "wrong": 14435
+          },
+          "st_s_cc_pr": {
+            "clusters": 734,
+            "count": 36594,
+            "rate": 0.5921872438104607,
+            "rate_decided_only": 0.5923007469424608,
+            "right": 21648,
+            "search_interval": [
+              0.5795266637787795,
+              0.6053381603447799
+            ],
+            "site_interval": [
+              0.5286296602737011,
+              0.6552444401980739
+            ],
+            "sites": 5270,
+            "tied": 45,
+            "two_way_interval": [
+              0.5640811677125246,
+              0.6183204651148079
+            ],
+            "wrong": 14901
+          },
+          "st_s_crux": {
+            "clusters": 734,
+            "count": 36594,
+            "rate": 0.5841394764168989,
+            "rate_decided_only": 0.6051571038251367,
+            "right": 17719,
+            "search_interval": [
+              0.5720032058419054,
+              0.5965909499580124
+            ],
+            "site_interval": [
+              0.5255418788980651,
+              0.6409025058698397
+            ],
+            "sites": 5270,
+            "tied": 7314,
+            "two_way_interval": [
+              0.557590712605441,
+              0.6087590192071343
+            ],
+            "wrong": 11561
+          },
+          "st_s_opr": {
+            "clusters": 734,
+            "count": 36594,
+            "rate": 0.5612395474667978,
+            "rate_decided_only": 0.579728191262274,
+            "right": 16295,
+            "search_interval": [
+              0.5497928633306096,
+              0.5730583384330084
+            ],
+            "site_interval": [
+              0.5038855195617481,
+              0.6167129615202704
+            ],
+            "sites": 5270,
+            "tied": 8486,
+            "two_way_interval": [
+              0.5350075892804469,
+              0.5845990383048874
+            ],
+            "wrong": 11813
+          },
+          "st_s_tranco": {
+            "clusters": 734,
+            "count": 36594,
+            "rate": 0.5859430507733508,
+            "rate_decided_only": 0.593830180798377,
+            "right": 19904,
+            "search_interval": [
+              0.5734760242523094,
+              0.5990446508248405
+            ],
+            "site_interval": [
+              0.5217329983773341,
+              0.6497903304341783
+            ],
+            "sites": 5270,
+            "tied": 3076,
+            "two_way_interval": [
+              0.5571707228899647,
+              0.6123814524656299
+            ],
+            "wrong": 13614
+          }
+        },
+        "threshold_places": 10.0,
+        "within_page_shuffle": {
+          "clusters": 734,
+          "count": 36594,
+          "rate": 0.5013390173252446,
+          "rate_decided_only": 0.5013390173252446,
+          "right": 18346,
+          "search_interval": [
+            0.49158788358984323,
+            0.5113754711307783
+          ],
+          "site_interval": [
+            0.4926860017236018,
+            0.5097473792828856
+          ],
+          "sites": 5270,
+          "tied": 0,
+          "two_way_interval": [
+            0.48068153447421047,
+            0.5205348983510407
+          ],
+          "wrong": 18248
+        }
+      },
+      "feature_sets": {
+        "free": {
+          "cv": {
+            "dropped_all_missing": [
+              "fp_referring_domains",
+              "fp_brand_search_volume",
+              "fp_review_count",
+              "fp_review_rating",
+              "fp_links_planned",
+              "fp_press_planned",
+              "fp_pages_at_launch"
+            ],
+            "gbt": {
+              "{\"min_child_samples\": 200, \"num_leaves\": 15}": {
+                "mse": 193.9534182436835,
+                "rounds": [
+                  126,
+                  187,
+                  224
+                ]
+              },
+              "{\"min_child_samples\": 200, \"num_leaves\": 7}": {
+                "mse": 194.19795135484503,
+                "rounds": [
+                  221,
+                  398,
+                  456
+                ]
+              },
+              "{\"min_child_samples\": 400, \"num_leaves\": 31}": {
+                "mse": 193.46108307988712,
+                "rounds": [
+                  69,
+                  123,
+                  129
+                ]
+              },
+              "{\"min_child_samples\": 50, \"num_leaves\": 15}": {
+                "mse": 194.02334264507945,
+                "rounds": [
+                  69,
+                  145,
+                  149
+                ]
+              }
+            },
+            "label_variance": 206.65034334355104,
+            "ridge": {
+              "1.0": 197.38212496617675,
+              "10.0": 197.3565712820043,
+              "100.0": 197.35110595276626,
+              "1000.0": 197.96848135214108
+            },
+            "rows": 122927
+          },
+          "features_used": [
+            "st_s_cc_hc",
+            "st_s_cc_pr",
+            "st_s_cc_hosts",
+            "st_s_crux",
+            "st_s_tranco",
+            "st_cc_present",
+            "st_crux_present",
+            "st_tranco_present",
+            "sd_age_days",
+            "sd_uncertainty_days",
+            "sd_left_censored",
+            "sd_age_lower_bound_days",
+            "sd_no_evidence",
+            "sd_possibly_reregistered",
+            "tld_code"
+          ],
+          "model_file": "data/forecast/models/trust/trust-v2-free-cross_encoder-en.json",
+          "model_sha256": "0e1265a251d4befa8805ce5ef3929804d09404e134444e8d80dd11a81893386d",
+          "rounds": 107
+        },
+        "free_plus_mdr": {
+          "cv": {
+            "dropped_all_missing": [
+              "fp_referring_domains",
+              "fp_brand_search_volume",
+              "fp_review_count",
+              "fp_review_rating",
+              "fp_links_planned",
+              "fp_press_planned",
+              "fp_pages_at_launch"
+            ],
+            "gbt": {
+              "{\"min_child_samples\": 200, \"num_leaves\": 15}": {
+                "mse": 193.142746626448,
+                "rounds": [
+                  124,
+                  187,
+                  271
+                ]
+              },
+              "{\"min_child_samples\": 200, \"num_leaves\": 7}": {
+                "mse": 193.710648108265,
+                "rounds": [
+                  225,
+                  437,
+                  457
+                ]
+              },
+              "{\"min_child_samples\": 400, \"num_leaves\": 31}": {
+                "mse": 192.7492482696721,
+                "rounds": [
+                  79,
+                  124,
+                  170
+                ]
+              },
+              "{\"min_child_samples\": 50, \"num_leaves\": 15}": {
+                "mse": 193.25317937014236,
+                "rounds": [
+                  65,
+                  176,
+                  354
+                ]
+              }
+            },
+            "label_variance": 206.65034334355104,
+            "ridge": {
+              "1.0": 196.7144947016154,
+              "10.0": 196.690495734205,
+              "100.0": 196.69202727878624,
+              "1000.0": 197.3362575332553
+            },
+            "rows": 122927
+          },
+          "features_used": [
+            "st_s_cc_hc",
+            "st_s_cc_pr",
+            "st_s_cc_hosts",
+            "st_s_crux",
+            "st_s_tranco",
+            "st_cc_present",
+            "st_crux_present",
+            "st_tranco_present",
+            "sd_age_days",
+            "sd_uncertainty_days",
+            "sd_left_censored",
+            "sd_age_lower_bound_days",
+            "sd_no_evidence",
+            "sd_possibly_reregistered",
+            "tld_code",
+            "mdr_before"
+          ],
+          "model_file": "data/forecast/models/trust/trust-v2-free_plus_mdr-cross_encoder-en.json",
+          "model_sha256": "3b6fb25c88ebdc3d730e20489748332c0aaef81c0c758ceba1ebac23e75b3d8d",
+          "rounds": 124
+        }
+      },
+      "label_summary": {
+        "test_residual_sd": 13.357504199343376,
+        "train_residual_sd": 14.375338025366606
+      },
+      "label_table_version": "3f6b301778dbebaf"
+    },
+    "lexical_all": {
+      "config": {
+        "backend": "lexical",
+        "language": null
+      },
+      "content_backend": "lexical",
+      "content_model": "bm25f-v1",
+      "counts": {
+        "search_groups_on_both_sides": 0,
+        "sites_on_both_sides": 0,
+        "test_rows": 39015,
+        "test_searches": 3069,
+        "test_sites": 17920,
+        "train_pages": 14047,
+        "train_rows": 346118,
+        "train_rows_missing_title": 53882,
+        "train_searches": 5346,
+        "train_sites": 83343
+      },
+      "evaluation": {
+        "models": {
+          "free_gbt": {
+            "best_single_measure": "st_s_cc_pr",
+            "both_sites_young": {
+              "best_single_measure": {
+                "clusters": 50,
+                "count": 76,
+                "rate": 0.4868421052631579,
+                "rate_decided_only": 0.4852941176470588,
+                "right": 33,
+                "search_interval": [
+                  0.3778771105447595,
+                  0.594610682110682
+                ],
+                "site_interval": [
+                  0.3766213724547058,
+                  0.6066898734177214
+                ],
+                "sites": 112,
+                "tied": 8,
+                "two_way_interval": [
+                  0.22805023923444975,
+                  0.7627690677966098
+                ],
+                "wrong": 35
+              },
+              "gain_over_best_single_measure": {
+                "count": 76,
+                "difference": 0.02631578947368421,
+                "difference_interval": [
+                  -0.2438570374015748,
+                  0.3181818181818182
+                ],
+                "interval_method": "two-way bootstrap over searches and sites",
+                "search_interval": [
+                  -0.06794421003281761,
+                  0.13158808479532158
+                ]
+              },
+              "median_start_uncertainty_days": 93.0,
+              "model": {
+                "clusters": 50,
+                "count": 76,
+                "rate": 0.5131578947368421,
+                "rate_decided_only": 0.5131578947368421,
+                "right": 39,
+                "search_interval": [
+                  0.3974358974358974,
+                  0.625
+                ],
+                "site_interval": [
+                  0.3972602739726027,
+                  0.6282142857142856
+                ],
+                "sites": 112,
+                "tied": 0,
+                "two_way_interval": [
+                  0.2423821548821549,
+                  0.7931034482758621
+                ],
+                "wrong": 37
+              },
+              "pairs": 76
+            },
+            "gain_over_best_single_measure": {
+              "count": 115325,
+              "difference": -0.006355950574463472,
+              "difference_interval": [
+                -0.02074287954954981,
+                0.009125910064434736
+              ],
+              "interval_method": "two-way bootstrap over searches and sites",
+              "search_interval": [
+                -0.012917237379350181,
+                0.000171498468759952
+              ]
+            },
+            "gain_over_link_count": {
+              "count": 115325,
+              "difference": 0.011068718838066335,
+              "difference_interval": [
+                -0.005143853552663794,
+                0.02874632090832636
+              ],
+              "interval_method": "two-way bootstrap over searches and sites",
+              "search_interval": [
+                0.003960416269034879,
+                0.018342552669547874
+              ]
+            },
+            "pairs": {
+              "clusters": 2506,
+              "count": 115325,
+              "rate": 0.5815131151094732,
+              "rate_decided_only": 0.5815314963703068,
+              "right": 67050,
+              "search_interval": [
+                0.5752159213649445,
+                0.5880636503920352
+              ],
+              "site_interval": [
+                0.5283818579276015,
+                0.6415577484240428
+              ],
+              "sites": 15367,
+              "tied": 26,
+              "two_way_interval": [
+                0.5597798818343699,
+                0.6003226498683163
+              ],
+              "wrong": 48249
+            }
+          },
+          "free_plus_mdr_gbt": {
+            "best_single_measure": "st_s_cc_pr",
+            "both_sites_young": {
+              "best_single_measure": {
+                "clusters": 50,
+                "count": 76,
+                "rate": 0.4868421052631579,
+                "rate_decided_only": 0.4852941176470588,
+                "right": 33,
+                "search_interval": [
+                  0.3778771105447595,
+                  0.594610682110682
+                ],
+                "site_interval": [
+                  0.3766213724547058,
+                  0.6066898734177214
+                ],
+                "sites": 112,
+                "tied": 8,
+                "two_way_interval": [
+                  0.22805023923444975,
+                  0.7627690677966098
+                ],
+                "wrong": 35
+              },
+              "gain_over_best_single_measure": {
+                "count": 76,
+                "difference": 0.039473684210526314,
+                "difference_interval": [
+                  -0.22733415233415233,
+                  0.3369189852700489
+                ],
+                "interval_method": "two-way bootstrap over searches and sites",
+                "search_interval": [
+                  -0.05555555555555555,
+                  0.14744718309859148
+                ]
+              },
+              "median_start_uncertainty_days": 93.0,
+              "model": {
+                "clusters": 50,
+                "count": 76,
+                "rate": 0.5263157894736842,
+                "rate_decided_only": 0.5263157894736842,
+                "right": 40,
+                "search_interval": [
+                  0.4053893178893179,
+                  0.6376811594202898
+                ],
+                "site_interval": [
+                  0.3918348543348543,
+                  0.6578947368421053
+                ],
+                "sites": 112,
+                "tied": 0,
+                "two_way_interval": [
+                  0.24545025728987993,
+                  0.8125171703296702
+                ],
+                "wrong": 36
+              },
+              "pairs": 76
+            },
+            "gain_over_best_single_measure": {
+              "count": 115325,
+              "difference": 0.0007673964881855626,
+              "difference_interval": [
+                -0.01397528992856651,
+                0.017386274395001008
+              ],
+              "interval_method": "two-way bootstrap over searches and sites",
+              "search_interval": [
+                -0.005859135635419092,
+                0.00742936437178475
+              ]
+            },
+            "gain_over_link_count": {
+              "count": 115325,
+              "difference": 0.01819206590071537,
+              "difference_interval": [
+                0.002217523682622972,
+                0.03665611652917138
+              ],
+              "interval_method": "two-way bootstrap over searches and sites",
+              "search_interval": [
+                0.011010718085683047,
+                0.025505838161575214
+              ]
+            },
+            "pairs": {
+              "clusters": 2506,
+              "count": 115325,
+              "rate": 0.5886364621721223,
+              "rate_decided_only": 0.5886433799299317,
+              "right": 67880,
+              "search_interval": [
+                0.582277698833068,
+                0.5951655604183954
+              ],
+              "site_interval": [
+                0.5335685792227962,
+                0.6474055087409434
+              ],
+              "sites": 15367,
+              "tied": 9,
+              "two_way_interval": [
+                0.5677148731900854,
+                0.6063198627244437
+              ],
+              "wrong": 47436
+            }
+          },
+          "free_plus_mdr_ridge": {
+            "best_single_measure": "st_s_cc_pr",
+            "both_sites_young": {
+              "best_single_measure": {
+                "clusters": 50,
+                "count": 76,
+                "rate": 0.4868421052631579,
+                "rate_decided_only": 0.4852941176470588,
+                "right": 33,
+                "search_interval": [
+                  0.3778771105447595,
+                  0.594610682110682
+                ],
+                "site_interval": [
+                  0.3766213724547058,
+                  0.6066898734177214
+                ],
+                "sites": 112,
+                "tied": 8,
+                "two_way_interval": [
+                  0.22805023923444975,
+                  0.7627690677966098
+                ],
+                "wrong": 35
+              },
+              "gain_over_best_single_measure": {
+                "count": 76,
+                "difference": 0.07894736842105263,
+                "difference_interval": [
+                  -0.19407040882543802,
+                  0.3906593749999998
+                ],
+                "interval_method": "two-way bootstrap over searches and sites",
+                "search_interval": [
+                  -0.02531645569620253,
+                  0.19444444444444445
+                ]
+              },
+              "median_start_uncertainty_days": 93.0,
+              "model": {
+                "clusters": 50,
+                "count": 76,
+                "rate": 0.5657894736842105,
+                "rate_decided_only": 0.5657894736842105,
+                "right": 43,
+                "search_interval": [
+                  0.44574966532797855,
+                  0.6785714285714286
+                ],
+                "site_interval": [
+                  0.4444444444444444,
+                  0.6866107772824188
+                ],
+                "sites": 112,
+                "tied": 0,
+                "two_way_interval": [
+                  0.2765856129685917,
+                  0.8490801886792452
+                ],
+                "wrong": 33
+              },
+              "pairs": 76
+            },
+            "gain_over_best_single_measure": {
+              "count": 115325,
+              "difference": -0.0056362453934532845,
+              "difference_interval": [
+                -0.018634286742614328,
+                0.00973143063172452
+              ],
+              "interval_method": "two-way bootstrap over searches and sites",
+              "search_interval": [
+                -0.01134088293739854,
+                -0.0001528431784164337
+              ]
+            },
+            "gain_over_link_count": {
+              "count": 115325,
+              "difference": 0.011788424019076522,
+              "difference_interval": [
+                -0.004230737782943401,
+                0.030883051635562007
+              ],
+              "interval_method": "two-way bootstrap over searches and sites",
+              "search_interval": [
+                0.004985147138366817,
+                0.0183781700061746
+              ]
+            },
+            "pairs": {
+              "clusters": 2506,
+              "count": 115325,
+              "rate": 0.5822328202904834,
+              "rate_decided_only": 0.5822385251090473,
+              "right": 67142,
+              "search_interval": [
+                0.5752698586373564,
+                0.589140905308975
+              ],
+              "site_interval": [
+                0.5354393806843306,
+                0.6274297663948676
+              ],
+              "sites": 15367,
+              "tied": 8,
+              "two_way_interval": [
+                0.5643616203195476,
+                0.5983798069328408
+              ],
+              "wrong": 48175
+            }
+          },
+          "free_ridge": {
+            "best_single_measure": "st_s_cc_pr",
+            "both_sites_young": {
+              "best_single_measure": {
+                "clusters": 50,
+                "count": 76,
+                "rate": 0.4868421052631579,
+                "rate_decided_only": 0.4852941176470588,
+                "right": 33,
+                "search_interval": [
+                  0.3778771105447595,
+                  0.594610682110682
+                ],
+                "site_interval": [
+                  0.3766213724547058,
+                  0.6066898734177214
+                ],
+                "sites": 112,
+                "tied": 8,
+                "two_way_interval": [
+                  0.22805023923444975,
+                  0.7627690677966098
+                ],
+                "wrong": 35
+              },
+              "gain_over_best_single_measure": {
+                "count": 76,
+                "difference": 0.039473684210526314,
+                "difference_interval": [
+                  -0.20650297619047617,
+                  0.31184475806451606
+                ],
+                "interval_method": "two-way bootstrap over searches and sites",
+                "search_interval": [
+                  -0.06252200704225352,
+                  0.15
+                ]
+              },
+              "median_start_uncertainty_days": 93.0,
+              "model": {
+                "clusters": 50,
+                "count": 76,
+                "rate": 0.5263157894736842,
+                "rate_decided_only": 0.5263157894736842,
+                "right": 40,
+                "search_interval": [
+                  0.38961038961038963,
+                  0.6527916666666665
+                ],
+                "site_interval": [
+                  0.4025974025974026,
+                  0.6479063570612865
+                ],
+                "sites": 112,
+                "tied": 0,
+                "two_way_interval": [
+                  0.2413448275862069,
+                  0.8261244377811092
+                ],
+                "wrong": 36
+              },
+              "pairs": 76
+            },
+            "gain_over_best_single_measure": {
+              "count": 115325,
+              "difference": -0.006000433557337958,
+              "difference_interval": [
+                -0.01898264835061893,
+                0.008620676097099808
+              ],
+              "interval_method": "two-way bootstrap over searches and sites",
+              "search_interval": [
+                -0.011494146462695778,
+                -0.00044705035707346145
+              ]
+            },
+            "gain_over_link_count": {
+              "count": 115325,
+              "difference": 0.01142423585519185,
+              "difference_interval": [
+                -0.004003641146147867,
+                0.029444245617393887
+              ],
+              "interval_method": "two-way bootstrap over searches and sites",
+              "search_interval": [
+                0.004666836572770757,
+                0.01797820043303305
+              ]
+            },
+            "pairs": {
+              "clusters": 2506,
+              "count": 115325,
+              "rate": 0.5818686321265988,
+              "rate_decided_only": 0.581879992021438,
+              "right": 67096,
+              "search_interval": [
+                0.5751507800888952,
+                0.5886430282526878
+              ],
+              "site_interval": [
+                0.5310129215503134,
+                0.6323449384209403
+              ],
+              "sites": 15367,
+              "tied": 16,
+              "two_way_interval": [
+                0.5633777136835314,
+                0.5983801234198564
+              ],
+              "wrong": 48213
+            }
+          }
+        },
+        "pages": 3671,
+        "pair_comparison": ">",
+        "pairs": 115325,
+        "single_measures": {
+          "st_mdr_before": {
+            "clusters": 2506,
+            "count": 115325,
+            "rate": 0.5634988077173206,
+            "rate_decided_only": 0.5739353431738788,
+            "right": 56846,
+            "search_interval": [
+              0.5572980596919742,
+              0.5699775024816384
+            ],
+            "site_interval": [
+              0.5034511567671706,
+              0.6264443427575962
+            ],
+            "sites": 15367,
+            "tied": 16279,
+            "two_way_interval": [
+              0.5428922815714643,
+              0.5803564636608698
+            ],
+            "wrong": 42200
+          },
+          "st_s_cc_hc": {
+            "clusters": 2506,
+            "count": 115325,
+            "rate": 0.5837676132668546,
+            "rate_decided_only": 0.5838446783950564,
+            "right": 67270,
+            "search_interval": [
+              0.5764723143047072,
+              0.5909949331836025
+            ],
+            "site_interval": [
+              0.517424345345184,
+              0.6523501652580472
+            ],
+            "sites": 15367,
+            "tied": 106,
+            "two_way_interval": [
+              0.560574015160245,
+              0.602687948356417
+            ],
+            "wrong": 47949
+          },
+          "st_s_cc_hosts": {
+            "clusters": 2506,
+            "count": 115325,
+            "rate": 0.5704443962714069,
+            "rate_decided_only": 0.5760005238834733,
+            "right": 61571,
+            "search_interval": [
+              0.5635328099067238,
+              0.5771440662942402
+            ],
+            "site_interval": [
+              0.5060224119902151,
+              0.6344958454818125
+            ],
+            "sites": 15367,
+            "tied": 8431,
+            "two_way_interval": [
+              0.5468639004426262,
+              0.5904550750136437
+            ],
+            "wrong": 45323
+          },
+          "st_s_cc_pr": {
+            "clusters": 2506,
+            "count": 115325,
+            "rate": 0.5878690656839367,
+            "rate_decided_only": 0.5879499040956787,
+            "right": 67743,
+            "search_interval": [
+              0.5803846189434685,
+              0.5951813957423078
+            ],
+            "site_interval": [
+              0.5214127724328878,
+              0.6555707967335773
+            ],
+            "sites": 15367,
+            "tied": 106,
+            "two_way_interval": [
+              0.5650714647132414,
+              0.6066747629822477
+            ],
+            "wrong": 47476
+          },
+          "st_s_crux": {
+            "clusters": 2506,
+            "count": 115325,
+            "rate": 0.5821677866897897,
+            "rate_decided_only": 0.6019670296560926,
+            "right": 55942,
+            "search_interval": [
+              0.5754637274296767,
+              0.5888574251994287
+            ],
+            "site_interval": [
+              0.5232067899581626,
+              0.6434808009446623
+            ],
+            "sites": 15367,
+            "tied": 22393,
+            "two_way_interval": [
+              0.5615201805807893,
+              0.5995069742878154
+            ],
+            "wrong": 36990
+          },
+          "st_s_opr": {
+            "clusters": 2506,
+            "count": 115325,
+            "rate": 0.5583351398222415,
+            "rate_decided_only": 0.5758926053358904,
+            "right": 51050,
+            "search_interval": [
+              0.5518944389143586,
+              0.5647212868533347
+            ],
+            "site_interval": [
+              0.5006701436226284,
+              0.6167625548722443
+            ],
+            "sites": 15367,
+            "tied": 26680,
+            "two_way_interval": [
+              0.5380874882083582,
+              0.5753248460339939
+            ],
+            "wrong": 37595
+          },
+          "st_s_tranco": {
+            "clusters": 2506,
+            "count": 115325,
+            "rate": 0.5819206590071537,
+            "rate_decided_only": 0.5895336384916461,
+            "right": 62207,
+            "search_interval": [
+              0.574668354543175,
+              0.5889843990737514
+            ],
+            "site_interval": [
+              0.5164500798921078,
+              0.6494567490637834
+            ],
+            "sites": 15367,
+            "tied": 9806,
+            "two_way_interval": [
+              0.5592723389983298,
+              0.6015112945384785
+            ],
+            "wrong": 43312
+          }
+        },
+        "threshold_places": 10.0,
+        "within_page_shuffle": {
+          "clusters": 2506,
+          "count": 115325,
+          "rate": 0.502597008454368,
+          "rate_decided_only": 0.502597008454368,
+          "right": 57962,
+          "search_interval": [
+            0.4970137599294839,
+            0.5079944935493026
+          ],
+          "site_interval": [
+            0.49772941161980994,
+            0.5074110387140477
+          ],
+          "sites": 15367,
+          "tied": 0,
+          "two_way_interval": [
+            0.49152243065766293,
+            0.5139887509252762
+          ],
+          "wrong": 57363
+        }
+      },
+      "feature_sets": {
+        "free": {
+          "cv": {
+            "dropped_all_missing": [
+              "fp_referring_domains",
+              "fp_brand_search_volume",
+              "fp_review_count",
+              "fp_review_rating",
+              "fp_links_planned",
+              "fp_press_planned",
+              "fp_pages_at_launch"
+            ],
+            "gbt": {
+              "{\"min_child_samples\": 200, \"num_leaves\": 15}": {
+                "mse": 193.0253240784,
+                "rounds": [
+                  589,
+                  600,
+                  421
+                ]
+              },
+              "{\"min_child_samples\": 200, \"num_leaves\": 7}": {
+                "mse": 193.63064330262955,
+                "rounds": [
+                  599,
+                  596,
+                  598
+                ]
+              },
+              "{\"min_child_samples\": 400, \"num_leaves\": 31}": {
+                "mse": 192.75653421676554,
+                "rounds": [
+                  599,
+                  217,
+                  224
+                ]
+              },
+              "{\"min_child_samples\": 50, \"num_leaves\": 15}": {
+                "mse": 193.05109060292534,
+                "rounds": [
+                  596,
+                  443,
+                  367
+                ]
+              }
+            },
+            "label_variance": 198.49694750506225,
+            "ridge": {
+              "1.0": 197.29948076078583,
+              "10.0": 197.29843168869124,
+              "100.0": 197.29364265807408,
+              "1000.0": 197.38871121876878
+            },
+            "rows": 346118
+          },
+          "features_used": [
+            "st_s_cc_hc",
+            "st_s_cc_pr",
+            "st_s_cc_hosts",
+            "st_s_crux",
+            "st_s_tranco",
+            "st_cc_present",
+            "st_crux_present",
+            "st_tranco_present",
+            "sd_age_days",
+            "sd_uncertainty_days",
+            "sd_left_censored",
+            "sd_age_lower_bound_days",
+            "sd_no_evidence",
+            "sd_possibly_reregistered",
+            "tld_code"
+          ],
+          "model_file": "data/forecast/models/trust/trust-v2-free-lexical-all.json",
+          "model_sha256": "4f0ade8609c2012f8e5f137ab70f5409aacfa32ccd2cf0b3c7bee45877544385",
+          "rounds": 346
+        },
+        "free_plus_mdr": {
+          "cv": {
+            "dropped_all_missing": [
+              "fp_referring_domains",
+              "fp_brand_search_volume",
+              "fp_review_count",
+              "fp_review_rating",
+              "fp_links_planned",
+              "fp_press_planned",
+              "fp_pages_at_launch"
+            ],
+            "gbt": {
+              "{\"min_child_samples\": 200, \"num_leaves\": 15}": {
+                "mse": 192.39775455860118,
+                "rounds": [
+                  590,
+                  576,
+                  461
+                ]
+              },
+              "{\"min_child_samples\": 200, \"num_leaves\": 7}": {
+                "mse": 193.0326191122158,
+                "rounds": [
+                  600,
+                  593,
+                  594
+                ]
+              },
+              "{\"min_child_samples\": 400, \"num_leaves\": 31}": {
+                "mse": 191.98085637075596,
+                "rounds": [
+                  445,
+                  292,
+                  273
+                ]
+              },
+              "{\"min_child_samples\": 50, \"num_leaves\": 15}": {
+                "mse": 192.3812144024953,
+                "rounds": [
+                  539,
+                  470,
+                  455
+                ]
+              }
+            },
+            "label_variance": 198.49694750506225,
+            "ridge": {
+              "1.0": 197.03887767869676,
+              "10.0": 197.03780618944282,
+              "100.0": 197.03286813704855,
+              "1000.0": 197.12664852351463
+            },
+            "rows": 346118
+          },
+          "features_used": [
+            "st_s_cc_hc",
+            "st_s_cc_pr",
+            "st_s_cc_hosts",
+            "st_s_crux",
+            "st_s_tranco",
+            "st_cc_present",
+            "st_crux_present",
+            "st_tranco_present",
+            "sd_age_days",
+            "sd_uncertainty_days",
+            "sd_left_censored",
+            "sd_age_lower_bound_days",
+            "sd_no_evidence",
+            "sd_possibly_reregistered",
+            "tld_code",
+            "mdr_before"
+          ],
+          "model_file": "data/forecast/models/trust/trust-v2-free_plus_mdr-lexical-all.json",
+          "model_sha256": "500994880065aca3ecf11c8bacfa5a26cc29b5683e6773d7778ba6212f337e31",
+          "rounds": 336
+        }
+      },
+      "label_summary": {
+        "test_residual_sd": 13.130560140851527,
+        "train_residual_sd": 14.088894474197124
+      },
+      "label_table_version": "52749257f55bc535"
+    },
+    "lexical_en": {
+      "config": {
+        "backend": "lexical",
+        "language": "en"
+      },
+      "content_backend": "lexical",
+      "content_model": "bm25f-v1",
+      "counts": {
+        "search_groups_on_both_sides": 0,
+        "sites_on_both_sides": 0,
+        "test_rows": 12226,
+        "test_searches": 768,
+        "test_sites": 5379,
+        "train_pages": 4778,
+        "train_rows": 121189,
+        "train_rows_missing_title": 1738,
+        "train_searches": 1485,
+        "train_sites": 28664
+      },
+      "evaluation": {
+        "models": {
+          "free_gbt": {
+            "best_single_measure": "st_s_cc_pr",
+            "both_sites_young": {
+              "best_single_measure": {
+                "clusters": 19,
+                "count": 31,
+                "rate": 0.5806451612903226,
+                "rate_decided_only": 0.6,
+                "right": 15,
+                "search_interval": [
+                  0.43898628048780486,
+                  0.7692708333333331
+                ],
+                "site_interval": [
+                  0.40625,
+                  0.75
+                ],
+                "sites": 44,
+                "tied": 6,
+                "two_way_interval": [
+                  0.2,
+                  1.0
+                ],
+                "wrong": 10
+              },
+              "gain_over_best_single_measure": {
+                "count": 31,
+                "difference": -0.0967741935483871,
+                "difference_interval": [
+                  -0.5418154761904761,
+                  0.3573809523809511
+                ],
+                "interval_method": "two-way bootstrap over searches and sites",
+                "search_interval": [
+                  -0.24074074074074073,
+                  0.057692307692307696
+                ]
+              },
+              "median_start_uncertainty_days": 93.0,
+              "model": {
+                "clusters": 19,
+                "count": 31,
+                "rate": 0.4838709677419355,
+                "rate_decided_only": 0.4838709677419355,
+                "right": 15,
+                "search_interval": [
+                  0.3142857142857143,
+                  0.700092592592592
+                ],
+                "site_interval": [
+                  0.30303030303030304,
+                  0.6896551724137931
+                ],
+                "sites": 44,
+                "tied": 0,
+                "two_way_interval": [
+                  0.09250992063492064,
+                  1.0
+                ],
+                "wrong": 16
+              },
+              "pairs": 31
+            },
+            "gain_over_best_single_measure": {
+              "count": 36134,
+              "difference": 0.005825538274201583,
+              "difference_interval": [
+                -0.019371984559560126,
+                0.03650069325073576
+              ],
+              "interval_method": "two-way bootstrap over searches and sites",
+              "search_interval": [
+                -0.005882816046151495,
+                0.01790635200044856
+              ]
+            },
+            "gain_over_link_count": {
+              "count": 36134,
+              "difference": 0.027494880168262577,
+              "difference_interval": [
+                -3.143499963698537e-05,
+                0.06012312670997357
+              ],
+              "interval_method": "two-way bootstrap over searches and sites",
+              "search_interval": [
+                0.013886802806470758,
+                0.04098296419859347
+              ]
+            },
+            "pairs": {
+              "clusters": 727,
+              "count": 36134,
+              "rate": 0.6028532683898821,
+              "rate_decided_only": 0.6029586946283625,
+              "right": 21765,
+              "search_interval": [
+                0.59061410847571,
+                0.6151468098911472
+              ],
+              "site_interval": [
+                0.5696526521782247,
+                0.6375136594726406
+              ],
+              "sites": 5195,
+              "tied": 37,
+              "two_way_interval": [
+                0.5774856926071501,
+                0.6273426551202053
+              ],
+              "wrong": 14332
+            }
+          },
+          "free_plus_mdr_gbt": {
+            "best_single_measure": "st_s_cc_pr",
+            "both_sites_young": {
+              "best_single_measure": {
+                "clusters": 19,
+                "count": 31,
+                "rate": 0.5806451612903226,
+                "rate_decided_only": 0.6,
+                "right": 15,
+                "search_interval": [
+                  0.43898628048780486,
+                  0.7692708333333331
+                ],
+                "site_interval": [
+                  0.40625,
+                  0.75
+                ],
+                "sites": 44,
+                "tied": 6,
+                "two_way_interval": [
+                  0.2,
+                  1.0
+                ],
+                "wrong": 10
+              },
+              "gain_over_best_single_measure": {
+                "count": 31,
+                "difference": -0.0967741935483871,
+                "difference_interval": [
+                  -0.6407829225790391,
+                  0.4
+                ],
+                "interval_method": "two-way bootstrap over searches and sites",
+                "search_interval": [
+                  -0.29411764705882354,
+                  0.06897749042145587
+                ]
+              },
+              "median_start_uncertainty_days": 93.0,
+              "model": {
+                "clusters": 19,
+                "count": 31,
+                "rate": 0.4838709677419355,
+                "rate_decided_only": 0.4838709677419355,
+                "right": 15,
+                "search_interval": [
+                  0.3333333333333333,
+                  0.6666666666666666
+                ],
+                "site_interval": [
+                  0.3076388888888889,
+                  0.6551993534482757
+                ],
+                "sites": 44,
+                "tied": 0,
+                "two_way_interval": [
+                  0.07692307692307693,
+                  0.9259259259259259
+                ],
+                "wrong": 16
+              },
+              "pairs": 31
+            },
+            "gain_over_best_single_measure": {
+              "count": 36134,
+              "difference": 0.009312558808878066,
+              "difference_interval": [
+                -0.01779299542134504,
+                0.04068463145140308
+              ],
+              "interval_method": "two-way bootstrap over searches and sites",
+              "search_interval": [
+                -0.0024281953792496406,
+                0.021841416287202257
+              ]
+            },
+            "gain_over_link_count": {
+              "count": 36134,
+              "difference": 0.03098190070293906,
+              "difference_interval": [
+                0.0018717697808307507,
+                0.06482171621721658
+              ],
+              "interval_method": "two-way bootstrap over searches and sites",
+              "search_interval": [
+                0.017395382390920398,
+                0.044761713387606795
+              ]
+            },
+            "pairs": {
+              "clusters": 727,
+              "count": 36134,
+              "rate": 0.6063402889245586,
+              "rate_decided_only": 0.6063550056741122,
+              "right": 21907,
+              "search_interval": [
+                0.5943446726312069,
+                0.6186094147074155
+              ],
+              "site_interval": [
+                0.5744563580382721,
+                0.6400653620663065
+              ],
+              "sites": 5195,
+              "tied": 5,
+              "two_way_interval": [
+                0.5828115437512434,
+                0.6307717857207077
+              ],
+              "wrong": 14222
+            }
+          },
+          "free_plus_mdr_ridge": {
+            "best_single_measure": "st_s_cc_pr",
+            "both_sites_young": {
+              "best_single_measure": {
+                "clusters": 19,
+                "count": 31,
+                "rate": 0.5806451612903226,
+                "rate_decided_only": 0.6,
+                "right": 15,
+                "search_interval": [
+                  0.43898628048780486,
+                  0.7692708333333331
+                ],
+                "site_interval": [
+                  0.40625,
+                  0.75
+                ],
+                "sites": 44,
+                "tied": 6,
+                "two_way_interval": [
+                  0.2,
+                  1.0
+                ],
+                "wrong": 10
+              },
+              "gain_over_best_single_measure": {
+                "count": 31,
+                "difference": -0.0967741935483871,
+                "difference_interval": [
+                  -0.5909511784511785,
+                  0.27278409090909056
+                ],
+                "interval_method": "two-way bootstrap over searches and sites",
+                "search_interval": [
+                  -0.28846153846153844,
+                  0.05405405405405406
+                ]
+              },
+              "median_start_uncertainty_days": 93.0,
+              "model": {
+                "clusters": 19,
+                "count": 31,
+                "rate": 0.4838709677419355,
+                "rate_decided_only": 0.4838709677419355,
+                "right": 15,
+                "search_interval": [
+                  0.3333333333333333,
+                  0.6538461538461539
+                ],
+                "site_interval": [
+                  0.2857142857142857,
+                  0.6764705882352942
+                ],
+                "sites": 44,
+                "tied": 0,
+                "two_way_interval": [
+                  0.05263157894736842,
+                  0.9334693877551014
+                ],
+                "wrong": 16
+              },
+              "pairs": 31
+            },
+            "gain_over_best_single_measure": {
+              "count": 36134,
+              "difference": 0.013394586815741407,
+              "difference_interval": [
+                -0.009120251153192207,
+                0.03894480688273271
+              ],
+              "interval_method": "two-way bootstrap over searches and sites",
+              "search_interval": [
+                0.0030359709366488555,
+                0.023823081854448747
+              ]
+            },
+            "gain_over_link_count": {
+              "count": 36134,
+              "difference": 0.035063928709802406,
+              "difference_interval": [
+                0.009660982931879001,
+                0.06423839318565171
+              ],
+              "interval_method": "two-way bootstrap over searches and sites",
+              "search_interval": [
+                0.023318040441704976,
+                0.046928956453089345
+              ]
+            },
+            "pairs": {
+              "clusters": 727,
+              "count": 36134,
+              "rate": 0.6104223169314219,
+              "rate_decided_only": 0.6104345419319125,
+              "right": 22055,
+              "search_interval": [
+                0.5972760824588086,
+                0.623488507695107
+              ],
+              "site_interval": [
+                0.5676218055516019,
+                0.6519351694068342
+              ],
+              "sites": 5195,
+              "tied": 4,
+              "two_way_interval": [
+                0.5833822189741344,
+                0.6363333010216041
+              ],
+              "wrong": 14075
+            }
+          },
+          "free_ridge": {
+            "best_single_measure": "st_s_cc_pr",
+            "both_sites_young": {
+              "best_single_measure": {
+                "clusters": 19,
+                "count": 31,
+                "rate": 0.5806451612903226,
+                "rate_decided_only": 0.6,
+                "right": 15,
+                "search_interval": [
+                  0.43898628048780486,
+                  0.7692708333333331
+                ],
+                "site_interval": [
+                  0.40625,
+                  0.75
+                ],
+                "sites": 44,
+                "tied": 6,
+                "two_way_interval": [
+                  0.2,
+                  1.0
+                ],
+                "wrong": 10
+              },
+              "gain_over_best_single_measure": {
+                "count": 31,
+                "difference": -0.03225806451612903,
+                "difference_interval": [
+                  -0.5,
+                  0.46153846153846156
+                ],
+                "interval_method": "two-way bootstrap over searches and sites",
+                "search_interval": [
+                  -0.21055161943319836,
+                  0.1724137931034483
+                ]
+              },
+              "median_start_uncertainty_days": 93.0,
+              "model": {
+                "clusters": 19,
+                "count": 31,
+                "rate": 0.5483870967741935,
+                "rate_decided_only": 0.5483870967741935,
+                "right": 17,
+                "search_interval": [
+                  0.35135135135135137,
+                  0.782608695652174
+                ],
+                "site_interval": [
+                  0.34285714285714286,
+                  0.7693548387096768
+                ],
+                "sites": 44,
+                "tied": 0,
+                "two_way_interval": [
+                  0.10808397683397684,
+                  1.0
+                ],
+                "wrong": 14
+              },
+              "pairs": 31
+            },
+            "gain_over_best_single_measure": {
+              "count": 36134,
+              "difference": 0.014709138207782144,
+              "difference_interval": [
+                -0.006166765830891466,
+                0.03952166407266134
+              ],
+              "interval_method": "two-way bootstrap over searches and sites",
+              "search_interval": [
+                0.0055070192864868535,
+                0.023830336336834998
+              ]
+            },
+            "gain_over_link_count": {
+              "count": 36134,
+              "difference": 0.03637848010184314,
+              "difference_interval": [
+                0.011979181175716069,
+                0.06513973261098017
+              ],
+              "interval_method": "two-way bootstrap over searches and sites",
+              "search_interval": [
+                0.025150092793835364,
+                0.047697589936435386
+              ]
+            },
+            "pairs": {
+              "clusters": 727,
+              "count": 36134,
+              "rate": 0.6117368683234626,
+              "rate_decided_only": 0.611752331921725,
+              "right": 22102,
+              "search_interval": [
+                0.5990108151907728,
+                0.6242886366157909
+              ],
+              "site_interval": [
+                0.5610068040383949,
+                0.6625629593193526
+              ],
+              "sites": 5195,
+              "tied": 5,
+              "two_way_interval": [
+                0.5853671570940312,
+                0.6366744332492246
+              ],
+              "wrong": 14027
+            }
+          }
+        },
+        "pages": 1163,
+        "pair_comparison": ">",
+        "pairs": 36134,
+        "single_measures": {
+          "st_mdr_before": {
+            "clusters": 727,
+            "count": 36134,
+            "rate": 0.5680937621077102,
+            "rate_decided_only": 0.5792355005957557,
+            "right": 17987,
+            "search_interval": [
+              0.5565453160172619,
+              0.5796912848639715
+            ],
+            "site_interval": [
+              0.5070201437056235,
+              0.6297797075469892
+            ],
+            "sites": 5195,
+            "tied": 5081,
+            "two_way_interval": [
+              0.5368814516185176,
+              0.5968290665194412
+            ],
+            "wrong": 13066
+          },
+          "st_s_cc_hc": {
+            "clusters": 727,
+            "count": 36134,
+            "rate": 0.5929872142580396,
+            "rate_decided_only": 0.5931263858093127,
+            "right": 21400,
+            "search_interval": [
+              0.580801322168337,
+              0.6055333559386374
+            ],
+            "site_interval": [
+              0.5269853265014827,
+              0.6609216036272328
+            ],
+            "sites": 5195,
+            "tied": 54,
+            "two_way_interval": [
+              0.5597097651169439,
+              0.6227173805935365
+            ],
+            "wrong": 14680
+          },
+          "st_s_cc_hosts": {
+            "clusters": 727,
+            "count": 36134,
+            "rate": 0.5753583882216196,
+            "rate_decided_only": 0.5810947644290905,
+            "right": 19512,
+            "search_interval": [
+              0.5627870499326975,
+              0.5880648223264352
+            ],
+            "site_interval": [
+              0.5122100365367633,
+              0.6391542549380976
+            ],
+            "sites": 5195,
+            "tied": 2556,
+            "two_way_interval": [
+              0.5422765933630702,
+              0.6057156400299701
+            ],
+            "wrong": 14066
+          },
+          "st_s_cc_pr": {
+            "clusters": 727,
+            "count": 36134,
+            "rate": 0.5970277301156806,
+            "rate_decided_only": 0.5971729490022173,
+            "right": 21546,
+            "search_interval": [
+              0.583833729243095,
+              0.6104638253094153
+            ],
+            "site_interval": [
+              0.5312724743591974,
+              0.6635140260971228
+            ],
+            "sites": 5195,
+            "tied": 54,
+            "two_way_interval": [
+              0.5639338563032552,
+              0.6270170013924966
+            ],
+            "wrong": 14534
+          },
+          "st_s_crux": {
+            "clusters": 727,
+            "count": 36134,
+            "rate": 0.5905379974539215,
+            "rate_decided_only": 0.6131811105345096,
+            "right": 17724,
+            "search_interval": [
+              0.5780879199183012,
+              0.6031876360039259
+            ],
+            "site_interval": [
+              0.5282739314635443,
+              0.6533909150754852
+            ],
+            "sites": 5195,
+            "tied": 7229,
+            "two_way_interval": [
+              0.5593280211489426,
+              0.6186223791026926
+            ],
+            "wrong": 11181
+          },
+          "st_s_opr": {
+            "clusters": 727,
+            "count": 36134,
+            "rate": 0.5690900536890463,
+            "rate_decided_only": 0.5900840760653845,
+            "right": 16353,
+            "search_interval": [
+              0.5580766570154956,
+              0.5814303254735675
+            ],
+            "site_interval": [
+              0.5119252058975243,
+              0.627633495943213
+            ],
+            "sites": 5195,
+            "tied": 8421,
+            "two_way_interval": [
+              0.5387845308802051,
+              0.5967961390969468
+            ],
+            "wrong": 11360
+          },
+          "st_s_tranco": {
+            "clusters": 727,
+            "count": 36134,
+            "rate": 0.59329163668567,
+            "rate_decided_only": 0.6019476199116918,
+            "right": 19904,
+            "search_interval": [
+              0.5804851321555378,
+              0.6069191146381204
+            ],
+            "site_interval": [
+              0.5276779595322559,
+              0.6620143034172075
+            ],
+            "sites": 5195,
+            "tied": 3068,
+            "two_way_interval": [
+              0.560310565549366,
+              0.6232338689863343
+            ],
+            "wrong": 13162
+          }
+        },
+        "threshold_places": 10.0,
+        "within_page_shuffle": {
+          "clusters": 727,
+          "count": 36134,
+          "rate": 0.5078042840537997,
+          "rate_decided_only": 0.5078042840537997,
+          "right": 18349,
+          "search_interval": [
+            0.49826241519420983,
+            0.51791569710045
+          ],
+          "site_interval": [
+            0.4989367559602929,
+            0.5162625229423463
+          ],
+          "sites": 5195,
+          "tied": 0,
+          "two_way_interval": [
+            0.487327195459039,
+            0.526882148099307
+          ],
+          "wrong": 17785
+        }
+      },
+      "feature_sets": {
+        "free": {
+          "cv": {
+            "dropped_all_missing": [
+              "fp_referring_domains",
+              "fp_brand_search_volume",
+              "fp_review_count",
+              "fp_review_rating",
+              "fp_links_planned",
+              "fp_press_planned",
+              "fp_pages_at_launch"
+            ],
+            "gbt": {
+              "{\"min_child_samples\": 200, \"num_leaves\": 15}": {
+                "mse": 193.50406982404934,
+                "rounds": [
+                  130,
+                  202,
+                  235
+                ]
+              },
+              "{\"min_child_samples\": 200, \"num_leaves\": 7}": {
+                "mse": 194.09450511652108,
+                "rounds": [
+                  128,
+                  289,
+                  260
+                ]
+              },
+              "{\"min_child_samples\": 400, \"num_leaves\": 31}": {
+                "mse": 193.29136085946925,
+                "rounds": [
+                  76,
+                  73,
+                  77
+                ]
+              },
+              "{\"min_child_samples\": 50, \"num_leaves\": 15}": {
+                "mse": 193.3426051999853,
+                "rounds": [
+                  127,
+                  211,
+                  177
+                ]
+              }
+            },
+            "label_variance": 202.59328690541756,
+            "ridge": {
+              "1.0": 196.9284450789609,
+              "10.0": 196.90962325258965,
+              "100.0": 196.9035351591131,
+              "1000.0": 197.29444894455415
+            },
+            "rows": 121189
+          },
+          "features_used": [
+            "st_s_cc_hc",
+            "st_s_cc_pr",
+            "st_s_cc_hosts",
+            "st_s_crux",
+            "st_s_tranco",
+            "st_cc_present",
+            "st_crux_present",
+            "st_tranco_present",
+            "sd_age_days",
+            "sd_uncertainty_days",
+            "sd_left_censored",
+            "sd_age_lower_bound_days",
+            "sd_no_evidence",
+            "sd_possibly_reregistered",
+            "tld_code"
+          ],
+          "model_file": "data/forecast/models/trust/trust-v2-free-lexical-en.json",
+          "model_sha256": "010f7c1b3576dbbb1b12e44add3b9984f928280952f2284076e9f20a9780d9df",
+          "rounds": 75
+        },
+        "free_plus_mdr": {
+          "cv": {
+            "dropped_all_missing": [
+              "fp_referring_domains",
+              "fp_brand_search_volume",
+              "fp_review_count",
+              "fp_review_rating",
+              "fp_links_planned",
+              "fp_press_planned",
+              "fp_pages_at_launch"
+            ],
+            "gbt": {
+              "{\"min_child_samples\": 200, \"num_leaves\": 15}": {
+                "mse": 192.7501993498589,
+                "rounds": [
+                  132,
+                  264,
+                  260
+                ]
+              },
+              "{\"min_child_samples\": 200, \"num_leaves\": 7}": {
+                "mse": 193.16644118859293,
+                "rounds": [
+                  346,
+                  378,
+                  373
+                ]
+              },
+              "{\"min_child_samples\": 400, \"num_leaves\": 31}": {
+                "mse": 192.34396609943659,
+                "rounds": [
+                  232,
+                  97,
+                  77
+                ]
+              },
+              "{\"min_child_samples\": 50, \"num_leaves\": 15}": {
+                "mse": 192.7124979957076,
+                "rounds": [
+                  129,
+                  221,
+                  159
+                ]
+              }
+            },
+            "label_variance": 202.59328690541756,
+            "ridge": {
+              "1.0": 196.34946093680034,
+              "10.0": 196.33156384891035,
+              "100.0": 196.32922691094004,
+              "1000.0": 196.73873650525488
+            },
+            "rows": 121189
+          },
+          "features_used": [
+            "st_s_cc_hc",
+            "st_s_cc_pr",
+            "st_s_cc_hosts",
+            "st_s_crux",
+            "st_s_tranco",
+            "st_cc_present",
+            "st_crux_present",
+            "st_tranco_present",
+            "sd_age_days",
+            "sd_uncertainty_days",
+            "sd_left_censored",
+            "sd_age_lower_bound_days",
+            "sd_no_evidence",
+            "sd_possibly_reregistered",
+            "tld_code",
+            "mdr_before"
+          ],
+          "model_file": "data/forecast/models/trust/trust-v2-free_plus_mdr-lexical-en.json",
+          "model_sha256": "6d747ac7ad09902762a9795a32d4463b67a19ad7dda58b44eab86ffe421465db",
+          "rounds": 135
+        }
+      },
+      "label_summary": {
+        "test_residual_sd": 13.206498115199205,
+        "train_residual_sd": 14.233526861091653
+      },
+      "label_table_version": "52749257f55bc535"
+    }
+  },
+  "version": "trust-v2",
+  "what_is_predicted": "Content scores, the content-expected place, every trust model output.",
+  "what_is_real": "Positions, titles and list values as recorded on their dates.",
+  "what_this_is": "The plan's marker 2 definition applied to sites that already rank somewhere in a public sample, with result titles standing in for page content. It is not yet the plan's 20,000 new sites with traffic curves. Those need the paid pulls."
+}

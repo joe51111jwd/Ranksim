@@ -87,9 +87,12 @@ python -m pytest tests/test_forecast_*.py tests/test_provider_isolation.py
 Rules that are enforced in code, do not work around them:
 
 - A run that reads held-out rows (`strength run`, the trust run, `backtest run`) is refused unless its design file is committed and pushed, the tree under `src/aeo/ranksim/forecast` is clean and matches the freeze, and that design version was not scored before.
-- Evidence under `evals/forecast/` is never edited or replaced. A new look at the same held-out rows is a new design version with `--design-version k --reason "..."`, and the report says it is a second look.
+- Evidence under `evals/forecast/` is never edited or replaced. A new look at the same held-out rows is a new design version with a written reason, and its reports are marked PROVISIONAL. `forecast backtest run --reason "..."` picks the next version itself. The strength, trust and cohort-backtest commands take `--design-version k`, with `--reason "..."` when the design is frozen.
 - Every paid call is a dry run without `--execute`, needs a recorded approval and a $1 sample first, and goes through the spend ledger. The approved budget starts at $0.
 - A forecast is frozen before its outcome exists and is never replaced. A missed stage day is reported and never backfilled.
 - A result on the free panel's already-ranking sites is a stand-in. It can never pass or fail a marker of the plan. A SYNTHETIC result is never an accuracy number.
+- The free panel ends on 30 April 2026 and versions 1 and 2 have read all of its held-out rows. Do not tune anything on those reports. Fresh evidence comes only from the paid cohort or the seed sites.
+
+Results and what James has to decide: `docs/plan/STATUS.md`.
 
 Large data is not in git. It lives under `data/forecast/` (ignored). `data/forecast/cache/PANEL_VERSIONS.md` says which panel each scored version used.

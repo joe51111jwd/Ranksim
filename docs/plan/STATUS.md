@@ -148,7 +148,7 @@ The forecast point is the median of the predicted distribution. A point chosen o
 - The forecast uses Search Console numbers only from UI and daily exports. API and range exports can be imported but are not read by the forecast yet.
 - The paid join costs about 0.1 seconds per cell, so 20,000 cells take about 40 minutes.
 - A list published on the same day as a forecast counts as known that day. The comparison is by date, not by hour.
-- GitHub Actions runs only on `main` and on pull requests. It has not run on this branch. The full suite passes in a clean clone on Python 3.13 with no keys.
+- GitHub Actions runs only on `main` and on pull requests. It has not run on this branch. The whole repo suite passes in a clean clone on Python 3.13 with no keys and on Python 3.11 with fake keys, and writes nothing into the checkout.
 
 ## What I need from you
 
@@ -159,7 +159,7 @@ The forecast point is the median of the predicted distribution. A point chosen o
 5. **Pilot agencies.** A pilot must launch by 19 December to reach day 90 before marker 5.
 6. **Grading rule.** Confirm the readings listed in section C of `PLAN_AUDIT.md`. The rule is frozen in code as version 1.
 7. **Marker 1 rule.** Sign off the 0.92 measured-share reading.
-8. **The point rule.** Median, or the point that maximises hits (see above).
+8. **The point rule.** Keep the median, or use the point chosen to score well under the grading rule (see above). I recommend the median.
 9. **The 20,000 site trust set.** The plan's filter kept about 4% of newly registered sites in our real run (49 of 1,120). So 20,000 kept sites needs about 460,000 registrations, or the set is about 900 sites. Many of the 49 kept sites were spam pages, so the real yield is lower. Decide which.
 10. **Past pages.** 24 or 30 months. Sites 24 to 30 months old need 30.
 11. **Marker 5 at 80% to 84.9%.** The plan does not say what happens there.

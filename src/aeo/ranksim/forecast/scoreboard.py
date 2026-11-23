@@ -138,23 +138,36 @@ def _compact(value: str) -> str:
     return re.sub(r"[^0-9a-z]", "", str(value).lower())
 
 
-BRAND_SHORT_LABEL = 3  # a derived site label shorter than this must match a whole word of the search
+BRAND_SHORT_LABEL = 3  # a derived site label shorter than this must match the search as a whole unit
+
+
+def short_label_pattern(label: str) -> re.Pattern[str]:
+    """The search pattern for a compacted label shorter than BRAND_SHORT_LABEL.
+
+    The label's characters appear in order with any non-alphanumeric characters
+    between them, and no letter or digit directly before or after: 'a1' matches
+    'a-1 plumbing' and 'a 1 plumbing', 'ge' matches 'g.e. appliances', but 'x'
+    does not match 'xbox' and 'hp' does not match 'php hosting'.
+    """
+    body = r"[^0-9a-z]*".join(re.escape(char) for char in label)
+    return re.compile(r"(?<![0-9a-z])" + body + r"(?![0-9a-z])")
 
 
 def derived_label_is_brand(site: str, search: str) -> bool:
     """The brand rule when no brand terms are registered: the site label (site.split('.')[0]) inside the search.
 
     The compacted label must sit inside the compacted search. A label shorter than
-    BRAND_SHORT_LABEL characters must be a whole word of the search, so x.com is not a
-    brand search on "xbox" and hp.com is one on "hp laptop". backtest.is_brand_search
-    uses the same rule (IMPLEMENTATION_SPEC section 6).
+    BRAND_SHORT_LABEL characters must match the search as a whole unit (short_label_pattern),
+    so x.com is not a brand search on "xbox" and hp.com is one on "hp laptop" and a-1.com
+    is one on "a 1 plumbing". backtest.is_brand_search calls this function, so the two
+    can never differ (IMPLEMENTATION_SPEC section 6).
     """
     label = _compact(str(site).strip().lower().split(".")[0])
     if not label:
         return False
     if len(label) >= BRAND_SHORT_LABEL:
         return label in _compact(search)
-    return label in re.split(r"[^0-9a-z]+", str(search).lower())
+    return short_label_pattern(label).search(str(search).lower()) is not None
 
 
 def _iso_date(value: date | datetime | str) -> str:
@@ -808,6 +821,7 @@ class Scoreboard:
             dup = session.scalar(select(SearchRow).where(SearchRow.site == site_row.site, SearchRow.search_key == key))
             if dup is not None:
                 raise ScoreboardRefusal(f"The search {search!r} is already registered for {site_row.site}.")
+            # The flag is stored once, here. brand_flag_differences() lists stored flags the derived rule no longer gives.
             session.add(
                 SearchRow(
                     site=site_row.site,
@@ -823,6 +837,26 @@ class Scoreboard:
                     created_at=utc_iso(self._now()),
                 )
             )
+
+    def brand_flag_differences(self) -> list[dict[str, Any]]:
+        """Stored brand flags that the derived brand rule, worked out again today, does not give. Read only.
+
+        Only searches of sites with no registered brand terms are checked: their flag came from
+        derived_label_is_brand when the search was registered, or was set by hand. A flag stored
+        under an older rule (for example x.com on "xbox" as brand) shows up here. Nothing is changed:
+        a stored flag is fixed only by an explicit, logged migration.
+        """
+        found: list[dict[str, Any]] = []
+        with self._session() as session:
+            sites = {row.site: row for row in session.scalars(select(SiteRow))}
+            for row in session.scalars(select(SearchRow).order_by(SearchRow.site, SearchRow.search_key)):
+                site_row = sites.get(row.site)
+                if site_row is None or any(_compact(term) for term in (site_row.brand_terms or [])):
+                    continue
+                derived = derived_label_is_brand(row.site, row.search_key)
+                if bool(row.is_brand) != derived:
+                    found.append({"site": row.site, "search": row.search, "stored": bool(row.is_brand), "derived": derived})
+        return found
 
     def register_model_version(
         self,

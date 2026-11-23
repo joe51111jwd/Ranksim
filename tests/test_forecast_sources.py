@@ -331,6 +331,62 @@ def test_stream_resumes_with_a_range_request_after_a_break(tmp_path: Path, monke
     assert report[OLD_RELEASE]["found"] == 2 and report[OLD_RELEASE]["streamed_bytes"] == len(payload)
 
 
+def _no_network(calls: list[str]) -> httpx.Client:
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(str(request.url))
+        raise httpx.ConnectError("[Errno 111] Connection refused", request=request)
+
+    return httpx.Client(transport=httpx.MockTransport(handler))
+
+
+def test_a_list_stream_with_no_network_fails_at_once_without_retries_and_marks_nothing_searched(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    waits: list[float] = []
+    monkeypatch.setattr(strength_lists, "_sleep", waits.append)
+    calls: list[str] = []
+    cc = CommonCrawlDomainRanks(root=tmp_path, client=_no_network(calls))
+    with pytest.raises(strength_lists.ListUnreachable, match="data.commoncrawl.org could not be made") as caught:
+        strength_lists.materialise_cc_release_strict(cc, [SITE], OLD_RELEASE)
+    assert isinstance(caught.value, httpx.HTTPError)  # strength sync reports it as a FAILED line for this list
+    assert len(calls) == 1 and waits == []
+    assert cc.searched(OLD_RELEASE) == set()
+    assert capsys.readouterr().err == ""
+
+
+def test_a_list_download_with_no_network_fails_at_once_without_retries(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    waits: list[float] = []
+    monkeypatch.setattr(strength_lists, "_sleep", waits.append)
+    calls: list[str] = []
+    dest = tmp_path / "list.csv.gz"
+    with pytest.raises(strength_lists.ListUnreachable, match="raw.githubusercontent.com"):
+        strength_lists.download_resumable(_no_network(calls), "https://raw.githubusercontent.com/x/202610.csv.gz", dest)
+    assert len(calls) == 1 and waits == [] and not dest.exists()
+
+
+def test_a_stream_that_started_and_broke_still_resumes_and_says_when_it_waits(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    waits: list[float] = []
+    monkeypatch.setattr(strength_lists, "_sleep", waits.append)
+    payload = (FIXTURES / "cc_domain_ranks_sample.txt.gz").read_bytes()
+    seen: list[str | None] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request.headers.get("range"))
+        if len(seen) == 1:
+            return httpx.Response(200, headers={"content-length": str(len(payload)), "etag": '"x"'}, stream=_Stream(payload, cut=100))
+        if len(seen) == 2:  # the network drops for a moment after the stream had started: still retried
+            raise httpx.ConnectError("[Errno 101] Network is unreachable", request=request)
+        start = int(request.headers["range"].split("=")[1].rstrip("-"))
+        return httpx.Response(206, stream=_Stream(payload[start:]), headers={"content-length": str(len(payload) - start)})
+
+    cc = CommonCrawlDomainRanks(root=tmp_path, client=httpx.Client(transport=httpx.MockTransport(handler)))
+    report = strength_lists.materialise_cc_release_strict(cc, [SITE, "google.com"], OLD_RELEASE)
+    assert report["found"] == 2 and seen == [None, "bytes=100-", "bytes=100-"]
+    assert len(waits) == 2
+    lines = [line for line in capsys.readouterr().err.splitlines() if "Waiting" in line]
+    assert len(lines) == 2 and all("before retrying" in line and "attempt" in line for line in lines)
+
+
 def test_download_resumable_continues_a_partial_file(tmp_path: Path) -> None:
     payload = b"0123456789" * 50
     dest = tmp_path / "file.bin"

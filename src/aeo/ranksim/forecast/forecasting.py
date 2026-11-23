@@ -399,6 +399,14 @@ def bundle_hash(manifest: Mapping[str, Any]) -> str:
     return sha256_text(canonical_json(_json_safe(body)))
 
 
+def refuse_existing_bundle(paths: ForecastPaths, name: str) -> Path:
+    """The folder of bundle `name`. Refused when it already holds a bundle: a bundle is never replaced."""
+    folder = models_root(paths) / check_bundle_name(name)
+    if (folder / BUNDLE_MANIFEST).exists():
+        raise ForecastingRefusal(f"{folder} already holds a bundle. A bundle is never replaced: train under a new --name.")
+    return folder
+
+
 def save_bundle(paths: ForecastPaths, name: str, *, placement: PlacementModel, strength_only: PlacementModel,
                 updater: Updater | None, trust: Any | None, manifest: Mapping[str, Any],
                 band_prior: Mapping[str, Any] | None = None) -> ModelBundle:
@@ -410,9 +418,7 @@ def save_bundle(paths: ForecastPaths, name: str, *, placement: PlacementModel, s
     from .trust import save_trust_model
 
     name = check_bundle_name(name)
-    folder = models_root(paths) / name
-    if (folder / BUNDLE_MANIFEST).exists():
-        raise ForecastingRefusal(f"{folder} already holds a bundle. A bundle is never replaced: train under a new --name.")
+    folder = refuse_existing_bundle(paths, name)
     folder.mkdir(parents=True, exist_ok=True)
     files: dict[str, dict[str, str]] = {}
     save_model(placement, folder / "placement.json")
@@ -632,6 +638,16 @@ def fit_bundle_band_prior(rows: pd.DataFrame, *, includes_never_ranked: bool, so
     }
 
 
+NEW_TO_SEARCH_NO_ROWS = ("No rule for sites new to a search is recorded, because no validation row of this training "
+                         "data is flagged as a site new to its search.")
+NEW_TO_SEARCH_LIVE = ("Live forecasts apply no rule for sites new to a search, because the live path does not compute "
+                      "that flag; a site that has not appeared on a search is handled by the appearance gate and the "
+                      "stage cap instead.")
+NEW_TO_SEARCH_LIVE_UNGATED = ("Live forecasts apply no rule for sites new to a search, because the live path does not "
+                              "compute that flag; this bundle was trained on cells that include searches a site never "
+                              "ranked for, so it has no appearance gate and every cell gets the updater version in use.")
+
+
 def fit_bundle(
     paths: ForecastPaths,
     name: str,
@@ -658,7 +674,7 @@ def fit_bundle(
     from .backtest import VALIDATION_SHARE, cross_fitted_prior, sample_training
     from .features import stable_share
     from .placement import fit_placement
-    from .updater import UpdaterError, choose_segment, choose_version, fit_model, fit_table, prior_columns
+    from .updater import UpdaterError, choose_segment, choose_version, fit_model, fit_table, prior_columns, segment_mask
 
     if label not in (REAL, SYNTHETIC):
         raise ForecastingRefusal("a training label is REAL or SYNTHETIC")
@@ -694,12 +710,14 @@ def fit_bundle(
         search_col = "search" if "search" in val_rows else ("keyword" if "keyword" in val_rows else group_col)
         updater = choose_version(table, model, val_rows, prior[is_val], search_col=search_col)
         # The rule for sites new to a search, chosen on validation rows only, as in the version 2 backtest design.
-        segment = (choose_segment(updater, val_rows, prior[is_val], search_col=search_col)
-                   if len(val_rows) and "new_to_search" in val_rows else None)
+        # A rule is recorded only when the segment has validation rows: one chosen on zero rows would be no choice.
+        in_segment = int(segment_mask(val_rows, "new_to_search").sum()) if len(val_rows) else 0
+        segment = choose_segment(updater, val_rows, prior[is_val], search_col=search_col) if in_segment else None
         updater_counts = {"rows": int(len(rows)), "fit_rows": int(len(fit_rows)), "validation_rows": int(len(val_rows)),
                           "in_use": updater.in_use, "reason": updater.reason,
                           "new_to_search_rule": None if segment is None else
-                          {"winner": segment["winner"], "validation_rows": segment["validation_rows"], "why": segment["why"]}}
+                          {"winner": segment["winner"], "validation_rows": segment["validation_rows"], "why": segment["why"]},
+                          "new_to_search_rule_note": NEW_TO_SEARCH_NO_ROWS if segment is None else None}
     counts = {"upload_rows": int(len(upload_rows)),
               "sites": int(upload_rows["site"].nunique()) if "site" in upload_rows else None,
               "searches": int(upload_rows["search"].nunique()) if "search" in upload_rows else None,
@@ -713,6 +731,7 @@ def fit_bundle(
         "difficulty_metric": difficulty_metric, "split": split_note, "counts": counts, "group_col": group_col,
         "placement_version": placement.model_version(), "strength_only_version": strength_only.model_version(),
         "updater_version": updater.version() if updater is not None else None,
+        "new_to_search_live": NEW_TO_SEARCH_LIVE_UNGATED if includes_never_ranked else NEW_TO_SEARCH_LIVE,
         "trust": None if trust is None else {"version": getattr(trust, "version", None),
                                              "feature_set": getattr(trust, "feature_set", None),
                                              "features": list(getattr(trust, "features", []))},
@@ -885,9 +904,13 @@ def marker2_from_trust_report(path: str | Path) -> dict[str, Any]:
     evaluation = report["runs"][primary]["evaluation"]
     label = SYNTHETIC if report.get("label") == SYNTHETIC else REAL
     marker_input = marker2_input(evaluation, "free_gbt", label=label, stand_in_reason=TRUST_STAND_IN_REASON)
+    provisional = bool(report.get("provisional"))
+    if provisional:  # a second look at held-out rows an earlier version already read: no pass and no fail
+        marker_input["provisional"] = True
+        marker_input["provisional_reason"] = report.get("provisional_reason")
     verdict = evaluate_marker(2, marker_input)
     return {"report_file": str(path), "version": report.get("version"), "label": label, "input": marker_input,
-            "verdict": verdict, "what_this_is": report.get("what_this_is")}
+            "verdict": verdict, "what_this_is": report.get("what_this_is"), "provisional": provisional}
 
 
 def panel_frame_path(paths: ForecastPaths, given: str | Path | None = None) -> Path | None:
@@ -1011,6 +1034,7 @@ def train(paths: ForecastPaths, *, data: str, name: str | None = None, world: An
     if data not in TRAINING_SOURCES:
         raise ForecastingRefusal(f"--data must be one of {', '.join(TRAINING_SOURCES)}")
     chosen = check_bundle_name(name or f"{data}-{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}")
+    refuse_existing_bundle(paths, chosen)  # refused before any training runs, not after it
     if data == "synthetic":
         from .synth import World
 
@@ -1931,6 +1955,67 @@ def site_appeared(inputs: "LiveInputs", site: str, search: str, location_code: i
     return None
 
 
+@dataclass(frozen=True)
+class StageTiming:
+    """When one registered site's stage forecast is dated, and whether it is MISSED or blocked by its date.
+
+    Worked out from the scoreboard and the clock alone, so a forecast command can say MISSED or why
+    nothing can be built before it loads any bundle.
+    """
+
+    site: str
+    source: str
+    launch: date
+    stage: str
+    stage_day: date
+    as_of: date
+    today: date
+    label: str
+    missed: str | None = None
+    blocked: str | None = None
+
+
+def stage_timing(scoreboard: Scoreboard, *, site: str, stage: str, day: date | None, now: datetime) -> StageTiming:
+    """The dates of one stage forecast. Refused: an unknown stage, an unregistered site, a site that is not live."""
+    from .config import FORECAST_FROZEN_GAP_DAYS
+
+    if stage not in STAGE_DAYS:
+        raise ForecastingRefusal(f"the stage must be one of {', '.join(STAGE_DAYS)}")
+    name, source, launch = _site_row(scoreboard, site)
+    if source not in LIVE_SOURCES:
+        raise ForecastingRefusal(f"{name} is a {source} site. Live forecasts are for seed, pilot and synthetic sites.")
+    label = SYNTHETIC if source == "synthetic" else REAL
+    stage_day = launch + timedelta(days=STAGE_DAYS[stage])
+    today = now.astimezone(timezone.utc).date()
+    as_of = as_date(day) if day is not None else min(stage_day, today)
+    missed = blocked = None
+    if (today - stage_day).days > FORECAST_FROZEN_GAP_DAYS:
+        missed = (f"MISSED: the {stage} stage day of {name} was {stage_day}, and a forecast dated then may be written "
+                  f"at most {FORECAST_FROZEN_GAP_DAYS} day later. A missed stage is never backfilled. A forecast made "
+                  "now would be a shorter lead, never this stage.")
+    elif as_of > today:
+        blocked = f"The forecast date {as_of} is later than today, {today}."
+    elif stage == "upload" and as_of > launch:
+        blocked = (f"An upload forecast must be made on or before launch ({launch}). The date is {as_of}. "
+                   "The scoreboard refuses it.")
+    elif stage != "upload" and as_of > stage_day:
+        blocked = (f"A {stage} forecast must be dated on or before day {STAGE_DAYS[stage]} ({stage_day}). "
+                   f"The date is {as_of}. The scoreboard refuses it.")
+    elif source in ("seed", "pilot") and (today - as_of).days > FORECAST_FROZEN_GAP_DAYS:
+        blocked = (f"A {source} forecast dated {as_of} written on {today} is more than {FORECAST_FROZEN_GAP_DAYS} day "
+                   "late. Later readings could have shaped it. The scoreboard refuses it.")
+    return StageTiming(name, source, launch, stage, stage_day, as_of, today, label, missed, blocked)
+
+
+NO_BUNDLE_LOADED = "none (nothing to build, so no bundle was loaded)"
+
+
+def unbuilt_run(timing: StageTiming) -> ForecastRun:
+    """A run that is MISSED or blocked by its date, made without loading a bundle: it builds nothing."""
+    return ForecastRun(timing.site, timing.source, timing.stage, timing.as_of, timing.label, "", NO_BUNDLE_LOADED,
+                       {}, blocked=timing.blocked, missed=timing.missed, stage_day=timing.stage_day)
+
+
 def plan_forecasts(
     scoreboard: Scoreboard,
     paths: ForecastPaths,
@@ -1955,13 +2040,9 @@ def plan_forecasts(
     at this stage is listed and left alone.
     """
     from .backtest import forecast_cells
-    from .config import FORECAST_FROZEN_GAP_DAYS
 
-    if stage not in STAGE_DAYS:
-        raise ForecastingRefusal(f"the stage must be one of {', '.join(STAGE_DAYS)}")
-    name, source, launch = _site_row(scoreboard, site)
-    if source not in LIVE_SOURCES:
-        raise ForecastingRefusal(f"{name} is a {source} site. Live forecasts are for seed, pilot and synthetic sites.")
+    timing = stage_timing(scoreboard, site=site, stage=stage, day=day, now=now)
+    name, source, launch = timing.site, timing.source, timing.launch
     if bundle.training_label == SYNTHETIC and source in ("seed", "pilot"):
         raise ForecastingRefusal(f"Bundle {bundle.name} was trained on SYNTHETIC rows. A synthetic model never forecasts "
                                  f"a seed or pilot site like {name}. Train on REAL data: forecast train --data panel.")
@@ -1969,32 +2050,19 @@ def plan_forecasts(
         raise ForecastingRefusal(f"Bundle {bundle.name} has no early-reading updater, so a {stage} forecast would be the "
                                  "upload model's answer with the site's readings ignored. Train a bundle with an updater "
                                  "(forecast train) and pass it with --bundle.")
-    label = SYNTHETIC if source == "synthetic" else REAL
-    stage_day = launch + timedelta(days=STAGE_DAYS[stage])
-    today = now.astimezone(timezone.utc).date()
-    as_of = as_date(day) if day is not None else min(stage_day, today)
+    label = timing.label
+    as_of = timing.as_of
     gate = appearance_gate(scoreboard, label=label, as_of=as_of) if bundle.conditional else NO_GATE
-    run = ForecastRun(name, source, stage, as_of, label, bundle.name, bundle.version, gate.to_dict(), stage_day=stage_day)
+    run = ForecastRun(name, source, stage, as_of, label, bundle.name, bundle.version, gate.to_dict(),
+                      stage_day=timing.stage_day)
     if bundle.training_cutoff > as_of:
         raise LeakError(f"bundle {bundle.name} learned outcomes up to {bundle.training_cutoff}, after the forecast date "
                         f"{as_of}. A forecast may only use what was knowable on its date.")
-    if (today - stage_day).days > FORECAST_FROZEN_GAP_DAYS:
-        run.missed = (f"MISSED: the {stage} stage day of {name} was {stage_day}, and a forecast dated then may be written "
-                      f"at most {FORECAST_FROZEN_GAP_DAYS} day later. A missed stage is never backfilled. A forecast made "
-                      "now would be a shorter lead, never this stage.")
+    if timing.missed:
+        run.missed = timing.missed
         return run
-    if as_of > today:
-        run.blocked = f"The forecast date {as_of} is later than today, {today}."
-    elif stage == "upload" and as_of > launch:
-        run.blocked = (f"An upload forecast must be made on or before launch ({launch}). The date is {as_of}. "
-                       "The scoreboard refuses it.")
-    elif stage != "upload" and as_of > stage_day:
-        run.blocked = (f"A {stage} forecast must be dated on or before day {STAGE_DAYS[stage]} ({stage_day}). "
-                       f"The date is {as_of}. The scoreboard refuses it.")
-    elif source in ("seed", "pilot") and (today - as_of).days > FORECAST_FROZEN_GAP_DAYS:
-        run.blocked = (f"A {source} forecast dated {as_of} written on {today} is more than {FORECAST_FROZEN_GAP_DAYS} day "
-                       "late. Later readings could have shaped it. The scoreboard refuses it.")
-    if run.blocked:
+    if timing.blocked:
+        run.blocked = timing.blocked
         return run
     if source == "synthetic" and strength is None:
         raise ForecastingRefusal("Synthetic sites are forecast only inside forecast demo, which holds their world.")
@@ -2210,7 +2278,8 @@ def due_lines(result: Mapping[str, Any]) -> list[str]:
         command = "upload" if item["stage"] == "upload" else f"update --stage {item['stage']}"
         if item["stage"] != "upload" and date.fromisoformat(item["stage_date"]) > today:
             # A stage forecast is made on its stage day, from that day's reading. One recorded earlier is never replaced.
-            lines.append(f"  {item['site']} ({item['source']}) {item['stage']} on {item['stage_date']}. Run it on "
+            lines.append(f"  {item['site']} ({item['source']}) {item['stage']} on {item['stage_date']}.{open_searches(item)} "
+                         "Run it on "
                          f"{item['stage_date']}, after that day's clean reading: python -m aeo.ranksim forecast {command} "
                          f"--site {item['site']} --record")
             continue
@@ -2284,7 +2353,8 @@ def list_backtests(root: str | Path | None = None) -> list[dict[str, Any]]:
         for version, path in _versioned(folder, "report"):
             report = json.loads(path.read_text(encoding="utf-8"))
             runs.append({"file": path.name, "run_version": version, "label": report.get("label"),
-                         "headline": _headline(report)})
+                         "headline": _headline(report), "provisional": bool(report.get("provisional")),
+                         "provisional_reason": report.get("provisional_reason")})
         out.append({"name": folder.name, "design_versions": [v for v, _ in designs], "runs": runs,
                     "stand_in": folder.name.startswith(BACKTEST_STAND_IN)})
     return out
@@ -2298,7 +2368,13 @@ def backtest_lines(items: Sequence[Mapping[str, Any]]) -> list[str]:
         tag = " STAND-IN: sites already seen on a search, not new launches." if item["stand_in"] else ""
         lines.append(f"{item['name']}: design versions {', '.join(map(str, item['design_versions'])) or 'none'}.{tag}")
         for run in item["runs"]:
-            lines.append(f"  {run['file']} ({run['label']}): {run['headline']}.")
+            if run.get("provisional"):
+                from .markers import SECOND_LOOK, provisional_sentence
+
+                lines.append(f"  {run['file']} ({run['label']}, {SECOND_LOOK}): {run['headline']}. "
+                             f"{provisional_sentence(run)}")
+            else:
+                lines.append(f"  {run['file']} ({run['label']}): {run['headline']}.")
     return lines
 
 

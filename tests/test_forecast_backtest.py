@@ -16,6 +16,7 @@ import pytest
 from aeo.ranksim.forecast import backtest as B
 from aeo.ranksim.forecast.asof import LeakError
 from aeo.ranksim.forecast.config import NT50
+from aeo.ranksim.forecast.features import AlreadyScored, ProvenanceRefusal
 from aeo.ranksim.forecast.grading import GradedCell
 from aeo.ranksim.forecast.markers import evaluate_marker
 from aeo.ranksim.forecast.placement import fit_placement
@@ -819,3 +820,63 @@ def test_the_committed_version_2_backtest_designs_can_be_read_back_and_rebuilt()
                           cuts=th["difficulty_kd_cuts_from_training_pages"], version=2, reason=reason)
     for spec in specs.values():
         assert spec.sha256() == frozen[spec.name]["sha256"], spec.name
+
+
+# ---------------------------------------------------------------------------
+# python -m aeo.ranksim.forecast.backtest run: a refusal is one plain sentence
+
+
+@pytest.mark.parametrize("refusal", [
+    B.BacktestRefusal("evals/forecast/backtest/panel_a/manifest-v1.json already holds a scored run under prereg sha256 abc."),
+    ProvenanceRefusal("src/aeo/ranksim/forecast is dirty. Commit and push it before a scored run."),
+    AlreadyScored("design version 2 is already scored."),
+])
+def test_a_refused_backtest_run_prints_one_refused_sentence_and_exits_2(monkeypatch, capsys, refusal):
+    def stub(**kwargs):
+        raise refusal
+
+    monkeypatch.setattr(B, "run_panel", stub)
+    assert B.main(["run", "--design-version", "1"]) == 2
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err.startswith("Refused: ") and captured.err.count("\n") == 1 and "Traceback" not in captured.err
+
+
+def test_a_real_crash_in_a_backtest_run_is_not_called_a_refusal(monkeypatch):
+    def stub(**kwargs):
+        raise KeyError("rank_at_outcome")
+
+    monkeypatch.setattr(B, "run_panel", stub)
+    with pytest.raises(KeyError):
+        B.main(["run"])
+
+
+def _no_scoring(monkeypatch):
+    """Stand-ins so run_panel reaches its checks without loading the panel or scoring a held-out row."""
+    monkeypatch.setattr(B, "load_panel_pages", lambda log=None: (pd.DataFrame(), pd.DataFrame()))
+    monkeypatch.setattr(B, "consecutive_gaps", lambda pages: {})
+    monkeypatch.setattr(B, "difficulty_cuts", lambda pages: [])
+
+    def never(*args, **kwargs):
+        raise AssertionError("nothing may be scored in this test")
+
+    monkeypatch.setattr(B, "_run_panel_body", never)
+
+
+def test_a_missing_reason_or_a_missing_prereg_in_a_backtest_run_is_a_refusal(monkeypatch, tmp_path, capsys):
+    _no_scoring(monkeypatch)
+    real_specs = B.panel_specs
+
+    def specs(design, *, gaps, cuts, version=1, reason=None):
+        if version > 1 and not reason:
+            raise ValueError(f"backtest design version {version} needs the reason for the new version, recorded in its prereg")
+        return real_specs(design, gaps={"all": [1.0]}, cuts=[10.0, 40.0], version=version, reason=reason)
+
+    monkeypatch.setattr(B, "panel_specs", specs)
+    monkeypatch.setattr(B, "frozen_spec_reason", lambda name, root, version: None)
+    with pytest.raises(B.BacktestRefusal, match="needs the reason"):
+        B.run_panel(root=tmp_path, version=3)
+    with pytest.raises(B.BacktestRefusal, match="missing"):
+        B.run_panel(root=tmp_path, version=1)  # no prereg.json under tmp_path
+    assert B.main(["run", "--design-version", "3"]) == 2
+    assert capsys.readouterr().err.startswith("Refused: backtest design version 3 needs the reason")

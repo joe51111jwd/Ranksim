@@ -122,6 +122,37 @@ def _cohort_sites(path: str | Path, which: str) -> list[dict[str, Any]]:
     return frame[columns].to_dict("records")
 
 
+TABLE_BUILDERS: dict[str, str] = {
+    "universe": f"{PROG} universe build",
+    "cohort": f"{PROG} cohort build",
+}
+FILE_FLAGS: dict[str, str] = {
+    "searches": "a text file with one search per line",
+    "sites": "a text file with one site per line",
+}
+
+
+def _refuse_inputs(ctx: Context, args: argparse.Namespace) -> int | None:
+    """Refuse a missing input file or a SYNTHETIC table before anything is priced. None when the inputs are fine.
+
+    A paid pull never runs on SYNTHETIC names, dry runs included: the price would be for made-up sites.
+    """
+    for flag, text in FILE_FLAGS.items():
+        given = getattr(args, flag, None)
+        if given and not Path(given).is_file():
+            return ctx.fail(f"{given} does not exist. Give --{flag} {text}.")
+    for flag, builder in TABLE_BUILDERS.items():
+        given = getattr(args, flag, None)
+        if not given:
+            continue
+        if not Path(given).is_file():
+            return ctx.fail(f"The {flag} table {given} does not exist. Build it with: {builder}")
+        why = ts.synthetic_table_reason(given)
+        if why is not None:
+            return ctx.fail(f"The {flag} table {given} is SYNTHETIC ({why}), and a paid pull never runs on SYNTHETIC names.")
+    return None
+
+
 def _sites_from(args: argparse.Namespace) -> list[Any]:
     found: list[Any] = list(getattr(args, "site", None) or [])
     if getattr(args, "sites", None):
@@ -236,6 +267,9 @@ def _run_pull(
 
 
 def cmd_pull_plan(ctx: Context, args: argparse.Namespace) -> int:
+    refused = _refuse_inputs(ctx, args)
+    if refused is not None:
+        return refused
     keywords = _keywords_from(args)
     sites = _unique_site_rows(_sites_from(args))
     searches: int | list[str] = sorted(set(keywords)) if keywords else PLAN_SEARCHES
@@ -251,6 +285,7 @@ def cmd_pull_plan(ctx: Context, args: argparse.Namespace) -> int:
         "plan": {"searches": plan.searches, "sites": plan.sites, "rows_per_site": plan.rows_per_site, "windows": list(plan.windows),
                  "lines": plan.table(), "totals_upper": {str(k): str(v) for k, v in plan.totals_upper.items()},
                  "totals_plan_reading": {str(k): str(v) for k, v in plan.totals_plan_reading.items()},
+                 "totals_sample_rate": {str(k): str(v) for k, v in plan.totals_sample_rate.items()},
                  "sites_with_age": plan.sites_with_age,
                  "sites_without_launch_page": {str(k): v for k, v in plan.sites_without_launch_page.items()},
                  "sites_24_to_30_months": plan.sites_24_to_30_months, "sites_over_30_months": plan.sites_over_30_months},
@@ -285,6 +320,9 @@ def cmd_pull_plan(ctx: Context, args: argparse.Namespace) -> int:
 
 
 def cmd_pull_past_pages(ctx: Context, args: argparse.Namespace) -> int:
+    refused = _refuse_inputs(ctx, args)
+    if refused is not None:
+        return refused
     keywords = _keywords_from(args)
     if not keywords:
         return ctx.fail(f"Give --searches with a file of searches, --search, or --universe with a table from: {PROG} universe build")
@@ -298,6 +336,9 @@ def cmd_pull_past_pages(ctx: Context, args: argparse.Namespace) -> int:
 
 
 def cmd_pull_traffic(ctx: Context, args: argparse.Namespace) -> int:
+    refused = _refuse_inputs(ctx, args)
+    if refused is not None:
+        return refused
     sites = _sites_from(args)
     if not sites:
         return ctx.fail(f"Give --sites with a file of sites, --site, or --cohort with a table from: {PROG} cohort build")
@@ -309,6 +350,9 @@ def cmd_pull_traffic(ctx: Context, args: argparse.Namespace) -> int:
 
 
 def cmd_pull_positions(ctx: Context, args: argparse.Namespace) -> int:
+    refused = _refuse_inputs(ctx, args)
+    if refused is not None:
+        return refused
     sites = _sites_from(args)
     if not sites:
         return ctx.fail(f"Give --sites with a file of sites, --site, or --cohort with a table from: {PROG} cohort build")

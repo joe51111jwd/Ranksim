@@ -9,6 +9,7 @@ from __future__ import annotations
 import csv
 import io
 import json
+import os
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
@@ -780,3 +781,196 @@ def test_a_network_error_in_any_command_ends_in_one_sentence_and_exit_1(tmp_path
     assert out == ""
     assert err.count("\n") == 1 and err.startswith("A network request failed (") and "run the same command again" in err
     assert "Traceback" not in err
+
+
+# ---------------------------------------------------------------------------------------------
+# The shared entry point: closed pipes, server status errors, --dir, SYNTHETIC lines
+
+
+class ClosedPipe(io.StringIO):
+    """An output whose reader has gone away, as `forecast status | head -0` leaves it."""
+
+    def write(self, text: str) -> int:
+        raise BrokenPipeError(32, "Broken pipe")
+
+
+def test_a_closed_output_pipe_exits_quietly_with_a_non_zero_code_and_is_not_called_a_network_failure(tmp_path):
+    err = io.StringIO()
+    code = cli.main(["status", "--dir", str(tmp_path / "data")], clock=pipeline.VirtualClock(START), stdout=ClosedPipe(),
+                    stderr=err)
+    assert code != 0
+    assert err.getvalue() == ""
+
+
+def test_a_server_error_status_names_the_code_and_the_host_and_says_running_again_will_not_help(tmp_path, monkeypatch):
+    request = httpx.Request("GET", "https://api.example.com/v3/list?apikey=SECRET-QUERY-123&page=2")
+    error = httpx.HTTPStatusError("404 Not Found", request=request, response=httpx.Response(404, request=request))
+
+    def boom(ctx, args):
+        raise error
+
+    monkeypatch.setattr(cli, "cmd_grade", boom)
+    code, out, err = run(["grade", "--date", "2026-12-01"], tmp_path)
+    assert code == cli.EXIT_CHECK_FAILED and out == ""
+    assert err.count("\n") == 1
+    assert "404" in err and "api.example.com" in err and "will not help" in err
+    assert "SECRET-QUERY-123" not in err and "?" not in err and "/v3/list" not in err
+    assert "Check the connection" not in err
+    assert not any(dash in err for dash in ("—", "–"))
+
+
+def test_status_names_open_searches_with_the_one_function_in_forecasting(tmp_path, monkeypatch):
+    from aeo.ranksim.forecast import forecasting
+
+    assert not hasattr(cli, "_open_searches")
+    monkeypatch.setattr(forecasting, "open_searches", lambda item: " OPEN-SEARCHES-MARK.")
+    data = tmp_path / "data"
+    board = pipeline.open_scoreboard(forecast_paths(data), clock=pipeline.VirtualClock(START))
+    board.add_site("seedone.com", source="seed", launch_date="2026-11-14", launch_date_source="test", built_by="test")
+    board.close()
+    code, out, _ = run(["status"], data)
+    assert "upload was due on 2026-11-14. OPEN-SEARCHES-MARK." in out
+
+
+def test_status_prints_one_line_for_stored_brand_flags_that_differ_from_the_brand_rule_and_changes_nothing(tmp_path):
+    data = tmp_path / "data"
+    board = pipeline.open_scoreboard(forecast_paths(data), clock=pipeline.VirtualClock(START))
+    board.add_site("x.com", source="seed", launch_date="2026-12-20", launch_date_source="test", built_by="test")
+    board.add_search("x.com", "x login", location_code=1026201)
+    code, out, _ = run(["status"], data)
+    assert "brand flag" not in out  # nothing differs: no line at all
+    board.add_search("x.com", "xbox series prices", location_code=1026201, is_brand=True)  # stored by the older substring rule
+    board.close()
+    code, out, _ = run(["status"], data)
+    flagged = [line for line in out.splitlines() if "brand flag" in line]
+    assert len(flagged) == 1
+    assert flagged[0].startswith("1 stored brand flags differ") and "x.com 'xbox series prices' stored brand" in flagged[0]
+    code, out, _ = run(["status", "--json"], data)
+    assert json.loads(out)["brand_flag_differences"] == [
+        {"site": "x.com", "search": "xbox series prices", "stored": True, "derived": False}]
+    board = pipeline.open_scoreboard(forecast_paths(data), clock=pipeline.VirtualClock(START))
+    assert len(board.brand_flag_differences()) == 1  # the stored row was not changed
+    board.close()
+
+
+def test_dir_holds_for_the_whole_process_during_one_command_and_the_old_value_comes_back(tmp_path, monkeypatch):
+    seen: list[Path] = []
+
+    def handler(ctx, args):
+        seen.append(forecast_paths().root)  # no argument: as the content model and the trust model look it up
+        return cli.EXIT_OK
+
+    monkeypatch.setattr(cli, "cmd_grade", handler)
+    monkeypatch.setenv("RANKSIM_FORECAST_DIR", str(tmp_path / "old"))
+    run(["grade", "--date", "2026-12-01"], tmp_path / "chosen")
+    assert seen == [(tmp_path / "chosen").resolve()]
+    assert forecast_paths().root == tmp_path / "old"
+
+    monkeypatch.delenv("RANKSIM_FORECAST_DIR")
+
+    def crash(ctx, args):
+        seen.append(forecast_paths().root)
+        raise ValueError("refused")
+
+    monkeypatch.setattr(cli, "cmd_grade", crash)
+    code, _, _ = run(["grade", "--date", "2026-12-01"], tmp_path / "second")
+    assert code == cli.EXIT_USAGE and seen[-1] == (tmp_path / "second").resolve()
+    assert "RANKSIM_FORECAST_DIR" not in os.environ
+
+
+def test_demo_with_only_dir_writes_the_demo_into_the_dir_folder(tmp_path, monkeypatch):
+    calls: list[Path] = []
+
+    def fake_demo(seed, *, workdir, sites):
+        calls.append(Path(workdir))
+        return _FakeDemo()
+
+    monkeypatch.setattr(pipeline, "demo", fake_demo)
+    code, out, err = run(["demo", "--sites", "2"], tmp_path / "chosen")
+    assert calls == [tmp_path / "chosen"], err
+    assert f"The demo files are in {tmp_path / 'chosen'}." in out
+    run_code = cli.main(["demo", "--workdir", str(tmp_path / "work"), "--dir", str(tmp_path / "chosen")],
+                        clock=pipeline.VirtualClock(START), stdout=io.StringIO(), stderr=io.StringIO())
+    assert run_code == 0 and calls[-1] == tmp_path / "work"  # --workdir still wins
+
+
+class _FakeDemo:
+    lines = ["SYNTHETIC: a stand-in demo."]
+    refusals: list = []
+    chain = {"ok": True}
+    export_check = {"ok": True}
+
+    def to_dict(self) -> dict:
+        return {"label": "SYNTHETIC"}
+
+
+@pytest.mark.parametrize("payload", [{"label": "SYNTHETIC", "rows": 3}, {"report": {"label": "SYNTHETIC"}, "file": "x"}])
+def test_every_text_line_of_a_synthetic_payload_says_synthetic_and_json_is_unchanged(payload):
+    out = io.StringIO()
+    ctx = cli.Context(paths=forecast_paths("unused"), as_json=False, out=out, err=io.StringIO(),
+                      clock=pipeline.VirtualClock(START), settings_factory=lambda: None)
+    ctx.emit(payload, ["Hit rate is NOT MEASURABLE (18 of 30 needed).", "Already SYNTHETIC. Left alone.", "", "  indented",
+                       "Marker 2 (SYNTHETIC).\nPair accuracy is NOT MEASURABLE (24 of 30 needed)."])
+    assert out.getvalue().splitlines() == ["SYNTHETIC: Hit rate is NOT MEASURABLE (18 of 30 needed).",
+                                           "Already SYNTHETIC. Left alone.", "", "SYNTHETIC:   indented",
+                                           "Marker 2 (SYNTHETIC).",
+                                           "SYNTHETIC: Pair accuracy is NOT MEASURABLE (24 of 30 needed)."]
+    as_json = io.StringIO()
+    replace_ctx = cli.Context(paths=forecast_paths("unused"), as_json=True, out=as_json, err=io.StringIO(),
+                              clock=pipeline.VirtualClock(START), settings_factory=lambda: None)
+    replace_ctx.emit(payload, ["ignored"])
+    assert json.loads(as_json.getvalue()) == payload
+
+
+@pytest.mark.parametrize("payload", [{"label": "REAL"}, {"rows": 1}, {"a": {"label": "REAL"}, "b": {"label": "SYNTHETIC"}},
+                                     {"label": "REAL", "report": {"label": "SYNTHETIC"}}])
+def test_real_or_unlabeled_output_is_printed_as_it_is(payload):
+    out = io.StringIO()
+    ctx = cli.Context(paths=forecast_paths("unused"), as_json=False, out=out, err=io.StringIO(),
+                      clock=pipeline.VirtualClock(START), settings_factory=lambda: None)
+    ctx.emit(payload, ["Pair accuracy 61.0% (REAL)."])
+    assert out.getvalue() == "Pair accuracy 61.0% (REAL).\n"
+
+
+def test_report_and_marker_on_the_synthetic_source_say_synthetic_on_every_line(tmp_path):
+    demo = tmp_path / "demo"
+    code, _, err = run(["demo", "--workdir", str(demo), "--sites", "2"], tmp_path / "data")
+    assert code == 0, err
+    for argv in (["report", "--source", "synthetic", "--stage", "upload"], ["marker", "--number", "3", "--source", "synthetic"]):
+        code, out, err = run(argv, demo)
+        lines = [line for line in out.splitlines() if line.strip()]
+        assert lines, (argv, err)
+        assert all("SYNTHETIC" in line for line in lines), [line for line in lines if "SYNTHETIC" not in line]
+
+
+def test_the_forecasting_commands_use_the_shared_network_sentence_and_let_a_closed_pipe_through():
+    """One sentence for all commands: a server status error is not a connection problem, a closed pipe is not a network error."""
+    from aeo.ranksim.forecast import cli_forecasting
+
+    class Ctx:
+        def __init__(self) -> None:
+            self.said: list[tuple[str, int]] = []
+
+        def fail(self, message: str, code: int = cli.EXIT_USAGE) -> int:
+            self.said.append((message, code))
+            return code
+
+    def raising(error: BaseException):
+        def handler(ctx, args):
+            raise error
+
+        return cli_forecasting.guarded(handler)
+
+    assert cli_forecasting.network_failure is cli.network_failure
+    request = httpx.Request("GET", "https://lists.example.org/top.csv?key=secret-value")
+    status = httpx.HTTPStatusError("404 Not Found", request=request, response=httpx.Response(404, request=request))
+    ctx = Ctx()
+    assert raising(status)(ctx, None) == cli.EXIT_CHECK_FAILED
+    message = ctx.said[0][0]
+    assert "HTTP 404" in message and "lists.example.org" in message and "secret-value" not in message
+    assert "Check the connection" not in message
+    ctx = Ctx()
+    assert raising(httpx.ConnectError("no route"))(ctx, None) == cli.EXIT_CHECK_FAILED
+    assert ctx.said[0][0].startswith("A network request failed (")
+    with pytest.raises(BrokenPipeError):
+        raising(BrokenPipeError(32, "Broken pipe"))(Ctx(), None)

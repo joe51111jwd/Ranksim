@@ -916,11 +916,13 @@ def train_paid(
     group, as the panel bundle does it. The 'test' split is never joined. A bundle from SYNTHETIC tables
     is labelled SYNTHETIC, which the live path refuses for a seed or pilot site.
     """
-    from .forecasting import PANEL_DIFFICULTY_METRIC, PLACEMENT_FEATURES, TrainResult, check_bundle_name, fit_bundle
+    from .forecasting import (PANEL_DIFFICULTY_METRIC, PLACEMENT_FEATURES, TrainResult, check_bundle_name, fit_bundle,
+                              refuse_existing_bundle)
     from .placement import PlacementError
     from .updater import UpdaterError
 
     name = check_bundle_name(name)
+    refuse_existing_bundle(paths, name)  # refused before the join and the training run, not after them
     join = join_upload_cells(folder, splits=("train",), panel_dir=panel_dir, paths=paths, strength=strength,
                              evidence=evidence, content_scorer=content_scorer, rule=rule, want_readings=True, log=log)
     rows = training_rows(join)

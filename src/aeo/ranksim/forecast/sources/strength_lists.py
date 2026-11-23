@@ -277,6 +277,40 @@ def record_source(directory: Path, key: str, entry: dict[str, Any]) -> None:
     os.replace(tmp, path)
 
 
+class ListUnreachable(httpx.ConnectError):
+    """The first connection of a download could not be made and no byte arrived. Never retried.
+
+    No network, a refused proxy or a dead host does not heal in a few minutes, so waiting through
+    the retries meant for a broken stream would only hide the failure. Nothing is marked searched.
+    """
+
+
+# Connection failures before any byte arrived: the download fails at once instead of retrying.
+FIRST_CONNECTION_ERRORS: tuple[type[Exception], ...] = (httpx.ConnectError, httpx.ConnectTimeout, httpx.ProxyError)
+
+def _sleep(seconds: float) -> None:
+    """time.sleep looked up at call time, so a test can replace either this or time.sleep."""
+    time.sleep(seconds)
+
+
+def _unreachable(url: str, error: Exception) -> ListUnreachable:
+    host = urlsplit(url).netloc or url
+    return ListUnreachable(f"the first connection to {host} could not be made ({type(error).__name__}: {error}). "
+                           "No byte arrived, so it was not retried. Check the network or the proxy",
+                           request=getattr(error, "_request", None))
+
+
+def _wait_before_retry(log: Callable[[str], None] | None, message: str, seconds: float) -> None:
+    """Say what is being waited for, then wait. A long wait is never silent: with no log the line goes to stderr."""
+    line = f"{message} Waiting {seconds:.0f} s before retrying."
+    if log is not None:
+        log(line)
+    else:
+        sys.stderr.write(line + "\n")
+        sys.stderr.flush()
+    _sleep(seconds)
+
+
 def http_date(text: str | None) -> date | None:
     if not text:
         return None
@@ -311,6 +345,7 @@ def download_resumable(
         return meta
     part = dest.with_name(dest.name + ".part")
     attempts = 0
+    received = 0  # bytes that arrived in this call; with none, a connection failure is not retried
     last_modified: str | None = None
     etag: str | None = None
     total: int | None = None
@@ -341,17 +376,20 @@ def download_resumable(
                 with open(part, mode) as handle:
                     for block in response.iter_bytes(CHUNK_BYTES):
                         handle.write(block)
+                        received += len(block)
             if total is None or part.stat().st_size >= total:
                 break
         except (httpx.TransportError, httpx.HTTPStatusError) as error:
             attempts += 1
             if isinstance(error, httpx.HTTPStatusError) and error.response is not None and error.response.status_code in (403, 404, 410):
                 raise
+            if isinstance(error, FIRST_CONNECTION_ERRORS) and not received:
+                raise _unreachable(url, error) from error
             if attempts > MAX_STREAM_RETRIES:
                 raise
-            if log:
-                log(f"download of {url} broke at {part.stat().st_size if part.exists() else 0} bytes ({error}). Retrying.")
-            time.sleep(min(60.0, 2.0 ** attempts))
+            _wait_before_retry(log, f"The download of {url} broke at {part.stat().st_size if part.exists() else 0} bytes "
+                                    f"({type(error).__name__}), attempt {attempts} of {MAX_STREAM_RETRIES}.",
+                               min(60.0, 2.0 ** attempts))
     os.replace(part, dest)
     meta = {
         "url": url,
@@ -522,11 +560,13 @@ class _ResumingStream:
                 raise httpx.ReadError("stream ended early")
             except httpx.TransportError as error:
                 attempts += 1
+                if isinstance(error, FIRST_CONNECTION_ERRORS) and not self.offset:
+                    raise _unreachable(self.url, error) from error
                 if attempts > MAX_STREAM_RETRIES:
                     raise
-                if self.log:
-                    self.log(f"stream of {self.url} broke at byte {self.offset} ({error}). Resuming.")
-                time.sleep(min(60.0, 2.0 ** attempts))
+                _wait_before_retry(self.log, f"The stream of {self.url} broke at byte {self.offset} ({type(error).__name__}), "
+                                             f"attempt {attempts} of {MAX_STREAM_RETRIES}. It resumes from there.",
+                                   min(60.0, 2.0 ** attempts))
 
 
 @dataclass

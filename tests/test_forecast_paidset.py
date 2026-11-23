@@ -666,3 +666,75 @@ def test_the_same_held_out_rows_are_scored_once_whatever_the_design_name_and_a_s
     assert report["second_look"]["earlier_looks"][0]["design"] == "cohort-a" and report["provisional"] is True
     assert second["marker"]["passed"] is None and second["manifest"]["second_look"] is True
     assert any("SECOND LOOK" in line for line in paidset.score_lines(second))
+
+
+def _printed_command(out: str, marker: str) -> list[str]:
+    """The argv after `forecast` of the command printed after `marker`."""
+    import shlex
+
+    line = next(line for line in out.splitlines() if marker in line)
+    words = shlex.split(line.split(marker, 1)[1])
+    return words[words.index("forecast") + 1:]
+
+
+def _run_printed(argv: list[str]) -> tuple[int, str, str]:
+    out, err = io.StringIO(), io.StringIO()
+    code = cli.main(argv, clock=pipeline.SystemClock(), stdout=out, stderr=err, settings_factory=lambda: None)
+    return code, out.getvalue(), err.getvalue()
+
+
+def test_the_score_command_printed_by_a_synthetic_freeze_runs_as_printed(synthetic_run, tmp_path, monkeypatch):
+    import shutil
+
+    monkeypatch.chdir(tmp_path)  # the default set folder of another working folder must not be what is scored
+    folder = tmp_path / "fresh_set"
+    shutil.copytree(synthetic_run["folder"], folder, ignore=shutil.ignore_patterns(paidset.LOOKS_FILE))
+    code, out, err = run_cli(["cohort-backtest", "freeze", "--set", str(folder), "--bundle", "syn-paid",
+                              "--root", str(tmp_path / "designs"), "--name", "cohort-hint"], synthetic_run["data"])
+    assert code == 0, err
+    argv = _printed_command(out, "Score it with: ")
+    assert "--set" in argv and "--dir" in argv and "--skip-git-check" in argv
+    code, out, err = _run_printed(argv)
+    assert code == 1, err  # scored; a SYNTHETIC run never passes a marker
+    assert "NOT A MARKER RESULT (SYNTHETIC)" in out
+
+
+def test_a_freeze_of_rows_already_scored_prints_the_second_look_commands_with_design_version_and_reason(
+        synthetic_run, tmp_path, monkeypatch):
+    import shutil
+
+    monkeypatch.chdir(tmp_path)
+    data = synthetic_run["data"]
+    folder = tmp_path / "fresh_set"
+    shutil.copytree(synthetic_run["folder"], folder, ignore=shutil.ignore_patterns(paidset.LOOKS_FILE))
+    root = tmp_path / "designs"
+    first = ["cohort-backtest", "freeze", "--set", str(folder), "--bundle", "syn-paid", "--root", str(root),
+             "--name", "cohort-x"]
+    code, out, err = run_cli(first, data)
+    assert code == 0, err
+    code, out, err = _run_printed(_printed_command(out, "Score it with: "))
+    assert code == 1, err
+    code, out, err = run_cli(["cohort-backtest", "freeze", "--set", str(folder), "--bundle", "syn-paid", "--root",
+                              str(root), "--name", "cohort-y"], data)
+    assert code == 0, err
+    assert "Score it with: " not in out  # version 1 of rows already read is refused, so it is never offered
+    freeze = _printed_command(out, "Freeze it with: ")
+    score = _printed_command(out, "score it with the same --design-version and --reason: ")
+    for argv in (freeze, score):
+        assert argv[argv.index("--design-version") + 1] == "2" and argv[argv.index("--reason") + 1] == "<why>"
+        argv[argv.index("--reason") + 1] = "looked again after a fix"
+    code, out, err = _run_printed(freeze)
+    assert code == 0, err
+    assert "SECOND LOOK: PROVISIONAL. Score it with: " in out
+    code, out, err = _run_printed(score)
+    assert code == 1, err
+    assert "SECOND LOOK" in out
+
+
+def test_paid_train_refuses_an_existing_bundle_name_before_it_joins_or_trains(synthetic_run, monkeypatch):
+    joined: list[Any] = []
+    monkeypatch.setattr(paidset, "join_upload_cells", lambda *a, **k: joined.append(a) or pytest.fail("joined"))
+    code, out, err = run_cli(["paid", "train", "--set", str(synthetic_run["folder"]), "--name", "syn-paid",
+                              "--content-backend", "lexical"], synthetic_run["data"])
+    assert code == 2 and "already holds a bundle" in err
+    assert joined == []

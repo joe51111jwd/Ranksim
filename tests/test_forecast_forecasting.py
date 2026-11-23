@@ -1119,21 +1119,142 @@ def test_a_network_error_in_a_forecast_command_ends_in_one_sentence_and_exit_1(t
     assert code == 1 and "ConnectionError: reset" in err
 
 
-def test_a_saved_bundle_keeps_the_rule_for_sites_new_to_a_search(tmp_path, monkeypatch):
-    """The rule is chosen on validation rows at training time and must survive save and load."""
-    from aeo.ranksim.forecast import trust
+def _segment_rows(*, flagged: bool) -> pd.DataFrame:
+    """Updater rows over 40 search groups. With `flagged`, every other row is a site new to its search."""
+    rows = fixture_rows(n=400, seed=3)
+    rows["search_group"] = [f"g{i % 40}" for i in range(len(rows))]
+    rows["search"] = [f"search {i % 40}" for i in range(len(rows))]
+    rows["new_to_search"] = np.where(np.arange(len(rows)) % 2 == 0, 1.0, 0.0) if flagged else np.nan
+    return rows
 
-    monkeypatch.setattr(trust, "default_models_dir", lambda: tmp_path / "no-trust")
-    monkeypatch.setattr(forecasting, "newest_trust_report", lambda root=None: None)
+
+def test_a_saved_bundle_keeps_the_rule_for_sites_new_to_a_search(tmp_path):
+    """With validation rows in the segment the rule is chosen on them and survives save and load."""
     paths = forecast_paths(tmp_path / "data")
-    made = forecasting.train(paths, data="panel", name="p-rule", frame_path=_panel_like_frame(tmp_path / "f.parquet")).bundle
+    rows = _segment_rows(flagged=True)
+    made = forecasting.fit_bundle(paths, "p-rule", rows, rows, label=REAL, source="panel", includes_never_ranked=False,
+                                  training_cutoff=date(2025, 12, 31), group_col="search_group", trust=None,
+                                  difficulty_metric="kd", split_note="test fixture")
     rule = made.manifest["counts"]["updater"]["new_to_search_rule"]
-    assert rule is not None and rule["winner"] in ("always_nt50", "table", "model")
+    assert rule is not None and rule["validation_rows"] > 0 and rule["winner"] in ("always_nt50", "table", "model")
+    assert made.manifest["counts"]["updater"]["new_to_search_rule_note"] is None
     loaded = forecasting.load_bundle(paths, "p-rule")
     assert loaded.updater is not None
     assert loaded.updater.segment_rules == made.updater.segment_rules
     assert loaded.updater.segment_rules.get("new_to_search") == rule["winner"]
+    assert loaded.updater.segment_comparison["new_to_search"]["validation_rows"] == rule["validation_rows"]
     assert loaded.updater.sha256() == made.updater.sha256()
+
+
+def test_no_rule_for_sites_new_to_a_search_is_recorded_without_validation_rows_in_the_segment(tmp_path):
+    """Real training rows have the flag missing. A rule chosen on zero rows is no choice, so none is written."""
+    paths = forecast_paths(tmp_path / "data")
+    rows = _segment_rows(flagged=False)
+    made = forecasting.fit_bundle(paths, "p-none", rows, rows, label=REAL, source="panel", includes_never_ranked=False,
+                                  training_cutoff=date(2025, 12, 31), group_col="search_group", trust=None,
+                                  difficulty_metric="kd", split_note="test fixture")
+    counts = made.manifest["counts"]["updater"]
+    assert counts["validation_rows"] > 0 and counts["new_to_search_rule"] is None
+    assert counts["new_to_search_rule_note"] == forecasting.NEW_TO_SEARCH_NO_ROWS
+    assert forecasting.load_bundle(paths, "p-none").updater.segment_rules == {}
+    live = made.manifest["new_to_search_live"]
+    assert "apply no rule for sites new to a search" in live and "appearance gate and the stage cap" in live
+    assert not any(dash in live for dash in DASHES)
+
+
+def test_a_second_look_trust_report_prints_marker_2_as_provisional_and_never_a_pass_or_a_fail(tmp_path, monkeypatch):
+    path = _trust_report(tmp_path / "trust", name="report-v2.json")
+    report = json.loads(path.read_text())
+    report.update(provisional=True, provisional_reason="held-out rows already read by version 1: rows version 1 "
+                                                       "already graded. Its numbers are PROVISIONAL.")
+    path.write_text(json.dumps(report))
+    result = forecasting.marker2_from_trust_report(path)
+    verdict = result["verdict"]
+    assert result["provisional"] is True and verdict["passed"] is None
+    assert verdict["provisional"] is True and verdict["provisional_passed"] is True  # the bars would be met: still no pass
+    monkeypatch.setattr(forecasting, "newest_trust_report", lambda root=None: path)
+    code, out, _ = run_cli(["marker", "--number", "2"], tmp_path / "data")
+    assert code == 1
+    assert out.splitlines()[0].endswith("(REAL, SECOND LOOK: PROVISIONAL). Nothing was rescored.")
+    assert "NOT A MARKER RESULT (STAND-IN, PROVISIONAL)" in out and "held-out rows already read by version 1" in out
+    for line in out.splitlines():
+        if line.startswith(("Check ", "Gain over")):
+            assert "SECOND LOOK: PROVISIONAL" in line and ", met (" not in line
+    assert "(REAL)." not in out
+    from aeo.ranksim.forecast.cli_forecasting import train_lines
+
+    trained = forecasting.TrainResult(_any_bundle(tmp_path), "panel", REAL, marker2=result)
+    lines = "\n".join(train_lines(trained))
+    assert "NOT A MARKER RESULT (STAND-IN, PROVISIONAL)" in lines and "(REAL, SECOND LOOK: PROVISIONAL). Nothing was rescored" in lines
+    assert ", met (REAL)" not in lines and "not met (REAL)" not in lines
+
+
+def _any_bundle(tmp_path: Path) -> forecasting.ModelBundle:
+    paths = forecast_paths(tmp_path / "bundles")
+    return forecasting.fit_bundle(paths, "tiny", fixture_rows(), None, label=REAL, source="panel",
+                                  includes_never_ranked=False, training_cutoff=date(2025, 12, 31),
+                                  group_col="search_group", trust=None, difficulty_metric="kd", split_note="fixture")
+
+
+def test_the_backtest_listing_says_second_look_provisional_for_a_provisional_report(tmp_path):
+    _design(tmp_path, "panel_c_entrant_placement", preregs=("prereg.json", "prereg-v2.json"), manifests=(1, 2))
+    second = tmp_path / "panel_c_entrant_placement" / "report-v2.json"
+    second.write_text(json.dumps({"label": REAL, "summary": {"hit": 0.457, "cells": 3372}, "provisional": True,
+                                  "provisional_reason": "held-out rows already read by version 1: a second look."}))
+    items = forecasting.list_backtests(tmp_path)
+    runs = {run["file"]: run for run in items[0]["runs"]}
+    assert runs["report-v2.json"]["provisional"] is True and runs["report-v1.json"]["provisional"] is False
+    lines = forecasting.backtest_lines(items)
+    v2 = [line for line in lines if "report-v2.json" in line][0]
+    assert "(REAL, SECOND LOOK: PROVISIONAL)" in v2 and "held-out rows already read by version 1" in v2
+    assert "(REAL):" not in v2
+    assert any("report-v1.json (REAL):" in line for line in lines)
+
+
+def test_train_refuses_a_bundle_name_that_exists_before_any_training_runs(tmp_path, monkeypatch):
+    data = tmp_path / "data"
+    rows = fixture_rows()
+    forecasting.fit_bundle(forecast_paths(data), "taken", rows, None, label=REAL, source="panel",
+                           includes_never_ranked=False, training_cutoff=date(2025, 12, 31), group_col="search_group",
+                           trust=None, difficulty_metric="kd", split_note="fixture")
+    trained: list[str] = []
+    monkeypatch.setattr(forecasting, "train_panel", lambda *a, **k: trained.append("panel"))
+    monkeypatch.setattr(forecasting, "train_synthetic", lambda *a, **k: trained.append("synthetic"))
+    code, _, err = run_cli(["train", "--data", "panel", "--name", "taken"], data)
+    assert code == 2 and "already holds a bundle. A bundle is never replaced: train under a new --name." in err
+    assert trained == []
+
+
+def test_upload_names_an_unregistered_site_before_any_bundle_is_needed(tmp_path):
+    data = tmp_path / "data"
+    Scoreboard(f"sqlite:///{data / 'scoreboard.db'}").close()
+    code, out, err = run_cli(["upload", "--site", "nosuch.example"], data)
+    assert code == 2 and "is not on the scoreboard" in err and "No bundle" not in out + err
+
+
+def test_update_says_missed_or_why_nothing_is_built_before_any_bundle_is_needed(tmp_path):
+    data = tmp_path / "data"
+    clock = pipeline.VirtualClock(_at(date(2026, 11, 28), 9))
+    board = Scoreboard(f"sqlite:///{data / 'scoreboard.db'}", clock=clock.now)
+    board.add_site(SITE, source="seed", launch_date=LAUNCH, launch_date_source="test", built_by="test", niche="plumber")
+    board.add_search(SITE, SEARCHES[0], location_code=LOCATION, difficulty="easy")
+    board.close()
+    clock.set(_at(LAUNCH + timedelta(days=35), 10))  # day 7 and its grace day have passed
+    code, out, err = run_cli(["update", "--site", SITE, "--stage", "d7"], data, clock=clock)
+    assert code == 1 and "MISSED" in out and "never backfilled" in out and "No bundle" not in out + err
+    code, out, err = run_cli(["update", "--all-due", "--stage", "d7"], data, clock=clock)
+    assert code == 1 and "MISSED" in out and "No bundle" not in out + err
+    early = pipeline.VirtualClock(_at(LAUNCH + timedelta(days=2), 10))
+    code, out, err = run_cli(["update", "--site", SITE, "--stage", "d7", "--date", "2026-12-08"], data, clock=early)
+    assert code == 1 and "Nothing was built: The forecast date 2026-12-08 is later than today" in out
+    assert "No bundle" not in out + err
+
+
+def test_train_help_says_frame_is_the_training_set_folder_for_paid_data(capsys):
+    code = cli.main(["train", "--help"], stdout=io.StringIO(), stderr=io.StringIO(), settings_factory=lambda: None)
+    assert code == 0
+    text = " ".join(capsys.readouterr().out.split())
+    assert "the training-set folder" in text and "--data paid" in text and "--data panel the panel frame" in text
 
 
 def test_an_updater_file_round_trips_with_its_segment_rules_and_range_calibration(tmp_path):
@@ -1167,3 +1288,11 @@ def test_due_names_the_searches_still_open_when_a_stage_is_partly_recorded():
     assert "Still open" not in untouched
     missed = next(line for line in lines if line.startswith("  c.example"))
     assert "4 of 5 searches have a forecast. Still open: gutter cleaning." in missed
+
+
+def test_due_names_the_searches_still_open_for_a_later_stage_too():
+    result = {"today": "2026-12-08", "window_days": 3, "missed": [],
+              "due": [{"site": "d.example", "source": "pilot", "stage": "d14", "stage_date": "2026-12-10",
+                       "searches_open": ["boiler repair"], "searches_recorded": 2, "searches_registered": 3}]}
+    later = next(line for line in forecasting.due_lines(result) if line.startswith("  d.example"))
+    assert "2 of 3 searches have a forecast. Still open: boiler repair." in later and "Run it on 2026-12-10" in later

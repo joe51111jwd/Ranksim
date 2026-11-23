@@ -27,19 +27,12 @@ from typing import Any, Callable
 import httpx
 
 from . import forecasting
-from .cli import EXIT_CHECK_FAILED, EXIT_OK, PROG, Context, _iso_date, _today
+from .cli import EXIT_CHECK_FAILED, EXIT_OK, PROG, Context, _iso_date, _today, network_failure
 from .config import STAGE_DAYS
 from .types import REAL, SYNTHETIC
 
 UPDATE_STAGES: tuple[str, ...] = tuple(stage for stage in STAGE_DAYS if stage != "upload")
 NETWORK_ERRORS: tuple[type[BaseException], ...] = (ConnectionError, httpx.HTTPError)
-
-
-def network_failure(error: BaseException) -> str:
-    """One plain sentence for a network error. The error text is cut short; output is scrubbed of keys anyway."""
-    detail = " ".join(str(error).split())[:200] or "no detail"
-    return (f"A network request failed ({type(error).__name__}: {detail}). Nothing more was done. Check the connection "
-            "and run the same command again.")
 
 
 def guarded(handler: Callable[[Context, argparse.Namespace], int]) -> Callable[[Context, argparse.Namespace], int]:
@@ -49,6 +42,8 @@ def guarded(handler: Callable[[Context, argparse.Namespace], int]) -> Callable[[
     def run(ctx: Context, args: argparse.Namespace) -> int:
         try:
             return handler(ctx, args)
+        except BrokenPipeError:
+            raise  # the reader closed the output: cli.main stops quietly, it is not a network failure
         except NETWORK_ERRORS as error:
             return ctx.fail(network_failure(error), EXIT_CHECK_FAILED)
 
@@ -57,6 +52,15 @@ def guarded(handler: Callable[[Context, argparse.Namespace], int]) -> Callable[[
 
 # ---------------------------------------------------------------------------
 # train
+
+
+def _marker2_tag(marker2: dict[str, Any]) -> str:
+    """The label of a marker 2 reading: REAL or SYNTHETIC, and SECOND LOOK: PROVISIONAL when it is one."""
+    from .markers import SECOND_LOOK
+
+    verdict = marker2.get("verdict") or {}
+    label = str(marker2.get("label") or verdict.get("label") or REAL)
+    return f"{label}, {SECOND_LOOK}" if (marker2.get("provisional") or verdict.get("provisional")) else label
 
 
 def train_lines(result: forecasting.TrainResult) -> list[str]:
@@ -86,7 +90,7 @@ def train_lines(result: forecasting.TrainResult) -> list[str]:
 
         lines.append(render_marker_text(marker2["verdict"]))
         if marker2.get("report_file"):
-            lines.append(f"Marker 2 read from {marker2['report_file']}. Nothing was rescored.")
+            lines.append(f"Marker 2 read from {marker2['report_file']} ({_marker2_tag(marker2)}). Nothing was rescored.")
     elif marker2:
         lines.append(f"Marker 2 was not measured: {marker2.get('note')}.")
     else:
@@ -192,9 +196,15 @@ def _sites_for(ctx: Context, args: argparse.Namespace, stage: str) -> _Chosen:
 
 
 def _forecast(ctx: Context, args: argparse.Namespace, stage: str) -> int:
-    bundle = _bundle(ctx, args.bundle)
+    """The site and the calendar are checked first. The bundle is loaded only when there is something to build, so an
+    unregistered site, a MISSED stage or a date the scoreboard would refuse is never hidden behind the bundle message."""
     board = ctx.scoreboard()
     chosen = _sites_for(ctx, args, stage)
+    now = ctx.clock.now()
+    timings = {site: forecasting.stage_timing(board, site=site, stage=stage, day=chosen.dates.get(site), now=now)
+               for site in chosen.sites}
+    buildable = any(not (t.missed or t.blocked) for t in timings.values())
+    bundle = _bundle(ctx, args.bundle) if buildable else None
     runs = []
     lines: list[str] = []
     for item in chosen.missed:
@@ -214,12 +224,15 @@ def _forecast(ctx: Context, args: argparse.Namespace, stage: str) -> int:
     elif not chosen.sites and args.all_due:
         lines.append(f"No {stage} forecast is due today.")
     for site in chosen.sites:
-        run = forecasting.upload_or_update(board, ctx.paths, bundle=bundle, site=site, stage=stage,
-                                           day=chosen.dates.get(site), now=ctx.clock.now(), record=bool(args.record))
+        if bundle is None:
+            run = forecasting.unbuilt_run(timings[site])
+        else:
+            run = forecasting.upload_or_update(board, ctx.paths, bundle=bundle, site=site, stage=stage,
+                                               day=chosen.dates.get(site), now=now, record=bool(args.record))
         runs.append(run)
         lines.extend(forecasting.run_lines(run, record=bool(args.record)))
-    payload = {"stage": stage, "record": bool(args.record), "bundle": bundle.version,
-               "training_label": bundle.training_label, "runs": [run.to_dict() for run in runs],
+    payload = {"stage": stage, "record": bool(args.record), "bundle": bundle.version if bundle else None,
+               "training_label": bundle.training_label if bundle else None, "runs": [run.to_dict() for run in runs],
                "missed": chosen.missed, "not_yet_due": chosen.later}
     ctx.emit(payload, lines)
     trouble = bool(chosen.missed) or any(run.blocked or run.missed or run.skipped or run.refused for run in runs)
@@ -288,7 +301,7 @@ def marker2(ctx: Context, root: str | Path | None = None) -> int:
                         EXIT_CHECK_FAILED)
     result = forecasting.marker2_from_trust_report(path)
     verdict = result["verdict"]
-    lines = [f"Marker 2 read from {path} ({result['label']}). Nothing was rescored."]
+    lines = [f"Marker 2 read from {path} ({_marker2_tag(result)}). Nothing was rescored."]
     lines.extend(render_marker_text(verdict).splitlines())
     lines.append("The free panel version is a stand-in for the plan's 20,000 new sites, so it neither passes nor fails "
                  "marker 2.")
@@ -308,7 +321,9 @@ def _register_train(sub: Any, common: argparse.ArgumentParser) -> None:
     train.add_argument("--data", choices=forecasting.TRAINING_SOURCES, required=True,
                        help="panel (REAL, training side only), synthetic (SYNTHETIC) or paid (REAL, the paid pulls)")
     train.add_argument("--name", default=None, help="the bundle folder under data/forecast/models (default <data>-<time>)")
-    train.add_argument("--frame", default=None, help="the panel frame parquet (default: the newest under the cache)")
+    train.add_argument("--frame", default=None,
+                       help="with --data panel the panel frame parquet (default: the newest under the cache); with "
+                            "--data paid the training-set folder (default: the one under the cache)")
     train.set_defaults(handler=guarded(cmd_train))
 
 

@@ -356,3 +356,64 @@ def test_marker_2_prints_both_gains_and_the_verdict_follows_link_count():
     assert evaluate_marker(2, worse)["passed"] is False  # a good stricter gain never rescues the plan's bar
     only_link = {k: v for k, v in report.items() if k != "gain_over_best_single_measure"}
     assert "gain_over_best_single_measure" not in evaluate_marker(2, only_link)
+
+
+# ---------------------------------------------------------------------------------------------
+# provisional reports: a second look at held-out rows an earlier version already read
+
+SECOND_LOOK_REASON = ("held-out rows already read by version 1: design version 2 grades rows that version 1 already "
+                      "graded and published (through 2026-04-30). Its numbers are PROVISIONAL.")
+
+
+def _every_marker_report(number: int, *, met: bool) -> dict:
+    rate = 0.97 if met else 0.40
+    if number == 1:
+        return {"headline": {"count": 300, "right": int(300 * rate), "rate": rate, "cluster_interval": [rate, rate]}}
+    if number == 2:
+        return {"pairs": {"count": 400, "right": int(400 * rate), "rate": rate},
+                "gain_over_link_count": {"difference": 0.06, "difference_interval": [0.02, 0.10]}}
+    stage = {3: "upload", 4: "d30", 5: "d60"}[number]
+    graded = cells(20, 5, hit_share=0.95 if met else 0.50, page_one_every=2)
+    source = "backtest" if number == 3 else "seed"
+    return stage_report_like(graded, source=source, stage=stage, as_of=marker(number).date.isoformat(),
+                             baselines={"persistence": [30] * len(graded)})
+
+
+@pytest.mark.parametrize("number", [1, 2, 3, 4, 5])
+@pytest.mark.parametrize("met", [True, False])
+def test_a_provisional_report_never_passes_or_fails_any_marker_and_keeps_what_the_bars_would_give(number, met):
+    report = _every_marker_report(number, met=met)
+    plain = evaluate_marker(number, report)
+    second = evaluate_marker(number, dict(report, provisional=True, provisional_reason=SECOND_LOOK_REASON))
+    assert second["passed"] is None
+    assert second["provisional"] is True and second["provisional_reason"] == SECOND_LOOK_REASON
+    assert second["provisional_passed"] is plain["passed"]
+    text = render_marker_text(second)
+    first = text.splitlines()[0]
+    assert "NOT A MARKER RESULT (PROVISIONAL)" in first and "PASSED (REAL)" not in text
+    assert "SECOND LOOK: PROVISIONAL" in text and "held-out rows already read by version 1" in text
+    for line in text.splitlines():
+        if line.startswith(("Check ", "Gain over")):
+            assert line.endswith("(REAL, SECOND LOOK: PROVISIONAL).") and ", met (" not in line and "not met" not in line
+    assert "—" not in text and "–" not in text
+
+
+def test_a_stand_in_that_is_also_provisional_says_both():
+    report = _every_marker_report(2, met=False)
+    verdict = evaluate_marker(2, dict(report, stand_in=True, stand_in_reason="its pairs are sites that already rank",
+                                      provisional=True, provisional_reason=SECOND_LOOK_REASON))
+    assert verdict["passed"] is None and verdict["stand_in_passed"] is False and verdict["provisional_passed"] is False
+    text = render_marker_text(verdict)
+    assert text.splitlines()[0].startswith("Marker 2, Trust model: NOT A MARKER RESULT (STAND-IN, PROVISIONAL).")
+    assert "This is a stand-in" in text and "This is a second look and PROVISIONAL" in text
+    assert text.count("This is a second look and PROVISIONAL") == 1
+
+
+def test_a_stored_provisional_verdict_prints_as_provisional():
+    """A verdict already written to a report (provisional, provisional_passed, provisional_reason) prints the same way."""
+    stored = {"marker": 3, "name": "Forecast at upload", "label": "REAL", "passed": None, "provisional": True,
+              "provisional_passed": False, "provisional_reason": SECOND_LOOK_REASON, "notes": [],
+              "checks": [{"name": "hit rate", "value": 0.45, "target": 0.75, "ok": False}]}
+    text = render_marker_text(stored)
+    assert "NOT A MARKER RESULT (PROVISIONAL)" in text and "not met (REAL)" not in text
+    assert "Check hit rate: 45.0% against 75.0%, the bar would not be met (REAL, SECOND LOOK: PROVISIONAL)." in text

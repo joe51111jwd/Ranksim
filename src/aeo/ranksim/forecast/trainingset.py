@@ -59,6 +59,7 @@ import pyarrow.parquet as pq
 
 from .asof import AsOfGuard, Dated, add_months, month_start, utc_iso
 from .budget import (
+    HISTORICAL_SERPS_PAGES_PER_MONTH_SAMPLES,
     HISTORICAL_SERPS_SNAPSHOTS_PER_MONTH_ESTIMATE,
     KIND_HISTORICAL_SERPS,
     KIND_HISTORICAL_TRAFFIC,
@@ -69,6 +70,7 @@ from .budget import (
     SpendLedger,
     historical_serps_cost,
     historical_serps_estimate,
+    historical_serps_sample_rate_estimate,
     historical_traffic_cost,
     ranked_keywords_cost,
     usd_text,
@@ -237,6 +239,7 @@ class PullPlan:
     sites_without_launch_page: dict[int, int]
     sites_24_to_30_months: int
     sites_over_30_months: int
+    totals_sample_rate: dict[int, Decimal] = field(default_factory=dict)
 
     def table(self) -> list[dict[str, Any]]:
         return [{**asdict(line), "usd": str(line.usd)} for line in self.lines]
@@ -247,10 +250,15 @@ class PullPlan:
             window = f"{line.window_months} months, " if line.window_months else ""
             out.append(f"{window}{line.item}: {usd_text(line.usd)} ({line.units}; {line.basis}).")
         for window in self.windows:
-            out.append(
-                f"Total with {window} months: {usd_text(self.totals_upper[window])} at the upper estimate, "
-                f"{usd_text(self.totals_plan_reading[window])} at one page per month."
-            )
+            text = f"Total with {window} months: {usd_text(self.totals_plan_reading[window])} at the plan rate of one page per month"
+            reserved = "the plan rate"
+            if self.totals_upper[window] != self.totals_plan_reading[window]:
+                text += f", {usd_text(self.totals_upper[window])} at the upper estimate"
+                reserved = "the upper estimate"
+            sample = self.totals_sample_rate.get(window)
+            if sample is not None:
+                text += f", {usd_text(sample)} at the rate seen in the free history samples"
+            out.append(f"{text}. The budget guard reserves {reserved}.")
         if self.sites_with_age:
             for window in self.windows:
                 out.append(f"With {window} months, {self.sites_without_launch_page[window]} of {self.sites_with_age} dated sites have no launch-month page.")
@@ -288,6 +296,7 @@ def plan_pulls(
     lines: list[CostLine] = []
     upper: dict[int, Decimal] = {}
     reading: dict[int, Decimal] = {}
+    sampled: dict[int, Decimal] = {}
     traffic = historical_traffic_cost(n_sites)
     n_position_sites = n_sites if position_sites is None else int(position_sites)
     positions = ranked_keywords_cost(n_position_sites, rows_per_site)
@@ -301,8 +310,14 @@ def plan_pulls(
             lines.append(CostLine(window, f"Past result pages, upper estimate at {HISTORICAL_SERPS_SNAPSHOTS_PER_MONTH_ESTIMATE} pages per month",
                                   KIND_HISTORICAL_SERPS, f"{n_searches} searches x {window * HISTORICAL_SERPS_SNAPSHOTS_PER_MONTH_ESTIMATE} pages",
                                   high, "budget.historical_serps_estimate"))
+        measured = historical_serps_sample_rate_estimate(window, n_searches)
+        rate = HISTORICAL_SERPS_PAGES_PER_MONTH_SAMPLES.quantize(Decimal("0.01"))
+        lines.append(CostLine(window, f"Past result pages at the rate seen in the free history samples ({rate} pages per month)",
+                              KIND_HISTORICAL_SERPS, f"{n_searches} searches x {window} months", measured,
+                              "budget.historical_serps_sample_rate_estimate"))
         upper[window] = high + traffic + positions + samples
         reading[window] = one + traffic + positions + samples
+        sampled[window] = measured + traffic + positions + samples
     lines.append(CostLine(None, "Traffic curves", KIND_HISTORICAL_TRAFFIC, f"{n_sites} sites", traffic, "budget.historical_traffic_cost"))
     lines.append(CostLine(None, "Exact positions", KIND_RANKED_KEYWORDS, f"{n_position_sites} sites x {rows_per_site} rows", positions,
                           "budget.ranked_keywords_cost"))
@@ -321,6 +336,7 @@ def plan_pulls(
         searches=n_searches, sites=n_sites, rows_per_site=rows_per_site, windows=windows, lines=lines, totals_upper=upper,
         totals_plan_reading=reading, sites_with_age=len(ages), sites_without_launch_page=without,
         sites_24_to_30_months=sum(1 for age in ages if 24 <= age < 30), sites_over_30_months=sum(1 for age in ages if age >= 30),
+        totals_sample_rate=sampled,
     )
 
 
@@ -1430,6 +1446,27 @@ def refuse_synthetic_inputs(cohort: pd.DataFrame, universe: Sequence[Any]) -> No
                 or _get(row, "sources") == "synthetic" or _get(row, "difficulty_proxy_source") == "synthetic_difficulty"):
             raise ValueError(f"the universe holds a SYNTHETIC search ({_get(row, 'keyword')!r}). A REAL training set is never "
                              "written from SYNTHETIC rows.")
+
+
+def synthetic_table_reason(path: str | Path) -> str | None:
+    """Why a cohort or universe table is SYNTHETIC, or None when nothing marks it so.
+
+    Read from the SYNTHETIC.json that paid synthetic writes beside its tables, the label column, the
+    marker columns only the synthetic world fills, and the synthetic locale. A paid pull never runs on
+    such a table: it would pay for made-up names.
+    """
+    path = Path(path)
+    if (path.parent / SYNTHETIC_META_FILE).is_file():
+        return f"{path.parent / SYNTHETIC_META_FILE} marks its folder SYNTHETIC"
+    frame = pd.read_parquet(path)
+    if "label" in frame.columns and SYNTHETIC in {str(v) for v in frame["label"].dropna().unique()}:
+        return "its label column says SYNTHETIC"
+    for column, values in SYNTHETIC_MARKERS.items():
+        if column in frame.columns and {str(v) for v in frame[column].dropna().unique()} & values:
+            return f"its {column} column holds a value only the synthetic world writes"
+    if "locale" in frame.columns and SYNTHETIC_LOCALE in {str(v) for v in frame["locale"].dropna().unique()}:
+        return f"its locale is {SYNTHETIC_LOCALE}"
+    return None
 
 
 def write_cells_set(

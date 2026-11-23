@@ -512,7 +512,8 @@ class SeedManifest:
                     raise ManifestError(
                         f"{first.domain} launches on {first.launch_date}, on or before the day {label} "
                         f"({day.isoformat()}). Searches are frozen before launch, or they could be chosen from early "
-                        "rankings. For a backfilled pilot, record after_launch_reason in the manifest."
+                        "rankings. For a pilot that was already live, run: python -m aeo.ranksim forecast seeds freeze "
+                        f"--manifest {path} --after-launch-reason \"<why>\""
                     )
         target = Path(path)
         sidecar = hash_path(target)

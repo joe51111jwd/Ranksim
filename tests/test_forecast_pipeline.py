@@ -826,6 +826,46 @@ def test_marker1_on_a_list_that_is_not_the_frozen_sample_is_not_a_marker_result(
     assert pipeline.marker1_lines(result)[0].startswith("NOT A MARKER RESULT")
 
 
+def test_marker1_text_names_the_reader_and_its_settings_and_prints_the_number_with_the_filter_off(tmp_path):
+    clock = pipeline.VirtualClock(START)
+    board = _board(tmp_path, clock)
+    specs = [PullSpec(f"plumber search {i:02d}", 1026201) for i in range(4)]
+    day_b = START + timedelta(hours=24)
+    source = ReplaySource([p for spec in specs for moment in (START, day_b) for p in _replay(spec, moment, SITES)])
+    pipeline.take_readings(board, source, specs, clock=clock)
+    clock.set(day_b)
+    pipeline.take_readings(board, source, specs, clock=clock)
+    result = pipeline.marker1(board, [spec.search for spec in specs], location_code=1026201, frozen_list=False)
+    board.close()
+    report = result["report"]
+    assert report["built_from_pulls"] is True and report["headline_beside_ablation"]["filter_off"] is not None
+    lines = pipeline.marker1_lines(result)
+    reader = report["reader"]
+    named = [line for line in lines if line.startswith(f"Reader {reader['reader_version']}, settings:")]
+    assert len(named) == 1 and f"min kept pulls {reader['min_kept_pulls']}" in named[0] and "altered-page filter on" in named[0]
+    off = f"{100 * report['headline_beside_ablation']['filter_off']:.1f}%"
+    assert any(line.startswith("With the altered-page filter switched off") and off in line for line in lines)
+    assert not any(dash in line for line in lines for dash in DASHES)
+
+
+def test_a_synthetic_report_uses_the_band_prior_stored_in_the_bundle_that_made_its_forecasts(demo_result, tmp_path):
+    """report and marker commands give the same band prior the demo prints, read from the live bundle."""
+    import shutil
+
+    from aeo.ranksim.forecast.config import ForecastPaths
+
+    workdir = Path(demo_result.workdir)
+    shutil.copy(workdir / "scoreboard.db", tmp_path / "scoreboard.db")
+    board = Scoreboard(f"sqlite:///{tmp_path / 'scoreboard.db'}")
+    as_of = date.fromisoformat(demo_result.stage_reports["upload"]["as_of"])
+    result = pipeline.stage_marker(board, source="synthetic", stage="upload", as_of=as_of, paths=ForecastPaths(workdir))
+    board.close()
+    report = result["report"]
+    assert "band_prior" not in report["baselines_missing"]
+    assert report["band_prior_source"].startswith(f"The band prior comes from bundle {pipeline.DEMO_BUNDLE}")
+    assert not any("band prior by difficulty is missing" in note for note in result["evaluation"]["notes"])
+
+
 # ---------------------------------------------------------------------------------------------
 # Round mode: one reading per search and date, and the pull gap floor
 

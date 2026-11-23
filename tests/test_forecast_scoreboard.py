@@ -1377,12 +1377,68 @@ def test_a_short_derived_site_label_is_a_brand_search_only_as_a_whole_word(board
         assert stored[(site, search)] is expected, (site, search)
 
 
-def test_the_scoreboard_and_the_backtest_use_one_brand_rule():
-    from aeo.ranksim.forecast import backtest
-    from aeo.ranksim.forecast.scoreboard import BRAND_SHORT_LABEL, derived_label_is_brand
+SHORT_LABEL_CASES = [
+    # A short label written with marks or spaces between its characters is still the site's own name.
+    ("a-1.com", "a-1 plumbing", True),
+    ("a1.com", "a 1 plumbing", True),
+    ("a-1.com", "a1 plumbing", True),
+    ("ge.com", "g.e. appliances", True),
+    ("3m.com", "3-m tape", True),
+    ("ab.io", "a.b. workout", True),
+    ("hp.com", "hp laptop", True),
+    ("x.com", "x login", True),
+    ("q1.net", "q1 results", True),
+    # A letter or digit directly before or after means another word.
+    ("x.com", "xbox one", False),
+    ("hp.com", "php hosting", False),
+    ("q1.net", "q10 pills", False),
+    ("ab.io", "cab ride", False),
+    ("a1.com", "a 12 plumbing", False),
+    ("ge.com", "gem cleaning", False),
+    # Labels of 3 or more characters keep the compacted substring rule.
+    ("roof-pros.com", "roof-pros", True),
+    ("roofpros.com", "roof pros near me", True),
+    ("roofpros.com", "roofing near me", False),
+]
 
-    assert BRAND_SHORT_LABEL == backtest.BRAND_SHORT_LABEL
-    for site in ("x.com", "hp.com", "ab.io", "roofpros.com", "alpha-roofing.com", "q1.net"):
-        for search in ("xbox one", "x login", "hp laptop", "php hosting", "ab workout", "cab ride", "roof pros", "alpha roofing",
-                       "q1 results", "q10 pills", "roofing near me"):
-            assert derived_label_is_brand(site, search) == backtest.is_brand_search(site, search), (site, search)
+
+@pytest.mark.parametrize(("site", "search", "expected"), SHORT_LABEL_CASES)
+def test_a_short_site_label_is_a_brand_search_as_one_unit_of_the_search_in_the_scoreboard_and_the_backtest(site, search,
+                                                                                                         expected):
+    from aeo.ranksim.forecast import backtest
+    from aeo.ranksim.forecast.scoreboard import derived_label_is_brand
+
+    assert derived_label_is_brand(site, search) is expected
+    assert backtest.is_brand_search(site, search) is expected
+
+
+def test_the_backtest_brand_rule_is_the_scoreboard_function_itself():
+    from aeo.ranksim.forecast import backtest, scoreboard
+
+    assert backtest.derived_label_is_brand is scoreboard.derived_label_is_brand
+    assert backtest.BRAND_SHORT_LABEL is scoreboard.BRAND_SHORT_LABEL
+
+
+def test_brand_flag_differences_lists_stored_flags_the_rule_no_longer_gives_and_changes_nothing(board: Scoreboard):
+    from sqlalchemy import select
+
+    from aeo.ranksim.forecast.scoreboard import SearchRow
+
+    board.add_site("x.com", source="seed", launch_date=LAUNCH, launch_date_source="seed manifest", built_by="ranksim")
+    board.add_site("a-1.com", source="seed", launch_date=LAUNCH, launch_date_source="seed manifest", built_by="ranksim")
+    board.add_site("acme.com", source="seed", launch_date=LAUNCH, launch_date_source="seed manifest", built_by="ranksim",
+                   brand_terms=["road runner"])
+    board.add_search("x.com", "x login", location_code=LOC)
+    assert board.brand_flag_differences() == []
+    board.add_search("x.com", "xbox series prices", location_code=LOC, is_brand=True)  # the older substring rule
+    board.add_search("a-1.com", "a 1 plumbing", location_code=LOC, is_brand=False)  # the older whole-word split
+    board.add_search("acme.com", "acme anvils", location_code=LOC, is_brand=True)  # registered terms: not checked
+    with board._session() as session:  # noqa: SLF001 - the check must leave every stored flag as it was
+        before = {(row.site, row.search): row.is_brand for row in session.scalars(select(SearchRow))}
+    assert board.brand_flag_differences() == [
+        {"site": "a-1.com", "search": "a 1 plumbing", "stored": False, "derived": True},
+        {"site": "x.com", "search": "xbox series prices", "stored": True, "derived": False},
+    ]
+    with board._session() as session:  # noqa: SLF001
+        after = {(row.site, row.search): row.is_brand for row in session.scalars(select(SearchRow))}
+    assert after == before

@@ -292,6 +292,16 @@ def test_freeze_refuses_when_the_freeze_day_is_on_or_after_launch():
         manifest(site("a.example")).freeze("unused.json", today=date(2026, 11, 30))
 
 
+def test_the_after_launch_refusal_names_the_seeds_freeze_flag_and_the_manifest(tmp_path):
+    late = replace(manifest(site("a.example")), created_at="2027-01-15T00:00:00Z")
+    target = tmp_path / "pilot.json"
+    with pytest.raises(ManifestError) as caught:
+        late.freeze(target)
+    text = str(caught.value)
+    assert f'seeds freeze --manifest {target} --after-launch-reason "<why>"' in text
+    assert "in the manifest" not in text
+
+
 def test_an_after_launch_reason_is_recorded_in_the_frozen_manifest(tmp_path):
     late = replace(manifest(site("a.example")), created_at="2027-01-15T00:00:00Z",
                    after_launch_reason="pilot site already live when the agency joined")

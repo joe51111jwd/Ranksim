@@ -504,3 +504,56 @@ def test_cohort_build_reports_a_public_source_failure_as_a_usage_error(tmp_path)
     code, _, err = run(["cohort", "build", "--name", "t", "--registrations", str(regs), "--after", "CC-MAIN-TEST-02", "--no-rdap",
                         "--no-dns"], tmp_path / "data", client=httpx.Client(transport=httpx.MockTransport(broken)))
     assert code == 2 and "could not be read" in err
+
+
+def test_a_paid_pull_refuses_a_synthetic_table_in_one_sentence_even_as_a_dry_run(tmp_path):
+    data = tmp_path / "data"
+    labelled = tmp_path / "labelled"
+    labelled.mkdir()
+    pd.DataFrame({"site": ["made-up-1.test", "made-up-2.test"], "kept": [True, True],
+                  "label": ["SYNTHETIC", "SYNTHETIC"]}).to_parquet(labelled / "cohort.parquet", index=False)
+    marked = tmp_path / "marked"  # the folder paid synthetic writes: SYNTHETIC.json beside the tables
+    marked.mkdir()
+    (marked / "SYNTHETIC.json").write_text("{}", encoding="utf-8")
+    pd.DataFrame({"keyword": ["fake search"]}).to_parquet(marked / "universe.parquet", index=False)
+    pd.DataFrame({"site": ["made-up-3.test"], "kept": [True]}).to_parquet(marked / "cohort.parquet", index=False)
+    transport = ForbiddenTransport()
+    for argv in (["pull", "traffic", "--cohort", str(labelled / "cohort.parquet")],
+                 ["pull", "positions", "--cohort", str(marked / "cohort.parquet")],
+                 ["pull", "past-pages", "--universe", str(marked / "universe.parquet")],
+                 ["pull", "plan", "--universe", str(marked / "universe.parquet")]):
+        code, out, err = run(argv, data, client=httpx.Client(transport=transport))
+        assert code == 2, argv
+        assert "is SYNTHETIC" in err and "a paid pull never runs on SYNTHETIC names" in err
+        assert "USD" not in out + err  # nothing was priced
+        assert err.strip().count(". ") == 0  # one sentence
+    assert transport.calls == 0 and ledger_bytes(data) is None
+
+
+def test_a_missing_pull_input_names_the_file_and_the_command_that_builds_it(tmp_path):
+    data = tmp_path / "data"
+    missing = tmp_path / "nosuch.parquet"
+    code, _, err = run(["pull", "past-pages", "--universe", str(missing)], data)
+    assert code == 2 and f"The universe table {missing} does not exist" in err
+    assert "Build it with: python -m aeo.ranksim forecast universe build" in err
+    code, _, err = run(["pull", "traffic", "--cohort", str(missing)], data)
+    assert code == 2 and "Build it with: python -m aeo.ranksim forecast cohort build" in err
+    code, _, err = run(["pull", "positions", "--sites", str(tmp_path / "nosuch.txt")], data)
+    assert code == 2 and "nosuch.txt does not exist. Give --sites a text file with one site per line." in err
+
+
+def test_pull_plan_prints_the_total_at_the_plan_rate_and_at_the_sample_rate_never_the_same_figure_twice(tmp_path):
+    code, out, _ = run(["pull", "plan"], tmp_path / "data")
+    assert code == 0
+    totals = [line for line in out.splitlines() if line.startswith("Total with 24 months")]
+    assert len(totals) == 1
+    plan_total = budget.historical_serps_estimate(24, 5000) + budget.historical_traffic_cost(20000) + \
+        budget.ranked_keywords_cost(2000, 100) + budget.SAMPLE_MAX_USD * 3
+    sample_total = budget.historical_serps_sample_rate_estimate(24, 5000) + budget.historical_traffic_cost(20000) + \
+        budget.ranked_keywords_cost(2000, 100) + budget.SAMPLE_MAX_USD * 3
+    assert budget.usd_text(plan_total) in totals[0] and budget.usd_text(sample_total) in totals[0]
+    assert totals[0].count(budget.usd_text(plan_total)) == 1
+    assert "at the rate seen in the free history samples" in totals[0]
+    sample_line = budget.usd_text(budget.historical_serps_sample_rate_estimate(24, 5000))
+    assert any(line.startswith("24 months, Past result pages at the rate seen in the free history samples") and sample_line in line
+               for line in out.splitlines())

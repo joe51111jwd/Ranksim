@@ -31,6 +31,7 @@ import argparse
 import csv
 import importlib
 import json
+import os
 import sys
 from dataclasses import dataclass, field, replace
 from datetime import date, datetime, timezone
@@ -56,13 +57,14 @@ from .budget import (
     serp_cost,
     usd_text,
 )
-from .config import DEFAULT_DEVICE, DEFAULT_LANGUAGE, DEFAULT_PULLS, MIN_PULL_GAP_SECONDS, SOURCES, STAGE_DAYS, TOP_DEPTH, ForecastPaths, forecast_paths
+from .config import (DEFAULT_DEVICE, DEFAULT_LANGUAGE, DEFAULT_PULLS, FORECAST_DIR_ENV, MIN_PULL_GAP_SECONDS, SOURCES,
+                     STAGE_DAYS, TOP_DEPTH, ForecastPaths, forecast_paths)
 from .scoreboard import ChainBroken, Scoreboard, ScoreboardError, ScoreboardRefusal
 from .seeds import ManifestError, SearchCandidate, SeedManifest, SeedSite, load_frozen, pick_niche_searches
 from .asof import utc_iso
 from .noise import sample_marker1_searches
 from .reader import DEFAULT_RULE_VERSION, READER_VERSIONS
-from .types import REAL, PullSpec
+from .types import REAL, SYNTHETIC, PullSpec
 
 PROG = "python -m aeo.ranksim forecast"
 DEFAULT_EXPORT_DIR = pipeline.DEFAULT_EXPORT_DIR  # RANKSIM_EXPORT_DIR overrides it, see pipeline.default_export_dir
@@ -165,15 +167,37 @@ class Context:
     # -- printing ------------------------------------------------------------------------------
 
     def emit(self, payload: Any, lines: Iterable[str]) -> None:
+        """Print the payload (--json) or the text lines. Every text line of a SYNTHETIC payload says SYNTHETIC."""
         if self.as_json:
             self.out.write(json.dumps(payload, indent=2, sort_keys=True, default=_json_default) + "\n")
-        else:
-            for line in lines:
-                self.out.write(f"{line}\n")
+            return
+        synthetic = payload_label(payload) == SYNTHETIC
+        for line in lines:
+            # A handler may pass a block of several lines as one item (a rendered marker): each printed line counts.
+            for text in str(line).split("\n") if synthetic else [str(line)]:
+                if synthetic and text.strip() and SYNTHETIC not in text:
+                    text = f"{SYNTHETIC}: {text}"
+                self.out.write(f"{text}\n")
 
     def fail(self, message: str, code: int = EXIT_USAGE) -> int:
         self.err.write(f"{message}\n")
         return code
+
+
+def payload_label(payload: Any) -> str | None:
+    """The data label of a command's payload: its own "label" key, else the one label its nested reports share.
+
+    Handlers pass the label as payload["label"] (train, paid, report, marker, cohort-backtest) or inside a nested
+    record such as payload["report"]["label"]. A payload whose nested records carry different labels has no single
+    label, and None is returned.
+    """
+    if not isinstance(payload, dict):
+        return None
+    own = payload.get("label")
+    if isinstance(own, str) and own:
+        return own
+    nested = {value.get("label") for value in payload.values() if isinstance(value, dict) and isinstance(value.get("label"), str)}
+    return nested.pop() if len(nested) == 1 else None
 
 
 def _json_default(value: Any) -> Any:
@@ -279,6 +303,8 @@ def _status_word(ok: bool | None) -> str:
 
 
 def cmd_status(ctx: Context, args: argparse.Namespace) -> int:
+    from .forecasting import open_searches  # a plug-in module: imported late, as the other plug-in imports are
+
     board = ctx.scoreboard()
     counts = pipeline.scoreboard_counts(board)
     chain = board.verify()
@@ -289,6 +315,7 @@ def cmd_status(ctx: Context, args: argparse.Namespace) -> int:
     export_dir = pipeline.default_export_dir()
     anchored = board.heads_anchor is not None
     calendar = pipeline.stage_calendar(board, _today(ctx, None))
+    brand_differences = board.brand_flag_differences()
     payload = {
         "data_dir": str(ctx.paths.root),
         "scoreboard_url": ctx.paths.scoreboard_url,
@@ -307,6 +334,7 @@ def cmd_status(ctx: Context, args: argparse.Namespace) -> int:
         "committed_export": {"folder": str(export_dir), "exists": anchored},
         "stages_due": calendar["due"],
         "stages_missed": calendar["missed"],
+        "brand_flag_differences": brand_differences,
     }
     lines = [
         f"Forecast data folder: {ctx.paths.root}.",
@@ -327,17 +355,22 @@ def cmd_status(ctx: Context, args: argparse.Namespace) -> int:
         lines.append(f"The spend ledger cannot be trusted: {state.problem}")
     lines.append(f"DataForSEO login set: {'yes' if creds['dataforseo'] else 'no'}. Serper key set: {'yes' if creds['serper'] else 'no'}.")
     lines.append(f"The plan's own schedule has {len(problems)} problems. See: {PROG} seeds schedule.")
+    if brand_differences:
+        named = "; ".join(f"{item['site']} '{item['search']}' stored {'brand' if item['stored'] else 'not brand'}"
+                          for item in brand_differences)
+        lines.append(f"{len(brand_differences)} stored brand flags differ from the brand rule as it is today, and "
+                     f"nothing was changed: {named}.")
     if calendar["due"]:
         lines.append(f"Stage forecasts due in the next {pipeline.STAGE_DUE_WINDOW_DAYS} days. Each must be made on or before "
                      "its stage day:")
-        lines.extend(f"  {item['site']} ({item['source']}) {item['stage']} on {item['stage_date']}.{_open_searches(item)}"
+        lines.extend(f"  {item['site']} ({item['source']}) {item['stage']} on {item['stage_date']}.{open_searches(item)}"
                      for item in calendar["due"])
     else:
         lines.append(f"No stage forecast is due in the next {pipeline.STAGE_DUE_WINDOW_DAYS} days.")
     if calendar["missed"]:
         lines.append("Stages MISSED (no forecast, and the last day to record one dated the stage day has passed). "
                      "A missed stage is never backfilled:")
-        lines.extend(f"  {item['site']} ({item['source']}) {item['stage']} was due on {item['stage_date']}.{_open_searches(item)}"
+        lines.extend(f"  {item['site']} ({item['source']}) {item['stage']} was due on {item['stage_date']}.{open_searches(item)}"
                      for item in calendar["missed"])
     ctx.emit(payload, lines)
     return EXIT_OK if chain.ok and state.ok else EXIT_CHECK_FAILED
@@ -1016,7 +1049,8 @@ def cmd_form_import(ctx: Context, args: argparse.Namespace) -> int:
 def cmd_demo(ctx: Context, args: argparse.Namespace) -> int:
     import tempfile
 
-    folder = Path(args.workdir) if args.workdir else Path(tempfile.mkdtemp(prefix="ranksim-demo-"))
+    chosen = args.workdir or getattr(args, "dir", None)  # --workdir first, then --dir, then a new temporary folder
+    folder = Path(chosen) if chosen else Path(tempfile.mkdtemp(prefix="ranksim-demo-"))
     result = pipeline.demo(args.seed, workdir=folder, sites=args.sites)
     ctx.emit(result.to_dict(), result.lines + [f"SYNTHETIC: The demo files are in {folder}."])
     checks_ok = all(item["refused"] for item in result.refusals) and result.chain["ok"] and result.export_check["ok"]
@@ -1261,7 +1295,8 @@ def _register_demo(sub: Any, common: argparse.ArgumentParser) -> None:
     demo = sub.add_parser("demo", parents=[common], help="the whole measuring flow on a synthetic world (free, SYNTHETIC)")
     demo.add_argument("--seed", type=int, default=pipeline.DEMO_SEED)
     demo.add_argument("--sites", type=int, default=pipeline.DEMO_SITES)
-    demo.add_argument("--workdir", default=None, help="a fresh folder for the demo files (default a new temporary folder)")
+    demo.add_argument("--workdir", default=None,
+                      help="a fresh folder for the demo files (default the --dir folder, else a new temporary folder)")
     demo.set_defaults(handler=cmd_demo)
 
 
@@ -1300,17 +1335,20 @@ def _plugin_registrars() -> tuple[Callable[[Any, argparse.ArgumentParser], None]
     return tuple(found)
 
 
-def _open_searches(item: dict[str, Any]) -> str:
-    """For a stage where some searches already have a forecast: one sentence naming the searches still open."""
-    still = list(item.get("searches_open") or [])
-    if not still or not item.get("searches_recorded"):
-        return ""
-    total = item.get("searches_registered", len(still) + item["searches_recorded"])
-    return f" {item['searches_recorded']} of {total} searches have a forecast. Still open: {', '.join(str(s) for s in still)}."
-
-
 def network_failure(error: BaseException) -> str:
-    """One plain sentence for a network error. The detail is cut short. Output is scrubbed of keys anyway."""
+    """One plain sentence for a network error. The detail is cut short. Output is scrubbed of keys anyway.
+
+    A server that answered with an error status (404, 401, 500) gets its own sentence with the status code and the
+    host only, never the full address: a query string can hold a key. Running again will not help there.
+    """
+    if isinstance(error, httpx.HTTPStatusError):
+        status = error.response.status_code if error.response is not None else None
+        try:
+            host = error.request.url.host or "an unknown host"
+        except RuntimeError:  # no request attached
+            host = "an unknown host"
+        return (f"The server at {host} answered HTTP {status}. Nothing more was done. Running the same command again "
+                "will not help until the address or the server is fixed.")
     detail = " ".join(str(error).split())[:200] or "no detail"
     return (f"A network request failed ({type(error).__name__}: {detail}). Nothing more was done. Check the connection "
             "and run the same command again.")
@@ -1360,8 +1398,9 @@ def main(
         args = parser.parse_args(argv)
     except SystemExit as stop:
         return int(stop.code or 0) if isinstance(stop.code, int) or stop.code is None else EXIT_USAGE
+    chosen_dir = getattr(args, "dir", None)
     ctx = Context(
-        paths=forecast_paths(getattr(args, "dir", None)),
+        paths=forecast_paths(chosen_dir),
         as_json=bool(getattr(args, "json", False)),
         out=out,  # type: ignore[arg-type]
         err=err,  # type: ignore[arg-type]
@@ -1369,8 +1408,19 @@ def main(
         settings_factory=factory,
         http_client=http_client,
     )
+    # --dir holds for the whole process while this command runs, so code that calls forecast_paths() with no
+    # argument (the content model, the trust model) reads the same folder. The old value comes back afterwards.
+    previous_dir = os.environ.get(FORECAST_DIR_ENV)
+    if chosen_dir:
+        os.environ[FORECAST_DIR_ENV] = str(Path(chosen_dir).resolve())
     try:
-        return int(args.handler(ctx, args))
+        code = int(args.handler(ctx, args))
+        out.flush()  # a closed pipe shows here, not in Python's exit flush
+        return code
+    except BrokenPipeError:
+        # The reader closed the output (for example `| head`). Not a network failure: stop quietly.
+        _silence_stdout(raw_out)
+        return EXIT_CHECK_FAILED
     except BudgetError as error:
         message = str(error)
         if "budget approve" not in message:
@@ -1386,6 +1436,22 @@ def main(
         return ctx.fail(network_failure(error), EXIT_CHECK_FAILED)
     finally:
         ctx.close()
+        if chosen_dir:
+            if previous_dir is None:
+                os.environ.pop(FORECAST_DIR_ENV, None)
+            else:
+                os.environ[FORECAST_DIR_ENV] = previous_dir
+
+
+def _silence_stdout(stream: Any) -> None:
+    """After a closed pipe on the real stdout, point it at /dev/null so Python's exit flush stays quiet."""
+    if stream is not sys.stdout:
+        return
+    try:
+        devnull = os.open(os.devnull, os.O_WRONLY)
+        os.dup2(devnull, sys.stdout.fileno())
+    except (OSError, ValueError, AttributeError):
+        pass
 
 
 if __name__ == "__main__":  # pragma: no cover

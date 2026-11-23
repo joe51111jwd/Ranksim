@@ -34,6 +34,10 @@ rank instead of new site launches. Its `passed` is None, never True or False,
 the value the bars would give is kept under `stand_in_passed`, and the text says
 in one sentence why it does not count.
 
+A provisional report (`provisional` true, with `provisional_reason`) is a second look at held-out
+rows an earlier version already read. Its `passed` is None for every marker, the value the bars
+would give is kept under `provisional_passed`, and every printed line says SECOND LOOK: PROVISIONAL.
+
 The plan's schedule is checked here too, with date arithmetic only.
 """
 
@@ -422,26 +426,37 @@ def _stage_marker(
 def render_marker_text(result: Mapping[str, Any]) -> str:
     """A marker verdict in short plain sentences."""
     words = {True: "PASSED", False: "NOT PASSED", None: "NOT MEASURABLE YET"}
+    provisional = bool(result.get("provisional"))
+    # A second look carries its label on every line with a number, so no line reads as a plain REAL result.
+    tag = f"{result['label']}, {SECOND_LOOK}" if provisional else str(result["label"])
+    stand_in = bool(result.get("stand_in"))
     if result.get("label") == SYNTHETIC:
         check = words[result.get("synthetic_check_passed")]
         lines = [
             f"Marker {result['marker']}, {result['name']}: NOT A MARKER RESULT ({SYNTHETIC}). "
-            f"Synthetic code check: {check} ({SYNTHETIC})."
+            f"Synthetic code check: {check} ({tag})."
         ]
-    elif result.get("stand_in"):
-        check = words[result.get("stand_in_passed")]
+    elif stand_in or provisional:
+        kinds = ", ".join(kind for kind, on in (("STAND-IN", stand_in), (PROVISIONAL, provisional)) if on)
+        would = result.get("stand_in_passed") if stand_in else result.get("provisional_passed")
+        on_what = "the stand-in" if stand_in else "this second look"
         lines = [
-            f"Marker {result['marker']}, {result['name']}: NOT A MARKER RESULT (STAND-IN). "
-            f"What the bars would give on the stand-in: {check} ({result['label']})."
+            f"Marker {result['marker']}, {result['name']}: NOT A MARKER RESULT ({kinds}). "
+            f"What the bars would give on {on_what}: {words[would]} ({tag})."
         ]
     else:
         lines = [f"Marker {result['marker']}, {result['name']}: {words[result['passed']]} ({result['label']})."]
-    if result.get("stand_in") and result.get("label") == SYNTHETIC:
-        lines.append(f"It is also a stand-in. What the bars would give: {words[result.get('stand_in_passed')]} ({SYNTHETIC}).")
+    if stand_in and result.get("label") == SYNTHETIC:
+        lines.append(f"It is also a stand-in. What the bars would give: {words[result.get('stand_in_passed')]} ({tag}).")
+    sentence = provisional_sentence(result) if provisional else None
+    if sentence:
+        lines.append(_plain_dates(f"{SECOND_LOOK}. {sentence}"))
+    states = ({True: "the bar would be met", False: "the bar would not be met", None: "not measurable"} if provisional
+              else {True: "met", False: "not met", None: "not measurable"})
     for check in result["checks"]:
-        state = {True: "met", False: "not met", None: "not measurable"}[check["ok"]]
+        state = states[check["ok"]]
         lines.append(
-            f"Check {check['name']}: {_shown(check['value'])} against {_shown(check['target'])}, {state} ({result['label']})."
+            f"Check {check['name']}: {_shown(check['value'])} against {_shown(check['target'])}, {state} ({tag})."
         )
     for key, words_for in ((MARKER2_LINK_GAIN, "Gain over link count alone, the plan's measure"),
                            (MARKER2_BEST_SINGLE_GAIN, "Gain over the best single measure, stricter and with no bar")):
@@ -451,9 +466,9 @@ def render_marker_text(result: Mapping[str, Any]) -> str:
             base = f" ({gain['baseline']})" if gain.get("baseline") else ""
             lines.append(
                 f"{words_for}{base}: {_shown(gain.get('difference'))}, interval {_shown(interval[0])} to "
-                f"{_shown(interval[1])} ({result['label']})."
+                f"{_shown(interval[1])} ({tag})."
             )
-    lines.extend(_plain_dates(note) for note in result["notes"])
+    lines.extend(_plain_dates(note) for note in result["notes"] if note != sentence)
     return "\n".join(lines).replace("\u2014", ",").replace("\u2013", " to ")
 
 

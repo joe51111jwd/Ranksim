@@ -66,10 +66,11 @@ import re
 import subprocess
 import sys
 from collections import defaultdict
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Callable, Mapping, Sequence
+from typing import Any, Callable, Iterator, Mapping, Sequence
 
 import numpy as np
 import pandas as pd
@@ -87,6 +88,8 @@ from .config import (
 )
 from .features import (
     PROVISIONAL,
+    AlreadyScored,
+    ProvenanceRefusal,
     code_provenance,
     evals_dir,
     freeze_prereg,
@@ -118,7 +121,7 @@ from .placement import (
     point_diagnostics,
     range_coverage,
 )
-from .scoreboard import PoolingRefused
+from .scoreboard import BRAND_SHORT_LABEL, PoolingRefused, derived_label_is_brand  # noqa: F401 - BRAND_SHORT_LABEL is re-exported
 from .types import PREDICTED, REAL, SYNTHETIC, Forecast
 from .updater import (
     MODEL_FEATURES,
@@ -174,6 +177,17 @@ class BacktestRefusal(ValueError):
 
 class ShallowOutcome(BacktestRefusal):
     """A site is missing from an outcome page that stops before rank 50: absence does not mean NT50 there."""
+
+
+@contextmanager
+def _as_refusal() -> Iterator[None]:
+    """Inside the checks made before any held-out outcome is read, a ValueError or a missing file is a refusal."""
+    try:
+        yield
+    except BacktestRefusal:
+        raise
+    except (ValueError, FileNotFoundError) as error:
+        raise BacktestRefusal(str(error)) from error
 
 
 # ---------------------------------------------------------------------------
@@ -531,9 +545,6 @@ def backtest_report(
     return report
 
 
-BRAND_SHORT_LABEL = 3  # a derived site label shorter than this must match a whole word of the search
-
-
 def _compact(value: Any) -> str:
     return re.sub(r"[^0-9a-z]", "", str(value).lower())
 
@@ -546,18 +557,14 @@ def site_label(site: str) -> str:
 def is_brand_search(site: str, search_text: str, brand_terms: Sequence[str] = ()) -> bool:
     """True when the search contains the site's brand name (IMPLEMENTATION_SPEC section 2), by the scoreboard's rule:
     a registered brand term, or else the site label, compacted (letters and digits only) inside the compacted search.
-    A derived label shorter than BRAND_SHORT_LABEL characters must be a whole word of the search ('hp laptop' for
-    hp.com), so x.com is not a brand search on 'xbox'."""
+    With no registered terms it calls scoreboard.derived_label_is_brand, the one copy of the derived rule: a label
+    shorter than BRAND_SHORT_LABEL characters must match the search as a whole unit ('hp laptop' and 'a 1 plumbing'
+    for hp.com and a-1.com), so x.com is not a brand search on 'xbox'."""
     compact = _compact(search_text)
     registered = [t for t in (brand_terms or ()) if _compact(t)]
     if registered:
         return any(_compact(t) in compact for t in registered)
-    label = _compact(site_label(site))
-    if not label:
-        return False
-    if len(label) >= BRAND_SHORT_LABEL:
-        return label in compact
-    return label in re.split(r"[^0-9a-z]+", str(search_text).lower())
+    return derived_label_is_brand(site, search_text)
 
 
 def graded_cells_from(frame: pd.DataFrame, points: Sequence[int], *, stage: str, source: str = "backtest",
@@ -1818,7 +1825,8 @@ def run_panel(design: PanelDesign = PanelDesign(), *, root: str | Path | None = 
         reason = frozen_spec_reason(probe.name, root, version)
         if rehearsal and not reason:
             reason = f"rehearsal of design version {version}; the reason is written when the design is frozen"
-    specs = panel_specs(design, gaps=gaps, cuts=cuts, version=version, reason=reason)
+    with _as_refusal():  # a missing reason for version 2 or later
+        specs = panel_specs(design, gaps=gaps, cuts=cuts, version=version, reason=reason)
     if rehearsal:
         from .strength import REHEARSAL_SPLIT
 
@@ -1835,14 +1843,15 @@ def run_panel(design: PanelDesign = PanelDesign(), *, root: str | Path | None = 
                                    design_version=version)
         finally:
             _ACTIVE_SPLIT.pop()
-    shas = {key: require_spec(spec, root, design_version=version) for key, spec in specs.items()}
-    for key, spec in specs.items():
-        refuse_scored_twice(spec.name, shas[key], root)
-    provenance = code_provenance()
-    git_info: dict[str, Any] = {}
-    if check_git:
-        require_clean_source(provenance)
-        git_info = {key: require_prereg_committed(spec_prereg_file(spec, root, version)) for key, spec in specs.items()}
+    with _as_refusal():  # a missing or different prereg, a design already scored, a dirty tree, an unpushed prereg
+        shas = {key: require_spec(spec, root, design_version=version) for key, spec in specs.items()}
+        for key, spec in specs.items():
+            refuse_scored_twice(spec.name, shas[key], root)
+        provenance = code_provenance()
+        git_info: dict[str, Any] = {}
+        if check_git:
+            require_clean_source(provenance)
+            git_info = {key: require_prereg_committed(spec_prereg_file(spec, root, version)) for key, spec in specs.items()}
     return _run_panel_body(sp, pages, design, specs, shas, cuts, root, log, rehearsal=False, provenance=provenance,
                            git_info=git_info, design_version=version)
 
@@ -2547,6 +2556,10 @@ def synthetic_spec(seeds: Sequence[int], base: SyntheticDesign) -> BacktestSpec:
         notes=["SYNTHETIC. It proves the machinery and shows the spread at plan size. Never accuracy."])
 
 
+# What `run` reports as one "Refused:" sentence with exit code 2. Any other exception is a crash and keeps its traceback.
+REFUSALS: tuple[type[BaseException], ...] = (BacktestRefusal, ProvenanceRefusal, AlreadyScored)
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m aeo.ranksim.forecast.backtest")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -2564,8 +2577,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(json.dumps(prereg_panel(log=_log, version=args.design_version, reason=args.reason), indent=2))
         return 0
     if args.command == "run":
-        print(json.dumps(_clean(run_panel(rehearsal=args.rehearsal, log=_log, version=args.design_version)), indent=1,
-                         default=str)[:20000])
+        try:
+            result = run_panel(rehearsal=args.rehearsal, log=_log, version=args.design_version)
+        except REFUSALS as error:  # a refusal is one plain sentence; any other error is a real crash and stays loud
+            print(f"Refused: {' '.join(str(error).split())}", file=sys.stderr)
+            return 2
+        print(json.dumps(_clean(result), indent=1, default=str)[:20000])
         return 0
     base = SyntheticDesign(seed=args.seed)
     seeds = list(range(100, 100 + args.seeds))

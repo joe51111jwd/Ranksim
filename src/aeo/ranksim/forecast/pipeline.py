@@ -1563,9 +1563,38 @@ def marker1_lines(result: Mapping[str, Any]) -> list[str]:
     raw = report.get("raw_single_pull_baseline")
     if raw:
         lines.append(f"Single raw pulls on the same searches agree {_pct(raw['headline'].get('rate'))} of the time ({label}).")
+    beside = report.get("headline_beside_ablation") or {}
+    if beside.get("filter_off") is not None:
+        lines.append(f"With the altered-page filter switched off, the same readings agree {_pct(beside['filter_off'])} "
+                     f"({label}). The headline keeps the filter on.")
+    else:
+        lines.append("The number with the altered-page filter switched off is missing: it needs every pull of every "
+                     "paired reading to be stored.")
+    lines.append(reader_line(report.get("reader")))
     lines.extend(str(note) for note in report.get("pipeline_notes", []))
     lines.append(markers_module.render_marker_text(result["evaluation"]))
     return lines
+
+
+def reader_line(reader: Mapping[str, Any] | None) -> str:
+    """The reader version and its settings, in one plain sentence (the same values --json shows under reader)."""
+    if not reader:
+        return "The reader version and its settings are not recorded in this report."
+    version = reader.get("reader_version") or "unknown"
+    rest = {k: v for k, v in reader.items() if k != "reader_version" and v is not None}
+    names = {"filter_on": "altered-page filter"}
+    shown = "; ".join(f"{names.get(k, k.replace('_', ' '))} {_setting(v)}" for k, v in rest.items())
+    return f"Reader {version}, settings: {shown or 'none recorded'}."
+
+
+def _setting(value: Any) -> str:
+    if isinstance(value, bool):
+        return "on" if value else "off"
+    if isinstance(value, (list, tuple)):
+        return ", ".join(_setting(item) for item in value) or "none"
+    if isinstance(value, Mapping):
+        return ", ".join(f"{k} {_setting(v)}" for k, v in value.items()) or "none"
+    return str(value).replace(chr(0x2014), ",").replace(chr(0x2013), " to ")  # no dashes in plain text
 
 
 def _pct(value: Any) -> str:
@@ -1678,6 +1707,10 @@ def scoreboard_paths(scoreboard: Scoreboard) -> ForecastPaths:
     return forecast_paths()
 
 
+# Sources whose forecasts can come from a live model bundle; their band prior is the one stored in that bundle.
+BUNDLE_BAND_PRIOR_SOURCES: tuple[str, ...] = ("seed", "pilot", "synthetic")
+
+
 def stage_marker(
     scoreboard: Scoreboard,
     *,
@@ -1695,13 +1728,13 @@ def stage_marker(
     always NT50 and persistence (always), the band prior by difficulty, and the site strength only
     points each forecast stored when it was made (`site_strength_points`).
 
-    The band prior. Given `training_cells` (with `training_note`), it is fitted on those. For a seed
-    or pilot report whose forecasts were made by a live model bundle it is the band prior stored in
-    that bundle (forecasting.report_band_prior, found from the forecasts' model version under
-    `paths`, default the folder that holds the scoreboard): fitted at training time on that bundle's
-    own training rows. Forecasts from more than one bundle, or an old bundle without one, leave it
-    missing. Otherwise (backtest and synthetic reports, and forecasts not made by a live bundle) it
-    is fitted on graded training-split cells (`band_prior_training`).
+    The band prior. Given `training_cells` (with `training_note`), it is fitted on those. For a seed,
+    pilot or synthetic report whose forecasts were made by a live model bundle it is the band prior
+    stored in that bundle (forecasting.report_band_prior, found from the forecasts' model version
+    under `paths`, default the folder that holds the scoreboard): fitted at training time on that
+    bundle's own training rows. Forecasts from more than one bundle, or an old bundle without one,
+    leave it missing. Otherwise (backtest reports, and forecasts not made by a live bundle) it is
+    fitted on graded training-split cells (`band_prior_training`).
     In every case a fitting site graded in the report is refused. `baseline_notes` says in plain
     sentences where each baseline came from or why it is missing; the report and the marker never
     pass while one is missing.
@@ -1712,7 +1745,7 @@ def stage_marker(
     training: list[Any] = []
     fitted = None
     records = (scoreboard.graded_records(source, stage, as_of, "original", model_version=model_version)
-               if training_cells is None and source in ("seed", "pilot") else [])
+               if training_cells is None and source in BUNDLE_BAND_PRIOR_SOURCES else [])
     if training_cells is not None:
         training = list(training_cells)
         band_note = training_note or (f"The band prior by difficulty is fitted on {len(training)} training cells given "

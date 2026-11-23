@@ -110,7 +110,10 @@ class ForecastPaths:
         return self.root / "imports"
 
 
+FORECAST_DIR_ENV = "RANKSIM_FORECAST_DIR"  # the forecast command sets it from --dir while one command runs
+
+
 def forecast_paths(root: str | Path | None = None) -> ForecastPaths:
     """Paths under RANKSIM_FORECAST_DIR, or ./data/forecast when it is not set."""
-    chosen = root or os.environ.get("RANKSIM_FORECAST_DIR") or "data/forecast"
+    chosen = root or os.environ.get(FORECAST_DIR_ENV) or "data/forecast"
     return ForecastPaths(root=Path(chosen))

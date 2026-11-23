@@ -153,19 +153,67 @@ def cmd_cohort_freeze(ctx: Context, args: argparse.Namespace) -> int:
              f"{_tag(label)}.",
              f"sha256 {frozen['sha256']}. The forecast source hash is stored beside it."]
     looks = frozen.get("earlier_looks") or []
+    version = int(frozen["version"])
     if looks:
         where = ", ".join(f"{look['design']} version {look['design_version']}" for look in looks)
         lines.append(f"These held-out test rows were already scored ({where}). A score of this design is a SECOND LOOK: it "
                      "needs design version 2 or later with its reason, and its numbers are PROVISIONAL with no marker "
                      f"verdict {_tag(label)}.")
-    if label == REAL:
-        lines.append(f"Commit and push {frozen['prereg_file']}, keep the source tree clean, then run: {PROG} cohort-backtest "
-                     f"score --bundle {args.bundle}" + (f" --design-version {args.design_version}" if args.design_version > 1 else ""))
-    else:
-        lines.append(f"SYNTHETIC. Score it with: {PROG} cohort-backtest score --bundle {args.bundle} --root {args.root} "
-                     "--skip-git-check")
+    lines.extend(_score_hint(ctx, args, frozen, label, version, looks))
     ctx.emit(frozen, lines)
     return EXIT_OK
+
+
+def _cohort_argv(ctx: Context, args: argparse.Namespace, command: str, version: int, reason: str | None) -> str:
+    """The full cohort-backtest command, every option it needs spelled out, so it runs as printed."""
+    import shlex
+
+    parts = [PROG, "cohort-backtest", command, "--set", shlex.quote(str(_set_dir(ctx, args).resolve())),
+             "--bundle", shlex.quote(str(args.bundle))]
+    if args.root:
+        parts += ["--root", shlex.quote(str(Path(args.root).resolve()))]
+    if args.name != paidset.DESIGN_NAME:
+        parts += ["--name", shlex.quote(str(args.name))]
+    if getattr(args, "panel_dir", None):
+        parts += ["--panel-dir", shlex.quote(str(Path(args.panel_dir).resolve()))]
+    if version > 1:
+        parts += ["--design-version", str(version), "--reason", shlex.quote(reason) if reason else '"<why>"']
+    if getattr(args, "dir", None):
+        parts += ["--dir", shlex.quote(str(Path(args.dir).resolve()))]
+    return " ".join(parts)
+
+
+def _next_free_version(args: argparse.Namespace, after: int, looks: list[dict[str, Any]]) -> int:
+    """The first design version above every version already frozen or scored for this design name."""
+    from .features import prereg_file
+
+    seen = [after] + [int(look["design_version"]) for look in looks
+                      if look.get("design") == args.name and isinstance(look.get("design_version"), int)]
+    version = max(seen) + 1
+    while prereg_file(paidset.design_root(args.root, args.name), version).exists():
+        version += 1
+    return version
+
+
+def _score_hint(ctx: Context, args: argparse.Namespace, frozen: dict[str, Any], label: str, version: int,
+                looks: list[dict[str, Any]]) -> list[str]:
+    """The next command after a freeze. When these rows were already scored, version 1 cannot be scored:
+    the hint is then the freeze and score of the next design version, with --design-version and --reason."""
+    git = "" if label == REAL else " --skip-git-check"
+    lead = "SYNTHETIC. " if label == SYNTHETIC else ""
+    if looks and version < 2:
+        nxt = _next_free_version(args, version, looks)
+        return [f"{lead}This version cannot be scored: these rows were already read. A second look is a new design "
+                f"version with its reason. Freeze it with: {_cohort_argv(ctx, args, 'freeze', nxt, None)}",
+                f"{lead}Then score it with the same --design-version and --reason: "
+                f"{_cohort_argv(ctx, args, 'score', nxt, None)}{git}"]
+    reason = frozen["payload"].get("reason_for_new_version") if version > 1 else None
+    command = _cohort_argv(ctx, args, "score", version, reason) + git
+    if looks:
+        lead = f"{lead}SECOND LOOK: PROVISIONAL. "
+    if label == REAL:
+        return [f"{lead}Commit and push {frozen['prereg_file']}, keep the source tree clean, then run: {command}"]
+    return [f"{lead}Score it with: {command}"]
 
 
 def cmd_cohort_score(ctx: Context, args: argparse.Namespace) -> int:

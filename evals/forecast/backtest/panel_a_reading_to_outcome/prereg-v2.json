@@ -1,0 +1,257 @@
+{
+  "code": {
+    "code_revision": "61d6fe5ccc89bad7db7ced6ec3c15849fe2d5645",
+    "source_dirty_at_freeze": false,
+    "source_sha256": {
+      "__init__.py": "b173190d83ce537be8e34a557c514ad657b503d6cb434fe7845dcb46b860e51a",
+      "agency_form.py": "50f531bea1e096c004bfc975763b7aeb78e5408020ac0b4d3a0c760a1b6bc5f9",
+      "asof.py": "f18c590dd3ae56dc48a0746d65a1c4ce8a94294e4e33e6598faf333b4c413c85",
+      "backtest.py": "73b1fe9722b41e6e35c71165dd23714cb7ff1f8cd14417f6f3ea17fa9ef93ef4",
+      "budget.py": "7de141b53e8a20d0d918d4214d00dc28ee1545ed8bb0041046ffe989ba2a737a",
+      "chain.py": "bbc29f8893bb4912aba6ad3a615bf727a8a15aa058743eed496d8a1875b2de0a",
+      "cli.py": "21b0f438e56c73e57f22c96c36f0fe843c810ce9299bf1f87cfd65e1b0dfa792",
+      "cli_data.py": "28e11e0b5677fc7a3ac235a5072c5689884b425ba18adadd0cb98bf384daf915",
+      "cli_forecasting.py": "3beba61d3c2691a6a6d38a75b70f476bf29d38a2d4f41be5b352ef9ec1a83334",
+      "cli_paid.py": "c44cd850f876e6cc6b6fa5499a70a066dea2568c09becadea44c2890059a35a1",
+      "config.py": "7170ee68b544d610edec2683203eabcc6a6c879e071e7429385fd1a7653722e4",
+      "content.py": "ffea51db47a06f1e3d92198ae8f2e888c5b847f72b3efec0c81838bcd2a9ddef",
+      "content_eval.py": "c0444e88b7cfe3625e1edd25ad58c76bf68bad3b7a937b99796c7712e35d45c6",
+      "dataforseo.py": "ee22f8a36131c04122202be19082b7e51998a31a5e0588f54e8c2dd084ab9de7",
+      "features.py": "a2c0683e583948634f633a11ae6870629df7ca918762fb0457ae739e52692c8c",
+      "forecasting.py": "5037a27f701974fd3b3b2d4425367ba6e1c283ba6563c2a00be8a37437c7124c",
+      "grade_job.py": "d7f3bc05ba4c4fbc3256a593586e51dff3fa2283400666d3b606eca7daf5d859",
+      "grading.py": "72445371bea1eaf5dc9a5a7f521ba6ba3693aa5f723b8e752ad4e0bd1dd27b6b",
+      "gsc.py": "221ebd1d8db789c84b02c60481f8ebdbc530b294cb453f1aa500732e593aa239",
+      "markers.py": "b9473d98add9bbc74d6d3fb02bcd02afe573e5f97532a30da43674ac14f593cf",
+      "noise.py": "e9c7385cc5f225704c9a16beddd5460884811cd8526475448b1d66de83babcfd",
+      "paidset.py": "860ad2835abdc2c9e7c1d0af3308f2eafb7bb12b2d4253abc6084258e5acb390",
+      "pipeline.py": "310c40fae38cc9a98dc5dac86c19c77309625ecde8b0c895cc8b90e1e2ffacb7",
+      "placement.py": "4ef61562c0c0d7a025e23e89dd9d384acda72c04fec456cb07f058275ec1509c",
+      "reader.py": "937f4f8117aeaffdacaaa6aa9be35429b98f42480b905793a1db3522997c1406",
+      "report.py": "d93c8785d9c9968f3dffcfb8c5b2866b973592edfbfd13a780bf38cc9f4a09ee",
+      "scoreboard.py": "d94c1f6da00da9e66f987f79cb065bc00cdd8b587131e442d632d7429d8c944d",
+      "seeds.py": "f1d1d79b1db93c1b94c1c82b298b46b79ea30202238e3d29febbf659e059a2fa",
+      "serper.py": "7d7f9f749ba97567b397c1d2f5c0cdbdb103002c9ce4ad06fe0119747aa37225",
+      "sources/__init__.py": "87be272d7e270db8d62d8da8dc3c63dcce4ec20614e7a88ac67281a970b0099f",
+      "sources/dfs_samples.py": "dfc79f28c590553e0849a10d7636dee10c1a85f67859b6c65855ce58cfada686",
+      "sources/domain_age.py": "a0bab2c4e5be5d0ce5e844e3d9eed2189c699ec14e524cfbc420857b6913ad02",
+      "sources/newsites.py": "89d76b693a2766d3b66b9578d4eea51dcd436e27a0c7a4c36e22b5221ed0aedb",
+      "sources/noise_sets.py": "fc1ee8790273ca6008d89adb7d5148a238e95069d5b378eec10cb1f8a89e1f1b",
+      "sources/panel.py": "3f1a53e88353180258f4c130d835b8564363c0727d3bc951c092b9772417451f",
+      "sources/strength_lists.py": "2676a0b8f9fc18c24503ffd4bf229b31b7b6dd57cd360ae0d982613879f6b300",
+      "sources/universe.py": "7aa70dd4445843a0ccc17bc25466ca0a010e50e6a9dc22181e71e7b0efd590eb",
+      "sources/updates.py": "fd7b79aa9f459d77e80886dda5d20c65e9a82379fb014cf05b2b1b71554447c3",
+      "stats.py": "bf0d4e22f27136b9770dc2ef63a50c7a3204ab9c662ddc419208d11e4f415658",
+      "strength.py": "351fb93a78e354e0314e1bb8c551ea9c92efc8fab1ba95a04483b90bd61ea389",
+      "synth.py": "4d7baebea3a017835da871890b8bd54676fd0484a0cd1ab49208f419647feeb9",
+      "trainingset.py": "908acecdd4b39ad72706508fb537ebc8c03ddf51be5f048cea72c75e93c443b7",
+      "trust.py": "ac7e43da0a0e64533562d07c674d4d150858f3ce5ad1b8eb8fd00e35b0cd2526",
+      "types.py": "a4f9eb3a0a18e1788540e742ed871123ba2170c38c04ee148745b34ea042c5fc",
+      "updater.py": "274ccfd67dd631690fbada1a736f57744787a3f7ea83c82fbbe8099a922690ce"
+    },
+    "source_tree_sha256": "369d7dfa83ca247c43f10c68ce0ff5c866c0df35b5c0ec56f2bf46e44d04b6a7"
+  },
+  "frozen_at": "2026-11-23T01:03:22Z",
+  "payload": {
+    "baselines": [
+      "always_nt50",
+      "persistence",
+      "band_prior",
+      "site_strength",
+      "the updater version not in use (table or model)",
+      "placement_prior_no_reading"
+    ],
+    "cells": "Every site in the top 100 of a page (the reading). The outcome is the FIRST later page of the same search whose gap is inside the window. Outcome position 1 to 50; NT50 when deeper or absent from a page at least 50 deep; absent from a shallower page is dropped and counted. Train: training search groups, outcome before the cutoff. Test: held-out search groups, reading on or after the cutoff. Subsets: all, new to the search at the reading (not on any earlier page; unknown on a search's first page), young sites. Windows chosen from the consecutive gap distribution (modes at 60 to 75 and 75 to 130 days), not from outcomes. Version 2 sides: test cells are held-out search groups AND held-out sites (SplitRule.site_is_test, sites the trust model never trained on) with the reading on or after the cutoff; training and validation cells are training search groups AND training sites with the outcome before the cutoff.",
+    "dataset": "panel dfs_history (DataForSEO sample databases), poison-risk pages dropped",
+    "feature_set": [
+      "own_score",
+      "gap_top10",
+      "gap_top20",
+      "gap_top50",
+      "q_top10",
+      "q_top20",
+      "q_top50",
+      "demand_top10_q25",
+      "demand_top10_q50",
+      "demand_top10_q75",
+      "demand_t11_20_q50",
+      "demand_t21_50_q50",
+      "trust_pred",
+      "trust_gap_top10",
+      "trust_q_top10",
+      "st_s_cc_hc",
+      "st_s_cc_pr",
+      "st_s_cc_hosts",
+      "st_s_crux",
+      "st_s_tranco",
+      "sd_age_days",
+      "sd_left_censored",
+      "sd_age_lower_bound_days",
+      "pg_kd",
+      "pg_log_volume",
+      "pg_depth",
+      "pg_sites_top10",
+      "new_to_search",
+      "lead_days",
+      "reading_position",
+      "reading_in_top50",
+      "reading_move",
+      "readings_count",
+      "prior_p_1-3",
+      "prior_p_4-10",
+      "prior_p_11-20",
+      "prior_p_21-50",
+      "prior_p_NT50",
+      "prior_point",
+      "lead_days",
+      "new_to_search",
+      "own_score",
+      "gap_top10",
+      "gap_top20",
+      "gap_top50",
+      "q_top10",
+      "q_top50",
+      "demand_top10_q50",
+      "demand_t21_50_q50",
+      "trust_pred",
+      "trust_gap_top10",
+      "pg_kd",
+      "sc_impressions_total",
+      "sc_clicks_total",
+      "sc_query_present_target",
+      "sc_avg_position_target",
+      "sc_impressions_slope"
+    ],
+    "model_versions": {
+      "out_of_fold": "3 strength fold scores (without the row's search fold) and 9 trust fold models (without the row's search fold and site fold), fitted in the run on training pages; they serve training and validation rows",
+      "placement": "placement-v1, fitted here on training cells, temperature and range level on the recent slice",
+      "strength_only_forecaster": "strength-v2 forecaster (data/forecast/models/strength/strength-v2-forecaster.json, fitted on training cells)",
+      "strength_score": "strength-v2 (data/forecast/models/strength/strength-v2-score.json, fitted on training pages)",
+      "trust": "trust-v2-free-lexical-all (fitted on training searches and training sites before the cutoff)",
+      "updater": "updater-table-v1 and updater-model-v2, fitted here; model temperature and range level on the recent slice; the rule for sites new to the search chosen on validation rows"
+    },
+    "name": "panel_a_reading_to_outcome",
+    "notes": [
+      "The panel cannot give searches a site targets but never ranks for. Every cell exists because the site appeared on the search at least once. An upload-day forecast for a brand-new site, which is mostly not in the top 50, cannot be validated on it.",
+      "These cells are a stand-in. They are sites already seen on a search, read on a single country-level page, not brand-new domains at launch. A marker verdict here is about this stand-in only.",
+      "Design version 2. Reason for the new version: Version 2 is a second look at the same held-out searches and dates that version 1 was scored on. It is not a fresh held-out test, and its reports are marked PROVISIONAL. (1) The data layer was fixed and the panel rebuilt: search volume counts as known only 45 days after its month ends, and intent and etv are null on pages older than their record date; the page volume feature changed on 70 percent of rows. (2) Bug-hunt fixes: graded cells are held-out sites on held-out searches and training cells use training sites only; brand searches are flagged and shown apart; headline intervals resample sites; registration records fetched today are left out; reports use the shared report code and are marked stand-ins, so markers 3 and 4 can neither pass nor fail on the free panel; every report is written only after every test is scored. (3) The strength-v2 and trust-v2 models replace the version 1 models. (4) Training and validation cells now take trust and strength inputs out of fold: trust from models fitted without their own search group and their own site, strength from scores fitted without their own search group. The strength score is still fitted on training-search pages that hold held-out sites, and the report counts those rows. (5) Two rules were added after the version 1 held-out results were seen: a rule for sites new to the search (version 1 scored 0.820 there against 0.867 for always NOT IN TOP 50), chosen inside the run on validation rows only among always NOT IN TOP 50, the table and the model; and a time-aware calibration that sets the range level and the temperature on training rows from the last 90 days before the cutoff (version 1 ranges covered 0.72 and 0.67 against 0.80). Because both ideas come from the held-out result, any gain they show on these held-out searches is not clean evidence.",
+      "PROVISIONAL: held-out rows already read by version 1: design version 2 grades rows of split strength-split-v1 (cutoff 2026-01-01) that design version 1 already graded and published (through 2026-04-30), and its changes were chosen after those numbers were read. Its numbers are PROVISIONAL, not fresh held-out accuracy: no marker verdict and no headline accuracy claim is made on them. Fresh held-out rows need a split whose cutoff is after 2026-04-30."
+    ],
+    "split": {
+      "search_test_share": 0.3,
+      "seed": 20261122,
+      "site_test_share": 0.3,
+      "time_cutoff": "2026-01-01",
+      "version": "strength-split-v1"
+    },
+    "thresholds": {
+      "bootstrap": {
+        "clusters": [
+          "search",
+          "site"
+        ],
+        "draws": 2000,
+        "seed": 20261122
+      },
+      "consecutive_page_gap_distribution": {
+        "bins": {
+          "(0, 2]": 2820,
+          "(105, 130]": 840,
+          "(130, 200]": 549,
+          "(2, 28]": 271,
+          "(200, 400]": 117,
+          "(28, 45]": 3105,
+          "(45, 60]": 1509,
+          "(60, 75]": 25893,
+          "(75, 90]": 4983,
+          "(90, 105]": 1313
+        },
+        "pairs": 41400,
+        "quantiles": {
+          "0.05": 0.460837495369213,
+          "0.1": 40.8864446577581,
+          "0.25": 60.333936831765044,
+          "0.5": 61.73632050440972,
+          "0.75": 69.58231124883392,
+          "0.9": 84.33172401209143,
+          "0.95": 96.33309183946643
+        }
+      },
+      "difficulty_kd_cuts_from_training_pages": [
+        0.0,
+        6.0
+      ],
+      "grading_rule": "v1",
+      "grading_rule_hash": "6b8797e2ba8ec50aa6ea9a7eafb62eeeefc66f6fe21da497f68b04ba8edc5906",
+      "label_thresholds": {
+        "locked": 0.8,
+        "out_of_reach": 0.8
+      },
+      "lead_floor_days": 28,
+      "min_count_to_print": 30,
+      "placement_point_rule": "median",
+      "prior_cross_fit_folds": 3,
+      "range_coverage": 0.8,
+      "train_cells_max": 200000,
+      "updater_model_replaces_table": "lower bound of model minus table on validation rows above 0",
+      "validation_share_of_training_search_groups": 0.2,
+      "version_2_rules": {
+        "brand_searches": "flagged when the compacted site label (site.split('.')[0]) or a registered brand term is inside the compacted search text (labels under 3 characters must be a whole word); left out of the headline and shown apart",
+        "calibration": {
+          "added_after": "the version 1 held-out result (ranges covered 0.72 and 0.67 against 0.80)",
+          "rule": "placement temperature and range level, the updater model's temperature and the updater range level are set on rows whose outcome date is in the last 90 days before the cutoff, at least 2000 rows, else on every row of their calibration fold or validation set; dates only"
+        },
+        "headline_clusters": "site (2,000 draws, seed 20261122); the search-clustered headline is printed apart",
+        "held_out_flags": "computed per graded cell (search, date and site sides); a cell not held out is refused",
+        "held_out_rows": {
+          "already_read_by": "design version 1",
+          "label": "PROVISIONAL",
+          "reason": "held-out rows already read by version 1: design version 2 grades rows of split strength-split-v1 (cutoff 2026-01-01) that design version 1 already graded and published (through 2026-04-30), and its changes were chosen after those numbers were read. Its numbers are PROVISIONAL, not fresh held-out accuracy: no marker verdict and no headline accuracy claim is made on them. Fresh held-out rows need a split whose cutoff is after 2026-04-30.",
+          "split": "strength-split-v1",
+          "time_cutoff": "2026-01-01",
+          "version_1_read_through": "2026-04-30",
+          "version_1_split": "strength-split-v1"
+        },
+        "models": {
+          "missing_model": "refused",
+          "strength": "strength-v2",
+          "trust": "trust-v2-free-lexical-all"
+        },
+        "new_to_search_rule": {
+          "candidates": [
+            "always_nt50",
+            "table",
+            "model"
+          ],
+          "origin": "The idea of a separate rule for sites new to the search comes from the version 1 held-out result: on those sites the updater scored 0.820 against 0.867 for always NOT IN TOP 50. The rule itself is chosen on validation rows only.",
+          "rule": "on validation rows of sites new to the search, the updater version in use stays unless a candidate beats it with a cluster interval over searches whose lower bound is above 0; among those the largest gain wins"
+        },
+        "out_of_fold_inputs": {
+          "fit": "the same procedure and training label table as the scored models (training pages only)",
+          "folds": 3,
+          "report": "in_sample_model_inputs counts rows whose trust or strength model saw their own search group or site. own_search_in_fit and trust_own_site_in_fit: 0 expected. Strength is split by search only, so strength_own_site_in_fit is NOT 0: a training or validation row's strength score was fitted on its own site's pages on other searches (later ones too), and the main score that serves test rows was fitted on training pages that hold the held-out sites on training searches before the cutoff",
+          "rule": "training and validation cells take trust_pred from a trust model fitted without their search fold and their site fold (sha256(seed|oof-search|group), sha256(seed|oof-site|site), 3 folds each, 9 models) and the strength score from a score fitted without their search fold (3 models); the sites on their input page are scored by the same models; test cells take the models fitted on every training row before the cutoff",
+          "seed": 20261153
+        },
+        "panel": "data/forecast/cache/panel rebuilt with the fixed parsers (search volume known 45 days after its month; intent and etv null on pages older than their record date)",
+        "report_code": "report.report_from_cells; every panel report is marked stand_in with its reason",
+        "reports_written": "every report of a run is written after every test is scored, so a crash writes none",
+        "start_evidence": "Common Crawl first release only; RDAP is left out (no dated history)"
+      },
+      "young_site": "sd_young == 1 (start estimate under 730 days)"
+    },
+    "time_cutoff": "2026-01-01",
+    "version": "backtest-v2",
+    "windows_days": {
+      "lead_28_74": [
+        28.0,
+        74.999
+      ],
+      "lead_75_130": [
+        75.0,
+        130.0
+      ]
+    }
+  },
+  "sha256": "f380f8445971f17b5c6be6ce1cb2e88d15d72200e21e7fec55e5ffcb151d5a3a"
+}

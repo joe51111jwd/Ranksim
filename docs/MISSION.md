@@ -192,3 +192,11 @@ Ranksim's core use case, predicting where a new or draft page lands, is still sh
 ## Coordination
 - SEO Tracker (Grok Bot teammate) runs SmartCrew site work and sends real SERP data.
 - SEO Tool Builder (Grok Bot) owns ranksim and dispatches Cursor agents. A weekday 9am ET routine keeps pushing this work.
+
+## Forecast system from the build plan (status 23 November 2026)
+The plan "Ranksim build plan: the road to 90%" is in `docs/plan/` and is implemented in `src/aeo/ranksim/forecast/`. It forecasts where a new site lands in Google's top 50 on day 90, and updates the forecast from early readings. Read `docs/plan/STATUS.md` for the results and for what James has to decide. Short form:
+- All seven parts are built and tested. No marker of the plan has passed, and none can on the free data. Real markers need the DataForSEO login, an approved budget and the seed sites.
+- On free public data about sites that already rank (a stand-in, REAL positions, PREDICTED forecasts): a day 30 style forecast hits 0.605 against a bar of 0.85, and placement of a site that first appears hits 0.457 against a bar of 0.75. Both beat every baseline. Neither is close to its bar.
+- Version 2 of these scores is a second look at the same held-out rows and is marked PROVISIONAL. The free data ends on 30 April 2026, so fresh evidence can only come from paid pulls or seed sites.
+- Nothing was spent. The approved budget in the spend guard is $0.
+- This work is on branch `claude/gifted-cerf-p1zvyr`. It is not merged and no pull request is open.

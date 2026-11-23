@@ -785,3 +785,37 @@ def test_range_without_the_new_site_rule_is_each_distributions_own_80pct_interva
     dist[-1] = 0.05
     block = B._range_block_from_dists(np.array([dist, nt50_mass()]), [12, NT50], 0.8)
     assert block == {"rows": 2, "coverage": 0.5, "mean_width": 3.5}  # [4, 9] misses 12; [51, 51] holds NT50
+
+
+def test_the_scored_run_reads_the_reason_back_from_the_frozen_backtest_design(tmp_path):
+    """`run --design-version 2` must rebuild exactly the frozen design. The reason lives in the design's notes."""
+    reason = "panel rebuilt with the data-layer fixes.  "
+    v2, _ = _frozen_panel_specs(version=2, reason=reason)
+    for spec in v2.values():
+        B.freeze_spec(spec, tmp_path, design_version=2, code=True)
+    for spec in v2.values():
+        assert B.frozen_spec_reason(spec.name, tmp_path, 2) == reason.strip()
+    again, _ = _frozen_panel_specs(version=2, reason=B.frozen_spec_reason(v2["A"].name, tmp_path, 2))
+    for key, spec in again.items():
+        assert spec.sha256() == v2[key].sha256()
+        assert B.require_spec(spec, tmp_path, design_version=2) == v2[key].sha256()
+    assert B.frozen_spec_reason(v2["A"].name, tmp_path, 1) is None  # version 1 has no reason
+    assert B.frozen_spec_reason(v2["A"].name, tmp_path, 3) is None  # not frozen
+    assert B.frozen_spec_reason("no_such_design", tmp_path, 2) is None
+
+
+def test_the_committed_version_2_backtest_designs_can_be_read_back_and_rebuilt():
+    """The version 2 designs that were scored stay reproducible from their own files."""
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1] / "evals" / "forecast" / "backtest"
+    frozen = {p.parent.name: json.loads(p.read_text()) for p in root.glob("panel_*/prereg-v2.json")}
+    if not frozen:
+        pytest.skip("the version 2 designs are not in this checkout")
+    reason = B.frozen_spec_reason("panel_a_reading_to_outcome", root, 2)
+    assert reason and reason.startswith("Version 2 is a second look at the same held-out searches and dates")
+    th = frozen["panel_a_reading_to_outcome"]["payload"]["thresholds"]
+    specs = B.panel_specs(B.PanelDesign(), gaps=th["consecutive_page_gap_distribution"],
+                          cuts=th["difficulty_kd_cuts_from_training_pages"], version=2, reason=reason)
+    for spec in specs.values():
+        assert spec.sha256() == frozen[spec.name]["sha256"], spec.name

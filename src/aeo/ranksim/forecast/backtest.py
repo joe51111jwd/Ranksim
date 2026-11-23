@@ -1387,6 +1387,30 @@ def panel_specs(design: PanelDesign, *, gaps: Mapping[str, Any], cuts: Sequence[
     return {"A": a, "B": b, "C": c, "ceiling": ceiling}
 
 
+REASON_NOTE = "Design version {version}. Reason for the new version: "  # how a backtest design records its reason
+
+
+def frozen_spec_reason(name: str, root: str | Path | None, version: int) -> str | None:
+    """The reason frozen in a backtest design version k >= 2, or None when that design is not frozen.
+
+    A backtest design keeps its reason in its notes (REASON_NOTE), not under the key the strength and
+    trust designs use. The scored run reads it back from there, so `run --design-version k` rebuilds
+    exactly the frozen design. The frozen sha256 still decides: a different text is refused.
+    """
+    path = prereg_file(backtest_dir(name, root), int(version))
+    if int(version) <= 1 or not path.is_file():
+        return None
+    payload = json.loads(path.read_text(encoding="utf-8")).get("payload", {})
+    direct = payload.get("reason_for_new_version")
+    if direct and str(direct).strip():
+        return str(direct).strip()
+    prefix = REASON_NOTE.format(version=int(version))
+    for note in payload.get("notes") or []:
+        if str(note).startswith(prefix) and str(note)[len(prefix):].strip():
+            return str(note)[len(prefix):].strip()
+    return None
+
+
 def _panel_specs_v2(design: PanelDesign, *, gaps: Mapping[str, Any], cuts: Sequence[float], version: int,
                     reason: str | None) -> dict[str, BacktestSpec]:
     if not reason or not str(reason).strip():
@@ -1456,7 +1480,7 @@ def _panel_specs_v2(design: PanelDesign, *, gaps: Mapping[str, Any], cuts: Seque
         data["thresholds"] = {**dict(spec.thresholds), f"version_{version}_rules": rules}
         if spec.model_versions:
             data["model_versions"] = dict(models)
-        data["notes"] = [*spec.notes, f"Design version {version}. Reason for the new version: {str(reason).strip()}"]
+        data["notes"] = [*spec.notes, REASON_NOTE.format(version=version) + str(reason).strip()]
         if provisional:
             data["notes"].append(f"{PROVISIONAL}: {provisional['reason']}")
         out[key] = BacktestSpec(**data)
@@ -1790,10 +1814,8 @@ def run_panel(design: PanelDesign = PanelDesign(), *, root: str | Path | None = 
     sp, pages = load_panel_pages(log=log)
     gaps, cuts = consecutive_gaps(pages), difficulty_cuts(pages)
     if version > 1 and not reason:
-        from .features import frozen_reason
-
         probe = panel_specs(design, gaps=gaps, cuts=cuts)["A"]
-        reason = frozen_reason(backtest_dir(probe.name, root), version)
+        reason = frozen_spec_reason(probe.name, root, version)
         if rehearsal and not reason:
             reason = f"rehearsal of design version {version}; the reason is written when the design is frozen"
     specs = panel_specs(design, gaps=gaps, cuts=cuts, version=version, reason=reason)

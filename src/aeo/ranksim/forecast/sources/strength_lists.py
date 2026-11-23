@@ -278,14 +278,14 @@ def record_source(directory: Path, key: str, entry: dict[str, Any]) -> None:
 
 
 class ListUnreachable(httpx.ConnectError):
-    """The first connection of a download could not be made and no byte arrived. Never retried.
+    """The first connection of a download could not be made: no server ever answered. Never retried.
 
     No network, a refused proxy or a dead host does not heal in a few minutes, so waiting through
     the retries meant for a broken stream would only hide the failure. Nothing is marked searched.
     """
 
 
-# Connection failures before any byte arrived: the download fails at once instead of retrying.
+# Connection failures before any server answered: the download fails at once instead of retrying.
 FIRST_CONNECTION_ERRORS: tuple[type[Exception], ...] = (httpx.ConnectError, httpx.ConnectTimeout, httpx.ProxyError)
 
 def _sleep(seconds: float) -> None:
@@ -296,7 +296,7 @@ def _sleep(seconds: float) -> None:
 def _unreachable(url: str, error: Exception) -> ListUnreachable:
     host = urlsplit(url).netloc or url
     return ListUnreachable(f"the first connection to {host} could not be made ({type(error).__name__}: {error}). "
-                           "No byte arrived, so it was not retried. Check the network or the proxy",
+                           "No server answered, so it was not retried. Check the network or the proxy",
                            request=getattr(error, "_request", None))
 
 
@@ -345,7 +345,7 @@ def download_resumable(
         return meta
     part = dest.with_name(dest.name + ".part")
     attempts = 0
-    received = 0  # bytes that arrived in this call; with none, a connection failure is not retried
+    connected = False  # a server answered at least once in this call; until then a connection failure is not retried
     last_modified: str | None = None
     etag: str | None = None
     total: int | None = None
@@ -356,6 +356,7 @@ def download_resumable(
             limiter.wait(url)
         try:
             with client.stream("GET", url, headers=headers) as response:
+                connected = True
                 if response.status_code == 416:
                     # Range not satisfiable: the partial file may already be complete.
                     size_text = (response.headers.get("content-range") or "").rpartition("/")[2]
@@ -376,14 +377,13 @@ def download_resumable(
                 with open(part, mode) as handle:
                     for block in response.iter_bytes(CHUNK_BYTES):
                         handle.write(block)
-                        received += len(block)
             if total is None or part.stat().st_size >= total:
                 break
         except (httpx.TransportError, httpx.HTTPStatusError) as error:
             attempts += 1
             if isinstance(error, httpx.HTTPStatusError) and error.response is not None and error.response.status_code in (403, 404, 410):
                 raise
-            if isinstance(error, FIRST_CONNECTION_ERRORS) and not received:
+            if isinstance(error, FIRST_CONNECTION_ERRORS) and not connected:
                 raise _unreachable(url, error) from error
             if attempts > MAX_STREAM_RETRIES:
                 raise
@@ -534,6 +534,7 @@ class _ResumingStream:
 
     def __iter__(self) -> Iterator[bytes]:
         attempts = 0
+        connected = False  # a server answered at least once; until then a connection failure is not retried
         while True:
             headers: dict[str, str] = {}
             if self.offset:
@@ -542,6 +543,7 @@ class _ResumingStream:
                     headers["If-Range"] = self.etag
             try:
                 with self.client.stream("GET", self.url, headers=headers) as response:
+                    connected = True
                     if self.offset and response.status_code != 206:
                         raise RuntimeError(f"{self.url} did not resume at byte {self.offset} (HTTP {response.status_code}).")
                     if not self.offset and response.status_code != 200:
@@ -560,7 +562,7 @@ class _ResumingStream:
                 raise httpx.ReadError("stream ended early")
             except httpx.TransportError as error:
                 attempts += 1
-                if isinstance(error, FIRST_CONNECTION_ERRORS) and not self.offset:
+                if isinstance(error, FIRST_CONNECTION_ERRORS) and not connected and not self.offset:
                     raise _unreachable(self.url, error) from error
                 if attempts > MAX_STREAM_RETRIES:
                     raise
@@ -1170,7 +1172,10 @@ class TrancoByDate:
         client = self._http()
         url = TRANCO_API.format(day=key)
         self.limiter.wait(url)
-        response = client.get(url)
+        try:
+            response = client.get(url)
+        except FIRST_CONNECTION_ERRORS as error:
+            raise _unreachable(url, error) from error
         response.raise_for_status()
         record = response.json()
         if not record.get("available", False) or not record.get("list_id"):

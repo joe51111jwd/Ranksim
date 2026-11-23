@@ -145,8 +145,12 @@ def cmd_cohort_freeze(ctx: Context, args: argparse.Namespace) -> int:
                                    name=args.name, version=args.design_version, reason=args.reason, panel_dir=args.panel_dir)
     label = frozen["label"]
     payload = frozen["payload"]
-    lines = [f"Froze the cohort backtest design {args.name} version {frozen['version']} in {frozen['prereg_file']} "
-             f"{_tag(label)}. Nothing was scored.",
+    first = (f"The cohort backtest design {args.name} version {frozen['version']} was already frozen in "
+             f"{frozen['prereg_file']} {_tag(label)}. It is the same design, so nothing was written. Nothing was scored."
+             if frozen.get("already_frozen") else
+             f"Froze the cohort backtest design {args.name} version {frozen['version']} in {frozen['prereg_file']} "
+             f"{_tag(label)}. Nothing was scored.")
+    lines = [first,
              f"Test rows: {payload['test_rows']['count']} cells on {payload['test_rows']['sites']} sites. Bundle "
              f"{payload['bundle']['name']} (sha256 {payload['bundle']['sha256'][:12]}) {_tag(label)}.",
              f"Band prior fitted on {payload['band_prior']['training_cells']} training cells: {payload['band_prior']['points']} "

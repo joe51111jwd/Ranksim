@@ -1427,9 +1427,15 @@ def _panel_specs_v2(design: PanelDesign, *, gaps: Mapping[str, Any], cuts: Seque
              "the trust model never trained on) with the reading on or after the cutoff; training and validation cells are "
              "training search groups AND training sites with the outcome before the cutoff.").format(v=version)
     rules = {"headline_clusters": "site (2,000 draws, seed 20261122); the search-clustered headline is printed apart",
-             "brand_searches": ("flagged when the compacted site label (site.split('.')[0]) or a registered brand term is "
-                                "inside the compacted search text (labels under 3 characters must be a whole word); left "
-                                "out of the headline and shown apart"),
+             # Version 2 was frozen and scored with the first wording. Its text stays so that design can be rebuilt.
+             "brand_searches": (("flagged when the compacted site label (site.split('.')[0]) or a registered brand term is "
+                                 "inside the compacted search text (labels under 3 characters must be a whole word); left "
+                                 "out of the headline and shown apart") if int(version) == 2 else
+                                ("flagged when a registered brand term, or else the compacted site label "
+                                 "(site.split('.')[0]), is inside the compacted search text; a label under 3 characters "
+                                 "must match as a whole unit, its characters in order with only characters that are not "
+                                 "letters or digits between them and none directly before or after (a-1.com on 'a-1 "
+                                 "plumbing', never x.com on 'xbox'); left out of the headline and shown apart")),
              "held_out_flags": "computed per graded cell (search, date and site sides); a cell not held out is refused",
              "start_evidence": "Common Crawl first release only; RDAP is left out (no dated history)",
              "models": {"strength": f"strength-v{models_for_design(version)['strength_version']}",

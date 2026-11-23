@@ -25,7 +25,7 @@ This is the status of the build plan in `docs/plan/BUILD_PLAN_ROAD_TO_90.md`. It
 | Paid cohort path (marker 3) | `paidset.py` | Built. Proven on SYNTHETIC tables only. No paid data exists. |
 | Budget guard | `budget.py` | Built. Approved budget is $0. Nothing was spent. |
 
-The forecast package is about 42,200 lines. Its test suite has 973 tests and passes with no keys.
+The forecast package is about 42,200 lines. Its test suite has 988 tests and passes with no keys.
 
 ## Results on the free panel (stand-in, not a marker result)
 
@@ -128,7 +128,7 @@ The forecast point is the median of the predicted distribution. A point chosen o
 
 - Eight bug hunts ran. In each one, a finder had to prove a bug with a failing test, a second reviewer tried to knock it down, and then a fixer worked on it. The commit messages count 95 confirmed bugs. The journals give 94 to 98 depending on how duplicates are counted.
 - Not all were fixed in full. Two reader findings were kept as deliberate rules and are marked as our reading in the code. One scoring finding is only partly fixed (see the next section). Version 2 could not be given fresh held-out rows, so it is labeled PROVISIONAL instead.
-- A final independent check then found more: a brand rule that missed names written with a hyphen, commands that printed version 2 numbers without the PROVISIONAL label, a data folder switch that did not reach every part of a command, and run book sentences that were out of date. Those are fixed, each with a test. That check also corrected this report.
+- A final independent check then found more: a brand rule that missed names written with a hyphen, commands that printed version 2 numbers without the PROVISIONAL label, a data folder switch that did not reach every part of a command, and run book sentences that were out of date. Those are fixed, each with a test. That check also corrected this report. A last review of those fixes found a few more defects, which are fixed too. The worst was a demo that could write its SYNTHETIC files into a real data folder, and a stage that was called MISSED when every forecast for it was already recorded.
 - The worst ones overall: search volume, intent and traffic values were read before they were known. Training rows got model inputs fitted on their own search. A forecast could be recorded before its stage day. A report could grade sites the model was trained on. A scored run could be repeated or run from uncommitted code.
 - A scored run is now refused unless its design is committed and pushed, the code is clean and matches the design, and that version was not scored before.
 

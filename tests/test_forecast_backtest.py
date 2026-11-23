@@ -880,3 +880,13 @@ def test_a_missing_reason_or_a_missing_prereg_in_a_backtest_run_is_a_refusal(mon
         B.run_panel(root=tmp_path, version=1)  # no prereg.json under tmp_path
     assert B.main(["run", "--design-version", "3"]) == 2
     assert capsys.readouterr().err.startswith("Refused: backtest design version 3 needs the reason")
+
+
+def test_a_new_design_version_describes_the_brand_rule_the_code_applies_and_version_2_keeps_its_text():
+    v2, _ = _frozen_panel_specs(version=2, reason="r")
+    v3, _ = _frozen_panel_specs(version=3, reason="r")
+    old = v2["A"].thresholds["version_2_rules"]["brand_searches"]
+    new = v3["A"].thresholds["version_3_rules"]["brand_searches"]
+    assert "must be a whole word" in old  # the wording version 2 was frozen and scored with
+    assert "whole unit" in new and "a-1 plumbing" in new and "whole word" not in new
+    assert B.is_brand_search("a-1.com", "a-1 plumbing") and not B.is_brand_search("x.com", "xbox one")

@@ -486,7 +486,7 @@ def test_upload_command_is_a_dry_run_until_record_and_says_why_every_point_is_no
     payload = json.loads(out)
     assert code == 0 and len(payload["runs"][0]["recorded"]) == 1 and payload["training_label"] == REAL
     code, out, _ = run_cli(["upload", "--site", SITE, "--record"], data, clock=clock)
-    assert code == 0 and "Already recorded" in out
+    assert code == 0 and "already has its upload forecast" in out and "never replaced" in out
 
 
 def test_marker_2_command_reads_the_newest_trust_report_and_says_it_is_a_stand_in(tmp_path, monkeypatch):
@@ -1296,3 +1296,47 @@ def test_due_names_the_searches_still_open_for_a_later_stage_too():
                        "searches_open": ["boiler repair"], "searches_recorded": 2, "searches_registered": 3}]}
     later = next(line for line in forecasting.due_lines(result) if line.startswith("  d.example"))
     assert "2 of 3 searches have a forecast. Still open: boiler repair." in later and "Run it on 2026-12-10" in later
+
+
+def test_a_fully_recorded_stage_is_done_and_never_called_missed_and_a_partly_recorded_one_names_what_is_open(
+        tmp_path, real_bundle_paths):
+    clock = pipeline.VirtualClock(_at(date(2026, 11, 28), 9))
+    board = seed_board(tmp_path, clock)
+    # Two of the three searches get a reading, so only two forecasts can be made.
+    read(board, clock, _at(date(2026, 11, 29), 9), SEARCHES[0], RIVALS)
+    read(board, clock, _at(date(2026, 11, 29), 11), SEARCHES[1], RIVALS)
+    bundle = forecasting.load_bundle(real_bundle_paths, "cond-real")
+    run = forecasting.upload_or_update(board, real_bundle_paths, bundle=bundle, site=SITE, stage="upload", day=None,
+                                       now=clock.now(), record=True, strength=fake_strength)
+    assert len(run.recorded) == 2
+    late = _at(LAUNCH + timedelta(days=20), 9)
+    partly = forecasting.stage_timing(board, site=SITE, stage="upload", day=None, now=late)
+    assert partly.done is None and partly.missed.startswith("MISSED")
+    assert "1 of 3 searches without a forecast" in partly.missed and SEARCHES[2] in partly.missed
+    read(board, clock, _at(date(2026, 11, 30), 9), SEARCHES[2], RIVALS)
+    clock.set(_at(date(2026, 11, 30), 10))
+    rest = forecasting.upload_or_update(board, real_bundle_paths, bundle=bundle, site=SITE, stage="upload", day=None,
+                                        now=clock.now(), record=True, strength=fake_strength)
+    assert len(rest.recorded) == 1
+    full = forecasting.stage_timing(board, site=SITE, stage="upload", day=None, now=late)
+    assert full.missed is None and full.blocked is None and full.done.startswith("Done: every registered search")
+    again = forecasting.plan_forecasts(board, real_bundle_paths, bundle, site=SITE, stage="upload", day=None, now=late,
+                                       strength=fake_strength)
+    assert again.done and again.missed is None and again.forecasts == []
+    assert forecasting.run_lines(again, record=False)[-1].startswith("Done:")
+    assert forecasting.run_lines(forecasting.unbuilt_run(full), record=False)[-1].startswith("Done:")
+    board.close()
+
+
+def test_a_stage_forecast_before_its_stage_day_is_blocked_and_one_on_the_day_is_not(tmp_path):
+    clock = pipeline.VirtualClock(_at(date(2026, 11, 28), 9))
+    board = seed_board(tmp_path, clock)
+    early = forecasting.stage_timing(board, site=SITE, stage="d7", day=None, now=_at(LAUNCH + timedelta(days=3), 9))
+    assert early.missed is None and "stage day" in early.blocked and str(LAUNCH + timedelta(days=7)) in early.blocked
+    on_day = forecasting.stage_timing(board, site=SITE, stage="d7", day=None, now=_at(LAUNCH + timedelta(days=7), 9))
+    assert on_day.blocked is None and on_day.missed is None and on_day.as_of == LAUNCH + timedelta(days=7)
+    grace = forecasting.stage_timing(board, site=SITE, stage="d7", day=None, now=_at(LAUNCH + timedelta(days=8), 9))
+    assert grace.blocked is None and grace.missed is None and grace.as_of == LAUNCH + timedelta(days=7)
+    upload = forecasting.stage_timing(board, site=SITE, stage="upload", day=None, now=_at(date(2026, 11, 28), 9))
+    assert upload.blocked is None  # an upload forecast is made on or before launch
+    board.close()

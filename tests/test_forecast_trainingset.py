@@ -1032,3 +1032,21 @@ def test_the_synthetic_training_set_writes_its_universe_launch_text_and_what_reb
     alive = {site for site, info in world.new_sites.items() if info.alive}
     assert set(texts) == alive
     assert all(rows[0]["captured_on"] == world.new_sites[site].launch_date for site, rows in texts.items())
+
+
+def test_a_synthetic_universe_is_spotted_by_its_source_columns_without_the_marker_file(tmp_path):
+    import pandas as pd
+
+    from aeo.ranksim.forecast import trainingset as ts
+
+    rows = pd.DataFrame([{"keyword": "roof repair", "locale": "US_en", "sources": "synthetic",
+                          "difficulty_proxy_source": "synthetic_difficulty"}])
+    path = tmp_path / "universe.parquet"
+    rows.to_parquet(path, index=False)
+    assert "sources" in (ts.synthetic_table_reason(path) or "")
+    real = pd.DataFrame([{"keyword": "roof repair", "locale": "US_en", "sources": "dfs_keywords",
+                          "difficulty_proxy_source": "dataforseo_kd"}])
+    real_path = tmp_path / "real" / "universe.parquet"
+    real_path.parent.mkdir()
+    real.to_parquet(real_path, index=False)
+    assert ts.synthetic_table_reason(real_path) is None

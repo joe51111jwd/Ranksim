@@ -720,3 +720,39 @@ def test_updates_load_calendar_names_its_file_and_the_cache_never_targets_the_pa
     payload, path = updates.load_calendar(root=tmp_path)
     assert path == updates.PACKAGED_PATH and payload["count"] == len(payload["updates"])
     assert updates.cache_path(tmp_path) != updates.PACKAGED_PATH
+
+
+def test_a_download_that_connected_and_broke_early_is_retried_even_when_the_next_connection_fails(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Fail fast is only for a download no server ever answered. A short first answer followed by a connection
+    error is a broken download, and it keeps its retries."""
+    waits: list[float] = []
+    monkeypatch.setattr(strength_lists, "_sleep", waits.append)
+    payload = b"rank,origin\n" + b"x" * 5000
+    calls: list[str | None] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request.headers.get("range"))
+        if len(calls) == 1:  # the server answers, sends a few hundred bytes, then the read breaks
+            return httpx.Response(200, headers={"content-length": str(len(payload))}, stream=_Stream(payload, cut=400))
+        if len(calls) == 2:  # the next connection cannot be made
+            raise httpx.ConnectError("[Errno 111] Connection refused", request=request)
+        start = int(request.headers["range"].split("=")[1].rstrip("-")) if "range" in request.headers else 0
+        status = 206 if start else 200
+        return httpx.Response(status, stream=_Stream(payload[start:]), headers={"content-length": str(len(payload) - start)})
+
+    dest = tmp_path / "list.csv"
+    meta = strength_lists.download_resumable(httpx.Client(transport=httpx.MockTransport(handler)),
+                                             "https://raw.githubusercontent.com/x/202610.csv", dest)
+    assert dest.read_bytes() == payload and meta["bytes"] == len(payload)
+    assert len(calls) == 3 and len(waits) == 2  # two waits, never a ListUnreachable
+
+
+def test_the_tranco_lookup_names_the_host_when_no_connection_can_be_made(tmp_path: Path) -> None:
+    from aeo.ranksim.forecast.sources.strength_lists import TrancoByDate
+
+    calls: list[str] = []
+    tranco = TrancoByDate(tmp_path, client=_no_network(calls))
+    with pytest.raises(strength_lists.ListUnreachable, match="tranco-list.eu could not be made"):
+        tranco.list_for_date("2026-10-01")
+    assert len(calls) == 1

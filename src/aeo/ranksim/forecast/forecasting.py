@@ -1878,6 +1878,7 @@ class ForecastRun:
     already: list[dict[str, str]] = field(default_factory=list)
     blocked: str | None = None
     missed: str | None = None
+    done: str | None = None
     recorded: list[str] = field(default_factory=list)
     refused: list[dict[str, str]] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
@@ -1894,7 +1895,8 @@ class ForecastRun:
             "bundle": self.bundle, "bundle_version": self.bundle_version, "gate": self.gate,
             "forecasts": [_json_safe({**f.to_payload(), "label_text": PREDICTED}) for f in self.forecasts],
             "inputs": self.inputs, "skipped": self.skipped, "already_recorded": self.already, "blocked": self.blocked,
-            "missed": self.missed, "recorded": self.recorded, "refused": self.refused, "notes": self.notes,
+            "missed": self.missed, "done": self.done, "recorded": self.recorded, "refused": self.refused,
+            "notes": self.notes,
         }
 
 
@@ -1973,6 +1975,7 @@ class StageTiming:
     label: str
     missed: str | None = None
     blocked: str | None = None
+    done: str | None = None  # every registered search already has a forecast at this stage: nothing to build
 
 
 def stage_timing(scoreboard: Scoreboard, *, site: str, stage: str, day: date | None, now: datetime) -> StageTiming:
@@ -1988,11 +1991,22 @@ def stage_timing(scoreboard: Scoreboard, *, site: str, stage: str, day: date | N
     stage_day = launch + timedelta(days=STAGE_DAYS[stage])
     today = now.astimezone(timezone.utc).date()
     as_of = as_date(day) if day is not None else min(stage_day, today)
-    missed = blocked = None
-    if (today - stage_day).days > FORECAST_FROZEN_GAP_DAYS:
+    missed = blocked = done = None
+    registered = _searches(scoreboard, name)
+    recorded = _already(scoreboard, name, stage)
+    still_open = [search for search, key, _, _, _ in registered if key not in recorded]
+    if registered and not still_open:
+        # A stage that is fully recorded is finished, whatever the date: it is never called MISSED.
+        done = (f"Done: every registered search of {name} already has its {stage} forecast. Nothing to build. "
+                "A forecast is never replaced.")
+    elif (today - stage_day).days > FORECAST_FROZEN_GAP_DAYS:
+        which = ""
+        if recorded and still_open:
+            which = (f" This is for the {len(still_open)} of {len(registered)} searches without a forecast: "
+                     f"{', '.join(still_open)}.")
         missed = (f"MISSED: the {stage} stage day of {name} was {stage_day}, and a forecast dated then may be written "
                   f"at most {FORECAST_FROZEN_GAP_DAYS} day later. A missed stage is never backfilled. A forecast made "
-                  "now would be a shorter lead, never this stage.")
+                  f"now would be a shorter lead, never this stage.{which}")
     elif as_of > today:
         blocked = f"The forecast date {as_of} is later than today, {today}."
     elif stage == "upload" and as_of > launch:
@@ -2001,10 +2015,15 @@ def stage_timing(scoreboard: Scoreboard, *, site: str, stage: str, day: date | N
     elif stage != "upload" and as_of > stage_day:
         blocked = (f"A {stage} forecast must be dated on or before day {STAGE_DAYS[stage]} ({stage_day}). "
                    f"The date is {as_of}. The scoreboard refuses it.")
+    elif stage != "upload" and as_of < stage_day:
+        # A stage forecast is made on its stage day, from that day's reading. One recorded early could never be
+        # replaced by the real one.
+        blocked = (f"The {stage} stage day of {name} is {stage_day} and the date is {as_of}. A stage forecast is dated "
+                   "on its stage day. Run it on that day, after that day's clean reading.")
     elif source in ("seed", "pilot") and (today - as_of).days > FORECAST_FROZEN_GAP_DAYS:
         blocked = (f"A {source} forecast dated {as_of} written on {today} is more than {FORECAST_FROZEN_GAP_DAYS} day "
                    "late. Later readings could have shaped it. The scoreboard refuses it.")
-    return StageTiming(name, source, launch, stage, stage_day, as_of, today, label, missed, blocked)
+    return StageTiming(name, source, launch, stage, stage_day, as_of, today, label, missed, blocked, done)
 
 
 NO_BUNDLE_LOADED = "none (nothing to build, so no bundle was loaded)"
@@ -2013,7 +2032,7 @@ NO_BUNDLE_LOADED = "none (nothing to build, so no bundle was loaded)"
 def unbuilt_run(timing: StageTiming) -> ForecastRun:
     """A run that is MISSED or blocked by its date, made without loading a bundle: it builds nothing."""
     return ForecastRun(timing.site, timing.source, timing.stage, timing.as_of, timing.label, "", NO_BUNDLE_LOADED,
-                       {}, blocked=timing.blocked, missed=timing.missed, stage_day=timing.stage_day)
+                       {}, blocked=timing.blocked, missed=timing.missed, done=timing.done, stage_day=timing.stage_day)
 
 
 def plan_forecasts(
@@ -2058,6 +2077,9 @@ def plan_forecasts(
     if bundle.training_cutoff > as_of:
         raise LeakError(f"bundle {bundle.name} learned outcomes up to {bundle.training_cutoff}, after the forecast date "
                         f"{as_of}. A forecast may only use what was knowable on its date.")
+    if timing.done:
+        run.done = timing.done
+        return run
     if timing.missed:
         run.missed = timing.missed
         return run
@@ -2215,6 +2237,8 @@ def run_lines(run: ForecastRun, *, record: bool) -> list[str]:
     """A run in short plain sentences. Every number says PREDICTED or names its label."""
     label = run.label
     lines = [f"{run.stage} forecasts for {run.site} ({run.source} site, {label}) as of {run.as_of}, bundle {run.bundle_version}."]
+    if run.done:
+        return lines + [run.done]
     if run.missed:
         return lines + [run.missed]
     if run.blocked:

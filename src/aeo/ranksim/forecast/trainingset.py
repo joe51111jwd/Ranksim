@@ -1425,6 +1425,8 @@ SYNTHETIC_MARKERS: dict[str, frozenset[str]] = {
     "launch_date_source": frozenset({"synthetic_truth"}),
     "source": frozenset({"synthetic-nrd"}),
     "registered_on_source": frozenset({"synthetic"}),
+    "sources": frozenset({"synthetic"}),
+    "difficulty_proxy_source": frozenset({"synthetic_difficulty"}),
 }
 
 

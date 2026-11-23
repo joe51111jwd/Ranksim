@@ -557,3 +557,44 @@ def test_pull_plan_prints_the_total_at_the_plan_rate_and_at_the_sample_rate_neve
     sample_line = budget.usd_text(budget.historical_serps_sample_rate_estimate(24, 5000))
     assert any(line.startswith("24 months, Past result pages at the rate seen in the free history samples") and sample_line in line
                for line in out.splitlines())
+
+
+def test_the_build_commands_never_print_a_full_address_and_let_a_closed_pipe_through(tmp_path, monkeypatch):
+    """cohort build and universe build use the shared network sentence: host and status only, no query string."""
+    from aeo.ranksim.forecast import cli_data
+
+    request = httpx.Request("GET", "https://api.example.com/v1/x?api_key=SECRETVALUE123")
+    status = httpx.HTTPStatusError("404 for url https://api.example.com/v1/x?api_key=SECRETVALUE123", request=request,
+                                   response=httpx.Response(404, request=request))
+
+    def raising(error):
+        def inner(ctx, args):
+            raise error
+
+        return inner
+
+    regs = write_lines(tmp_path / "r.csv", ["site,listed_on", "a.com,2025-10-27"])
+    cohort = ["cohort", "build", "--name", "t", "--registrations", str(regs), "--after", "CC-MAIN-TEST-02", "--no-rdap", "--no-dns"]
+    for name, argv in (("_cohort_build", cohort), ("_universe_build", None)):
+        if argv is None:
+            continue
+        monkeypatch.setattr(cli_data, name, raising(status))
+        code, _, err = run(argv, tmp_path / "data")
+        assert code == 2 and "SECRETVALUE123" not in err and "api.example.com" in err and "HTTP 404" in err
+        monkeypatch.setattr(cli_data, name, raising(BrokenPipeError(32, "Broken pipe")))
+        code, out, err = run(argv, tmp_path / "data")
+        assert code != 0 and "network" not in err.lower() and "could not be read" not in err
+    for handler, inner in ((cli_data.cmd_cohort_build, "_cohort_build"), (cli_data.cmd_universe_build, "_universe_build")):
+        monkeypatch.setattr(cli_data, inner, raising(BrokenPipeError(32, "Broken pipe")))
+        with pytest.raises(BrokenPipeError):
+            handler(None, None)
+        monkeypatch.setattr(cli_data, inner, raising(status))
+
+        class Ctx:
+            said = ""
+
+            def fail(self, message, code=2):
+                Ctx.said = message
+                return code
+
+        assert handler(Ctx(), None) == 2 and "SECRETVALUE123" not in Ctx.said and "HTTP 404" in Ctx.said

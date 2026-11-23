@@ -888,10 +888,29 @@ def test_demo_with_only_dir_writes_the_demo_into_the_dir_folder(tmp_path, monkey
     monkeypatch.setattr(pipeline, "demo", fake_demo)
     code, out, err = run(["demo", "--sites", "2"], tmp_path / "chosen")
     assert calls == [tmp_path / "chosen"], err
-    assert f"The demo files are in {tmp_path / 'chosen'}." in out
+    assert f"The demo files are in the folder {tmp_path / 'chosen'}" in out
     run_code = cli.main(["demo", "--workdir", str(tmp_path / "work"), "--dir", str(tmp_path / "chosen")],
                         clock=pipeline.VirtualClock(START), stdout=io.StringIO(), stderr=io.StringIO())
     assert run_code == 0 and calls[-1] == tmp_path / "work"  # --workdir still wins
+
+
+def test_demo_never_writes_its_synthetic_files_into_a_folder_that_is_not_empty(tmp_path, monkeypatch):
+    """A real data folder (even one that only holds models) must never receive the SYNTHETIC scoreboard."""
+    calls: list[Path] = []
+
+    def fake_demo(seed, *, workdir, sites):
+        calls.append(Path(workdir))
+        return _FakeDemo()
+
+    monkeypatch.setattr(pipeline, "demo", fake_demo)
+    data = tmp_path / "realdata"
+    (data / "models").mkdir(parents=True)
+    for argv in (["demo", "--sites", "2", "--dir", str(data)], ["demo", "--sites", "2", "--workdir", str(data)]):
+        out, err = io.StringIO(), io.StringIO()
+        code = cli.main(argv, clock=pipeline.VirtualClock(START), stdout=out, stderr=err)
+        assert code == cli.EXIT_USAGE and calls == [], argv
+        assert "SYNTHETIC" in err.getvalue() and "not empty" in err.getvalue()
+    assert sorted(p.name for p in data.iterdir()) == ["models"]
 
 
 class _FakeDemo:
@@ -974,3 +993,13 @@ def test_the_forecasting_commands_use_the_shared_network_sentence_and_let_a_clos
     assert ctx.said[0][0].startswith("A network request failed (")
     with pytest.raises(BrokenPipeError):
         raising(BrokenPipeError(32, "Broken pipe"))(Ctx(), None)
+
+
+@pytest.mark.parametrize("status, expected", [(404, "will not help"), (401, "will not help"), (429, "wait a little"),
+                                              (503, "wait a little"), (408, "wait a little")])
+def test_a_server_status_error_says_whether_trying_again_can_help(status, expected):
+    request = httpx.Request("GET", "https://lists.example.org/top.csv?key=secret-value")
+    error = httpx.HTTPStatusError("boom", request=request, response=httpx.Response(status, request=request))
+    message = cli.network_failure(error)
+    assert f"HTTP {status}" in message and expected in message and "secret-value" not in message
+

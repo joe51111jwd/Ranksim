@@ -252,6 +252,8 @@ def _provisional_reason(report: Mapping[str, Any]) -> str:
 def provisional_sentence(report: Mapping[str, Any]) -> str:
     """One plain sentence that says the numbers are a second look, PROVISIONAL, and why they count for nothing."""
     reason = _provisional_reason(report)
+    # A stored reason may start with the label itself ("SECOND LOOK: ...", "PROVISIONAL: ..."): the label is not the why.
+    reason = re.sub(r"^\s*(?:SECOND LOOK\s*:?\s*)?(?:PROVISIONAL\s*[:.]?\s*)?", "", reason, flags=re.IGNORECASE)
     first = reason.split(":", 1)[0].split(". ", 1)[0].strip().rstrip(".") or PROVISIONAL_DEFAULT_REASON
     return (f"This is a second look and {PROVISIONAL} ({first}), so its numbers are not fresh held-out accuracy and "
             "what the bars would give does not count as a pass or a fail.")

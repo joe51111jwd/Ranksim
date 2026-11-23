@@ -738,3 +738,18 @@ def test_paid_train_refuses_an_existing_bundle_name_before_it_joins_or_trains(sy
                               "--content-backend", "lexical"], synthetic_run["data"])
     assert code == 2 and "already holds a bundle" in err
     assert joined == []
+
+
+def test_a_second_freeze_of_the_same_design_says_it_was_already_frozen_and_writes_nothing(synthetic_run, tmp_path):
+    import shutil
+
+    paths = forecast_paths(synthetic_run["data"])
+    folder = tmp_path / "fresh_set"
+    shutil.copytree(synthetic_run["folder"], folder, ignore=shutil.ignore_patterns(paidset.LOOKS_FILE))
+    kwargs = dict(folder=folder, bundle_name="syn-paid", root=tmp_path / "designs", name="cohort-twice")
+    first = paidset.freeze_design(paths, **kwargs)
+    assert first["already_frozen"] is False
+    before = Path(first["prereg_file"]).read_bytes()
+    again = paidset.freeze_design(paths, **kwargs)
+    assert again["already_frozen"] is True and again["sha256"] == first["sha256"]
+    assert Path(again["prereg_file"]).read_bytes() == before

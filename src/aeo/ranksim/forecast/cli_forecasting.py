@@ -203,7 +203,7 @@ def _forecast(ctx: Context, args: argparse.Namespace, stage: str) -> int:
     now = ctx.clock.now()
     timings = {site: forecasting.stage_timing(board, site=site, stage=stage, day=chosen.dates.get(site), now=now)
                for site in chosen.sites}
-    buildable = any(not (t.missed or t.blocked) for t in timings.values())
+    buildable = any(not (t.missed or t.blocked or t.done) for t in timings.values())
     bundle = _bundle(ctx, args.bundle) if buildable else None
     runs = []
     lines: list[str] = []

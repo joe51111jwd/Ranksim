@@ -69,6 +69,7 @@ from .cli import (
     _iso_date,
     _searches_from,
     _today,
+    network_failure,
 )
 from .config import DEFAULT_LANGUAGE, EXCLUDED_SITES
 from .types import PREDICTED, REAL
@@ -394,9 +395,15 @@ def _read_registrations(path: str | Path) -> list[Any]:
 def cmd_cohort_build(ctx: Context, args: argparse.Namespace) -> int:
     try:
         return _cohort_build(ctx, args)
-    except (ConnectionError, httpx.HTTPError, subprocess.CalledProcessError) as error:
+    except BrokenPipeError:
+        raise  # the reader closed the output: cli.main stops quietly, it is not a network failure
+    except subprocess.CalledProcessError as error:
         return ctx.fail(f"A public source could not be read: {type(error).__name__}: {error}. Run the command again: "
                         "what was already fetched is cached and is not fetched twice.")
+    except (ConnectionError, httpx.HTTPError) as error:
+        # network_failure never prints a full address: a query string can hold a key.
+        return ctx.fail(f"A public source could not be read. {network_failure(error)} What was already fetched is "
+                        "cached and is not fetched twice.")
 
 
 def _cohort_build(ctx: Context, args: argparse.Namespace) -> int:
@@ -461,8 +468,10 @@ def _cohort_build(ctx: Context, args: argparse.Namespace) -> int:
 def cmd_universe_build(ctx: Context, args: argparse.Namespace) -> int:
     try:
         return _universe_build(ctx, args)
+    except BrokenPipeError:
+        raise  # the reader closed the output: cli.main stops quietly, it is not a network failure
     except (ConnectionError, httpx.HTTPError) as error:
-        return ctx.fail(f"The public keyword shard could not be downloaded: {type(error).__name__}: {error}.")
+        return ctx.fail(f"The public keyword shard could not be downloaded. {network_failure(error)}")
 
 
 def _universe_build(ctx: Context, args: argparse.Namespace) -> int:

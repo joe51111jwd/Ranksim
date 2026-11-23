@@ -1208,10 +1208,12 @@ def freeze_design(
         raise PaidSetRefusal("A SYNTHETIC design is written only under an explicit root folder, never beside REAL designs.")
     body = versioned_payload(payload, name=name, version=version, reason=reason)
     target = prereg_file(design_root(root, name), version)
+    already_frozen = target.is_file()  # freeze_prereg then only checks that the stored design is the same
     digest = freeze_prereg(target, body, code=True)
     looks = earlier_looks(folder, root, name, keys_sha=payload["test_rows"]["keys_sha256"],
                           cells_sha=payload["training_set"]["cells_sha256"])
     return {"prereg_file": str(target), "sha256": digest, "payload": body, "label": payload["label"], "version": int(version),
+            "already_frozen": already_frozen,
             "earlier_looks": looks}
 
 

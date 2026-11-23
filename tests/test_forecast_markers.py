@@ -417,3 +417,15 @@ def test_a_stored_provisional_verdict_prints_as_provisional():
     text = render_marker_text(stored)
     assert "NOT A MARKER RESULT (PROVISIONAL)" in text and "not met (REAL)" not in text
     assert "Check hit rate: 45.0% against 75.0%, the bar would not be met (REAL, SECOND LOOK: PROVISIONAL)." in text
+
+
+def test_the_provisional_sentence_never_gives_the_label_itself_as_the_reason():
+    from aeo.ranksim.forecast.markers import provisional_sentence
+
+    text = provisional_sentence({"provisional": True, "provisional_reason":
+                                 "SECOND LOOK: these held-out test rows were already scored 1 time(s) under another design."})
+    assert "(these held-out test rows were already scored 1 time(s) under another design)" in text
+    assert "(SECOND LOOK)" not in text
+    plain = provisional_sentence({"provisional": True, "provisional_reason":
+                                  "held-out rows already read by version 1: design version 2 grades rows that were read."})
+    assert "(held-out rows already read by version 1)" in plain

@@ -1050,9 +1050,13 @@ def cmd_demo(ctx: Context, args: argparse.Namespace) -> int:
     import tempfile
 
     chosen = args.workdir or getattr(args, "dir", None)  # --workdir first, then --dir, then a new temporary folder
-    folder = Path(chosen) if chosen else Path(tempfile.mkdtemp(prefix="ranksim-demo-"))
+    folder = Path(chosen).resolve() if chosen else Path(tempfile.mkdtemp(prefix="ranksim-demo-"))
+    if folder.exists() and (not folder.is_dir() or any(folder.iterdir())):
+        # The demo writes a SYNTHETIC scoreboard, manifest and forms. They must never land beside real data.
+        return ctx.fail(f"The demo writes SYNTHETIC files and will not write into {folder}, which is not empty. "
+                        f"Pass --workdir with a new or empty folder, or pass neither --workdir nor --dir.")
     result = pipeline.demo(args.seed, workdir=folder, sites=args.sites)
-    ctx.emit(result.to_dict(), result.lines + [f"SYNTHETIC: The demo files are in {folder}."])
+    ctx.emit(result.to_dict(), result.lines + [f"SYNTHETIC: The demo files are in the folder {folder}"])
     checks_ok = all(item["refused"] for item in result.refusals) and result.chain["ok"] and result.export_check["ok"]
     return EXIT_OK if checks_ok else EXIT_CHECK_FAILED
 
@@ -1338,8 +1342,9 @@ def _plugin_registrars() -> tuple[Callable[[Any, argparse.ArgumentParser], None]
 def network_failure(error: BaseException) -> str:
     """One plain sentence for a network error. The detail is cut short. Output is scrubbed of keys anyway.
 
-    A server that answered with an error status (404, 401, 500) gets its own sentence with the status code and the
-    host only, never the full address: a query string can hold a key. Running again will not help there.
+    A server that answered with an error status gets its own sentence with the status code and the host only,
+    never the full address: a query string can hold a key. For 404 or 401 running again will not help. For 408,
+    429 and 5xx it may, and the sentence says to wait and try again.
     """
     if isinstance(error, httpx.HTTPStatusError):
         status = error.response.status_code if error.response is not None else None
@@ -1347,6 +1352,9 @@ def network_failure(error: BaseException) -> str:
             host = error.request.url.host or "an unknown host"
         except RuntimeError:  # no request attached
             host = "an unknown host"
+        if status is not None and (status in (408, 429) or status >= 500):
+            return (f"The server at {host} answered HTTP {status}. Nothing more was done. That can pass: wait a little "
+                    "and run the same command again.")
         return (f"The server at {host} answered HTTP {status}. Nothing more was done. Running the same command again "
                 "will not help until the address or the server is fixed.")
     detail = " ".join(str(error).split())[:200] or "no detail"

@@ -304,17 +304,20 @@ def evaluate_marker(number: int, report: Mapping[str, Any]) -> dict[str, Any]:
         notes.append("Not measurable yet.")
     synthetic = is_synthetic_report(report)
     stand_in = is_stand_in_report(report)
+    provisional = is_provisional_report(report)
     if synthetic:
         notes.append("Synthetic results test the code. They cannot pass a marker.")
     if stand_in:
         notes.append(stand_in_sentence(report))
+    if provisional:
+        notes.append(provisional_sentence(report))
     result = {
         "marker": number,
         "name": item.name,
         "date": item.date.isoformat(),
         "markers_hash": markers_hash(),
         "label": SYNTHETIC if synthetic else REAL,
-        "passed": None if (synthetic or stand_in) else passed,
+        "passed": None if (synthetic or stand_in or provisional) else passed,
         "checks": checks,
         "notes": notes,
     }
@@ -324,6 +327,10 @@ def evaluate_marker(number: int, report: Mapping[str, Any]) -> dict[str, Any]:
         result["stand_in"] = True
         result["stand_in_reason"] = _stand_in_reason(report)
         result["stand_in_passed"] = passed
+    if provisional:
+        result["provisional"] = True
+        result["provisional_reason"] = _provisional_reason(report)
+        result["provisional_passed"] = passed
     result.update({key: value for key, value in extra.items() if key not in result})
     return result
 
